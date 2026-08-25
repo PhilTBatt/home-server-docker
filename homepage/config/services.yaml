@@ -1,0 +1,10 @@
+- Infrastructure:
+    - AdGuard Home:
+        icon: adguard-home.png
+        href: http://192.168.0.200:3000
+        description: DNS filtering
+        widget:
+          type: adguard
+          url: http://192.168.0.200:3000
+          username: 'philtbatt'
+          password: "{{HOMEPAGE_VAR_ADGUARD_PASSWORD}}"
