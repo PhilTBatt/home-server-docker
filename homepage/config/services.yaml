@@ -4,7 +4,16 @@
         href: http://192.168.0.200:3000
         description: DNS filtering
         widget:
-          type: adguard
-          url: http://192.168.0.200:3000
-          username: 'philtbatt'
-          password: "{{HOMEPAGE_VAR_ADGUARD_PASSWORD}}"
+            type: adguard
+            url: http://192.168.0.200:3000
+            username: 'philtbatt'
+            password: "{{HOMEPAGE_VAR_ADGUARD_PASSWORD}}"
+
+    - Uptime Kuma:
+        icon: uptime-kuma.png
+        href: http://192.168.0.200:3001
+        description: Service monitoring
+        widget:
+            type: uptimekuma
+            url: http://192.168.0.200:3001
+            slug: home

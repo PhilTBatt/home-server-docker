@@ -2,3 +2,4 @@ adguard/work/
 adguard/conf/AdGuardHome.yaml
 homepage/config/logs/
 .env
+uptime-kuma/data/
