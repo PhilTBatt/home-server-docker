@@ -3,3 +3,5 @@ adguard/conf/AdGuardHome.yaml
 homepage/config/logs/
 .env
 uptime-kuma/data/
+jellyfin/config/
+jellyfin/cache/

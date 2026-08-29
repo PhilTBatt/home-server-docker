@@ -1,19 +1,30 @@
 - Infrastructure:
-    - AdGuard Home:
-        icon: adguard-home.png
-        href: http://192.168.0.200:3000
-        description: DNS filtering
-        widget:
-            type: adguard
-            url: http://192.168.0.200:3000
-            username: 'philtbatt'
-            password: "{{HOMEPAGE_VAR_ADGUARD_PASSWORD}}"
+  - AdGuard Home:
+      icon: adguard-home.png
+      href: http://192.168.0.200:3000
+      description: DNS filtering
+      widget:
+        type: adguard
+        url: http://192.168.0.200:3000
+        username: 'philtbatt'
+        password: "{{HOMEPAGE_VAR_ADGUARD_PASSWORD}}"
 
-    - Uptime Kuma:
-        icon: uptime-kuma.png
-        href: http://192.168.0.200:3001
-        description: Service monitoring
-        widget:
-            type: uptimekuma
-            url: http://192.168.0.200:3001
-            slug: home
+  - Uptime Kuma:
+      icon: uptime-kuma.png
+      href: http://192.168.0.200:3001
+      description: Service monitoring
+      widget:
+        type: uptimekuma
+        url: http://192.168.0.200:3001
+        slug: home
+
+  - Jellyfin:
+      icon: jellyfin.png
+      href: http://192.168.0.200:8096
+      description: Media server
+      widget:
+        type: jellyfin
+        url: http://192.168.0.200:8096
+        key: "{{HOMEPAGE_VAR_JELLYFIN_KEY}}"
+        enableBlocks: true
+        enableNowPlaying: true
