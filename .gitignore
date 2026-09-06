@@ -5,3 +5,4 @@ homepage/config/logs/
 uptime-kuma/data/
 jellyfin/config/
 jellyfin/cache/
+media-stack/config/
