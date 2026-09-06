@@ -57,3 +57,10 @@ services:
       - /home/phil/media:/data
     ports:
       - "7878:7878"
+
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest
+    container_name: byparr
+    restart: unless-stopped
+    environment:
+      TZ: Europe/London
