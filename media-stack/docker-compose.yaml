@@ -64,3 +64,16 @@ services:
     restart: unless-stopped
     environment:
       TZ: Europe/London
+
+  seerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: seerr
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: Europe/London
+      LOG_LEVEL: info
+    volumes:
+      - ./config/seerr:/app/config
+    ports:
+      - "5055:5055"
