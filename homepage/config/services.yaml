@@ -18,6 +18,7 @@
         url: http://192.168.0.200:3001
         slug: home
 
+- Media:
   - Jellyfin:
       icon: jellyfin.png
       href: http://192.168.0.200:8096
@@ -28,3 +29,62 @@
         key: "{{HOMEPAGE_VAR_JELLYFIN_KEY}}"
         enableBlocks: true
         enableNowPlaying: true
+
+  - Seerr:
+      icon: seerr.png
+      href: http://192.168.0.200:5055
+      description: Media Requests
+      widget:
+        type: seerr
+        url: http://192.168.0.200:5055
+        key: "{{HOMEPAGE_VAR_SEERR_KEY}}"
+        enableBlocks: true
+        enableNowPlaying: true
+
+  - Sonarr:
+      icon: sonarr.png
+      href: http://192.168.0.200:8989
+      description: TV
+      widget:
+        type: sonarr
+        url: http://192.168.0.200:8989
+        key: "{{HOMEPAGE_VAR_SONARR_KEY}}"
+        enableBlocks: true
+        enableNowPlaying: true
+
+  - Radarr:
+      icon: radarr.png
+      href: http://192.168.0.200:7878
+      description: Movies
+      widget:
+        type: radarr
+        url: http://192.168.0.200:7878
+        key: "{{HOMEPAGE_VAR_RADARR_KEY}}"
+        enableBlocks: true
+        enableNowPlaying: true
+
+  - Prowlarr:
+      icon: prowlarr.png
+      href: http://192.168.0.200:9696
+      description: Indexers
+      widget:
+        type: prowlarr
+        url: http://192.168.0.200:9696
+        key: "{{HOMEPAGE_VAR_PROWLARR_KEY}}"
+        enableBlocks: true
+        enableNowPlaying: true
+
+  - qBittorrent:
+      icon: qbittorrent.png
+      href: http://192.168.0.200:8081
+      description: BitTorrent client
+      widget:
+        type: qbittorrent
+        url: http://192.168.0.200:8081
+        username: 'philtbatt'
+        password: "{{HOMEPAGE_VAR_QBITTORRENT_PASSWORD}}"
+
+  - Byparr:
+      icon: mdi-shield-check
+      href: http://192.168.0.200:8191
+      description: Cloudflare Solver
