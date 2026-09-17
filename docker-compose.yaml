@@ -1,0 +1,138 @@
+services:
+  adguard:
+    image: adguard/adguardhome:latest
+    container_name: adguard
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "3000:3000/tcp"
+    environment:
+      TZ: Europe/London
+    volumes:
+      - ./adguard/work:/opt/adguardhome/work
+      - ./adguard/conf:/opt/adguardhome/conf
+
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    ports:
+      - "8080:3000"
+    env_file:
+      - ./homepage/.env
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: 192.168.0.200:8080,100.64.238.6:8080,home-server:8080,home-server.tail8209fb.ts.net:8080
+      PUID: 1000
+      PGID: 1000
+    volumes:
+      - ./homepage/config:/app/config
+
+  kuma:
+    image: louislam/uptime-kuma:2
+    container_name: kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      TZ: Europe/London
+    volumes:
+      - ./kuma/data:/app/data
+
+
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    user: 1000:1000
+    ports:
+      - "8096:8096"
+    environment:
+      TZ: Europe/London
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+      - /home/phil/media/library:/media
+    group_add:
+      - "991"
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/London
+      WEBUI_PORT: 8081
+      TORRENTING_PORT: 6881
+    volumes:
+      - ./media-stack/config/qbittorrent:/config
+      - /home/phil/media/downloads/torrents:/data/downloads/torrents
+    ports:
+      - "8081:8081"
+      - "6881:6881"
+      - "6881:6881/udp"
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/London
+    volumes:
+      - ./media-stack/config/prowlarr:/config
+    ports:
+      - "9696:9696"
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/London
+    volumes:
+      - ./media-stack/config/sonarr:/config
+      - /home/phil/media:/data
+    ports:
+      - "8989:8989"
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/London
+    volumes:
+      - ./media-stack/config/radarr:/config
+      - /home/phil/media:/data
+    ports:
+      - "7878:7878"
+
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest
+    container_name: byparr
+    restart: unless-stopped
+    environment:
+      TZ: Europe/London
+
+  seerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: seerr
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: Europe/London
+      LOG_LEVEL: info
+    volumes:
+      - ./media-stack/config/seerr:/app/config
+    ports:
+      - "5055:5055"
