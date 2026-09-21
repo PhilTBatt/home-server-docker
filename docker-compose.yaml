@@ -161,3 +161,18 @@ services:
     volumes:
       - ./beszel/data:/beszel_data
       - ./beszel/socket:/beszel_socket
+
+  beszel-agent:
+    image: henrygd/beszel-agent:latest
+    container_name: beszel-agent
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ./beszel/.env
+    environment:
+      LISTEN: /beszel_socket/beszel.sock
+      HUB_URL: http://localhost:8090
+    volumes:
+      - ./beszel/agent_data:/var/lib/beszel-agent
+      - ./beszel/socket:/beszel_socket
+      - /var/run/docker.sock:/var/run/docker.sock:ro

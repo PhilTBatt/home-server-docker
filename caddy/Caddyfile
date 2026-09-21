@@ -33,3 +33,7 @@ http://prowlarr.home {
 http://qbit.home {
 	reverse_proxy qbittorrent:8081
 }
+
+http://metrics.home {
+	reverse_proxy beszel:8090
+}

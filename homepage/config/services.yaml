@@ -18,6 +18,18 @@
         url: http://kuma:3001
         slug: home
 
+  - Beszel:
+      icon: beszel.png
+      href: http://192.168.0.200:8090
+      description: System Metrics
+      widget:
+        type: beszel
+        url: http://beszel:8090
+        username: 'philtbatt@gmail.com'
+        password: "{{HOMEPAGE_VAR_BESZEL_PASSWORD}}"
+        systemId: home-server
+        version: 2
+
 - Media:
   - Jellyfin:
       icon: jellyfin.png

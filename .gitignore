@@ -8,3 +8,6 @@ jellyfin/cache/
 media-stack/config/
 caddy/config/
 caddy/data/
+beszel/data/
+beszel/socket/
+beszel/agent_data/
