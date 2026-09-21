@@ -1,0 +1,35 @@
+http://home.home {
+	reverse_proxy homepage:3000
+}
+
+http://dns.home {
+	reverse_proxy adguard:3000
+}
+
+http://uptime.home {
+	reverse_proxy uptime-kuma:3001
+}
+
+http://jellyfin.home {
+	reverse_proxy jellyfin:8096
+}
+
+http://requests.home {
+	reverse_proxy seerr:5055
+}
+
+http://sonarr.home {
+	reverse_proxy sonarr:8989
+}
+
+http://radarr.home {
+	reverse_proxy radarr:7878
+}
+
+http://prowlarr.home {
+	reverse_proxy prowlarr:9696
+}
+
+http://qbit.home {
+	reverse_proxy qbittorrent:8081
+}

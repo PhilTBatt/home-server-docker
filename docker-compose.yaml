@@ -22,7 +22,7 @@ services:
     env_file:
       - ./homepage/.env
     environment:
-      HOMEPAGE_ALLOWED_HOSTS: 192.168.0.200:8080,100.64.238.6:8080,home-server:8080,home-server.tail8209fb.ts.net:8080
+      HOMEPAGE_ALLOWED_HOSTS: 192.168.0.200:8080,100.64.238.6:8080,home-server:8080,home-server.tail8209fb.ts.net:8080,home.home,homepage:3000
       PUID: 1000
       PGID: 1000
     volumes:
@@ -39,6 +39,18 @@ services:
     volumes:
       - ./kuma/data:/app/data
 
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      TZ: Europe/London
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
 
   jellyfin:
     image: jellyfin/jellyfin:latest
@@ -136,3 +148,16 @@ services:
       - ./media-stack/config/seerr:/app/config
     ports:
       - "5055:5055"
+
+  beszel:
+    image: henrygd/beszel:latest
+    container_name: beszel
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      TZ: Europe/London
+      APP_URL: http://192.168.0.200:8090
+    volumes:
+      - ./beszel/data:/beszel_data
+      - ./beszel/socket:/beszel_socket
