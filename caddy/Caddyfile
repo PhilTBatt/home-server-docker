@@ -7,7 +7,7 @@ http://dns.home {
 }
 
 http://uptime.home {
-	reverse_proxy uptime-kuma:3001
+	reverse_proxy kuma:3001
 }
 
 http://jellyfin.home {
