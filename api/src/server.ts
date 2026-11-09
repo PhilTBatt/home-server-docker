@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { timingSafeEqual } from "node:crypto";
+import { health } from "./modules/health/routes.js";
 
 const apiToken = process.env.API_TOKEN;
 if (!apiToken) {
@@ -16,8 +17,6 @@ app.addHook("onRequest", async (request, reply) => {
   }
 });
 
-app.get("/health", async () => {
-  return { status: "ok" };
-});
+app.register(health);
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
