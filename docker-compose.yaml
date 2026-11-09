@@ -181,5 +181,7 @@ services:
     build: ./api
     container_name: api
     restart: unless-stopped
+    env_file:
+      - ./api/.env
     environment:
       TZ: Europe/London
