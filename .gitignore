@@ -11,3 +11,5 @@ caddy/data/
 beszel/data/
 beszel/socket/
 beszel/agent_data/
+api/node_modules/
+api/dist/
