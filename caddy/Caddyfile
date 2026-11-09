@@ -37,3 +37,7 @@ http://qbit.home {
 http://metrics.home {
 	reverse_proxy beszel:8090
 }
+
+http://api.home {
+	reverse_proxy api:3000
+}

@@ -176,3 +176,10 @@ services:
       - ./beszel/agent_data:/var/lib/beszel-agent
       - ./beszel/socket:/beszel_socket
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  api:
+    build: ./api
+    container_name: api
+    restart: unless-stopped
+    environment:
+      TZ: Europe/London
