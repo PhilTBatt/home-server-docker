@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { timingSafeEqual } from "node:crypto";
 import { health } from "./modules/health/routes.js";
+import { media } from "./modules/media/routes.js";
 
 const apiToken = process.env.API_TOKEN;
 if (!apiToken) {
@@ -18,5 +19,6 @@ app.addHook("onRequest", async (request, reply) => {
 });
 
 app.register(health);
+app.register(media, { prefix: "/media" });
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
