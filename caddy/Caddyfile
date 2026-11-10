@@ -41,3 +41,14 @@ http://metrics.home {
 http://api.home {
 	reverse_proxy api:3000
 }
+
+http://hub.home {
+	handle_path /api/* {
+		reverse_proxy api:3000
+	}
+
+	handle {
+		root * /srv/hub
+		file_server
+	}
+}
