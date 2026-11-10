@@ -17,7 +17,7 @@ const loginSchema = {
 
 export const auth: FastifyPluginAsync = async (app) => {
   app.post<{ Body: LoginBody }>("/login", { schema: loginSchema }, async (request, reply) => {
-    if (!isAuthorized(`Bearer ${request.body.token}`)) {
+    if (!isAuthorized(request.body.token)) {
       return reply.code(401).send({ error: "Unauthorized" });
     }
     reply.setCookie("hub_token", request.body.token, {
