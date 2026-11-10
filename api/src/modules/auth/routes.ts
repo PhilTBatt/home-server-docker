@@ -28,4 +28,9 @@ export const auth: FastifyPluginAsync = async (app) => {
     });
     return { status: "logged in" };
   });
+
+  app.post("/logout", async (request, reply) => {
+    reply.clearCookie("hub_token", { path: "/" });
+    return { status: "logged out" };
+  });
 };
