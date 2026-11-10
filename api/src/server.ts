@@ -1,19 +1,17 @@
 import Fastify from "fastify";
-import { timingSafeEqual } from "node:crypto";
 import { health } from "./modules/health/routes.js";
 import { media } from "./modules/media/routes.js";
-
-const apiToken = process.env.API_TOKEN;
-if (!apiToken) {
-  throw new Error("API_TOKEN is not set");
-}
-const expected = Buffer.from(`Bearer ${apiToken}`);
+import cookie from "@fastify/cookie";
+import { isAuthorized } from "./token.js";
 
 const app = Fastify({ logger: true });
 
+await app.register(cookie);
+
 app.addHook("onRequest", async (request, reply) => {
-  const given = Buffer.from(request.headers.authorization ?? "");
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+  const cookieToken = request.cookies.hub_token;
+  const presented = request.headers.authorization ?? (cookieToken ? `Bearer ${cookieToken}` : "");
+  if (!isAuthorized(presented)) {
     return reply.code(401).send({ error: "Unauthorized" });
   }
 });

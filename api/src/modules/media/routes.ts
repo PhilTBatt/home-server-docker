@@ -53,6 +53,7 @@ export const media: FastifyPluginAsync = async (app) => {
     if (!response.ok) {
       throw new Error(`Jellyfin replied ${response.status}`);
     }
+    
     const counts = (await response.json()) as JellyfinCounts;
     return {
       movies: counts.MovieCount,
