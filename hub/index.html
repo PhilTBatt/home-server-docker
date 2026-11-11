@@ -4,9 +4,20 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Home Hub</title>
+    <script type="module" src="app.js"></script>
   </head>
   <body>
     <h1>Home Hub</h1>
-    <p>It works.</p>
+    <p id="message">Loading...</p>
+
+    <form id="login-form" hidden>
+      <label for="token">Token</label>
+      <input id="token" type="password" required>
+      <button type="submit">Log in</button>
+    </form>
+
+    <section id="dashboard" hidden>
+      <button id="logout" type="button">Log out</button>
+    </section>
   </body>
 </html>
