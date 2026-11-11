@@ -4,7 +4,7 @@
  * @property {string} name
  * @property {number} percent
  * @property {number} speedKBps
- * @property {number} etaSeconds
+ * @property {number | null} etaSeconds
  * @property {string} state
  */
 
@@ -76,6 +76,26 @@ function listItem(text) {
   return item;
 }
 
+/**
+ * Turns seconds into something like "1h 23m", "12m" or "45s".
+ * @param {number | null} seconds
+ * @returns {string}
+ */
+function formatEta(seconds) {
+  if (seconds === null) {
+    return "unknown";
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m`;
+  }
+  return `${seconds}s`;
+}
+
 async function loadDownloads() {
   const response = await fetch("/api/media/downloads");
   if (!response.ok) {
@@ -89,7 +109,7 @@ async function loadDownloads() {
     return;
   }
   downloadsList.replaceChildren(
-    ...downloads.map((d) => listItem(`${d.name}: ${d.percent}% at ${d.speedKBps} KB/s`)),
+    ...downloads.map((d) => listItem(`${d.name}: ${d.percent}% at ${d.speedKBps} KB/s, ETA ${formatEta(d.etaSeconds)}`)),
   );
 }
 

@@ -13,6 +13,8 @@ if (!jellyfinApiKey) {
 }
 const jellyfinAuth = `MediaBrowser Token="${jellyfinApiKey}"`;
 
+const qbitNoEta = 8640000;
+
 type QbitTorrent = {
   name: string;
   progress: number;
@@ -41,7 +43,7 @@ export const media: FastifyPluginAsync = async (app) => {
       name: t.name,
       percent: Math.round(t.progress * 100),
       speedKBps: Math.round(t.dlspeed / 1024),
-      etaSeconds: t.eta,
+      etaSeconds: t.eta === qbitNoEta ? null : t.eta,
       state: t.state,
     }));
   });
