@@ -49,6 +49,7 @@ const downloadsList = byId("downloads");
 const libraryText = byId("library");
 const wifiText = byId("wifi");
 const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
+/** @type {number | undefined} */ let refreshTimer;
 
 /**
  * Shows the dashboard when logged in, otherwise the login form.
@@ -57,12 +58,22 @@ const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
 function showView(loggedIn) {
   loginForm.hidden = loggedIn;
   dashboard.hidden = !loggedIn;
+  clearInterval(refreshTimer);
 
   if (loggedIn) {
     loadDownloads();
     loadLibrary();
     loadWifi();
+
+    refreshTimer = setInterval(refreshDownloads, 10_000);
   }
+}
+
+function refreshDownloads() {
+  if (document.hidden) {
+    return;
+  }
+  loadDownloads();
 }
 
 /**
