@@ -1,0 +1,22 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+  line-height: 1.5;
+}
+
+button,
+input {
+  font: inherit;
+  padding: 0.5rem 1rem;
+}
+
+li {
+  margin-bottom: 0.5rem;
+  overflow-wrap: anywhere;
+}
