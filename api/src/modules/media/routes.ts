@@ -21,12 +21,29 @@ type QbitTorrent = {
   dlspeed: number;
   eta: number;
   state: string;
+  hash: string;
 };
 
 type JellyfinCounts = {
   MovieCount: number;
   SeriesCount: number;
   EpisodeCount: number;
+};
+
+type TorrentAction = {
+  hash: string;
+  action: "stop" | "start";
+};
+
+const torrentActionSchema = {
+  params: {
+    type: "object",
+    required: ["hash", "action"],
+    properties: {
+      hash: { type: "string", pattern: "^[0-9a-f]{40}$" },
+      action: { type: "string", enum: ["stop", "start"] },
+    },
+  },
 };
 
 export const media: FastifyPluginAsync = async (app) => {
@@ -45,8 +62,26 @@ export const media: FastifyPluginAsync = async (app) => {
       speedKBps: Math.round(t.dlspeed / 1024),
       etaSeconds: t.eta === qbitNoEta ? null : t.eta,
       state: t.state,
+      hash: t.hash
     }));
   });
+
+  app.post<{ Params: TorrentAction }>(
+    "/downloads/:hash/:action",
+    { schema: torrentActionSchema },
+    async (request) => {
+      const { hash, action } = request.params;
+      const response = await fetch(`http://qbittorrent:8081/api/v2/torrents/${action}`, {
+        method: "POST",
+        headers: { Authorization: qbitAuth },
+        body: new URLSearchParams({ hashes: hash }),
+      });
+      if (!response.ok) {
+        throw new Error(`qBittorrent replied ${response.status}`);
+      }
+      return { status: action === "stop" ? "stopped" : "started" };
+    },
+  );
 
   app.get("/library", async () => {
     const response = await fetch("http://jellyfin:8096/Items/Counts", {
