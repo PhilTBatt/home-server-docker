@@ -48,6 +48,7 @@ const logoutButton = byId("logout");
 const downloadsList = byId("downloads");
 const libraryText = byId("library");
 const wifiText = byId("wifi");
+const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
 
 /**
  * Shows the dashboard when logged in, otherwise the login form.
@@ -158,6 +159,18 @@ logoutButton.addEventListener("click", async () => {
   } else {
     message.textContent = `The API replied ${response.status}.`;
   }
+});
+
+scanButton.addEventListener("click", async () => {
+  scanButton.disabled = true;
+  libraryText.textContent = "Starting scan...";
+  const response = await fetch("/api/media/library/scan", { method: "POST" });
+  if (response.ok) {
+    libraryText.textContent = "Scan started. Refresh in a minute for new counts.";
+  } else {
+    libraryText.textContent = `Couldn't start a scan: the API replied ${response.status}.`;
+  }
+  scanButton.disabled = false;
 });
 
 checkLogin();

@@ -61,4 +61,15 @@ export const media: FastifyPluginAsync = async (app) => {
       episodes: counts.EpisodeCount,
     };
   });
+
+  app.post("/library/scan", async () => {
+    const response = await fetch("http://jellyfin:8096/Library/Refresh", {
+      method: "POST",
+      headers: { Authorization: jellyfinAuth },
+    });
+    if (!response.ok) {
+      throw new Error(`Jellyfin replied ${response.status}`);
+    }
+    return { status: "scan started" };
+  });
 };
