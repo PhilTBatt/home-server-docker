@@ -13,3 +13,4 @@ beszel/socket/
 beszel/agent_data/
 api/node_modules/
 api/dist/
+.claude/settings.local.json

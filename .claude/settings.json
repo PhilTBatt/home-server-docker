@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(./adguard/**)",
+      "Read(./beszel/**)",
+      "Read(./caddy/config/**)",
+      "Read(./caddy/data/**)",
+      "Read(./homepage/config/**)",
+      "Read(./jellyfin/**)",
+      "Read(./kuma/**)",
+      "Read(./media-stack/**)"
+    ]
+  }
+}
