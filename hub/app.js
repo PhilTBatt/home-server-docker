@@ -1,4 +1,19 @@
 // @ts-check
+/**
+ * @typedef {object} Download
+ * @property {string} name
+ * @property {number} percent
+ * @property {number} speedKBps
+ * @property {number} etaSeconds
+ * @property {string} state
+ */
+
+/**
+ * @typedef {object} LibraryCounts
+ * @property {number} movies
+ * @property {number} series
+ * @property {number} episodes
+ */
 
 /**
  * Finds the element with this id, or stops the script if there isn't one.
@@ -18,6 +33,8 @@ const loginForm = byId("login-form");
 const tokenInput = /** @type {HTMLInputElement} */ (byId("token"));
 const dashboard = byId("dashboard");
 const logoutButton = byId("logout");
+const downloadsList = byId("downloads");
+const libraryText = byId("library");
 
 /**
  * Shows the dashboard when logged in, otherwise the login form.
@@ -26,6 +43,50 @@ const logoutButton = byId("logout");
 function showView(loggedIn) {
   loginForm.hidden = loggedIn;
   dashboard.hidden = !loggedIn;
+
+  if (loggedIn) {
+    loadDownloads();
+    loadLibrary();
+  }
+}
+
+/**
+ * Makes a list item containing this text.
+ * @param {string} text
+ * @returns {HTMLLIElement}
+ */
+function listItem(text) {
+  const item = document.createElement("li");
+  item.textContent = text;
+  return item;
+}
+
+async function loadDownloads() {
+  const response = await fetch("/api/media/downloads");
+  if (!response.ok) {
+    downloadsList.replaceChildren(listItem(`Couldn't load downloads: the API replied ${response.status}.`));
+    return;
+  }
+  /** @type {Download[]} */
+  const downloads = await response.json();
+  if (downloads.length === 0) {
+    downloadsList.replaceChildren(listItem("Nothing downloading."));
+    return;
+  }
+  downloadsList.replaceChildren(
+    ...downloads.map((d) => listItem(`${d.name}: ${d.percent}% at ${d.speedKBps} KB/s`)),
+  );
+}
+
+async function loadLibrary() {
+  const response = await fetch("/api/media/library");
+  if (!response.ok) {
+    libraryText.textContent = `Couldn't load the library: the API replied ${response.status}.`;
+    return;
+  }
+  /** @type {LibraryCounts} */
+  const counts = await response.json();
+  libraryText.textContent = `${counts.movies} movies, ${counts.series} series, ${counts.episodes} episodes`;
 }
 
 async function checkLogin() {
