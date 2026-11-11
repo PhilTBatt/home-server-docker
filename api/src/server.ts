@@ -4,6 +4,7 @@ import { media } from "./modules/media/routes.js";
 import cookie from "@fastify/cookie";
 import { isAuthorized, tokenFromHeader } from "./token.js";
 import { auth } from "./modules/auth/routes.js";
+import { system } from "./modules/system/routes.js";
 
 const app = Fastify({ logger: true });
 
@@ -19,5 +20,6 @@ app.addHook("onRequest", async (request, reply) => {
 app.register(health);
 app.register(media, { prefix: "/media" });
 app.register(auth, { prefix: "/auth" });
+app.register(system, { prefix: "/system" });
 
 await app.listen({ port: 3000, host: "0.0.0.0" });

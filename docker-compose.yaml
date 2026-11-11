@@ -186,3 +186,5 @@ services:
       - ./api/.env
     environment:
       TZ: Europe/London
+    volumes:
+      - /var/log/wifi-watchdog:/var/log/wifi-watchdog:ro
