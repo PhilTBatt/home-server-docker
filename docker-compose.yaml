@@ -188,3 +188,10 @@ services:
       TZ: Europe/London
     volumes:
       - /var/log/wifi-watchdog:/var/log/wifi-watchdog:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --header \"Authorization: Bearer $$API_TOKEN\" http://127.0.0.1:3000/health"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
