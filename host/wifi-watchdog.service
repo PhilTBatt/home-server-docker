@@ -1,0 +1,8 @@
+[Unit]
+Description=Reconnect the Wi-Fi if the Sky hub stops answering
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-watchdog
+SyslogLevel=notice
+LogLevelMax=notice
