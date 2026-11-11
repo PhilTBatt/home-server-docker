@@ -16,6 +16,18 @@
  */
 
 /**
+ * @typedef {object} Reconnect
+ * @property {string} time
+ * @property {string} message
+ */
+
+/**
+ * @typedef {object} WifiReconnects
+ * @property {number} total
+ * @property {Reconnect[]} recent
+ */
+
+/**
  * Finds the element with this id, or stops the script if there isn't one.
  * @param {string} id
  * @returns {HTMLElement}
@@ -35,6 +47,7 @@ const dashboard = byId("dashboard");
 const logoutButton = byId("logout");
 const downloadsList = byId("downloads");
 const libraryText = byId("library");
+const wifiText = byId("wifi");
 
 /**
  * Shows the dashboard when logged in, otherwise the login form.
@@ -47,6 +60,7 @@ function showView(loggedIn) {
   if (loggedIn) {
     loadDownloads();
     loadLibrary();
+    loadWifi();
   }
 }
 
@@ -87,6 +101,22 @@ async function loadLibrary() {
   /** @type {LibraryCounts} */
   const counts = await response.json();
   libraryText.textContent = `${counts.movies} movies, ${counts.series} series, ${counts.episodes} episodes`;
+}
+
+async function loadWifi() {
+  const response = await fetch("/api/system/wifi-reconnects");
+  if (!response.ok) {
+    wifiText.textContent = `Couldn't load Wi-Fi reconnects: the API replied ${response.status}.`;
+    return;
+  }
+  /** @type {WifiReconnects} */
+  const wifi = await response.json();
+  if (wifi.total === 0) {
+    wifiText.textContent = "No reconnects logged.";
+    return;
+  }
+  const last = new Date(wifi.recent[0].time).toLocaleString();
+  wifiText.textContent = `${wifi.total} reconnect${wifi.total === 1 ? "" : "s"}, last at ${last}.`;
 }
 
 async function checkLogin() {
