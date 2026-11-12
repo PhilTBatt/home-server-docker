@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import Fastify from "fastify";
-import { parseReconnects, system } from "./routes.js";
+import { currentProblems, parseReconnects, system } from "./routes.js";
 
 function buildApp() {
   const app = Fastify();
@@ -96,4 +96,19 @@ test("alerts reports no Wi-Fi problem when the log file doesn't exist", async ()
   const response = await buildApp().inject({ method: "GET", url: "/system/alerts" });
   const codes = response.json().problems.map((p: { code: string }) => p.code);
   assert.equal(codes.includes("wifi-reconnects"), false);
+});
+
+test("currentProblems returns a list of problems with known codes", async () => {
+  const problems = await currentProblems();
+  assert.ok(Array.isArray(problems));
+  for (const problem of problems) {
+    assert.ok(["disk-low", "memory-low", "wifi-reconnects"].includes(problem.code));
+  }
+});
+
+test("currentProblems agrees with the alerts route", async () => {
+  const response = await buildApp().inject({ method: "GET", url: "/system/alerts" });
+  const fromRoute = response.json().problems.map((p: { code: string }) => p.code);
+  const direct = (await currentProblems()).map((p) => p.code);
+  assert.deepEqual(direct, fromRoute);
 });

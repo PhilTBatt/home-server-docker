@@ -41,6 +41,16 @@ async function readStatus(): Promise<Status> {
   };
 }
 
+export async function currentProblems() {
+  const status = await readStatus();
+  const reconnects = parseReconnects(await readReconnectLog());
+  return findProblems(
+    status,
+    reconnects.recent.map((r) => r.time),
+    new Date(),
+  );
+}
+
 export const system: FastifyPluginAsync = async (app) => {
   app.get("/wifi-reconnects", async () => {
     return parseReconnects(await readReconnectLog());
@@ -51,13 +61,7 @@ export const system: FastifyPluginAsync = async (app) => {
   });
 
   app.get("/alerts", async () => {
-    const status = await readStatus();
-    const reconnects = parseReconnects(await readReconnectLog());
-    const problems = findProblems(
-      status,
-      reconnects.recent.map((r) => r.time),
-      new Date(),
-    );
+    const problems = await currentProblems();
     return { ok: problems.length === 0, problems };
   });
 };
