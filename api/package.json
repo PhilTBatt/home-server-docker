@@ -4,7 +4,7 @@
   "private": true,
   "description": "An API for my home hub",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsc && node --test \"dist/**/*.test.js\""
   },
   "keywords": [],
   "author": "",
