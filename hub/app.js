@@ -27,6 +27,16 @@
  * @property {Reconnect[]} recent
  */
 
+
+/**
+ * @typedef {object} ServerStatus
+ * @property {number} uptimeSeconds
+ * @property {number} memoryTotalMB
+ * @property {number} memoryAvailableMB
+ * @property {number} diskTotalGB
+ * @property {number} diskAvailableGB
+ */
+
 /**
  * Finds the element with this id, or stops the script if there isn't one.
  * @param {string} id
@@ -48,6 +58,7 @@ const logoutButton = byId("logout");
 const downloadsList = byId("downloads");
 const libraryText = byId("library");
 const wifiText = byId("wifi");
+const serverText = byId("server");
 const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
 /** @type {number | undefined} */ let refreshTimer;
 
@@ -64,6 +75,7 @@ function showView(loggedIn) {
     loadDownloads();
     loadLibrary();
     loadWifi();
+    loadServer();
 
     refreshTimer = setInterval(refreshDownloads, 10_000);
   }
@@ -105,6 +117,20 @@ function formatEta(seconds) {
     return `${minutes}m`;
   }
   return `${seconds}s`;
+}
+
+
+/**
+ * @param {number} seconds
+ * @returns {string}
+ */
+function formatUptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  if (days === 0) {
+    return formatEta(seconds);
+  }
+  const hours = Math.floor((seconds % 86400) / 3600);
+  return `${days}d ${hours}h`;
 }
 
 async function loadDownloads() {
@@ -149,6 +175,20 @@ async function loadWifi() {
   }
   const last = new Date(wifi.recent[0].time).toLocaleString();
   wifiText.textContent = `${wifi.total} reconnect${wifi.total === 1 ? "" : "s"}, last at ${last}.`;
+}
+
+
+async function loadServer() {
+  const response = await fetch("/api/system/status");
+  if (!response.ok) {
+    serverText.textContent = `Couldn't load the server status: the API replied ${response.status}.`;
+    return;
+  }
+  /** @type {ServerStatus} */
+  const status = await response.json();
+  const memoryFree = (status.memoryAvailableMB / 1024).toFixed(1);
+  const memoryTotal = (status.memoryTotalMB / 1024).toFixed(1);
+  serverText.textContent = `Up ${formatUptime(status.uptimeSeconds)}. Memory: ${memoryFree} of ${memoryTotal} GB available. Disk: ${status.diskAvailableGB} of ${status.diskTotalGB} GB free.`;
 }
 
 async function checkLogin() {
