@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFile, statfs } from "node:fs/promises";
+import { freemem, totalmem, uptime } from "node:os";
 import type { FastifyPluginAsync } from "fastify";
 
 const reconnectLog = "/var/log/wifi-watchdog/reconnects.log";
@@ -24,5 +25,17 @@ export const system: FastifyPluginAsync = async (app) => {
         return { time: line.slice(0, space), message: line.slice(space + 1) };
       });
     return { total: reconnects.length, recent: reconnects.slice(-20).reverse() };
+  });
+
+  
+  app.get("/status", async () => {
+    const disk = await statfs("/");
+    return {
+      uptimeSeconds: Math.round(uptime()),
+      memoryTotalMB: Math.round(totalmem() / 1024 ** 2),
+      memoryAvailableMB: Math.round(freemem() / 1024 ** 2),
+      diskTotalGB: Math.round((disk.blocks * disk.bsize) / 1024 ** 3),
+      diskAvailableGB: Math.round((disk.bavail * disk.bsize) / 1024 ** 3),
+    };
   });
 };
