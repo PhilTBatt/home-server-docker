@@ -38,6 +38,18 @@
  */
 
 /**
+ * @typedef {object} Problem
+ * @property {string} code
+ * @property {string} message
+ */
+
+/**
+ * @typedef {object} Alerts
+ * @property {boolean} ok
+ * @property {Problem[]} problems
+ */
+
+/**
  * Finds the element with this id, or stops the script if there isn't one.
  * @param {string} id
  * @returns {HTMLElement}
@@ -59,6 +71,7 @@ const downloadsList = byId("downloads");
 const libraryText = byId("library");
 const wifiText = byId("wifi");
 const serverText = byId("server");
+const alertsList = byId("alerts");
 const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
 /** @type {number | undefined} */ let refreshTimer;
 
@@ -76,6 +89,7 @@ function showView(loggedIn) {
     loadLibrary();
     loadWifi();
     loadServer();
+    loadAlerts();
 
     refreshTimer = setInterval(refreshDownloads, 10_000);
   }
@@ -189,6 +203,21 @@ async function loadServer() {
   const memoryFree = (status.memoryAvailableMB / 1024).toFixed(1);
   const memoryTotal = (status.memoryTotalMB / 1024).toFixed(1);
   serverText.textContent = `Up ${formatUptime(status.uptimeSeconds)}. Memory: ${memoryFree} of ${memoryTotal} GB available. Disk: ${status.diskAvailableGB} of ${status.diskTotalGB} GB free.`;
+}
+
+async function loadAlerts() {
+  const response = await fetch("/api/system/alerts");
+  if (!response.ok) {
+    alertsList.replaceChildren(listItem(`Couldn't load alerts: the API replied ${response.status}.`));
+    return;
+  }
+  /** @type {Alerts} */
+  const alerts = await response.json();
+  if (alerts.ok) {
+    alertsList.replaceChildren(listItem("All good."));
+    return;
+  }
+  alertsList.replaceChildren(...alerts.problems.map((p) => listItem(p.message)));
 }
 
 async function checkLogin() {
