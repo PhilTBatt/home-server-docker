@@ -1,6 +1,7 @@
 import { readFile, statfs } from "node:fs/promises";
 import { freemem, totalmem, uptime } from "node:os";
 import type { FastifyPluginAsync } from "fastify";
+import { findProblems, type Status } from "./alerts.js";
 
 const reconnectLog = "/var/log/wifi-watchdog/reconnects.log";
 
@@ -20,26 +21,43 @@ export function parseReconnects(text: string) {
   return { total: reconnects.length, recent: reconnects.slice(-20).reverse() };
 }
 
+async function readReconnectLog() {
+  return readFile(reconnectLog, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  });
+}
+
+async function readStatus(): Promise<Status> {
+  const disk = await statfs("/");
+  return {
+    uptimeSeconds: Math.round(uptime()),
+    memoryTotalMB: Math.round(totalmem() / 1024 ** 2),
+    memoryAvailableMB: Math.round(freemem() / 1024 ** 2),
+    diskTotalGB: Math.round((disk.blocks * disk.bsize) / 1024 ** 3),
+    diskAvailableGB: Math.round((disk.bavail * disk.bsize) / 1024 ** 3),
+  };
+}
+
 export const system: FastifyPluginAsync = async (app) => {
   app.get("/wifi-reconnects", async () => {
-    const text = await readFile(reconnectLog, "utf8").catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") {
-        return "";
-      }
-      throw error;
-    });
-
-    return parseReconnects(text);
+    return parseReconnects(await readReconnectLog());
   });
-  
+
   app.get("/status", async () => {
-    const disk = await statfs("/");
-    return {
-      uptimeSeconds: Math.round(uptime()),
-      memoryTotalMB: Math.round(totalmem() / 1024 ** 2),
-      memoryAvailableMB: Math.round(freemem() / 1024 ** 2),
-      diskTotalGB: Math.round((disk.blocks * disk.bsize) / 1024 ** 3),
-      diskAvailableGB: Math.round((disk.bavail * disk.bsize) / 1024 ** 3),
-    };
+    return readStatus();
+  });
+
+  app.get("/alerts", async () => {
+    const status = await readStatus();
+    const reconnects = parseReconnects(await readReconnectLog());
+    const problems = findProblems(
+      status,
+      reconnects.recent.map((r) => r.time),
+      new Date(),
+    );
+    return { ok: problems.length === 0, problems };
   });
 };

@@ -97,6 +97,7 @@ const protectedRoutes = [
   ["POST", "/auth/logout"],
   ["GET", "/system/wifi-reconnects"],
   ["GET", "/system/status"],
+  ["GET", "/system/alerts"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {

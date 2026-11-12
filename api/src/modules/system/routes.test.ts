@@ -77,3 +77,23 @@ test("status returns five sensible numbers", async () => {
   assert.ok(status.diskTotalGB > 0);
   assert.ok(status.diskAvailableGB <= status.diskTotalGB);
 });
+
+test("alerts returns ok and a list of problems that agree with each other", async () => {
+  const response = await buildApp().inject({ method: "GET", url: "/system/alerts" });
+  assert.equal(response.statusCode, 200);
+  const alerts = response.json();
+  assert.deepEqual(Object.keys(alerts).sort(), ["ok", "problems"]);
+  assert.equal(typeof alerts.ok, "boolean");
+  assert.ok(Array.isArray(alerts.problems));
+  assert.equal(alerts.ok, alerts.problems.length === 0);
+  for (const problem of alerts.problems) {
+    assert.ok(["disk-low", "memory-low", "wifi-reconnects"].includes(problem.code));
+    assert.equal(typeof problem.message, "string");
+  }
+});
+
+test("alerts reports no Wi-Fi problem when the log file doesn't exist", async () => {
+  const response = await buildApp().inject({ method: "GET", url: "/system/alerts" });
+  const codes = response.json().problems.map((p: { code: string }) => p.code);
+  assert.equal(codes.includes("wifi-reconnects"), false);
+});
