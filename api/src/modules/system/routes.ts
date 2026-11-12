@@ -9,6 +9,17 @@ type Reconnect = {
   message: string;
 };
 
+export function parseReconnects(text: string) {
+  const reconnects: Reconnect[] = text
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => {
+      const space = line.indexOf(" ");
+      return { time: line.slice(0, space), message: line.slice(space + 1) };
+    });
+  return { total: reconnects.length, recent: reconnects.slice(-20).reverse() };
+}
+
 export const system: FastifyPluginAsync = async (app) => {
   app.get("/wifi-reconnects", async () => {
     const text = await readFile(reconnectLog, "utf8").catch((error: NodeJS.ErrnoException) => {
@@ -17,16 +28,9 @@ export const system: FastifyPluginAsync = async (app) => {
       }
       throw error;
     });
-    const reconnects: Reconnect[] = text
-      .split("\n")
-      .filter((line) => line !== "")
-      .map((line) => {
-        const space = line.indexOf(" ");
-        return { time: line.slice(0, space), message: line.slice(space + 1) };
-      });
-    return { total: reconnects.length, recent: reconnects.slice(-20).reverse() };
-  });
 
+    return parseReconnects(text);
+  });
   
   app.get("/status", async () => {
     const disk = await statfs("/");
