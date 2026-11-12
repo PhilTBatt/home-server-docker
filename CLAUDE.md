@@ -13,6 +13,7 @@ My home server and everything that plugs into it. This repo (`~/docker`) is the 
 - Rebuild the API: `docker compose up --build --wait api`
 - API logs: `docker compose logs --tail 20 api`
 - npm (Node isn't installed on the host): `docker run --rm -u node -v "$PWD/api:/app" -w /app node:26-alpine npm <command>`
+- Read from the API: `bash host/hub-get.sh <path>`, e.g. `bash host/hub-get.sh /media/downloads`. GET only; it adds the token itself. Routes: `/health`, `/media/downloads`, `/media/library`, `/system/wifi-reconnects`.
 
 ## How to work with me
 I'm building this to learn, and I want to be able to say truthfully that I built it.

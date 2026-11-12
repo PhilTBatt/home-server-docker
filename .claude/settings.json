@@ -1,5 +1,8 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(bash host/hub-get.sh *)"
+    ],
     "deny": [
       "Read(**/.env)",
       "Read(./adguard/**)",
