@@ -41,3 +41,6 @@ I'm building this to learn, and I want to be able to say truthfully that I built
 
 ## Ruled out for now
 Self-hosted AI, Home Assistant, photo/file storage, a password manager, replacing Spotify, a self-hosted PaaS. Don't suggest them unless I bring them up.
+
+## Decision records
+- When Phil makes a decision that would be costly to reverse, or that someone will later ask "why?" about, draft a record in `docs/decisions/` from `docs/decisions/template.md` with the next number. Phil reviews and commits it.
