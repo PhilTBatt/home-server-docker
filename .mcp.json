@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hub": {
+      "command": "bash",
+      "args": ["${CLAUDE_PROJECT_DIR:-.}/host/hub-mcp.sh"]
+    }
+  }
+}

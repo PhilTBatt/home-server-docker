@@ -4,10 +4,18 @@
       "Bash(rm *)",
       "Bash(rmdir *)",
       "Bash(mv *)",
-      "Bash(cp *)"
+      "Bash(cp *)",
+      "mcp__hub__scan_library",
+      "mcp__hub__stop_download",
+      "mcp__hub__start_download"
     ],
     "allow": [
-      "Bash(bash host/hub-get.sh *)"
+      "mcp__hub__get_status",
+      "mcp__hub__get_alerts",
+      "mcp__hub__get_features",
+      "mcp__hub__get_downloads",
+      "mcp__hub__get_library",
+      "mcp__hub__get_wifi_reconnects"
     ],
     "deny": [
       "Read(**/.env)",
