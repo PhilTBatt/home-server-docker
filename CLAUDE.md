@@ -15,7 +15,7 @@ My home server and everything that plugs into it. This repo (`~/docker`) is the 
 ## Commands (from ~/docker)
 - Rebuild the API: `docker compose up --build --wait api`
 - Rebuild the MCP image: `docker compose build mcp`
-- Update from GitHub: `bash host/hub-update.sh` pulls, then rebuilds only what changed; `--dry-run` shows what it would do. It never runs sudo: it prints the install line for changed `host/` files.
+- Update from GitHub: `bash host/hub-update.sh` pulls, then rebuilds only what changed; `--dry-run` shows what it would do. For a changed `host/` file it shows the change and asks before installing it with sudo; with no one there to answer, it installs nothing.
 - API logs: `docker compose logs --tail 20 api`
 - npm (Node isn't installed on the host): `docker run --rm -u node -v "$PWD/api:/app" -w /app node:26-alpine npm <command>`. For the MCP server, mount `$PWD/mcp` instead.
 - Read from the API: use the `hub` MCP tools (`get_status`, `get_alerts`, `get_features`, `get_downloads`, `get_library`, `get_wifi_reconnects`). `scan_library`, `stop_download` and `start_download` change things, so they always ask first. `bash host/hub-get.sh <path>` is my own checking tool.
