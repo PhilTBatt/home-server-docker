@@ -1,6 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { createApiGet, readToken } from "./api.js";
+import { createApiGet, createApiPost, readToken } from "./api.js";
 import { buildServer } from "./tools.js";
 
-const server = buildServer(createApiGet(readToken(process.env)));
+const token = readToken(process.env);
+const server = buildServer(createApiGet(token), createApiPost(token));
 await server.connect(new StdioServerTransport());

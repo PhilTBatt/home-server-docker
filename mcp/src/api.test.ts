@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { createApiGet, readToken } from "./api.js";
+import { createApiGet, createApiPost, readToken } from "./api.js";
 
 const token = "test-token";
 
@@ -42,11 +42,11 @@ test("sends the token as a Bearer header", async () => {
   assert.deepEqual(headers, { Authorization: "Bearer test-token" });
 });
 
-test("only ever reads: no method or body is sent", async () => {
+test("createApiGet only ever reads: a GET with no body", async () => {
   const fetchMock = fakeApi();
   await createApiGet(token)("/media/downloads");
   const init = fetchMock.mock.calls[0].arguments[1];
-  assert.equal(init?.method, undefined);
+  assert.equal(init?.method, "GET");
   assert.equal(init?.body, undefined);
 });
 
@@ -121,4 +121,49 @@ test("error messages never include the token", async () => {
     fail();
     await assert.rejects(createApiGet(token)("/health"), (error: Error) => !error.message.includes(token));
   }
+});
+
+test("createApiPost sends a POST to the API on the compose network", async () => {
+  const fetchMock = fakeApi(200, JSON.stringify({ status: "scan started" }));
+  await createApiPost(token)("/media/library/scan");
+  const [url, init] = fetchMock.mock.calls[0].arguments;
+  assert.equal(url, "http://api:3000/media/library/scan");
+  assert.equal(init?.method, "POST");
+});
+
+test("createApiPost sends the token as a Bearer header", async () => {
+  const fetchMock = fakeApi();
+  await createApiPost(token)("/media/library/scan");
+  const headers = fetchMock.mock.calls[0].arguments[1]?.headers as Record<string, string>;
+  assert.deepEqual(headers, { Authorization: "Bearer test-token" });
+});
+
+test("createApiPost sends no body, so the API doesn't reject an empty JSON body", async () => {
+  const fetchMock = fakeApi();
+  await createApiPost(token)("/media/library/scan");
+  assert.equal(fetchMock.mock.calls[0].arguments[1]?.body, undefined);
+});
+
+test("createApiPost returns the API's JSON", async () => {
+  fakeApi(200, JSON.stringify({ status: "stopped" }));
+  assert.deepEqual(await createApiPost(token)(`/media/downloads/${"a".repeat(40)}/stop`), { status: "stopped" });
+});
+
+test("createApiPost has the same 10 second timeout", async () => {
+  fakeApi();
+  const timeoutMock = mock.method(AbortSignal, "timeout");
+  await createApiPost(token)("/media/library/scan");
+  assert.equal(timeoutMock.mock.calls[0].arguments[0], 10_000);
+});
+
+test("createApiPost names the status and path when the API refuses", async () => {
+  fakeApi(400, JSON.stringify({ error: "Bad Request" }));
+  await assert.rejects(createApiPost(token)("/media/downloads/all/stop"), { message: "The API replied 400 to /media/downloads/all/stop" });
+});
+
+test("createApiPost says when the API can't be reached", async () => {
+  mock.method(globalThis, "fetch", async () => {
+    throw new TypeError("fetch failed");
+  });
+  await assert.rejects(createApiPost(token)("/media/library/scan"), { message: "Couldn't reach the API" });
 });

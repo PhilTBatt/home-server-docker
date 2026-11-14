@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import type { ApiGet } from "./api.js";
+import * as z from "zod";
+import type { ApiGet, ApiPost } from "./api.js";
 
 type ReadTool = {
   name: string;
@@ -40,13 +41,39 @@ export const readTools: ReadTool[] = [
   },
 ];
 
-export function buildServer(get: ApiGet): McpServer {
+const hashInput = z.object({
+  hash: z.string().regex(/^[0-9a-f]{40}$/).describe("The torrent's hash, from get_downloads"),
+});
+
+function asText(data: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+}
+
+export function buildServer(get: ApiGet, post: ApiPost): McpServer {
   const server = new McpServer({ name: "home-hub", version: "1.0.0" });
   for (const tool of readTools) {
-    server.registerTool(tool.name, { description: tool.description }, async () => {
-      const data = await get(tool.path);
-      return { content: [{ type: "text", text: JSON.stringify(data) }] };
-    });
+    server.registerTool(tool.name, { description: tool.description }, async () => asText(await get(tool.path)));
   }
+
+  server.registerTool(
+    "scan_library",
+    { description: "Asks Jellyfin to scan the library for new and changed files, for example after a download finishes." },
+    async () => asText(await post("/media/library/scan")),
+  );
+
+  server.registerTool(
+    "stop_download",
+    {
+      description: "Stops a torrent in qBittorrent. A stopped torrent no longer shows in get_downloads, so keep its hash to start it again.",
+      inputSchema: hashInput,
+    },
+    async ({ hash }) => asText(await post(`/media/downloads/${hash}/stop`)),
+  );
+
+  server.registerTool(
+    "start_download",
+    { description: "Starts a stopped torrent in qBittorrent again.", inputSchema: hashInput },
+    async ({ hash }) => asText(await post(`/media/downloads/${hash}/start`)),
+  );
   return server;
 }
