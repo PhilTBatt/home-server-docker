@@ -9,11 +9,12 @@ const complete = {
   ALERTS: "on",
   HEARTBEAT: "on",
   DAILY_SUMMARY: "on",
+  MEMORY_INBOX: "on",
   NTFY_TOPIC: "test-topic",
   HEALTHCHECK_URL: "https://hc-ping.com/test",
 };
 
-const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off" };
+const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off" };
 
 test("reads every setting into its own field", () => {
   assert.deepEqual(readConfig(complete), {
@@ -22,7 +23,7 @@ test("reads every setting into its own field", () => {
     jellyfinApiKey: "test-jellyfin-key",
     ntfyTopic: "test-topic",
     healthcheckUrl: "https://hc-ping.com/test",
-    features: { alerts: true, heartbeat: true, dailySummary: true },
+    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true },
   });
 });
 
@@ -57,12 +58,12 @@ test("an empty setting counts as missing", () => {
 
 test("with nothing set, the always-needed settings and every switch are named, in a fixed order", () => {
   assert.throws(() => readConfig({}), {
-    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY",
+    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX",
   });
 });
 
 test("with every switch on and nothing else set, every other setting is named, in a fixed order", () => {
-  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on" }), {
+  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on" }), {
     message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL",
   });
 });
@@ -87,16 +88,25 @@ test("each switch can be turned off on its own", () => {
     alerts: false,
     heartbeat: true,
     dailySummary: true,
+    memoryInbox: true,
   });
   assert.deepEqual(readConfig({ ...complete, HEARTBEAT: "off" }).features, {
     alerts: true,
     heartbeat: false,
     dailySummary: true,
+    memoryInbox: true,
   });
   assert.deepEqual(readConfig({ ...complete, DAILY_SUMMARY: "off" }).features, {
     alerts: true,
     heartbeat: true,
     dailySummary: false,
+    memoryInbox: true,
+  });
+  assert.deepEqual(readConfig({ ...complete, MEMORY_INBOX: "off" }).features, {
+    alerts: true,
+    heartbeat: true,
+    dailySummary: true,
+    memoryInbox: false,
   });
 });
 
@@ -164,26 +174,44 @@ test("the API token and service keys are needed even with every feature off", ()
 
 test("everything off still works when the feature settings are present", () => {
   const config = readConfig(allOff);
-  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false });
+  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false });
   assert.equal(config.ntfyTopic, "test-topic");
   assert.equal(config.healthcheckUrl, "https://hc-ping.com/test");
 });
 
 test("switchedOff lists nothing when everything is on", () => {
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true }), []);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true }), []);
 });
 
 test("switchedOff names each feature that's off, in plain words and a fixed order", () => {
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false }), [
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false }), [
     "alerts",
     "heartbeat",
     "daily summary",
+    "brain inbox",
   ]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false }), ["daily summary"]);
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true }), ["alerts"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true }), ["daily summary"]);
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true }), ["alerts"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false }), ["brain inbox"]);
 });
 
 test("switchedOff agrees with what readConfig reads", () => {
   const config = readConfig({ ...complete, HEARTBEAT: "off" });
   assert.deepEqual(switchedOff(config.features), ["heartbeat"]);
+});
+
+test("the brain inbox switch needs no other setting", () => {
+  assert.equal(readConfig({ ...allOff, MEMORY_INBOX: "on", NTFY_TOPIC: undefined, HEALTHCHECK_URL: undefined }).features.memoryInbox, true);
+});
+
+test("a missing MEMORY_INBOX is refused, so the brain inbox can't switch itself off quietly", () => {
+  assert.throws(() => readConfig({ ...complete, MEMORY_INBOX: undefined }), {
+    message: "Missing settings in api/.env: MEMORY_INBOX",
+  });
+});
+
+test("MEMORY_INBOX must be exactly on or off", () => {
+  assert.throws(() => readConfig({ ...complete, MEMORY_INBOX: "yes" }), {
+    message: "Settings in api/.env that must be on or off: MEMORY_INBOX",
+  });
 });

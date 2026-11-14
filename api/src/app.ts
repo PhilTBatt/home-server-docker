@@ -5,6 +5,7 @@ import cookie from "@fastify/cookie";
 import { isAuthorized, tokenFromHeader } from "./token.js";
 import { auth } from "./modules/auth/routes.js";
 import { system } from "./modules/system/routes.js";
+import { memory } from "./modules/memory/routes.js";
 import type { Config } from "./config.js";
 
 export async function buildApp(options: { logger: boolean; config: Config }) {
@@ -27,5 +28,6 @@ export async function buildApp(options: { logger: boolean; config: Config }) {
     });
   app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
   app.register(system, { prefix: "/system", features: options.config.features });
+  app.register(memory, { prefix: "/memory", features: options.config.features });
   return app;
 }

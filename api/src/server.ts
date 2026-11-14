@@ -4,6 +4,7 @@ import { currentProblems, readStatus } from "./modules/system/routes.js";
 import { sendHeartbeat } from "./modules/notify/heartbeat.js";
 import { createDailySummary } from "./modules/notify/daily.js";
 import { readConfig } from "./config.js";
+import { countWaiting } from "./modules/memory/routes.js";
 
 const config = readConfig(process.env);
 
@@ -14,7 +15,7 @@ await app.listen({ port: 3000, host: "0.0.0.0" });
 
 
 const checkAndNotify = createNotifier(config.ntfyTopic, currentProblems);
-const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, currentProblems, 8, config.features);
+const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, currentProblems, 8, config.features, countWaiting);
 
 function runCheck() {
   if (config.features.alerts) {

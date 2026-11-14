@@ -188,6 +188,12 @@ services:
       TZ: Europe/London
     volumes:
       - /var/log/wifi-watchdog:/var/log/wifi-watchdog:ro
+      - type: bind
+        source: ../hub-memory/inbox
+        target: /memory/inbox
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null --header \"Authorization: Bearer $$API_TOKEN\" http://127.0.0.1:3000/health"]
       interval: 1m

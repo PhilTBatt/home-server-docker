@@ -12,7 +12,7 @@ const status: Status = {
   diskAvailableGB: 180,
 };
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true };
 
 const diskLow: Problem = { code: "disk-low", message: "Disk is low: 22 of 230 GB free." };
 const wifi: Problem = { code: "wifi-reconnects", message: "Wi-Fi reconnected 2 times in the last 24 hours." };
@@ -68,20 +68,21 @@ test("formatUptime shows days and hours from a day up", () => {
 });
 
 test("a healthy summary lists the numbers and says no problems", () => {
-  assert.deepEqual(summaryFor(status, [], allOn), {
+  assert.deepEqual(summaryFor(status, [], allOn, 0), {
     title: "Home Hub: daily summary",
     message: [
       "Up 3d 4h.",
       "Memory: 3.1 of 7.2 GB available.",
       "Disk: 180 of 231 GB free.",
       "No problems.",
+      "Brain: no notes waiting.",
     ].join("\n"),
     tags: "memo",
   });
 });
 
 test("a summary with problems lists each one under a heading", () => {
-  const summary = summaryFor(status, [diskLow, wifi], allOn);
+  const summary = summaryFor(status, [diskLow, wifi], allOn, 0);
   assert.equal(
     summary.message,
     [
@@ -91,6 +92,7 @@ test("a summary with problems lists each one under a heading", () => {
       "Problems:",
       diskLow.message,
       wifi.message,
+      "Brain: no notes waiting.",
     ].join("\n"),
   );
 });
@@ -98,21 +100,21 @@ test("a summary with problems lists each one under a heading", () => {
 test("summaryFor leaves its inputs unchanged", () => {
   const statusCopy = { ...status };
   const problems = [diskLow];
-  summaryFor(status, problems, allOn);
+  summaryFor(status, problems, allOn, 0);
   assert.deepEqual(status, statusCopy);
   assert.deepEqual(problems, [diskLow]);
 });
 
 test("nothing is sent before the chosen hour", async () => {
   const fetchMock = fakeNtfy();
-  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0);
   assert.equal(await send(new Date("2026-11-13T07:59:00Z")), false);
   assert.equal(fetchMock.mock.callCount(), 0);
 });
 
 test("the summary is sent during the chosen hour", async () => {
   const fetchMock = fakeNtfy();
-  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0);
   assert.equal(await send(new Date("2026-11-13T08:02:00Z")), true);
   assert.equal(fetchMock.mock.callCount(), 1);
   const [url, options] = fetchMock.mock.calls[0].arguments;
@@ -123,7 +125,7 @@ test("the summary is sent during the chosen hour", async () => {
 
 test("the summary is only sent once a day", async () => {
   const fetchMock = fakeNtfy();
-  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0);
   const results = [];
   for (const time of ["08:00", "08:05", "08:30", "08:55"]) {
     results.push(await send(new Date(`2026-11-13T${time}:00Z`)));
@@ -134,7 +136,7 @@ test("the summary is only sent once a day", async () => {
 
 test("nothing is sent after the chosen hour, even if it was missed", async () => {
   const fetchMock = fakeNtfy();
-  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0);
   assert.equal(await send(new Date("2026-11-13T09:00:00Z")), false);
   assert.equal(await send(new Date("2026-11-13T21:00:00Z")), false);
   assert.equal(fetchMock.mock.callCount(), 0);
@@ -142,7 +144,7 @@ test("nothing is sent after the chosen hour, even if it was missed", async () =>
 
 test("the next day gets its own summary", async () => {
   const fetchMock = fakeNtfy();
-  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0);
   assert.equal(await send(new Date("2026-11-13T08:00:00Z")), true);
   assert.equal(await send(new Date("2026-11-14T08:00:00Z")), true);
   assert.equal(fetchMock.mock.callCount(), 2);
@@ -150,7 +152,7 @@ test("the next day gets its own summary", async () => {
 
 test("the hour is London time, so it moves with the clocks in summer", async () => {
   const fetchMock = fakeNtfy();
-  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0);
   assert.equal(await send(new Date("2026-07-01T08:00:00Z")), false);
   assert.equal(await send(new Date("2026-07-01T07:00:00Z")), true);
   assert.equal(fetchMock.mock.callCount(), 1);
@@ -159,7 +161,7 @@ test("the hour is London time, so it moves with the clocks in summer", async () 
 test("a failed send is retried at the next check in the same hour", async () => {
   let reply = 500;
   const fetchMock = mock.method(globalThis, "fetch", async () => new Response(null, { status: reply }));
-  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0);
   await assert.rejects(send(new Date("2026-11-13T08:00:00Z")), /ntfy replied 500/);
   reply = 200;
   assert.equal(await send(new Date("2026-11-13T08:05:00Z")), true);
@@ -177,6 +179,7 @@ test("a failure reading the status sends nothing", async () => {
     async () => [],
     8,
     allOn,
+    async () => 0,
   );
   await assert.rejects(send(new Date("2026-11-13T08:00:00Z")), /statfs failed/);
   assert.equal(fetchMock.mock.callCount(), 0);
@@ -184,21 +187,21 @@ test("a failure reading the status sends nothing", async () => {
 
 test("current problems are included in the summary", async () => {
   const fetchMock = fakeNtfy();
-  const send = createDailySummary("my-topic", async () => status, async () => [diskLow], 8, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [diskLow], 8, allOn, async () => 0);
   await send(new Date("2026-11-13T08:00:00Z"));
   assert.match(String(fetchMock.mock.calls[0].arguments[1]?.body), /Problems:\nDisk is low: 22 of 230 GB free\./);
 });
 
 test("a different hour can be chosen", async () => {
   const fetchMock = fakeNtfy();
-  const send = createDailySummary("my-topic", async () => status, async () => [], 19, allOn);
+  const send = createDailySummary("my-topic", async () => status, async () => [], 19, allOn, async () => 0);
   assert.equal(await send(new Date("2026-11-13T08:00:00Z")), false);
   assert.equal(await send(new Date("2026-11-13T19:00:00Z")), true);
   assert.equal(fetchMock.mock.callCount(), 1);
 });
 
 test("a summary names anything switched off, in a fixed order", () => {
-  const summary = summaryFor(status, [], { alerts: false, heartbeat: false, dailySummary: true });
+  const summary = summaryFor(status, [], { alerts: false, heartbeat: false, dailySummary: true, memoryInbox: false }, null);
   assert.equal(
     summary.message,
     [
@@ -206,24 +209,24 @@ test("a summary names anything switched off, in a fixed order", () => {
       "Memory: 3.1 of 7.2 GB available.",
       "Disk: 180 of 231 GB free.",
       "No problems.",
-      "Switched off: alerts, heartbeat.",
+      "Switched off: alerts, heartbeat, brain inbox.",
     ].join("\n"),
   );
 });
 
 test("the switched-off line comes after the problems", () => {
-  const summary = summaryFor(status, [diskLow], { alerts: true, heartbeat: false, dailySummary: true });
-  assert.deepEqual(summary.message.split("\n").slice(-3), ["Problems:", diskLow.message, "Switched off: heartbeat."]);
+  const summary = summaryFor(status, [diskLow], { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true }, 2);
+  assert.deepEqual(summary.message.split("\n").slice(-4), ["Problems:", diskLow.message, "Brain: 2 notes waiting.", "Switched off: heartbeat."]);
 });
 
 test("a summary with everything on says nothing about switches", () => {
-  assert.doesNotMatch(summaryFor(status, [diskLow], allOn).message, /Switched off/);
+  assert.doesNotMatch(summaryFor(status, [diskLow], allOn, 0).message, /Switched off/);
 });
 
 test("summaryFor leaves the switches unchanged", () => {
-  const features: Features = { alerts: false, heartbeat: true, dailySummary: true };
-  summaryFor(status, [], features);
-  assert.deepEqual(features, { alerts: false, heartbeat: true, dailySummary: true });
+  const features: Features = { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true };
+  summaryFor(status, [], features, 3);
+  assert.deepEqual(features, { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true });
 });
 
 test("the summary that's sent includes what's switched off", async () => {
@@ -232,8 +235,58 @@ test("the summary that's sent includes what's switched off", async () => {
     alerts: true,
     heartbeat: false,
     dailySummary: true,
-  });
+    memoryInbox: false,
+  }, async () => 0);
   assert.equal(await send(new Date("2026-11-13T08:00:00Z")), true);
   const body = String(fetchMock.mock.calls[0].arguments[1]?.body);
-  assert.match(body, /Switched off: heartbeat\.$/);
+  assert.match(body, /Switched off: heartbeat, brain inbox\.$/);
+});
+
+test("with the brain inbox on, the summary says how many notes are waiting", () => {
+  const line = (waiting: number) => summaryFor(status, [], allOn, waiting).message.split("\n").at(-1);
+  assert.equal(line(0), "Brain: no notes waiting.");
+  assert.equal(line(1), "Brain: 1 note waiting.");
+  assert.equal(line(3), "Brain: 3 notes waiting.");
+});
+
+test("if the inbox couldn't be read, the summary says so instead of a number", () => {
+  assert.equal(summaryFor(status, [], allOn, null).message.split("\n").at(-1), "Brain: couldn't read the inbox.");
+});
+
+test("with the brain inbox off, there's no brain line and it's named as switched off", () => {
+  const summary = summaryFor(status, [], { ...allOn, memoryInbox: false }, 5);
+  assert.doesNotMatch(summary.message, /Brain:/);
+  assert.match(summary.message, /Switched off: brain inbox\.$/);
+});
+
+test("the summary that's sent counts the inbox when the brain inbox is on", async () => {
+  const fetchMock = fakeNtfy();
+  let counted = 0;
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => {
+    counted++;
+    return 4;
+  });
+  await send(new Date("2026-11-13T08:00:00Z"));
+  assert.equal(counted, 1);
+  assert.match(String(fetchMock.mock.calls[0].arguments[1]?.body), /Brain: 4 notes waiting\.$/);
+});
+
+test("the inbox isn't touched when the brain inbox is off", async () => {
+  fakeNtfy();
+  let counted = 0;
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, { ...allOn, memoryInbox: false }, async () => {
+    counted++;
+    return 4;
+  });
+  await send(new Date("2026-11-13T08:00:00Z"));
+  assert.equal(counted, 0);
+});
+
+test("an unreadable inbox doesn't stop the summary going out", async () => {
+  const fetchMock = fakeNtfy();
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => {
+    throw new Error("Couldn't read the brain inbox");
+  });
+  assert.equal(await send(new Date("2026-11-13T08:00:00Z")), true);
+  assert.match(String(fetchMock.mock.calls[0].arguments[1]?.body), /Brain: couldn't read the inbox\.$/);
 });

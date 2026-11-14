@@ -9,7 +9,7 @@ const config: Config = {
   jellyfinApiKey: "test-jellyfin-key",
   ntfyTopic: "test-topic",
   healthcheckUrl: "https://hc-ping.com/test",
-  features: { alerts: true, heartbeat: true, dailySummary: true }
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -108,7 +108,8 @@ const protectedRoutes = [
   ["GET", "/system/wifi-reconnects"],
   ["GET", "/system/status"],
   ["GET", "/system/alerts"],
-  ["GET", "/system/features"]
+  ["GET", "/system/features"],
+  ["GET", "/memory/inbox"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -243,9 +244,23 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), features);
+});
+
+test("the app serves /memory/inbox, and switched off it says so", async () => {
+  const off = { ...config.features, memoryInbox: false };
+  const app = await buildRealApp({ logger: false, config: { ...config, features: off } });
+  const response = await app.inject({ method: "GET", url: "/memory/inbox", headers: goodHeader });
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(response.json(), { error: "The brain inbox is switched off" });
+});
+
+test("switched on, /memory/inbox tries to count rather than saying it's off", async () => {
+  const app = await buildApp({ logger: false });
+  const response = await app.inject({ method: "GET", url: "/memory/inbox", headers: goodHeader });
+  assert.doesNotMatch(response.body, /switched off/);
 });

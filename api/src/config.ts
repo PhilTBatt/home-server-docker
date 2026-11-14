@@ -2,6 +2,7 @@ export type Features = {
   alerts: boolean;
   heartbeat: boolean;
   dailySummary: boolean;
+  memoryInbox: boolean;
 };
 
 export type Config = {
@@ -17,6 +18,7 @@ const featureLabels: Record<keyof Features, string> = {
   alerts: "alerts",
   heartbeat: "heartbeat",
   dailySummary: "daily summary",
+  memoryInbox: "brain inbox",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -47,6 +49,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     alerts: readSwitch("ALERTS"),
     heartbeat: readSwitch("HEARTBEAT"),
     dailySummary: readSwitch("DAILY_SUMMARY"),
+    memoryInbox: readSwitch("MEMORY_INBOX"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
