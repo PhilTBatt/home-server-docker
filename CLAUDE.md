@@ -27,6 +27,10 @@ I'm building this to learn, and I want to be able to say truthfully that I built
 - Tell me about gotchas when they come up, not after I hit them.
 - I handle git. Don't commit. End each step with a one-line commit message.
 - For decisions: give the options, why you discarded them, your confidence, and the strongest case against your answer.
+- No comments in code files, ever. Keep only `#!/bin/bash`, `// @ts-check` and JSDoc type tags.
+- You write the tests for any code change, thoroughly, and run them before you hand over.
+- When I say "next", the previous step is done and committed.
+- Build new things in place but switched off, with an easy way to turn them on and off.
 
 ## Accuracy
 - Don't state an inference as fact; say when you're guessing. "I don't know" beats a confident wrong answer.
