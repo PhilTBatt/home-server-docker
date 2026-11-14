@@ -16,3 +16,4 @@ api/dist/
 .claude/settings.local.json
 CLAUDE.local.md
 PLAN.md
+*.patch
