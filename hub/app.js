@@ -50,6 +50,16 @@
  */
 
 /**
+ * @typedef {object} Features
+ * @property {boolean} alerts
+ * @property {boolean} heartbeat
+ * @property {boolean} dailySummary
+ */
+
+/** @type {Record<string, string>} */
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary" };
+
+/**
  * Finds the element with this id, or stops the script if there isn't one.
  * @param {string} id
  * @returns {HTMLElement}
@@ -72,6 +82,7 @@ const libraryText = byId("library");
 const wifiText = byId("wifi");
 const serverText = byId("server");
 const alertsList = byId("alerts");
+const switchesText = byId("switches");
 const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
 /** @type {number | undefined} */ let refreshTimer;
 
@@ -90,6 +101,7 @@ function showView(loggedIn) {
     loadWifi();
     loadServer();
     loadAlerts();
+    loadSwitches();
 
     refreshTimer = setInterval(refreshDownloads, 10_000);
   }
@@ -218,6 +230,20 @@ async function loadAlerts() {
     return;
   }
   alertsList.replaceChildren(...alerts.problems.map((p) => listItem(p.message)));
+}
+
+async function loadSwitches() {
+  const response = await fetch("/api/system/features");
+  if (!response.ok) {
+    switchesText.textContent = `Couldn't load the switches: the API replied ${response.status}.`;
+    return;
+  }
+  /** @type {Features} */
+  const features = await response.json();
+  const off = Object.entries(features)
+    .filter(([, on]) => !on)
+    .map(([name]) => featureLabels[name] ?? name);
+  switchesText.textContent = off.length === 0 ? "All on." : `Off: ${off.join(", ")}.`;
 }
 
 async function checkLogin() {
