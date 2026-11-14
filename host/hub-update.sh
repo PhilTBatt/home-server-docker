@@ -41,6 +41,7 @@ installs=$(grep '^host/' <<< "$changed" | grep -v '^host/hub-')
 destination() {
   case "$1" in
     host/wifi-watchdog.sh) echo /usr/local/sbin/wifi-watchdog ;;
+    host/backup.sh) echo /usr/local/sbin/home-hub-backup ;;
     host/*.service | host/*.timer) echo "/etc/systemd/system/${1#host/}" ;;
   esac
 }
