@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import Fastify from "fastify";
+import type { Features } from "../../config.js";
 import { currentProblems, parseReconnects, system } from "./routes.js";
 
-function buildApp() {
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true };
+
+function buildApp(features = allOn) {
   const app = Fastify();
-  app.register(system, { prefix: "/system" });
+  app.register(system, { prefix: "/system", features });
   return app;
 }
 
@@ -111,4 +114,18 @@ test("currentProblems agrees with the alerts route", async () => {
   const fromRoute = response.json().problems.map((p: { code: string }) => p.code);
   const direct = (await currentProblems()).map((p) => p.code);
   assert.deepEqual(direct, fromRoute);
+});
+
+test("features returns the switches it's given", async () => {
+  const allOnResponse = await buildApp().inject({ method: "GET", url: "/system/features" });
+  assert.equal(allOnResponse.statusCode, 200);
+  assert.deepEqual(allOnResponse.json(), { alerts: true, heartbeat: true, dailySummary: true });
+  const mixed = { alerts: false, heartbeat: true, dailySummary: false };
+  const mixedResponse = await buildApp(mixed).inject({ method: "GET", url: "/system/features" });
+  assert.deepEqual(mixedResponse.json(), mixed);
+});
+
+test("features never includes any other settings", async () => {
+  const response = await buildApp().inject({ method: "GET", url: "/system/features" });
+  assert.deepEqual(Object.keys(response.json()), ["alerts", "heartbeat", "dailySummary"]);
 });

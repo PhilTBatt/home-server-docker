@@ -1,6 +1,7 @@
 import { readFile, statfs } from "node:fs/promises";
 import { freemem, totalmem, uptime } from "node:os";
 import type { FastifyPluginAsync } from "fastify";
+import type { Config } from "../../config.js";
 import { findProblems, type Status } from "./alerts.js";
 
 const reconnectLog = "/var/log/wifi-watchdog/reconnects.log";
@@ -51,7 +52,7 @@ export async function currentProblems() {
   );
 }
 
-export const system: FastifyPluginAsync = async (app) => {
+export const system: FastifyPluginAsync<Pick<Config, "features">> = async (app, options) => {
   app.get("/wifi-reconnects", async () => {
     return parseReconnects(await readReconnectLog());
   });
@@ -63,5 +64,9 @@ export const system: FastifyPluginAsync = async (app) => {
   app.get("/alerts", async () => {
     const problems = await currentProblems();
     return { ok: problems.length === 0, problems };
+  });
+
+  app.get("/features", async () => {
+    return options.features;
   });
 };

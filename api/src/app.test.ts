@@ -107,7 +107,8 @@ const protectedRoutes = [
   ["POST", "/auth/logout"],
   ["GET", "/system/wifi-reconnects"],
   ["GET", "/system/status"],
-  ["GET", "/system/alerts"]
+  ["GET", "/system/alerts"],
+  ["GET", "/system/features"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -239,4 +240,12 @@ test("the media module gets its keys from the settings it's given", async () => 
   const jellyfinHeaders = new Headers(fetchMock.mock.calls[1].arguments[1]?.headers);
   assert.equal(qbitHeaders.get("Authorization"), "Bearer another-qbit-key");
   assert.equal(jellyfinHeaders.get("Authorization"), 'MediaBrowser Token="another-jellyfin-key"');
+});
+
+test("the features route shows the switches from the settings it's given", async () => {
+  const features = { alerts: true, heartbeat: false, dailySummary: true };
+  const app = await buildRealApp({ logger: false, config: { ...config, features } });
+  const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), features);
 });

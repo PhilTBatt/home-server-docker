@@ -26,6 +26,6 @@ export async function buildApp(options: { logger: boolean; config: Config }) {
       jellyfinApiKey: options.config.jellyfinApiKey,
     });
   app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
-  app.register(system, { prefix: "/system" });
+  app.register(system, { prefix: "/system", features: options.config.features });
   return app;
 }

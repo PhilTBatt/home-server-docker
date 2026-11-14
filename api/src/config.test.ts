@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readConfig } from "./config.js";
+import { readConfig, switchedOff } from "./config.js";
 
 const complete = {
   API_TOKEN: "test-token",
@@ -167,4 +167,23 @@ test("everything off still works when the feature settings are present", () => {
   assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false });
   assert.equal(config.ntfyTopic, "test-topic");
   assert.equal(config.healthcheckUrl, "https://hc-ping.com/test");
+});
+
+test("switchedOff lists nothing when everything is on", () => {
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true }), []);
+});
+
+test("switchedOff names each feature that's off, in plain words and a fixed order", () => {
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false }), [
+    "alerts",
+    "heartbeat",
+    "daily summary",
+  ]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false }), ["daily summary"]);
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true }), ["alerts"]);
+});
+
+test("switchedOff agrees with what readConfig reads", () => {
+  const config = readConfig({ ...complete, HEARTBEAT: "off" });
+  assert.deepEqual(switchedOff(config.features), ["heartbeat"]);
 });

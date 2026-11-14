@@ -13,6 +13,18 @@ export type Config = {
   features: Features;
 };
 
+const featureLabels: Record<keyof Features, string> = {
+  alerts: "alerts",
+  heartbeat: "heartbeat",
+  dailySummary: "daily summary",
+};
+
+export function switchedOff(features: Features): string[] {
+  return Object.entries(featureLabels)
+    .filter(([key]) => !features[key as keyof Features])
+    .map(([, label]) => label);
+}
+
 export function readConfig(env: Record<string, string | undefined>): Config {
   const missing: string[] = [];
   const notOnOrOff: string[] = [];
@@ -43,6 +55,6 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
   if (notOnOrOff.length > 0) problems.push(`Settings in api/.env that must be on or off: ${notOnOrOff.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
-  
+
   return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, features };
 }
