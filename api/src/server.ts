@@ -3,31 +3,24 @@ import { createNotifier } from "./modules/notify/notifier.js";
 import { currentProblems, readStatus } from "./modules/system/routes.js";
 import { sendHeartbeat } from "./modules/notify/heartbeat.js";
 import { createDailySummary } from "./modules/notify/daily.js";
+import { readConfig } from "./config.js";
 
-const ntfyTopic = process.env.NTFY_TOPIC;
-if (!ntfyTopic) {
-  throw new Error("NTFY_TOPIC is not set");
-}
-
-const healthcheckUrl = process.env.HEALTHCHECK_URL ?? "";
-if (!healthcheckUrl) {
-  throw new Error("HEALTHCHECK_URL is not set");
-}
+const config = readConfig(process.env);
 
 const app = await buildApp({ logger: true });
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
 
 
-const checkAndNotify = createNotifier(ntfyTopic, currentProblems);
-const sendDailySummary = createDailySummary(ntfyTopic, readStatus, currentProblems, 8);
+const checkAndNotify = createNotifier(config.ntfyTopic, currentProblems);
+const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, currentProblems, 8);
 
 function runCheck() {
   checkAndNotify().catch((error: unknown) => {
     app.log.error(error, "notification check failed");
   });
 
-  sendHeartbeat(healthcheckUrl).catch((error: unknown) => {
+  sendHeartbeat(config.healthcheckUrl).catch((error: unknown) => {
     app.log.error(error, "heartbeat failed");
   });
 
