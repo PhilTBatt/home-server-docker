@@ -8,12 +8,14 @@ My home server and everything that plugs into it. This repo (`~/docker`) is the 
 - `api/`: my Fastify + TypeScript API (Node 26, ESM, compiled with `tsc`). One module per folder in `api/src/modules/<name>/routes.ts`. Every route except `POST /auth/login` needs `API_TOKEN` as a Bearer header or the `hub_token` cookie.
 - `api/src/modules/notify/`: every 5 minutes the API checks for problems and sends any change to my phone through ntfy, pings Healthchecks.io so I hear when the server goes quiet, and at 08:00 London time sends a daily summary. `NTFY_TOPIC` and `HEALTHCHECK_URL` in `api/.env` are secrets: never print them.
 - `hub/`: the phone page at `hub.home`. Plain JS with `// @ts-check` and JSDoc types, served by Caddy; `/api/*` is proxied to the API.
+- `mcp/`: an MCP server that offers the API's GET routes to Claude Code as read-only tools. Same setup as `api/`. Runs as a throwaway container per session, started by `bash host/hub-mcp.sh`. It's in the compose `tools` profile, so `docker compose up` never starts or builds it. Not registered with Claude Code yet.
 - `host/`: files that run outside Docker (Wi-Fi watchdog, Docker's daemon.json). These are sources; live copies are put in place with `sudo install`.
 
 ## Commands (from ~/docker)
 - Rebuild the API: `docker compose up --build --wait api`
+- Rebuild the MCP image: `docker compose build mcp`
 - API logs: `docker compose logs --tail 20 api`
-- npm (Node isn't installed on the host): `docker run --rm -u node -v "$PWD/api:/app" -w /app node:26-alpine npm <command>`
+- npm (Node isn't installed on the host): `docker run --rm -u node -v "$PWD/api:/app" -w /app node:26-alpine npm <command>`. For the MCP server, mount `$PWD/mcp` instead.
 - Read from the API: `bash host/hub-get.sh <path>`, e.g. `bash host/hub-get.sh /media/downloads`. GET only; it adds the token itself. Routes: `/health`, `/media/downloads`, `/media/library`, `/system/wifi-reconnects`, `/system/status`, `/system/alerts`, `/system/features`.
 
 ## How to work with me

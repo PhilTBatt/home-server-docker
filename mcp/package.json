@@ -1,0 +1,20 @@
+{
+  "name": "home-hub-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP tools for my home hub API",
+  "scripts": {
+    "test": "tsc && node --test \"dist/**/*.test.js\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}

@@ -13,6 +13,8 @@ beszel/socket/
 beszel/agent_data/
 api/node_modules/
 api/dist/
+mcp/node_modules/
+mcp/dist/
 .claude/settings.local.json
 CLAUDE.local.md
 PLAN.md
