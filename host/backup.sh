@@ -49,6 +49,9 @@ finish() {
   if [ "$dry_run" = no ]; then
     if [ $code -eq 0 ]; then problem=ok; fi
     write_status backup-last-run "$(now) $problem"
+    if [ -n "$HEALTHCHECK_URL" ] && ! curl -fsS -m 10 --retry 5 -o /dev/null --data-raw "$problem" "$HEALTHCHECK_URL/$code"; then
+      echo "Couldn't tell Healthchecks how the backup went." >&2
+    fi
   fi
 }
 
@@ -62,7 +65,7 @@ trap finish EXIT
 trap 'exit 1' INT TERM
 
 if [ ! -f "$settings" ]; then
-  fail "it isn't set up yet" "Not set up yet: $settings is missing. It needs BACKUP_FROM, RESTIC_REPOSITORY and RESTIC_PASSWORD_FILE."
+  fail "it isn't set up yet" "Not set up yet: $settings is missing. It needs BACKUP_FROM, RESTIC_REPOSITORY and RESTIC_PASSWORD_FILE, and can have HEALTHCHECK_URL."
 fi
 
 set -a
