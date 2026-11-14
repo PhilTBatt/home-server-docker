@@ -8,6 +8,7 @@ import { readConfig } from "./config.js";
 const config = readConfig(process.env);
 
 const app = await buildApp({ logger: true, config });
+app.log.info({ features: config.features }, "feature switches");
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
 
@@ -16,17 +17,23 @@ const checkAndNotify = createNotifier(config.ntfyTopic, currentProblems);
 const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, currentProblems, 8);
 
 function runCheck() {
-  checkAndNotify().catch((error: unknown) => {
-    app.log.error(error, "notification check failed");
-  });
+  if (config.features.alerts) {
+    checkAndNotify().catch((error: unknown) => {
+      app.log.error(error, "notification check failed");
+    });
+  }
 
-  sendHeartbeat(config.healthcheckUrl).catch((error: unknown) => {
-    app.log.error(error, "heartbeat failed");
-  });
+  if (config.features.heartbeat) {
+    sendHeartbeat(config.healthcheckUrl).catch((error: unknown) => {
+      app.log.error(error, "heartbeat failed");
+    });
+  }
 
-  sendDailySummary(new Date()).catch((error: unknown) => {
-    app.log.error(error, "daily summary failed");
-  });
+  if (config.features.dailySummary) {
+    sendDailySummary(new Date()).catch((error: unknown) => {
+      app.log.error(error, "daily summary failed");
+    });
+  }
 }
 
 runCheck();

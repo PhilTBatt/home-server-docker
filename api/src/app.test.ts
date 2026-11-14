@@ -9,6 +9,7 @@ const config: Config = {
   jellyfinApiKey: "test-jellyfin-key",
   ntfyTopic: "test-topic",
   healthcheckUrl: "https://hc-ping.com/test",
+  features: { alerts: true, heartbeat: true, dailySummary: true }
 };
 
 function buildApp(options: { logger: boolean }) {
