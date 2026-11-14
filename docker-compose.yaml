@@ -191,7 +191,6 @@ services:
       - type: bind
         source: ../hub-memory/inbox
         target: /memory/inbox
-        read_only: true
         bind:
           create_host_path: false
     healthcheck:

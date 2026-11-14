@@ -4,7 +4,7 @@ import Fastify from "fastify";
 import type { Features } from "../../config.js";
 import { currentProblems, parseReconnects, system } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true };
 
 function buildApp(features = allOn) {
   const app = Fastify();
@@ -119,13 +119,13 @@ test("currentProblems agrees with the alerts route", async () => {
 test("features returns the switches it's given", async () => {
   const allOnResponse = await buildApp().inject({ method: "GET", url: "/system/features" });
   assert.equal(allOnResponse.statusCode, 200);
-  assert.deepEqual(allOnResponse.json(), { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true });
-  const mixed = { alerts: false, heartbeat: true, dailySummary: false, memoryInbox: false };
+  assert.deepEqual(allOnResponse.json(), { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true });
+  const mixed = { alerts: false, heartbeat: true, dailySummary: false, memoryInbox: false, memoryUpload: false };
   const mixedResponse = await buildApp(mixed).inject({ method: "GET", url: "/system/features" });
   assert.deepEqual(mixedResponse.json(), mixed);
 });
 
 test("features never includes any other settings", async () => {
   const response = await buildApp().inject({ method: "GET", url: "/system/features" });
-  assert.deepEqual(Object.keys(response.json()), ["alerts", "heartbeat", "dailySummary", "memoryInbox"]);
+  assert.deepEqual(Object.keys(response.json()), ["alerts", "heartbeat", "dailySummary", "memoryInbox", "memoryUpload"]);
 });

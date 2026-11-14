@@ -12,7 +12,7 @@ const status: Status = {
   diskAvailableGB: 180,
 };
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true };
 
 const diskLow: Problem = { code: "disk-low", message: "Disk is low: 22 of 230 GB free." };
 const wifi: Problem = { code: "wifi-reconnects", message: "Wi-Fi reconnected 2 times in the last 24 hours." };
@@ -201,7 +201,7 @@ test("a different hour can be chosen", async () => {
 });
 
 test("a summary names anything switched off, in a fixed order", () => {
-  const summary = summaryFor(status, [], { alerts: false, heartbeat: false, dailySummary: true, memoryInbox: false }, null);
+  const summary = summaryFor(status, [], { alerts: false, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: true }, null);
   assert.equal(
     summary.message,
     [
@@ -215,7 +215,7 @@ test("a summary names anything switched off, in a fixed order", () => {
 });
 
 test("the switched-off line comes after the problems", () => {
-  const summary = summaryFor(status, [diskLow], { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true }, 2);
+  const summary = summaryFor(status, [diskLow], { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true, memoryUpload: true }, 2);
   assert.deepEqual(summary.message.split("\n").slice(-4), ["Problems:", diskLow.message, "Brain: 2 notes waiting.", "Switched off: heartbeat."]);
 });
 
@@ -224,9 +224,9 @@ test("a summary with everything on says nothing about switches", () => {
 });
 
 test("summaryFor leaves the switches unchanged", () => {
-  const features: Features = { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true };
+  const features: Features = { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true };
   summaryFor(status, [], features, 3);
-  assert.deepEqual(features, { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true });
+  assert.deepEqual(features, { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true });
 });
 
 test("the summary that's sent includes what's switched off", async () => {
@@ -236,6 +236,7 @@ test("the summary that's sent includes what's switched off", async () => {
     heartbeat: false,
     dailySummary: true,
     memoryInbox: false,
+    memoryUpload: true,
   }, async () => 0);
   assert.equal(await send(new Date("2026-11-13T08:00:00Z")), true);
   const body = String(fetchMock.mock.calls[0].arguments[1]?.body);

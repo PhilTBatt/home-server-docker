@@ -55,10 +55,11 @@
  * @property {boolean} heartbeat
  * @property {boolean} dailySummary
  * @property {boolean} memoryInbox
+ * @property {boolean} memoryUpload
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads" };
 
 /**
  * @param {string} id
