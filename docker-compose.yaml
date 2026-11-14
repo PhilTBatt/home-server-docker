@@ -187,6 +187,7 @@ services:
       TZ: Europe/London
     volumes:
       - /var/log/wifi-watchdog:/var/log/wifi-watchdog:ro
+      - /var/lib/home-hub:/var/lib/home-hub:ro
       - type: bind
         source: ../hub-memory/inbox
         target: /memory/inbox

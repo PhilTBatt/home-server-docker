@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
 import { currentProblems, parseReconnects, system } from "./routes.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true };
 
-function buildApp(features = allOn) {
+function buildApp(features = allOn, backupDir = join(tmpdir(), "no-such-backup-status-here")) {
   const app = Fastify();
-  app.register(system, { prefix: "/system", features });
+  app.register(system, { prefix: "/system", features, backupDir });
   return app;
 }
 
@@ -128,4 +131,23 @@ test("features returns the switches it's given", async () => {
 test("features never includes any other settings", async () => {
   const response = await buildApp().inject({ method: "GET", url: "/system/features" });
   assert.deepEqual(Object.keys(response.json()), ["alerts", "heartbeat", "dailySummary", "memoryInbox", "memoryUpload"]);
+});
+
+test("backup says never run when there's no status yet", async () => {
+  const response = await buildApp().inject({ method: "GET", url: "/system/backup" });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { lastRun: null, lastSuccess: null });
+});
+
+test("backup answers with the last run and the last success", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "backup-"));
+  await writeFile(join(dir, "backup-last-run"), "2026-11-15T03:31:12Z ok\n");
+  await writeFile(join(dir, "backup-last-success"), "2026-11-15T03:31:10Z\n");
+  const response = await buildApp(allOn, dir).inject({ method: "GET", url: "/system/backup" });
+  await rm(dir, { recursive: true, force: true });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), {
+    lastRun: { time: "2026-11-15T03:31:12Z", problem: null },
+    lastSuccess: "2026-11-15T03:31:10Z",
+  });
 });
