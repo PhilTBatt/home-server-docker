@@ -3,12 +3,6 @@ export const apiUrl = "http://api:3000";
 export type ApiGet = (path: string) => Promise<unknown>;
 export type ApiPost = (path: string) => Promise<unknown>;
 
-export function readToken(env: Record<string, string | undefined>): string {
-  const token = env.API_TOKEN ?? "";
-  if (token === "") throw new Error("Missing setting: API_TOKEN");
-  return token;
-}
-
 function createApiRequest(method: "GET" | "POST", token: string, timeoutMs: number) {
   return async (path: string): Promise<unknown> => {
     const response = await fetch(`${apiUrl}${path}`, {

@@ -49,11 +49,12 @@ function asText(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
 }
 
-export function buildServer(get: ApiGet, post: ApiPost): McpServer {
+export function buildServer(get: ApiGet, post: ApiPost, actions: boolean): McpServer {
   const server = new McpServer({ name: "home-hub", version: "1.0.0" });
   for (const tool of readTools) {
     server.registerTool(tool.name, { description: tool.description }, async () => asText(await get(tool.path)));
   }
+  if (!actions) return server;
 
   server.registerTool(
     "scan_library",

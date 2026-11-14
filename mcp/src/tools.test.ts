@@ -51,14 +51,14 @@ function fakeApi(data: unknown = { ok: true, problems: [] }) {
   return { get, post, calls };
 }
 
-async function connect(api: { get: ApiGet; post: ApiPost }) {
+async function connect(api: { get: ApiGet; post: ApiPost }, actions = true) {
   const [client, serverSide] = InMemoryTransport.createLinkedPair();
   const waiting = new Map<number, (reply: Reply) => void>();
   client.onmessage = (message) => {
     const reply = message as Reply;
     waiting.get(reply.id)?.(reply);
   };
-  await buildServer(api.get, api.post).connect(serverSide);
+  await buildServer(api.get, api.post, actions).connect(serverSide);
   await client.start();
 
   let nextId = 1;
@@ -226,4 +226,27 @@ test("an unknown tool is refused without calling the API", async () => {
   const { callTool } = await connect(fake);
   assert.ok(refused(await callTool("delete_download", { hash })));
   assert.deepEqual(fake.calls, []);
+});
+
+test("read-only offers only the six read tools", async () => {
+  const { listTools } = await connect(fakeApi(), false);
+  const names = (await listTools()).map((tool) => tool.name);
+  assert.deepEqual(names, Object.keys(readPaths));
+});
+
+for (const [name, { args }] of Object.entries(actions)) {
+  test(`read-only refuses ${name} without calling the API`, async () => {
+    const fake = fakeApi();
+    const { callTool } = await connect(fake, false);
+    assert.ok(refused(await callTool(name, args)));
+    assert.deepEqual(fake.calls, []);
+  });
+}
+
+test("read-only still answers the read tools", async () => {
+  const fake = fakeApi({ movies: 0, series: 5, episodes: 46 });
+  const { callTool } = await connect(fake, false);
+  const result = (await callTool("get_library")).result as CallResult;
+  assert.deepEqual(result.content, [{ type: "text", text: '{"movies":0,"series":5,"episodes":46}' }]);
+  assert.deepEqual(fake.calls, ["GET /media/library"]);
 });

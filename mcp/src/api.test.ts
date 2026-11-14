@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { createApiGet, createApiPost, readToken } from "./api.js";
+import { createApiGet, createApiPost } from "./api.js";
 
 const token = "test-token";
 
@@ -11,22 +11,6 @@ afterEach(() => {
 function fakeApi(status = 200, body: string = JSON.stringify({ status: "ok" })) {
   return mock.method(globalThis, "fetch", async () => new Response(body, { status }));
 }
-
-test("readToken returns API_TOKEN", () => {
-  assert.equal(readToken({ API_TOKEN: token }), token);
-});
-
-test("readToken refuses a missing API_TOKEN and names it", () => {
-  assert.throws(() => readToken({}), { message: "Missing setting: API_TOKEN" });
-});
-
-test("readToken refuses an empty API_TOKEN", () => {
-  assert.throws(() => readToken({ API_TOKEN: "" }), { message: "Missing setting: API_TOKEN" });
-});
-
-test("readToken ignores other settings", () => {
-  assert.equal(readToken({ API_TOKEN: token, QBIT_API_KEY: "other" }), token);
-});
 
 test("calls the API on the compose network with the path given", async () => {
   const fetchMock = fakeApi();
