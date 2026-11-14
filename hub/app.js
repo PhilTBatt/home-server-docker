@@ -58,6 +58,23 @@
  * @property {boolean} memoryUpload
  */
 
+/**
+ * @typedef {object} InboxCount
+ * @property {number} waiting
+ */
+
+/**
+ * @typedef {object} SavedNote
+ * @property {string} saved
+ * @property {number} [waiting]
+ */
+
+/**
+ * @typedef {object} ApiError
+ * @property {string} [error]
+ * @property {string} [message]
+ */
+
 /** @type {Record<string, string>} */
 const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads" };
 
@@ -85,6 +102,13 @@ const serverText = byId("server");
 const alertsList = byId("alerts");
 const switchesText = byId("switches");
 const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
+const brainSection = byId("brain");
+const inboxText = byId("brain-inbox");
+const noteForm = /** @type {HTMLFormElement} */ (byId("note-form"));
+const noteTitle = /** @type {HTMLInputElement} */ (byId("note-title"));
+const noteText = /** @type {HTMLTextAreaElement} */ (byId("note-text"));
+const sendNoteButton = /** @type {HTMLButtonElement} */ (byId("send-note"));
+const noteStatus = byId("note-status");
 /** @type {number | undefined} */ let refreshTimer;
 
 /**
@@ -242,6 +266,37 @@ async function loadSwitches() {
     .filter(([, on]) => !on)
     .map(([name]) => featureLabels[name] ?? name);
   switchesText.textContent = off.length === 0 ? "All on." : `Off: ${off.join(", ")}.`;
+  showBrain(features);
+}
+
+/**
+ * @param {Features} features
+ */
+function showBrain(features) {
+  brainSection.hidden = !features.memoryInbox && !features.memoryUpload;
+  inboxText.hidden = !features.memoryInbox;
+  noteForm.hidden = !features.memoryUpload;
+  if (features.memoryInbox) loadInbox();
+}
+
+/**
+ * @param {number} waiting
+ * @returns {string}
+ */
+function waitingText(waiting) {
+  if (waiting === 0) return "No notes waiting.";
+  return `${waiting} note${waiting === 1 ? "" : "s"} waiting.`;
+}
+
+async function loadInbox() {
+  const response = await fetch("/api/memory/inbox");
+  if (!response.ok) {
+    inboxText.textContent = `Couldn't load the inbox: the API replied ${response.status}.`;
+    return;
+  }
+  /** @type {InboxCount} */
+  const count = await response.json();
+  inboxText.textContent = waitingText(count.waiting);
 }
 
 async function checkLogin() {
@@ -295,6 +350,38 @@ scanButton.addEventListener("click", async () => {
     libraryText.textContent = `Couldn't start a scan: the API replied ${response.status}.`;
   }
   scanButton.disabled = false;
+});
+
+noteForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (noteText.value.trim() === "") {
+    noteStatus.textContent = "Write something first.";
+    return;
+  }
+  sendNoteButton.disabled = true;
+  noteStatus.textContent = "Sending...";
+  try {
+    const response = await fetch("/api/memory/inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: noteTitle.value, text: noteText.value }),
+    });
+    if (response.ok) {
+      /** @type {SavedNote} */
+      const result = await response.json();
+      noteForm.reset();
+      noteStatus.textContent = `Saved as ${result.saved}.`;
+      if (result.waiting !== undefined) inboxText.textContent = waitingText(result.waiting);
+    } else {
+      /** @type {ApiError | null} */
+      const body = await response.json().catch(() => null);
+      const reason = body?.message ?? body?.error ?? `the API replied ${response.status}`;
+      noteStatus.textContent = `Couldn't save the note: ${reason}. Your note is still here.`;
+    }
+  } catch {
+    noteStatus.textContent = "Couldn't reach the API. Your note is still here.";
+  }
+  sendNoteButton.disabled = false;
 });
 
 checkLogin();

@@ -35,6 +35,19 @@
       <h2>Wi-Fi</h2>
       <p id="wifi">Loading...</p>
 
+      <div id="brain" hidden>
+        <h2>Brain</h2>
+        <p id="brain-inbox" hidden>Loading...</p>
+        <form id="note-form" hidden>
+          <label for="note-title">Title</label>
+          <input id="note-title" maxlength="80" required>
+          <label for="note-text">Note</label>
+          <textarea id="note-text" maxlength="20000" rows="6" required></textarea>
+          <button id="send-note" type="submit">Send to the brain</button>
+        </form>
+        <p id="note-status"></p>
+      </div>
+
       
       <h2>Server</h2>
       <p id="server">Loading...</p>
