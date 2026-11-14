@@ -11,6 +11,7 @@ My home server and everything that plugs into it. This repo (`~/docker`) is the 
 - `hub/`: the phone page at `hub.home`. Plain JS with `// @ts-check` and JSDoc types, served by Caddy; `/api/*` is proxied to the API.
 - `mcp/`: an MCP server that offers the API to Claude Code as tools: read-only ones for the GET routes, plus `scan_library`, `stop_download` and `start_download`, which must always ask before running. Same setup as `api/`. Runs as a throwaway container per session, started by `bash host/hub-mcp.sh`; `bash host/hub-mcp.sh read-only` leaves the three action tools out. It's in the compose `tools` profile, so `docker compose up` never starts or builds it. Registered for this repo in `.mcp.json` as `hub`.
 - `host/`: files that run outside Docker (Wi-Fi watchdog, Docker's daemon.json). These are sources; live copies are put in place with `sudo install`.
+- `.github/workflows/safety.yaml`: on every push, Gitleaks scans the history for secrets, and while the repo is public `.github/scripts/personal-details.sh` checks the tracked files against the words in the `PERSONAL_WORDS` secret. It only ever prints file names, because the logs are public.
 
 ## Commands (from ~/docker)
 - Rebuild the API: `docker compose up --build --wait api`

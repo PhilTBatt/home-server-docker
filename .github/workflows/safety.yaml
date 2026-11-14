@@ -1,0 +1,25 @@
+name: Safety checks
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact --no-banner --verbose
+
+  personal:
+    if: ${{ github.event.repository.visibility == 'public' && github.actor != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash .github/scripts/personal-details.sh
+        env:
+          PERSONAL_WORDS: ${{ secrets.PERSONAL_WORDS }}
