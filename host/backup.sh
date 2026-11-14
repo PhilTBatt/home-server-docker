@@ -2,6 +2,7 @@
 
 settings=/etc/home-hub/backup.env
 apps=(jellyfin sonarr radarr prowlarr seerr kuma beszel qbittorrent)
+keep=(--keep-daily 7 --keep-weekly 4 --keep-monthly 6)
 
 case "$1" in
   "") dry_run=no ;;
@@ -56,7 +57,8 @@ done
 
 if [ "$dry_run" = yes ]; then
   echo "Dry run: would stop ${to_stop[*]:-nothing}, back up, then start them again."
-  restic backup --dry-run --exclude "$docker_dir/jellyfin/cache" "${paths[@]}"
+  restic backup --dry-run --exclude "$docker_dir/jellyfin/cache" "${paths[@]}" || exit
+  restic forget --dry-run "${keep[@]}"
   exit
 fi
 
@@ -79,5 +81,17 @@ fi
 
 restic backup --exclude "$docker_dir/jellyfin/cache" "${paths[@]}"
 status=$?
-if [ $status -ne 0 ]; then echo "The backup failed: restic exited with $status." >&2; fi
+if [ ${#to_stop[@]} -gt 0 ]; then
+  trap - EXIT INT TERM
+  start_again
+fi
+
+if [ $status -ne 0 ]; then
+  echo "The backup failed: restic exited with $status, so no old backups were removed." >&2
+  exit $status
+fi
+
+restic forget --prune "${keep[@]}"
+status=$?
+if [ $status -ne 0 ]; then echo "Backed up, but removing old backups failed: restic exited with $status." >&2; fi
 exit $status
