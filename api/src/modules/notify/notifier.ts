@@ -25,11 +25,12 @@ export function notificationFor(previousCodes: string[], problems: Problem[]): N
   };
 }
 
-export async function sendToNtfy(topic: string, notification: Notification): Promise<void> {
+export async function sendToNtfy(topic: string, notification: Notification, timeoutMs = 10_000): Promise<void> {
   const response = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
     method: "POST",
     headers: { Title: notification.title, Tags: notification.tags },
     body: notification.message,
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     throw new Error(`ntfy replied ${response.status}`);

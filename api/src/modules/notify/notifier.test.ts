@@ -104,6 +104,35 @@ test("sendToNtfy throws when ntfy refuses the message", async () => {
   await assert.rejects(sendToNtfy("my-topic", sample), /ntfy replied 429/);
 });
 
+test("sendToNtfy passes a timeout signal so a hung ntfy can't hold up the checks", async () => {
+  const fetchMock = fakeNtfy();
+  await sendToNtfy("my-topic", sample);
+  assert.ok(fetchMock.mock.calls[0].arguments[1]?.signal instanceof AbortSignal);
+});
+
+test("sendToNtfy waits 10 seconds by default", async () => {
+  fakeNtfy();
+  const timeoutMock = mock.method(AbortSignal, "timeout");
+  await sendToNtfy("my-topic", sample);
+  assert.equal(timeoutMock.mock.callCount(), 1);
+  assert.equal(timeoutMock.mock.calls[0].arguments[0], 10_000);
+});
+
+test("sendToNtfy gives up when ntfy doesn't answer within the timeout", async () => {
+  mock.method(globalThis, "fetch", (_input: unknown, init?: RequestInit) => {
+    return new Promise<Response>((_resolve, reject) => {
+      const neverAborted = setTimeout(() => reject(new Error("never aborted")), 1000);
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(neverAborted);
+        reject(init.signal?.reason);
+      });
+    });
+  });
+  const started = Date.now();
+  await assert.rejects(sendToNtfy("my-topic", sample, 50), (error: Error) => error.name === "TimeoutError");
+  assert.ok(Date.now() - started < 1000);
+});
+
 test("the first check sends nothing when all is well", async () => {
   const fetchMock = fakeNtfy();
   const check = createNotifier("my-topic", async () => []);
@@ -138,6 +167,22 @@ test("a failed send is retried on the next check", async () => {
   const check = createNotifier("my-topic", async () => [diskLow]);
   await assert.rejects(check(), /ntfy replied 500/);
   status = 200;
+  assert.equal(await check(), true);
+  assert.equal(await check(), false);
+  assert.equal(fetchMock.mock.callCount(), 2);
+});
+
+test("a send that times out is retried on the next check", async () => {
+  let calls = 0;
+  const fetchMock = mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }
+    return new Response(null, { status: 200 });
+  });
+  const check = createNotifier("my-topic", async () => [diskLow]);
+  await assert.rejects(check(), (error: Error) => error.name === "TimeoutError");
   assert.equal(await check(), true);
   assert.equal(await check(), false);
   assert.equal(fetchMock.mock.callCount(), 2);
