@@ -1,6 +1,4 @@
 #!/bin/bash
-# Reconnects the Wi-Fi when the Sky hub stops answering.
-# The copy that runs is /usr/local/sbin/wifi-watchdog, started by wifi-watchdog.service.
 
 hub="192.168.0.1"
 wifi="wlp2s0"

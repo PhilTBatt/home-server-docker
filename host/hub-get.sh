@@ -1,6 +1,4 @@
 #!/bin/bash
-# Reads from the Home Hub API using the token in api/.env, without printing the token.
-# Run from ~/docker. Usage: bash host/hub-get.sh /media/downloads
 
 path="$1"
 

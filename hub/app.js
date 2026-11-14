@@ -60,7 +60,6 @@
 const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary" };
 
 /**
- * Finds the element with this id, or stops the script if there isn't one.
  * @param {string} id
  * @returns {HTMLElement}
  */
@@ -87,7 +86,6 @@ const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
 /** @type {number | undefined} */ let refreshTimer;
 
 /**
- * Shows the dashboard when logged in, otherwise the login form.
  * @param {boolean} loggedIn
  */
 function showView(loggedIn) {
@@ -115,7 +113,6 @@ function refreshDownloads() {
 }
 
 /**
- * Makes a list item containing this text.
  * @param {string} text
  * @returns {HTMLLIElement}
  */
@@ -126,7 +123,6 @@ function listItem(text) {
 }
 
 /**
- * Turns seconds into something like "1h 23m", "12m" or "45s".
  * @param {number | null} seconds
  * @returns {string}
  */
