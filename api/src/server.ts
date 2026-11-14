@@ -23,7 +23,6 @@ const checkAndNotify = createNotifier(ntfyTopic, currentProblems);
 function runCheck() {
   checkAndNotify().catch((error: unknown) => {
     app.log.error(error, "notification check failed");
-    app.log.error(error, "notification check failed");
   });
 
   sendHeartbeat(healthcheckUrl).catch((error: unknown) => {
