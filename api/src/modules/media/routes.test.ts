@@ -1,16 +1,13 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
 import Fastify from "fastify";
-
-process.env.QBIT_API_KEY = "test-qbit-key";
-process.env.JELLYFIN_API_KEY = "test-jellyfin-key";
-const { media } = await import("./routes.js");
+import { media } from "./routes.js";
 
 const hash = "0123456789abcdef0123456789abcdef01234567";
 
 function buildApp() {
   const app = Fastify();
-  app.register(media, { prefix: "/media" });
+  app.register(media, { prefix: "/media", qbitApiKey: "test-qbit-key", jellyfinApiKey: "test-jellyfin-key" });
   return app;
 }
 

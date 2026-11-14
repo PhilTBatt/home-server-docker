@@ -1,13 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 
-const apiToken = process.env.API_TOKEN;
-if (!apiToken) {
-  throw new Error("API_TOKEN is not set");
-}
-const expected = Buffer.from(apiToken);
-
-export function isAuthorized(token: string): boolean {
+export function isAuthorized(token: string, apiToken: string): boolean {
+  if (apiToken === "") {
+    return false;
+  }
   const given = Buffer.from(token);
+  const expected = Buffer.from(apiToken);
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 

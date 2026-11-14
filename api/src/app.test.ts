@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
+import { buildApp as buildRealApp } from "./app.js";
+import type { Config } from "./config.js";
 
-process.env.API_TOKEN = "test-token";
-process.env.QBIT_API_KEY = "test-qbit-key";
-process.env.JELLYFIN_API_KEY = "test-jellyfin-key";
-const { buildApp } = await import("./app.js");
+const config: Config = {
+  apiToken: "test-token",
+  qbitApiKey: "test-qbit-key",
+  jellyfinApiKey: "test-jellyfin-key",
+  ntfyTopic: "test-topic",
+  healthcheckUrl: "https://hc-ping.com/test",
+};
+
+function buildApp(options: { logger: boolean }) {
+  return buildRealApp({ ...options, config });
+}
 
 const goodHeader = { authorization: "Bearer test-token" };
 const goodCookie = { hub_token: "test-token" };
@@ -187,4 +196,46 @@ test("the cookie from login opens the lock, and logout clears it", async () => {
   assert.ok(cleared);
   assert.equal(cleared.value, "");
   assert.equal(cleared.maxAge, 0);
+});
+
+test("the lock uses the token from the settings it's given", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, apiToken: "another-token" } });
+  const oldToken = await app.inject({ method: "GET", url: "/health", headers: goodHeader });
+  assert.equal(oldToken.statusCode, 401);
+  const newToken = await app.inject({
+    method: "GET",
+    url: "/health",
+    headers: { authorization: "Bearer another-token" },
+  });
+  assert.equal(newToken.statusCode, 200);
+});
+
+test("login uses the token from the settings it's given", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, apiToken: "another-token" } });
+  const response = await app.inject({ method: "POST", url: "/auth/login", payload: { token: "another-token" } });
+  assert.equal(response.statusCode, 200);
+});
+
+test("an empty token setting keeps the lock shut", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, apiToken: "" } });
+  const noToken = await app.inject({ method: "GET", url: "/health" });
+  const emptyBearer = await app.inject({ method: "GET", url: "/health", headers: { authorization: "Bearer " } });
+  const emptyLogin = await app.inject({ method: "POST", url: "/auth/login", payload: { token: "" } });
+  assert.equal(noToken.statusCode, 401);
+  assert.equal(emptyBearer.statusCode, 401);
+  assert.notEqual(emptyLogin.statusCode, 200);
+});
+
+test("the media module gets its keys from the settings it's given", async () => {
+  const fetchMock = mock.method(globalThis, "fetch", async () => Response.json([]));
+  const app = await buildRealApp({
+    logger: false,
+    config: { ...config, qbitApiKey: "another-qbit-key", jellyfinApiKey: "another-jellyfin-key" },
+  });
+  await app.inject({ method: "GET", url: "/media/downloads", headers: goodHeader });
+  await app.inject({ method: "POST", url: "/media/library/scan", headers: goodHeader });
+  const qbitHeaders = new Headers(fetchMock.mock.calls[0].arguments[1]?.headers);
+  const jellyfinHeaders = new Headers(fetchMock.mock.calls[1].arguments[1]?.headers);
+  assert.equal(qbitHeaders.get("Authorization"), "Bearer another-qbit-key");
+  assert.equal(jellyfinHeaders.get("Authorization"), 'MediaBrowser Token="another-jellyfin-key"');
 });

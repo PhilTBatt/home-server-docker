@@ -1,20 +1,23 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-
-process.env.API_TOKEN = "test-token";
-const { isAuthorized, tokenFromHeader } = await import("./token.js");
+import { isAuthorized, tokenFromHeader } from "./token.js";
 
 test("isAuthorized accepts the right token", () => {
-  assert.equal(isAuthorized("test-token"), true);
+  assert.equal(isAuthorized("test-token", "test-token"), true);
 });
 
 test("isAuthorized rejects a wrong token of the same length", () => {
-  assert.equal(isAuthorized("test-tokeX"), false);
+  assert.equal(isAuthorized("test-tokeX", "test-token"), false);
 });
 
 test("isAuthorized rejects tokens of a different length", () => {
-  assert.equal(isAuthorized("test"), false);
-  assert.equal(isAuthorized(""), false);
+  assert.equal(isAuthorized("test", "test-token"), false);
+  assert.equal(isAuthorized("", "test-token"), false);
+});
+
+test("isAuthorized refuses everything when the expected token is empty", () => {
+  assert.equal(isAuthorized("", ""), false);
+  assert.equal(isAuthorized("anything", ""), false);
 });
 
 test("tokenFromHeader returns undefined when no header was sent", () => {

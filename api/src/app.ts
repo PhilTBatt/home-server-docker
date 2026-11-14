@@ -5,8 +5,9 @@ import cookie from "@fastify/cookie";
 import { isAuthorized, tokenFromHeader } from "./token.js";
 import { auth } from "./modules/auth/routes.js";
 import { system } from "./modules/system/routes.js";
+import type { Config } from "./config.js";
 
-export async function buildApp(options: { logger: boolean }) {
+export async function buildApp(options: { logger: boolean; config: Config }) {
   const app = Fastify({ logger: options.logger });
 
   await app.register(cookie);
@@ -15,12 +16,16 @@ export async function buildApp(options: { logger: boolean }) {
     if (request.routeOptions.url === "/auth/login") return;
 
     const token = tokenFromHeader(request.headers.authorization) ?? request.cookies.hub_token ?? "";
-    if (!isAuthorized(token)) return reply.code(401).send({ error: "Unauthorized" }); 
+    if (!isAuthorized(token, options.config.apiToken)) return reply.code(401).send({ error: "Unauthorized" }); 
   });
 
   app.register(health);
-  app.register(media, { prefix: "/media" });
-  app.register(auth, { prefix: "/auth" });
+      app.register(media, {
+      prefix: "/media",
+      qbitApiKey: options.config.qbitApiKey,
+      jellyfinApiKey: options.config.jellyfinApiKey,
+    });
+  app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
   app.register(system, { prefix: "/system" });
   return app;
 }

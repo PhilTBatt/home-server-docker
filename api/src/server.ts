@@ -7,7 +7,7 @@ import { readConfig } from "./config.js";
 
 const config = readConfig(process.env);
 
-const app = await buildApp({ logger: true });
+const app = await buildApp({ logger: true, config });
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
 

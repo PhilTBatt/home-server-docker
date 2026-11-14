@@ -2,14 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import cookie from "@fastify/cookie";
 import Fastify from "fastify";
-
-process.env.API_TOKEN = "test-token";
-const { auth } = await import("./routes.js");
+import { auth } from "./routes.js";
 
 async function buildApp() {
   const app = Fastify();
   await app.register(cookie);
-  app.register(auth, { prefix: "/auth" });
+  app.register(auth, { prefix: "/auth", apiToken: "test-token" });
   return app;
 }
 

@@ -1,17 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-
-const qbitApiKey = process.env.QBIT_API_KEY;
-if (!qbitApiKey) {
-  throw new Error("QBIT_API_KEY is not set");
-  
-}
-const qbitAuth = `Bearer ${qbitApiKey}`;
-
-const jellyfinApiKey = process.env.JELLYFIN_API_KEY;
-if (!jellyfinApiKey) {
-  throw new Error("JELLYFIN_API_KEY is not set");
-}
-const jellyfinAuth = `MediaBrowser Token="${jellyfinApiKey}"`;
+import type { Config } from "../../config.js";
 
 const qbitNoEta = 8640000;
 
@@ -46,7 +34,9 @@ const torrentActionSchema = {
   },
 };
 
-export const media: FastifyPluginAsync = async (app) => {
+export const media: FastifyPluginAsync<Pick<Config, "qbitApiKey" | "jellyfinApiKey">> = async (app, options) => {
+  const qbitAuth = `Bearer ${options.qbitApiKey}`;
+  const jellyfinAuth = `MediaBrowser Token="${options.jellyfinApiKey}"`;
   app.get("/downloads", async () => {
     const response = await fetch(
       "http://qbittorrent:8081/api/v2/torrents/info?filter=downloading",

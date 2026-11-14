@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
+import type { Config } from "../../config.js";
 import { isAuthorized } from "../../token.js";
 
 type LoginBody = {
@@ -15,11 +16,9 @@ const loginSchema = {
   },
 };
 
-export const auth: FastifyPluginAsync = async (app) => {
+export const auth: FastifyPluginAsync<Pick<Config, "apiToken">> = async (app, options) => {
   app.post<{ Body: LoginBody }>("/login", { schema: loginSchema }, async (request, reply) => {
-    if (!isAuthorized(request.body.token)) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
+    if (!isAuthorized(request.body.token, options.apiToken)) return reply.code(401).send({ error: "Unauthorized" });
     reply.setCookie("hub_token", request.body.token, {
       httpOnly: true,
       sameSite: "strict",
