@@ -1,0 +1,63 @@
+# Home Hub
+
+TODO (Phil): what Home Hub is, in a sentence or two.
+
+## Why I built it
+TODO (Phil): why you're building it and what you want to learn from it.
+
+## How I built it
+TODO (Phil): how you built it, including how you used AI help, in your own words.
+
+## How the parts fit
+- Everything runs on one Ubuntu server, from one compose file: `docker-compose.yaml`.
+- Caddy is the front door. Each service has a `.home` name, and AdGuard Home answers DNS on the home network, which is how those names reach Caddy.
+- Nothing is open to the internet. Away from home, everything goes through Tailscale.
+- The API (`api/`) is the centre: one module per capability, and every route except logging in needs a token. It reads from qBittorrent and Jellyfin, watches the server's Wi-Fi reconnect log, and can count and add notes in the brain's inbox.
+- Every 5 minutes the API checks for problems and sends any change to my phone through ntfy. It also pings Healthchecks.io, which tells me if the server goes quiet, and sends a daily summary at 08:00.
+- The phone page (`hub/`, at `hub.home`) is plain JavaScript served by Caddy, which passes `/api/*` on to the API.
+- Claude Code reaches the API through an MCP server (`mcp/`), a throwaway container started for each session. Its tools read from the API; the three that change things (start a library scan, stop or start a download) always ask first.
+- The brain is a separate private repo of notes, `hub-memory`. Its `inbox/` folder is mounted into the API.
+- Anything that runs outside Docker lives in `host/`. The main one is the Wi-Fi watchdog, a systemd timer that reconnects the Wi-Fi when the router stops answering.
+
+## Services
+| Address | Service | What it's for |
+|---|---|---|
+| `hub.home` | the phone page | alerts, downloads, library, Wi-Fi, brain, server and switches |
+| `api.home` | the API | everything the phone page and Claude Code use |
+| `home.home` | Homepage | a dashboard of everything |
+| `dns.home` | AdGuard Home | DNS and ad blocking |
+| `uptime.home` | Uptime Kuma | uptime checks |
+| `metrics.home` | Beszel | server metrics, with `beszel-agent` |
+| `jellyfin.home` | Jellyfin | the media server |
+| `requests.home` | Seerr | requests for films and shows |
+| `sonarr.home`, `radarr.home` | Sonarr, Radarr | TV and films |
+| `prowlarr.home` | Prowlarr | indexers, with Byparr |
+| `qbit.home` | qBittorrent | downloads |
+
+## Switches
+New features are built switched off. Each switch is a line in `api/.env` set to exactly `on` or `off`. Anything else, or a missing switch, stops the API starting, so a typo can't quietly change what's on. `GET /system/features`, the phone page and the daily summary all show what's off. The MCP server has one switch of its own, `MCP_ACTIONS`, which `bash host/hub-mcp.sh read-only` turns off.
+
+## Folders
+- `api/`: the API. Fastify and TypeScript on Node 26, one module per folder in `src/modules/`, with each module's tests beside its code.
+- `hub/`: the phone page.
+- `mcp/`: the MCP server for Claude Code. Same setup as `api/`.
+- `host/`: files that run outside Docker, plus helper scripts: `hub-update.sh` pulls and rebuilds only what changed, `hub-mcp.sh` starts the MCP server, and `hub-get.sh` and `hub-post.sh` try an API route.
+- `caddy/`: the Caddyfile.
+- `homepage/config/`: Homepage's settings. Logins and keys come from `homepage/.env`.
+- `docs/decisions/`: why things are the way they are, one record per decision.
+- `.github/`: tests and safety checks on every push, and Dependabot.
+- `CLAUDE.md`, `.mcp.json` and `.claude/settings.json`: how Claude Code works in this repo.
+
+## Running it
+Secrets live in `.env` files that git ignores (`api/.env`, `homepage/.env` and `beszel/.env`), so they're never in this repo. The API also expects the brain's inbox at `../hub-memory/inbox`, and won't start without it.
+- Start everything: `docker compose up -d`
+- Rebuild the API after a change: `docker compose up --build --wait api`
+- Pull from GitHub and rebuild only what changed: `bash host/hub-update.sh`, or `bash host/hub-update.sh --dry-run` to see what it would do
+
+## Tests
+Node isn't installed on the server, so npm runs in a throwaway container. From this folder:
+```
+docker run --rm -u node -v "$PWD/api:/app" -w /app node:26-alpine npm ci
+docker run --rm -u node -v "$PWD/api:/app" -w /app node:26-alpine npm test
+```
+For the MCP server, use `$PWD/mcp` instead. GitHub runs both test suites on every push, alongside a secret scan of the whole history.
