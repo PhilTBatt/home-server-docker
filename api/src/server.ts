@@ -1,7 +1,8 @@
 import { buildApp } from "./app.js";
 import { createNotifier } from "./modules/notify/notifier.js";
-import { currentProblems } from "./modules/system/routes.js";
+import { currentProblems, readStatus } from "./modules/system/routes.js";
 import { sendHeartbeat } from "./modules/notify/heartbeat.js";
+import { createDailySummary } from "./modules/notify/daily.js";
 
 const ntfyTopic = process.env.NTFY_TOPIC;
 if (!ntfyTopic) {
@@ -19,6 +20,7 @@ await app.listen({ port: 3000, host: "0.0.0.0" });
 
 
 const checkAndNotify = createNotifier(ntfyTopic, currentProblems);
+const sendDailySummary = createDailySummary(ntfyTopic, readStatus, currentProblems, 8);
 
 function runCheck() {
   checkAndNotify().catch((error: unknown) => {
@@ -27,6 +29,10 @@ function runCheck() {
 
   sendHeartbeat(healthcheckUrl).catch((error: unknown) => {
     app.log.error(error, "heartbeat failed");
+  });
+
+  sendDailySummary(new Date()).catch((error: unknown) => {
+    app.log.error(error, "daily summary failed");
   });
 }
 

@@ -30,7 +30,7 @@ async function readReconnectLog() {
   });
 }
 
-async function readStatus(): Promise<Status> {
+export async function readStatus(): Promise<Status> {
   const disk = await statfs("/");
   return {
     uptimeSeconds: Math.round(uptime()),
