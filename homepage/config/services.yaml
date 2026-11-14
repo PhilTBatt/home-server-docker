@@ -6,7 +6,7 @@
       widget:
         type: adguard
         url: http://adguard:3000
-        username: 'philtbatt'
+        username: "{{HOMEPAGE_VAR_ADGUARD_USERNAME}}"
         password: "{{HOMEPAGE_VAR_ADGUARD_PASSWORD}}"
 
   - Uptime Kuma:
@@ -25,7 +25,7 @@
       widget:
         type: beszel
         url: http://beszel:8090
-        username: 'philtbatt@gmail.com'
+        username: "{{HOMEPAGE_VAR_BESZEL_USERNAME}}"
         password: "{{HOMEPAGE_VAR_BESZEL_PASSWORD}}"
         systemId: home-server
         version: 2
@@ -93,7 +93,7 @@
       widget:
         type: qbittorrent
         url: http://qbittorrent:8081
-        username: 'philtbatt'
+        username: "{{HOMEPAGE_VAR_QBITTORRENT_USERNAME}}"
         password: "{{HOMEPAGE_VAR_QBITTORRENT_PASSWORD}}"
 
   - Byparr:
