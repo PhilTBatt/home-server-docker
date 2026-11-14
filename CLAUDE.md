@@ -6,6 +6,7 @@ My home server and everything that plugs into it. This repo (`~/docker`) is the 
 - Ubuntu Server 26.04 on a repurposed laptop: 8 GB RAM, 192.168.0.200, hostname `home-server`, user `phil`. Wi-Fi only.
 - Caddy serves `.home` hostnames over plain HTTP. AdGuard does DNS. Tailscale for remote access (no port forwarding possible).
 - `api/`: my Fastify + TypeScript API (Node 26, ESM, compiled with `tsc`). One module per folder in `api/src/modules/<name>/routes.ts`. Every route except `POST /auth/login` needs `API_TOKEN` as a Bearer header or the `hub_token` cookie.
+- `api/src/modules/notify/`: every 5 minutes the API checks for problems and sends any change to my phone through ntfy, pings Healthchecks.io so I hear when the server goes quiet, and at 08:00 London time sends a daily summary. `NTFY_TOPIC` and `HEALTHCHECK_URL` in `api/.env` are secrets: never print them.
 - `hub/`: the phone page at `hub.home`. Plain JS with `// @ts-check` and JSDoc types, served by Caddy; `/api/*` is proxied to the API.
 - `host/`: files that run outside Docker (Wi-Fi watchdog, Docker's daemon.json). These are sources; live copies are put in place with `sudo install`.
 
