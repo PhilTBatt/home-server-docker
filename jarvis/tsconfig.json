@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "module": "nodenext",
+    "target": "es2025",
+    "strict": true,
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
