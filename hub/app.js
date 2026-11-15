@@ -59,6 +59,18 @@
  */
 
 /**
+ * @typedef {object} BackupRun
+ * @property {string} time
+ * @property {string | null} problem
+ */
+
+/**
+ * @typedef {object} BackupState
+ * @property {BackupRun | null} lastRun
+ * @property {string | null} lastSuccess
+ */
+
+/**
  * @typedef {object} InboxCount
  * @property {number} waiting
  */
@@ -99,6 +111,7 @@ const downloadsList = byId("downloads");
 const libraryText = byId("library");
 const wifiText = byId("wifi");
 const serverText = byId("server");
+const backupText = byId("backup");
 const alertsList = byId("alerts");
 const switchesText = byId("switches");
 const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
@@ -124,6 +137,7 @@ function showView(loggedIn) {
     loadLibrary();
     loadWifi();
     loadServer();
+    loadBackup();
     loadAlerts();
     loadSwitches();
 
@@ -237,6 +251,29 @@ async function loadServer() {
   const memoryFree = (status.memoryAvailableMB / 1024).toFixed(1);
   const memoryTotal = (status.memoryTotalMB / 1024).toFixed(1);
   serverText.textContent = `Up ${formatUptime(status.uptimeSeconds)}. Memory: ${memoryFree} of ${memoryTotal} GB available. Disk: ${status.diskAvailableGB} of ${status.diskTotalGB} GB free.`;
+}
+
+/**
+ * @param {BackupState} backup
+ * @returns {string}
+ */
+function backupSummary(backup) {
+  if (backup.lastRun === null) return "Never run.";
+  const ran = new Date(backup.lastRun.time).toLocaleString();
+  if (backup.lastRun.problem === null) return `Last ran ${ran}.`;
+  const lastGood = backup.lastSuccess === null ? "No good backup yet." : `Last good backup: ${new Date(backup.lastSuccess).toLocaleString()}.`;
+  return `The last run (${ran}) failed: ${backup.lastRun.problem}. ${lastGood}`;
+}
+
+async function loadBackup() {
+  const response = await fetch("/api/system/backup");
+  if (!response.ok) {
+    backupText.textContent = `Couldn't load the backup status: the API replied ${response.status}.`;
+    return;
+  }
+  /** @type {BackupState} */
+  const backup = await response.json();
+  backupText.textContent = backupSummary(backup);
 }
 
 async function loadAlerts() {
