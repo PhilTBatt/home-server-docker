@@ -21,6 +21,7 @@ export const auth: FastifyPluginAsync<Pick<Config, "apiToken">> = async (app, op
     if (!isAuthorized(request.body.token, options.apiToken)) return reply.code(401).send({ error: "Unauthorized" });
     reply.setCookie("hub_token", request.body.token, {
       httpOnly: true,
+      secure: "auto",
       sameSite: "strict",
       path: "/",
       maxAge: 60 * 60 * 24 * 60,
@@ -29,7 +30,7 @@ export const auth: FastifyPluginAsync<Pick<Config, "apiToken">> = async (app, op
   });
 
   app.post("/logout", async (request, reply) => {
-    reply.clearCookie("hub_token", { path: "/" });
+    reply.clearCookie("hub_token", { path: "/", secure: "auto" });
     return { status: "logged out" };
   });
 };

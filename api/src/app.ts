@@ -9,7 +9,7 @@ import { memory } from "./modules/memory/routes.js";
 import type { Config } from "./config.js";
 
 export async function buildApp(options: { logger: boolean; config: Config }) {
-  const app = Fastify({ logger: options.logger });
+  const app = Fastify({ logger: options.logger, trustProxy: true });
 
   await app.register(cookie);
 

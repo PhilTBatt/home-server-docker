@@ -265,3 +265,22 @@ test("switched on, /memory/inbox tries to count rather than saying it's off", as
   const response = await app.inject({ method: "GET", url: "/memory/inbox", headers: goodHeader });
   assert.doesNotMatch(response.body, /switched off/);
 });
+
+test("the app trusts Caddy's forwarded protocol, so an HTTPS login gets an HTTPS-only cookie", async () => {
+  const app = await buildApp({ logger: false });
+  const response = await app.inject({
+    method: "POST",
+    url: "/auth/login",
+    headers: { "x-forwarded-proto": "https" },
+    payload: { token: "test-token" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.match(String(response.headers["set-cookie"]), /; Secure(;|$)/);
+});
+
+test("an HTTP login to the app still gets a cookie it can use", async () => {
+  const app = await buildApp({ logger: false });
+  const response = await app.inject({ method: "POST", url: "/auth/login", payload: { token: "test-token" } });
+  assert.equal(response.statusCode, 200);
+  assert.doesNotMatch(String(response.headers["set-cookie"]), /; Secure(;|$)/);
+});
