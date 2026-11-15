@@ -44,6 +44,7 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     environment:
       TZ: Europe/London
     volumes:

@@ -38,11 +38,13 @@ http://metrics.home {
 	reverse_proxy beszel:8090
 }
 
-http://api.home {
+http://api.home, https://api.home {
+	tls internal
 	reverse_proxy api:3000
 }
 
-http://hub.home {
+http://hub.home, https://hub.home {
+	tls internal
 	handle_path /api/* {
 		reverse_proxy api:3000
 	}
