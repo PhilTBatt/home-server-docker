@@ -30,6 +30,7 @@ const readPaths: Record<string, string> = {
   get_downloads: "/media/downloads",
   get_library: "/media/library",
   get_wifi_reconnects: "/system/wifi-reconnects",
+  get_backup: "/system/backup",
 };
 
 const actions: Record<string, { args: Record<string, unknown>; call: string }> = {
@@ -92,7 +93,7 @@ test("names itself home-hub", async () => {
   assert.equal(result.serverInfo.name, "home-hub");
 });
 
-test("offers the six read tools, then scan, stop and start, in order", async () => {
+test("offers the seven read tools, then scan, stop and start, in order", async () => {
   const { listTools } = await connect(fakeApi());
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), ...Object.keys(actions)]);
@@ -228,7 +229,7 @@ test("an unknown tool is refused without calling the API", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
-test("read-only offers only the six read tools", async () => {
+test("read-only offers only the seven read tools", async () => {
   const { listTools } = await connect(fakeApi(), false);
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, Object.keys(readPaths));

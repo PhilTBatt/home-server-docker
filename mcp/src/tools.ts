@@ -39,6 +39,11 @@ export const readTools: ReadTool[] = [
     description: "How many times the Wi-Fi watchdog has reconnected the server, with the 20 most recent, newest first.",
     path: "/system/wifi-reconnects",
   },
+  {
+    name: "get_backup",
+    description: "When the last backup ran and whether it worked (problem is null when it did), and when the last good backup was. lastRun is null if backups have never run.",
+    path: "/system/backup",
+  },
 ];
 
 const hashInput = z.object({
