@@ -43,12 +43,14 @@ export async function readStatus(): Promise<Status> {
   };
 }
 
-export async function currentProblems() {
+export async function currentProblems(backupDir?: string) {
   const status = await readStatus();
   const reconnects = parseReconnects(await readReconnectLog());
+  const backup = await readBackupState(backupDir).catch(() => null);
   return findProblems(
     status,
     reconnects.recent.map((r) => r.time),
+    backup?.lastRun ?? null,
     new Date(),
   );
 }
@@ -63,7 +65,7 @@ export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?:
   });
 
   app.get("/alerts", async () => {
-    const problems = await currentProblems();
+    const problems = await currentProblems(options.backupDir);
     return { ok: problems.length === 0, problems };
   });
 

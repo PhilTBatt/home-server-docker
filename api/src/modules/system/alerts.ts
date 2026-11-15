@@ -1,3 +1,5 @@
+import type { BackupRun } from "./backup.js";
+
 export type Status = {
   uptimeSeconds: number;
   memoryTotalMB: number;
@@ -7,14 +9,14 @@ export type Status = {
 };
 
 export type Problem = {
-  code: "disk-low" | "memory-low" | "wifi-reconnects";
+  code: "disk-low" | "memory-low" | "wifi-reconnects" | "backup-failed";
   message: string;
 };
 
 const lowFraction = 0.1;
 const dayMs = 24 * 60 * 60 * 1000;
 
-export function findProblems(status: Status, reconnectTimes: string[], now: Date): Problem[] {
+export function findProblems(status: Status, reconnectTimes: string[], lastBackupRun: BackupRun | null, now: Date): Problem[] {
   const problems: Problem[] = [];
 
   if (status.diskAvailableGB < status.diskTotalGB * lowFraction) {
@@ -37,6 +39,13 @@ export function findProblems(status: Status, reconnectTimes: string[], now: Date
     problems.push({
       code: "wifi-reconnects",
       message: `Wi-Fi reconnected ${recentCount} time${recentCount === 1 ? "" : "s"} in the last 24 hours.`,
+    });
+  }
+
+  if (lastBackupRun !== null && lastBackupRun.problem !== null) {
+    problems.push({
+      code: "backup-failed",
+      message: `The last backup failed: ${lastBackupRun.problem}.`,
     });
   }
 

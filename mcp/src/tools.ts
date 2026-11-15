@@ -16,7 +16,7 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_alerts",
-    description: "Problems on the home server right now: low disk, low memory or Wi-Fi reconnects in the last 24 hours. ok is true when there are none.",
+    description: "Problems on the home server right now: low disk, low memory, Wi-Fi reconnects in the last 24 hours, or a failed last backup. ok is true when there are none.",
     path: "/system/alerts",
   },
   {

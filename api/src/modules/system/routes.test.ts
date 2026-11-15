@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify from "fastify";
@@ -93,7 +93,7 @@ test("alerts returns ok and a list of problems that agree with each other", asyn
   assert.ok(Array.isArray(alerts.problems));
   assert.equal(alerts.ok, alerts.problems.length === 0);
   for (const problem of alerts.problems) {
-    assert.ok(["disk-low", "memory-low", "wifi-reconnects"].includes(problem.code));
+    assert.ok(["disk-low", "memory-low", "wifi-reconnects", "backup-failed"].includes(problem.code));
     assert.equal(typeof problem.message, "string");
   }
 });
@@ -105,17 +105,17 @@ test("alerts reports no Wi-Fi problem when the log file doesn't exist", async ()
 });
 
 test("currentProblems returns a list of problems with known codes", async () => {
-  const problems = await currentProblems();
+  const problems = await currentProblems(join(tmpdir(), "no-such-backup-status-here"));
   assert.ok(Array.isArray(problems));
   for (const problem of problems) {
-    assert.ok(["disk-low", "memory-low", "wifi-reconnects"].includes(problem.code));
+    assert.ok(["disk-low", "memory-low", "wifi-reconnects", "backup-failed"].includes(problem.code));
   }
 });
 
 test("currentProblems agrees with the alerts route", async () => {
   const response = await buildApp().inject({ method: "GET", url: "/system/alerts" });
   const fromRoute = response.json().problems.map((p: { code: string }) => p.code);
-  const direct = (await currentProblems()).map((p) => p.code);
+  const direct = (await currentProblems(join(tmpdir(), "no-such-backup-status-here"))).map((p) => p.code);
   assert.deepEqual(direct, fromRoute);
 });
 
@@ -150,4 +150,22 @@ test("backup answers with the last run and the last success", async () => {
     lastRun: { time: "2026-11-15T03:31:12Z", problem: null },
     lastSuccess: "2026-11-15T03:31:10Z",
   });
+});
+
+test("alerts include a failed last backup", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "backup-"));
+  await writeFile(join(dir, "backup-last-run"), "2026-11-16T03:30:05Z couldn't open the backup repository\n");
+  const response = await buildApp(allOn, dir).inject({ method: "GET", url: "/system/alerts" });
+  await rm(dir, { recursive: true, force: true });
+  const problems = response.json().problems;
+  assert.ok(problems.some((p: { code: string; message: string }) => p.code === "backup-failed" && p.message === "The last backup failed: couldn't open the backup repository."));
+});
+
+test("an unreadable backup status doesn't stop the alerts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "backup-"));
+  await mkdir(join(dir, "backup-last-run"));
+  const response = await buildApp(allOn, dir).inject({ method: "GET", url: "/system/alerts" });
+  await rm(dir, { recursive: true, force: true });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().problems.some((p: { code: string }) => p.code === "backup-failed"), false);
 });
