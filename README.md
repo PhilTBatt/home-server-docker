@@ -1,12 +1,12 @@
 # Home Hub
 
-TODO (Phil): what Home Hub is, in a sentence or two.
+Home Hub is my server, to do what I want with, and to have futuristic things built on it that can help me do what I want: a cool program that knows stuff and can help me out.
 
 ## Why I built it
-TODO (Phil): why you're building it and what you want to learn from it.
+I built it to learn, to help me do more coding stuff, and because it was cool as shit.
 
 ## How I built it
-TODO (Phil): how you built it, including how you used AI help, in your own words.
+I built it using my own ideas, with AI helping me plan and learn what I needed to do to make it. I made all the decisions and made each commit myself.
 
 ## How the parts fit
 - Everything runs on one Ubuntu server, from one compose file: `docker-compose.yaml`.
