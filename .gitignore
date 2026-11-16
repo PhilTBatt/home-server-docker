@@ -17,6 +17,7 @@ mcp/node_modules/
 mcp/dist/
 jarvis/node_modules/
 jarvis/dist/
+jarvis/data/
 .claude/settings.local.json
 CLAUDE.local.md
 PLAN.md

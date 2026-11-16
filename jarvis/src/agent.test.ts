@@ -141,7 +141,8 @@ test("times first words from the question, at the first streamed text", async ()
   await agent.emit(textDelta("Phil."));
   clock.set(3400);
   await agent.emit(success("Hi Phil."));
-  assert.deepEqual(await answer, { text: "Hi Phil.", firstWordsMs: 600, totalMs: 1400 });
+  const { text, firstWordsMs, totalMs } = await answer;
+  assert.deepEqual({ text, firstWordsMs, totalMs }, { text: "Hi Phil.", firstWordsMs: 600, totalMs: 1400 });
 });
 
 test("the engine's ready time counts from starting the session", async () => {
@@ -196,7 +197,8 @@ test("no first-words time when nothing was streamed", async () => {
   await tick();
   clock.set(700);
   await agent.emit(success("Hello"));
-  assert.deepEqual(await answer, { text: "Hello", firstWordsMs: null, totalMs: 700 });
+  const { text, firstWordsMs, totalMs } = await answer;
+  assert.deepEqual({ text, firstWordsMs, totalMs }, { text: "Hello", firstWordsMs: null, totalMs: 700 });
 });
 
 test("each question is timed from its own start", async () => {
@@ -206,7 +208,8 @@ test("each question is timed from its own start", async () => {
   await tick();
   clock.set(1000);
   await agent.emit(textDelta("1"), success("1"));
-  assert.deepEqual(await first, { text: "1", firstWordsMs: 1000, totalMs: 1000 });
+  const one = await first;
+  assert.deepEqual({ text: one.text, firstWordsMs: one.firstWordsMs, totalMs: one.totalMs }, { text: "1", firstWordsMs: 1000, totalMs: 1000 });
   clock.set(5000);
   const second = session.ask("Two");
   await tick();
@@ -214,7 +217,8 @@ test("each question is timed from its own start", async () => {
   await agent.emit(textDelta("2"));
   clock.set(5500);
   await agent.emit(success("2"));
-  assert.deepEqual(await second, { text: "2", firstWordsMs: 300, totalMs: 500 });
+  const two = await second;
+  assert.deepEqual({ text: two.text, firstWordsMs: two.firstWordsMs, totalMs: two.totalMs }, { text: "2", firstWordsMs: 300, totalMs: 500 });
   assert.equal(agent.sent.length, 2);
 });
 
@@ -515,4 +519,85 @@ test("nothing is added after the queue ends", async () => {
   queue.end();
   queue.push("too late");
   assert.equal((await queue.messages.next()).done, true);
+});
+
+function roundStart(parent: string | null = null) {
+  return { type: "stream_event", parent_tool_use_id: parent, event: { type: "message_start", message: { id: "msg" } } };
+}
+
+function usage(input: number, output: number, cacheWrite = 0, cacheRead = 0) {
+  return { input_tokens: input, output_tokens: output, cache_creation_input_tokens: cacheWrite, cache_read_input_tokens: cacheRead };
+}
+
+test("an answer reports its rounds and tool uses, counting only Jarvis's own", async () => {
+  const { agent, session } = setup();
+  const answer = session.ask("What's in my notes?");
+  await tick();
+  await agent.emit(
+    roundStart(),
+    { type: "assistant", parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }] } },
+    roundStart("toolu_9"),
+    { type: "assistant", parent_tool_use_id: "toolu_9", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_2", name: "Read", input: {} }] } },
+    roundStart(),
+    success("It covers your life."),
+  );
+  const stats = (await answer).stats;
+  assert.equal(stats?.rounds, 2);
+  assert.equal(stats?.toolUses, 1);
+});
+
+test("an answer's tokens include cached input, as the engine reports them", async () => {
+  const { agent, session } = setup();
+  const answer = session.ask("Hello?");
+  await tick();
+  await agent.emit({ ...success("Hi."), usage: usage(100, 20, 300, 4000) });
+  const stats = (await answer).stats;
+  assert.equal(stats?.inputTokens, 4400);
+  assert.equal(stats?.outputTokens, 20);
+});
+
+test("an answer with no usage reported counts zero tokens", async () => {
+  const { agent, session } = setup();
+  const answer = session.ask("Hello?");
+  await tick();
+  await agent.emit(success("Hi."));
+  const stats = (await answer).stats;
+  assert.equal(stats?.inputTokens, 0);
+  assert.equal(stats?.outputTokens, 0);
+});
+
+test("each answer's cost is the change in the engine's running total", async () => {
+  const { agent, session } = setup();
+  const first = session.ask("One");
+  await tick();
+  await agent.emit(success("1", 0.002));
+  assert.ok(Math.abs(((await first).stats?.costUsd ?? 0) - 0.002) < 1e-12);
+  const second = session.ask("Two");
+  await tick();
+  await agent.emit(success("2", 0.0035));
+  assert.ok(Math.abs(((await second).stats?.costUsd ?? 0) - 0.0015) < 1e-12);
+  assert.equal(session.costUsd(), 0.0035);
+});
+
+test("a failed question's cost isn't charged to the next answer", async () => {
+  const { agent, session } = setup();
+  const first = session.ask("One");
+  await tick();
+  const check = assert.rejects(first);
+  await agent.emit({ type: "result", subtype: "error_during_execution", is_error: true, total_cost_usd: 0.001, errors: ["Overloaded"], permission_denials: [] });
+  await check;
+  const second = session.ask("Two");
+  await tick();
+  await agent.emit(success("2", 0.003));
+  assert.ok(Math.abs(((await second).stats?.costUsd ?? 0) - 0.002) < 1e-12);
+});
+
+test("the engine's thinking isn't counted, and nothing is ever recovered", async () => {
+  const { agent, session } = setup();
+  const answer = session.ask("Hello?");
+  await tick();
+  await agent.emit(success("Hi."));
+  const stats = (await answer).stats;
+  assert.equal(stats?.earlierThinkingBlocks, null);
+  assert.equal(stats?.recovered, false);
 });

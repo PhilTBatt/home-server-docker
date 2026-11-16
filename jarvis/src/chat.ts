@@ -1,5 +1,6 @@
 import { closedMessage, type AgentSession } from "./agent.js";
-import { brainDir, type Engine } from "./config.js";
+import type { Outcome } from "./answer-log.js";
+import { brainDir, type Engine, type ThinkingHistory } from "./config.js";
 import { withTimeout } from "./run.js";
 import { seconds, type Answer } from "./timing.js";
 
@@ -31,6 +32,7 @@ export const engineNames: Record<Engine, string> = {
 export const exitWords = ["exit", "quit"];
 export const greeting = "Jarvis is listening. Type a message and press Enter, or type exit to stop.";
 export const stoppedMessage = "Jarvis has stopped. Start him again to carry on.";
+export const restartNote = "that went wrong, so starting again without the earlier thinking";
 
 export type ChatDeps = {
   lines: AsyncIterable<string>;
@@ -38,6 +40,7 @@ export type ChatDeps = {
   write: (text: string) => void;
   prompt: () => void;
   questionTimeoutMs: number;
+  record?: (outcome: Outcome) => Promise<void>;
 };
 
 export type PromptLine = {
@@ -76,8 +79,13 @@ export function toolNote(name: string, input: unknown): string {
   return `using ${name}`;
 }
 
-export function engineLine(engine: Engine): string {
-  return `Engine: ${engineNames[engine]}`;
+export const thinkingNotes: Record<ThinkingHistory, string> = {
+  keep: "keeping its thinking between questions",
+  drop: "dropping its thinking after each answer",
+};
+
+export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): string {
+  return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
 export function timingLine(answer: Answer): string {
@@ -98,21 +106,20 @@ async function reply(deps: ChatDeps, message: string): Promise<"answered" | "sto
   };
   const newLine = () => (lineEnded ? "" : "\n");
   show("Jarvis: ");
+  let answer: Answer;
   try {
-    const answer = await withTimeout(
+    answer = await withTimeout(
       deps.session.ask(message, {
         text: (delta) => {
           streamed = true;
           show(printable(delta));
         },
         tool: (name, input) => show(`${newLine()}  (${printable(toolNote(name, input))})\n`),
+        restart: () => show(`${newLine()}  (${restartNote})\n`),
       }),
       deps.questionTimeoutMs,
       () => deps.session.close(),
     );
-    if (!streamed) show(printable(answer.text));
-    show(`${newLine()}  ${timingLine(answer)}\n`);
-    return "answered";
   } catch (error) {
     const reason = printable(error instanceof Error ? error.message : String(error));
     if (reason === closedMessage) {
@@ -120,8 +127,13 @@ async function reply(deps: ChatDeps, message: string): Promise<"answered" | "sto
       return "stopped";
     }
     show(reason.startsWith("Refused:") ? `${newLine()}  (${reason})\n` : `${newLine()}Jarvis couldn't answer: ${reason}\n`);
+    await deps.record?.({ error: reason });
     return "failed";
   }
+  if (!streamed) show(printable(answer.text));
+  show(`${newLine()}  ${timingLine(answer)}\n`);
+  await deps.record?.({ answer });
+  return "answered";
 }
 
 export async function runChat(deps: ChatDeps): Promise<void> {

@@ -1,7 +1,18 @@
+export type AnswerStats = {
+  rounds: number;
+  toolUses: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null;
+  earlierThinkingBlocks: number | null;
+  recovered: boolean;
+};
+
 export type Answer = {
   text: string;
   firstWordsMs: number | null;
   totalMs: number;
+  stats?: AnswerStats;
 };
 
 export type Summary = {

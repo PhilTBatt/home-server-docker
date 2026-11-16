@@ -1,0 +1,204 @@
+import { logVersion, type LogLine } from "./answer-log.js";
+import { engines, thinkingHistories, type Engine, type ThinkingHistory } from "./config.js";
+import { seconds, summarise } from "./timing.js";
+
+export type ReadLog = { lines: LogLine[]; skipped: number };
+
+export type Group = {
+  label: string;
+  engine: Engine;
+  thinking: ThinkingHistory | null;
+  model: string;
+  lines: LogLine[];
+};
+
+const numberFields = ["firstWordsMs", "totalMs", "rounds", "toolUses", "inputTokens", "outputTokens", "costUsd", "earlierThinkingBlocks"] as const;
+const lastQuestionColumn = 6;
+
+function isNumberOrNull(value: unknown): boolean {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+export function isLogLine(value: unknown): value is LogLine {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const line = value as Record<string, unknown>;
+  return (
+    line.v === logVersion &&
+    typeof line.at === "string" &&
+    typeof line.chat === "string" &&
+    Number.isInteger(line.question) &&
+    (line.question as number) >= 1 &&
+    (engines as readonly unknown[]).includes(line.engine) &&
+    (line.thinking === null || (thinkingHistories as readonly unknown[]).includes(line.thinking)) &&
+    typeof line.model === "string" &&
+    typeof line.ok === "boolean" &&
+    (line.error === null || typeof line.error === "string") &&
+    numberFields.every((field) => isNumberOrNull(line[field])) &&
+    (line.recovered === null || typeof line.recovered === "boolean")
+  );
+}
+
+export function readLog(text: string): ReadLog {
+  const lines: LogLine[] = [];
+  let skipped = 0;
+  for (const raw of text.split("\n")) {
+    if (raw.trim() === "") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      skipped++;
+      continue;
+    }
+    if (isLogLine(parsed)) lines.push(parsed);
+    else skipped++;
+  }
+  return { lines, skipped };
+}
+
+function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
+  if (engine === "sdk") return "Agent SDK";
+  return thinking === null ? "API" : `API, ${thinking}`;
+}
+
+function order(group: Group): [number, number, string] {
+  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model];
+}
+
+function compareGroups(a: Group, b: Group): number {
+  const [engineA, thinkingA, modelA] = order(a);
+  const [engineB, thinkingB, modelB] = order(b);
+  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0);
+}
+
+export function groupLines(lines: LogLine[]): Group[] {
+  const groups = new Map<string, Group>();
+  for (const line of lines) {
+    const thinking = line.engine === "api" ? line.thinking : null;
+    const key = JSON.stringify([line.engine, thinking, line.model]);
+    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, lines: [] };
+    group.lines.push(line);
+    groups.set(key, group);
+  }
+  const models = new Set(lines.map((line) => line.model));
+  return [...groups.values()]
+    .map((group) => ({ ...group, label: models.size > 1 ? `${settingName(group.engine, group.thinking)} (${group.model})` : settingName(group.engine, group.thinking) }))
+    .sort(compareGroups);
+}
+
+function numbers(lines: LogLine[], pick: (line: LogLine) => number | null): number[] {
+  return lines.map(pick).filter((value): value is number => value !== null);
+}
+
+function median(values: number[]): number | null {
+  return summarise(values)?.median ?? null;
+}
+
+function average(values: number[]): number | null {
+  return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function shown(value: number | null, format: (value: number) => string): string {
+  return value === null ? "-" : format(value);
+}
+
+export function withCommas(value: number): string {
+  return Math.round(value)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function dollars(value: number): string {
+  return `$${value.toFixed(4)}`;
+}
+
+function fineDollars(value: number): string {
+  return `$${value.toFixed(5)}`;
+}
+
+function oneDecimal(value: number): string {
+  return value.toFixed(1);
+}
+
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+export function table(header: string[], rows: string[][]): string {
+  const widths = header.map((cell, column) => Math.max(cell.length, ...rows.map((row) => row[column].length)));
+  const render = (cells: string[]) =>
+    cells
+      .map((cell, column) => (column === 0 ? cell.padEnd(widths[0]) : cell.padStart(widths[column])))
+      .join("   ")
+      .trimEnd();
+  return [render(header), ...rows.map(render)].join("\n");
+}
+
+function summaryRows(groups: Group[]): string[][] {
+  const answered = groups.map((group) => group.lines.filter((line) => line.ok));
+  const row = (label: string, cell: (group: Group, answered: LogLine[]) => string) => [label, ...groups.map((group, index) => cell(group, answered[index]))];
+  return [
+    row("Answers", (_group, lines) => String(lines.length)),
+    row("Failed", (group) => String(group.lines.filter((line) => !line.ok).length)),
+    row("Recovered", (group, lines) => (group.engine === "api" ? String(lines.filter((line) => line.recovered === true).length) : "-")),
+    row("First words, median", (_group, lines) => shown(median(numbers(lines, (line) => line.firstWordsMs)), seconds)),
+    row("Full answer, median", (_group, lines) => shown(median(numbers(lines, (line) => line.totalMs)), seconds)),
+    row("Rounds, average", (_group, lines) => shown(average(numbers(lines, (line) => line.rounds)), oneDecimal)),
+    row("Tool uses, average", (_group, lines) => shown(average(numbers(lines, (line) => line.toolUses)), oneDecimal)),
+    row("Input tokens, median", (_group, lines) => shown(median(numbers(lines, (line) => line.inputTokens)), withCommas)),
+    row("Output tokens, median", (_group, lines) => shown(median(numbers(lines, (line) => line.outputTokens)), withCommas)),
+    row("Earlier thinking blocks, median", (group, lines) => (group.engine === "api" ? shown(median(numbers(lines, (line) => line.earlierThinkingBlocks)), withCommas) : "-")),
+    row("Cost per answer, median", (_group, lines) => shown(median(numbers(lines, (line) => line.costUsd)), fineDollars)),
+    row("Cost, total", (group) => {
+      const costs = numbers(group.lines, (line) => line.costUsd);
+      return costs.length === 0 ? "-" : dollars(costs.reduce((sum, cost) => sum + cost, 0));
+    }),
+  ];
+}
+
+function questionColumn(question: number): number {
+  return Math.min(question, lastQuestionColumn);
+}
+
+function questionRows(groups: Group[]): string[][] {
+  return groups.map((group) => [
+    group.label,
+    ...Array.from({ length: lastQuestionColumn }, (_unused, index) => {
+      const lines = group.lines.filter((line) => line.ok && questionColumn(line.question) === index + 1);
+      return shown(median(numbers(lines, (line) => line.inputTokens)), withCommas);
+    }),
+  ]);
+}
+
+function failureLines(groups: Group[]): string[] {
+  return groups.flatMap((group) => {
+    const counts = new Map<string, number>();
+    for (const line of group.lines) if (!line.ok) counts.set(line.error ?? "other", (counts.get(line.error ?? "other") ?? 0) + 1);
+    if (counts.size === 0) return [];
+    const kinds = [...counts.entries()].sort(([kindA, countA], [kindB, countB]) => countB - countA || (kindA < kindB ? -1 : 1));
+    return [`  ${group.label}: ${kinds.map(([kind, count]) => `${kind} (${count})`).join(", ")}`];
+  });
+}
+
+export function compareReport({ lines, skipped }: ReadLog): string {
+  const out: string[] = [];
+  const skippedNote = `${plural(skipped, "line")} couldn't be read and ${skipped === 1 ? "was" : "were"} left out.`;
+  if (lines.length === 0) {
+    out.push("No answers logged yet. Set JARVIS_LOG=on, chat for a while, then run this again.");
+    if (skipped > 0) out.push(skippedNote);
+    return `${out.join("\n")}\n`;
+  }
+  const days = lines.map((line) => line.at.slice(0, 10)).sort();
+  const span = days[0] === days[days.length - 1] ? `on ${days[0]}` : `from ${days[0]} to ${days[days.length - 1]}`;
+  const chats = new Set(lines.map((line) => line.chat)).size;
+  out.push(`${plural(lines.length, "question")} logged in ${plural(chats, "chat")}, ${span} (UTC).`);
+  if (skipped > 0) out.push(skippedNote);
+  const groups = groupLines(lines);
+  out.push("", table(["", ...groups.map((group) => group.label)], summaryRows(groups)));
+  out.push("", "Input tokens by question number in the chat, median:");
+  out.push(table(["", ...Array.from({ length: lastQuestionColumn }, (_unused, index) => (index + 1 === lastQuestionColumn ? `${index + 1}+` : String(index + 1)))], questionRows(groups)));
+  const failures = failureLines(groups);
+  if (failures.length > 0) out.push("", "Failures:", ...failures);
+  out.push("", "Medians and averages leave out failed questions; the total cost includes them. Costs are estimates: the Agent SDK's own, and the plain API's from list prices.");
+  return `${out.join("\n")}\n`;
+}

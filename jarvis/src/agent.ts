@@ -16,6 +16,7 @@ export type AgentSettings = {
 export type AnswerListener = {
   text?: (delta: string) => void;
   tool?: (name: string, input: unknown) => void;
+  restart?: () => void;
 };
 
 export type AgentSession = {
@@ -38,6 +39,8 @@ type Pending = {
   resolve: (answer: Answer) => void;
   reject: (error: Error) => void;
   listener: AnswerListener;
+  rounds: number;
+  toolUses: number;
 };
 
 export function agentOptions(settings: AgentSettings): Options {
@@ -104,6 +107,10 @@ function textDelta(message: SDKMessage): string | null {
   return message.event.delta.text;
 }
 
+function startsRound(message: SDKMessage): boolean {
+  return message.type === "stream_event" && message.parent_tool_use_id === null && message.event.type === "message_start";
+}
+
 function toolCalls(message: SDKMessage): { name: string; input: unknown }[] {
   if (message.type !== "assistant" || message.parent_tool_use_id !== null) return [];
   return message.message.content.flatMap((block) => (block.type === "tool_use" ? [{ name: block.name, input: block.input }] : []));
@@ -144,13 +151,32 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
       if (pending.firstWordsMs === null) pending.firstWordsMs = settings.now() - pending.started;
       pending.listener.text?.(text);
     }
-    for (const call of toolCalls(message)) pending.listener.tool?.(call.name, call.input);
+    if (startsRound(message)) pending.rounds++;
+    for (const call of toolCalls(message)) {
+      pending.toolUses++;
+      pending.listener.tool?.(call.name, call.input);
+    }
     if (message.type !== "result") return;
+    const costBefore = cost ?? 0;
     cost = message.total_cost_usd;
     const answered = pending;
     pending = null;
     if (message.subtype === "success" && !message.is_error && denials(message).length === 0) {
-      answered.resolve({ text: message.result, firstWordsMs: answered.firstWordsMs, totalMs: settings.now() - answered.started });
+      const usage = message.usage;
+      answered.resolve({
+        text: message.result,
+        firstWordsMs: answered.firstWordsMs,
+        totalMs: settings.now() - answered.started,
+        stats: {
+          rounds: answered.rounds,
+          toolUses: answered.toolUses,
+          inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_creation_input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+          outputTokens: usage?.output_tokens ?? 0,
+          costUsd: Math.max(0, message.total_cost_usd - costBefore),
+          earlierThinkingBlocks: null,
+          recovered: false,
+        },
+      });
     } else {
       answered.reject(new Error(resultError(message)));
     }
@@ -172,7 +198,7 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
       if (stopped !== null) return Promise.reject(stopped);
       if (pending !== null) return Promise.reject(new Error("One question at a time"));
       return new Promise<Answer>((resolve, reject) => {
-        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener };
+        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener, rounds: 0, toolUses: 0 };
         input.push(question);
       });
     },

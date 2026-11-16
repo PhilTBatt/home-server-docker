@@ -145,7 +145,7 @@ test("no first-words time when the answer has no text", async () => {
     totalMs: 700,
     inputTokens: 0,
     outputTokens: 0,
-    content: [],
+    content: [{ type: "text", text: "" }],
     stopReason: "end_turn",
   });
 });
@@ -361,10 +361,13 @@ test("a tool request whose input isn't valid JSON is unreadable", async () => {
   await assert.rejects(askDirect(request()), { message: "The API sent something unreadable" });
 });
 
-test("blank text isn't kept as a block, since the API refuses empty text when it's sent back", async () => {
+test("blank text is kept exactly, since a turn with thinking must go back unchanged", async () => {
   fakeApi([...opening, textDelta("  "), event({ type: "content_block_stop", index: 0 }), ...toolUse(1, "toolu_1", "list_folder", ['{"path": "."}']), ...toolStop]);
   const answer = await askDirect(request());
-  assert.deepEqual(answer.content, [{ type: "tool_use", id: "toolu_1", name: "list_folder", input: { path: "." } }]);
+  assert.deepEqual(answer.content, [
+    { type: "text", text: "  " },
+    { type: "tool_use", id: "toolu_1", name: "list_folder", input: { path: "." } },
+  ]);
 });
 
 test("a block that never finishes isn't kept", async () => {
@@ -374,20 +377,73 @@ test("a block that never finishes isn't kept", async () => {
   assert.equal(answer.stopReason, "max_tokens");
 });
 
-test("thinking isn't shown, timed or kept", async () => {
+test("thinking is kept exactly, with its signature, but isn't shown or timed", async () => {
   fakeApi([
     event({ type: "message_start", message: { id: "msg_1" } }),
-    event({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
-    event({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Hmm." } }),
+    event({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }),
+    event({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Phil wants " } }),
+    event({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "his index." } }),
+    event({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "EqQBsig" } }),
     event({ type: "content_block_stop", index: 0 }),
     event({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
     event({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Hi." } }),
     event({ type: "content_block_stop", index: 1 }),
     ...closing.slice(1),
   ]);
-  const answer = await askDirect(request());
+  const heard: string[] = [];
+  const answer = await askDirect(request({ now: clock([0, 300, 900]), onText: (delta) => heard.push(delta) }));
   assert.equal(answer.text, "Hi.");
-  assert.deepEqual(answer.content, [{ type: "text", text: "Hi." }]);
+  assert.deepEqual(heard, ["Hi."]);
+  assert.equal(answer.firstWordsMs, 300);
+  assert.deepEqual(answer.content, [
+    { type: "thinking", thinking: "Phil wants his index.", signature: "EqQBsig" },
+    { type: "text", text: "Hi." },
+  ]);
+});
+
+test("thinking with no text, only a signature, is kept exactly too", async () => {
+  fakeApi([
+    event({ type: "message_start", message: { id: "msg_1" } }),
+    event({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }),
+    event({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "" } }),
+    event({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "EqQBonly" } }),
+    event({ type: "content_block_stop", index: 0 }),
+    ...toolUse(1, "toolu_1", "read_file", ['{"path": "index.md"}']),
+    ...toolStop,
+  ]);
+  const answer = await askDirect(request());
+  assert.deepEqual(answer.content, [
+    { type: "thinking", thinking: "", signature: "EqQBonly" },
+    { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } },
+  ]);
+});
+
+test("redacted thinking and blocks of unknown kinds arrive whole and are kept exactly", async () => {
+  fakeApi([
+    event({ type: "message_start", message: { id: "msg_1" } }),
+    event({ type: "content_block_start", index: 0, content_block: { type: "redacted_thinking", data: "EmwKAhgB" } }),
+    event({ type: "content_block_stop", index: 0 }),
+    event({ type: "content_block_start", index: 1, content_block: { type: "something_new", value: 7, nested: { a: [1, 2] } } }),
+    event({ type: "content_block_stop", index: 1 }),
+    event({ type: "content_block_start", index: 2, content_block: { type: "text", text: "" } }),
+    event({ type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "Done." } }),
+    event({ type: "content_block_stop", index: 2 }),
+    ...closing.slice(1),
+  ]);
+  const answer = await askDirect(request());
+  assert.deepEqual(answer.content, [
+    { type: "redacted_thinking", data: "EmwKAhgB" },
+    { type: "something_new", value: 7, nested: { a: [1, 2] } },
+    { type: "text", text: "Done." },
+  ]);
+});
+
+test("a kept block is a copy, so changing it can't change what the stream said", async () => {
+  const start = { type: "content_block_start", index: 0, content_block: { type: "something_new", nested: { a: [1] } } };
+  fakeApi([event({ type: "message_start", message: { id: "msg_1" } }), event(start), event({ type: "content_block_stop", index: 0 }), ...closing.slice(1)]);
+  const answer = await askDirect(request());
+  (answer.content[0] as unknown as { nested: { a: number[] } }).nested.a.push(2);
+  assert.deepEqual(start.content_block.nested.a, [1]);
 });
 
 test("the stop reason is empty when the stream doesn't give one", async () => {

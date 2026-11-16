@@ -3,7 +3,8 @@ import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
-import { apiChatSystem, chatModel, chatSystem, costLine, engineLine, exitWords, greeting, printable, promptWhileOpen, questionTimeoutMs, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
+import type { Outcome } from "./answer-log.js";
+import { apiChatSystem, chatModel, chatSystem, costLine, engineLine, exitWords, greeting, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
 import type { Answer } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -97,6 +98,12 @@ test("both engines share the same reading rules", () => {
     assert.ok(chatSystem.includes(rule));
     assert.ok(apiChatSystem.includes(rule));
   }
+});
+
+test("the engine line says what the plain API engine does with its thinking", () => {
+  assert.equal(engineLine("api", "keep"), "Engine: a plain API call, keeping its thinking between questions");
+  assert.equal(engineLine("api", "drop"), "Engine: a plain API call, dropping its thinking after each answer");
+  assert.equal(engineLine("sdk", "drop"), "Engine: the Agent SDK");
 });
 
 test("the engine line names the engine", () => {
@@ -273,6 +280,21 @@ test("a failed question says why, and the chat carries on", async () => {
   assert.deepEqual(session.asked, ["Hello", "Again"]);
 });
 
+test("when an answer starts again, a note says so before the new attempt's words", async () => {
+  const session = fakeSession({
+    "Read it": async (listener) => {
+      listener.text?.("Let me check.");
+      listener.tool?.("read_file", { path: "index.md" });
+      listener.restart?.();
+      listener.text?.("Let me check.");
+      return answer("Let me check.", 100, 400);
+    },
+  });
+  const { run, output } = chat(session, ["Read it"]);
+  await run();
+  assert.ok(output().includes(`Jarvis: Let me check.\n  (reading index.md)\n  (${restartNote})\nLet me check.\n  (first words`));
+});
+
 test("a refused file read shows as a note, not a failure, and the chat carries on", async () => {
   const session = fakeSession({
     "Read /etc/passwd": async (listener) => {
@@ -447,4 +469,94 @@ test("the timing line copes with no first words", () => {
 test("the cost line rounds to four decimal places", () => {
   assert.equal(costLine(0.00123456), "Cost of this chat: about $0.0012");
   assert.equal(costLine(null), "Cost of this chat: unknown");
+});
+
+function recorder(output?: () => string) {
+  const outcomes: Outcome[] = [];
+  const seen: string[] = [];
+  return {
+    outcomes,
+    seen,
+    record: async (outcome: Outcome) => {
+      outcomes.push(outcome);
+      if (output !== undefined) seen.push(output());
+    },
+  };
+}
+
+test("each answer is handed to the log after its timing line is shown", async () => {
+  const session = fakeSession({ Hello: hello });
+  let read = () => "";
+  const log = recorder(() => read());
+  const { run, output } = chat(session, ["Hello"], { record: log.record });
+  read = output;
+  await run();
+  assert.deepEqual(log.outcomes, [{ answer: answer("Hi Phil.", 500, 1200) }]);
+  assert.ok(log.seen[0].endsWith("Jarvis: Hi Phil.\n  (first words 0.50 s, full answer 1.20 s)\n"));
+});
+
+test("failures, refusals and time-outs are handed to the log with what went wrong", async () => {
+  const session = fakeSession({
+    Hello: async () => {
+      throw new Error("Overloaded");
+    },
+    Refused: async () => {
+      throw new Error("Refused: Read");
+    },
+    Slow: () => new Promise<Answer>(() => {}),
+  });
+  const log = recorder();
+  const { run } = chat(session, ["Hello", "Refused", "Slow"], { record: log.record, questionTimeoutMs: 20 });
+  await run();
+  assert.deepEqual(log.outcomes, [{ error: "Overloaded" }, { error: "Refused: Read" }, { error: "No answer within 0.02 seconds" }]);
+});
+
+test("a question stopped with Ctrl+C isn't logged, since it says nothing about the engine", async () => {
+  const session: FakeSession = fakeSession({
+    Hello: (listener) =>
+      new Promise<Answer>((_resolve, reject) => {
+        listener.text?.("Let me ");
+        session.close();
+        reject(new Error(closedMessage));
+      }),
+  });
+  const log = recorder();
+  const { run } = chat(session, ["Hello"], { record: log.record });
+  await run();
+  assert.deepEqual(log.outcomes, []);
+});
+
+test("the log is waited for before the next prompt, so lines can't overlap", async () => {
+  const session = fakeSession({ Hello: hello, Again: hello });
+  const events: string[] = [];
+  const { run } = chat(session, ["Hello", "Again"], {
+    record: async () => {
+      events.push("log started");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      events.push("log finished");
+    },
+    prompt: () => events.push("prompt"),
+  });
+  await run();
+  assert.deepEqual(events, ["prompt", "log started", "log finished", "prompt", "log started", "log finished", "prompt"]);
+});
+
+test("a failure is logged before the next prompt too", async () => {
+  const session = fakeSession({
+    Hello: async () => {
+      throw new Error("Overloaded");
+    },
+    Again: hello,
+  });
+  const events: string[] = [];
+  const { run } = chat(session, ["Hello", "Again"], {
+    record: async () => {
+      events.push("log started");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      events.push("log finished");
+    },
+    prompt: () => events.push("prompt"),
+  });
+  await run();
+  assert.deepEqual(events, ["prompt", "log started", "log finished", "prompt", "log started", "log finished", "prompt"]);
 });

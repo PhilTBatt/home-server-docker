@@ -6,7 +6,8 @@
   "scripts": {
     "test": "tsc && node --test \"dist/**/*.test.js\"",
     "speed-test": "tsc && node dist/speed-test.js",
-    "chat": "tsc && node dist/jarvis.js"
+    "chat": "tsc && node dist/jarvis.js",
+    "compare": "tsc && node dist/compare.js"
   },
   "keywords": [],
   "author": "",

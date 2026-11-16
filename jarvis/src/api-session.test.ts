@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { closedMessage, type AgentSession } from "./agent.js";
-import { answerCost, maxToolSteps, pricesPerMTok, startApiSession, type ApiSettings, type SendRequest } from "./api-session.js";
+import { answerCost, echoed, hasVisibleContent, maxToolSteps, pricesPerMTok, startApiSession, thinkingBlocksIn, withoutThinking, type ApiSettings, type SendRequest } from "./api-session.js";
 import type { BrainTools, ToolOutcome } from "./brain-tools.js";
 import type { DirectAnswer, DirectRequest } from "./direct.js";
 
@@ -65,7 +65,8 @@ function clock(times: number[]): () => number {
 test("the answer comes back with its timings, measured by the session from the question", async () => {
   const { send } = recorder([async () => reply("Hi.")]);
   const session = startApiSession({ ...settings, now: clock([1000, 1000, 2500]) }, send);
-  assert.deepEqual(await session.ask("Hello?"), { text: "Hi.", firstWordsMs: 300, totalMs: 1500 });
+  const { text, firstWordsMs, totalMs } = await session.ask("Hello?");
+  assert.deepEqual({ text, firstWordsMs, totalMs }, { text: "Hi.", firstWordsMs: 300, totalMs: 1500 });
 });
 
 test("he remembers the conversation: each question carries the turns before it", async () => {
@@ -256,14 +257,14 @@ function fakeTools(outcomes: Record<string, ToolOutcome> = {}) {
 
 const readIndex = { id: "toolu_1", name: "read_file", input: { path: "index.md" } };
 
-test("with tools, they're sent with every request and thinking is off", async () => {
+test("with tools, they're sent with every request and thinking stays at its default", async () => {
   const { tools } = fakeTools();
   const { send, requests } = recorder([async () => toolReply([readIndex]), async () => reply("It covers your life.")]);
   await startApiSession({ ...settings, tools }, send).ask("What's in my notes?");
   assert.equal(requests.length, 2);
   for (const request of requests) {
     assert.deepEqual(request.tools, tools.definitions);
-    assert.equal(request.thinkingOff, true);
+    assert.equal(request.thinkingOff, false);
   }
 });
 
@@ -380,7 +381,8 @@ test("first words are timed from the question, even when they come in a later ro
   const { tools } = fakeTools();
   const { send } = recorder([async () => toolReply([readIndex]), async () => ({ ...reply("Done."), firstWordsMs: 200 })]);
   const session = startApiSession({ ...settings, tools, now: clock([0, 0, 1500, 2000]) }, send);
-  assert.deepEqual(await session.ask("Read it"), { text: "Done.", firstWordsMs: 1700, totalMs: 2000 });
+  const { text, firstWordsMs, totalMs } = await session.ask("Read it");
+  assert.deepEqual({ text, firstWordsMs, totalMs }, { text: "Done.", firstWordsMs: 1700, totalMs: 2000 });
 });
 
 test("first words from the text before a tool count, not the later answer", async () => {
@@ -452,4 +454,261 @@ for (const stopReason of ["max_tokens", "end_turn", null]) {
 test("a tool request is cut off when the session has no tools to run it", async () => {
   const { send } = recorder([async () => toolReply([readIndex])]);
   await assert.rejects(startApiSession(settings, send).ask("Read it"), { message: "The answer was cut off part-way through using a tool" });
+});
+
+
+test("a turn with no thinking goes back without blank text, which the API refuses", () => {
+  assert.deepEqual(
+    echoed([
+      { type: "text", text: "  " },
+      { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } },
+      { type: "text", text: "" },
+    ]),
+    [{ type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } }],
+  );
+});
+
+test("a turn with thinking goes back exactly, blank text and all, so its signatures stay valid", () => {
+  const withThinking = [
+    { type: "thinking", thinking: "Hmm.", signature: "sig1" },
+    { type: "text", text: "" },
+    { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } },
+  ];
+  assert.deepEqual(echoed(withThinking), withThinking);
+  const withRedacted = [{ type: "redacted_thinking", data: "abc" }, { type: "text", text: " " }];
+  assert.deepEqual(echoed(withRedacted), withRedacted);
+});
+
+test("inside a question, a turn with thinking is sent back exactly with the tool results", async () => {
+  const { tools } = fakeTools();
+  const thinkingTurn = [
+    { type: "thinking", thinking: "Index first.", signature: "sig1" },
+    { type: "text", text: "\n\n" },
+    { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } },
+  ];
+  const { send, requests } = recorder([async () => ({ ...toolReply([readIndex]), content: thinkingTurn }), async () => reply("It covers your life.")]);
+  await startApiSession({ ...settings, tools }, send).ask("What's in my notes?");
+  assert.deepEqual(requests[1].history, [
+    { role: "user", content: "What's in my notes?" },
+    { role: "assistant", content: thinkingTurn },
+  ]);
+});
+
+
+const thinking = (text: string) => ({ type: "thinking" as const, thinking: text, signature: `sig-${text}` });
+
+function thoughtful(text: string, thought = "Hmm.", inputTokens = 100, outputTokens = 20): DirectAnswer {
+  return { ...reply(text, inputTokens, outputTokens), content: [thinking(thought), { type: "text", text }] };
+}
+
+function rejected(message = "The API replied 400: messages: text content blocks must contain non-whitespace text") {
+  return async (): Promise<DirectAnswer> => {
+    throw new Error(message);
+  };
+}
+
+test("an answer reports its rounds, tool uses, tokens and cost", async () => {
+  const { tools } = fakeTools();
+  const { send } = recorder([async () => toolReply([readIndex]), async () => reply("Done.", 1000, 100)]);
+  const answer = await startApiSession({ ...settings, tools }, send).ask("Read it");
+  assert.equal(answer.stats?.rounds, 2);
+  assert.equal(answer.stats?.toolUses, 1);
+  assert.equal(answer.stats?.inputTokens, 1200);
+  assert.equal(answer.stats?.outputTokens, 130);
+  assert.ok(Math.abs((answer.stats?.costUsd ?? 0) - (1200 * 0.1 + 130 * 0.5) / 1_000_000) < 1e-12);
+  assert.equal(answer.stats?.recovered, false);
+  assert.equal(answer.stats?.earlierThinkingBlocks, 0);
+});
+
+test("each answer's cost is its own, while the session's cost is the running total", async () => {
+  const { send } = recorder([async () => reply("One.", 1000, 0), async () => reply("Two.", 2000, 0)]);
+  const session = startApiSession(settings, send);
+  const first = await session.ask("First?");
+  const second = await session.ask("Second?");
+  assert.ok(Math.abs((first.stats?.costUsd ?? 0) - 0.0001) < 1e-12);
+  assert.ok(Math.abs((second.stats?.costUsd ?? 0) - 0.0002) < 1e-12);
+  assert.ok(Math.abs((session.costUsd() ?? 0) - 0.0003) < 1e-12);
+});
+
+test("an answer's cost is unknown for a model without prices", async () => {
+  const { send } = recorder([async () => reply("Hi.")]);
+  const answer = await startApiSession({ ...settings, model: "claude-unknown-1" }, send).ask("Hello?");
+  assert.equal(answer.stats?.costUsd, null);
+});
+
+test("keeping thinking saves each answer exactly, thinking and all, and counts it on the next question", async () => {
+  const { send, requests } = recorder([async () => thoughtful("One."), async () => thoughtful("Two.", "Again.")]);
+  const session = startApiSession({ ...settings, thinkingHistory: "keep" }, send);
+  await session.ask("First?");
+  const second = await session.ask("Second?");
+  assert.deepEqual(requests[1].history, [
+    { role: "user", content: "First?" },
+    { role: "assistant", content: [thinking("Hmm."), { type: "text", text: "One." }] },
+  ]);
+  assert.equal(second.stats?.earlierThinkingBlocks, 1);
+});
+
+test("keeping thinking is the default", async () => {
+  const { send, requests } = recorder([async () => thoughtful("One."), async () => reply("Two.")]);
+  const session = startApiSession(settings, send);
+  await session.ask("First?");
+  await session.ask("Second?");
+  assert.equal(thinkingBlocksIn(requests[1].history ?? []), 1);
+});
+
+test("dropping thinking keeps the answers and file reads but none of the thinking or blank text", async () => {
+  const { tools } = fakeTools();
+  const toolTurn = [thinking("Index first."), { type: "text", text: "\n\n" }, { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } }];
+  const { send, requests } = recorder([async () => ({ ...toolReply([readIndex]), content: toolTurn }), async () => thoughtful("It covers your life."), async () => reply("Yes.")]);
+  const session = startApiSession({ ...settings, tools, thinkingHistory: "drop" }, send);
+  await session.ask("What's in my notes?");
+  const next = await session.ask("Anything else?");
+  assert.deepEqual(requests[2].history, [
+    { role: "user", content: "What's in my notes?" },
+    { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: 'contents of {"path":"index.md"}' }] },
+    { role: "assistant", content: [{ type: "text", text: "It covers your life." }] },
+  ]);
+  assert.equal(next.stats?.earlierThinkingBlocks, 0);
+});
+
+test("dropping thinking still sends it back within a question, while tools are being used", async () => {
+  const { tools } = fakeTools();
+  const toolTurn = [thinking("Index first."), { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } }];
+  const { send, requests } = recorder([async () => ({ ...toolReply([readIndex]), content: toolTurn }), async () => reply("Done.")]);
+  await startApiSession({ ...settings, tools, thinkingHistory: "drop" }, send).ask("Read it");
+  assert.deepEqual(requests[1].history?.[1], { role: "assistant", content: toolTurn });
+});
+
+for (const thinkingHistory of ["keep", "drop"] as const) {
+  test(`an answer that's only thinking isn't saved (${thinkingHistory})`, async () => {
+    const { send, requests } = recorder([async () => ({ ...reply(""), content: [thinking("Hmm."), { type: "text", text: " " }] }), async () => reply("Hi.")]);
+    const session = startApiSession({ ...settings, thinkingHistory }, send);
+    await session.ask("Think?");
+    await session.ask("Hello?");
+    assert.deepEqual(requests[1].history, []);
+  });
+}
+
+test("if the API rejects a request that carries thinking, it's retried once without any thinking, and that sticks", async () => {
+  const { send, requests } = recorder([async () => thoughtful("One."), rejected(), async () => reply("Two."), async () => reply("Three.")]);
+  const session = startApiSession(settings, send);
+  await session.ask("First?");
+  let restarts = 0;
+  const second = await session.ask("Second?", { restart: () => restarts++ });
+  assert.equal(second.text, "Two.");
+  assert.equal(second.stats?.recovered, true);
+  assert.equal(second.stats?.rounds, 1);
+  assert.equal(restarts, 0);
+  assert.equal(requests[2].question, "Second?");
+  assert.equal(thinkingBlocksIn(requests[1].history ?? []), 1);
+  assert.deepEqual(requests[2].history, [
+    { role: "user", content: "First?" },
+    { role: "assistant", content: [{ type: "text", text: "One." }] },
+  ]);
+  const third = await session.ask("Third?");
+  assert.equal(third.stats?.recovered, false);
+  assert.equal(thinkingBlocksIn(requests[3].history ?? []), 0);
+});
+
+test("a rejection with no thinking to drop isn't retried", async () => {
+  const { send, requests } = recorder([rejected(), async () => reply("Never.")]);
+  await assert.rejects(startApiSession(settings, send).ask("Hello?"), { message: /^The API replied 400:/ });
+  assert.equal(requests.length, 1);
+});
+
+test("other failures aren't retried, even with thinking in the conversation", async () => {
+  const { send, requests } = recorder([async () => thoughtful("One."), rejected("The API replied 529: Overloaded"), async () => reply("Never.")]);
+  const session = startApiSession(settings, send);
+  await session.ask("First?");
+  await assert.rejects(session.ask("Second?"), { message: "The API replied 529: Overloaded" });
+  assert.equal(requests.length, 2);
+  assert.equal(thinkingBlocksIn(requests[1].history ?? []), 1);
+});
+
+test("the retry happens once: a second rejection fails the question", async () => {
+  const { send, requests } = recorder([async () => thoughtful("One."), rejected(), rejected("The API replied 400: something else"), async () => reply("Never.")]);
+  const session = startApiSession(settings, send);
+  await session.ask("First?");
+  await assert.rejects(session.ask("Second?"), { message: "The API replied 400: something else" });
+  assert.equal(requests.length, 3);
+});
+
+test("a rejection in the middle of using tools starts the question again, since a tool turn's thinking can't be dropped", async () => {
+  const { tools, runs } = fakeTools();
+  const toolTurn = [thinking("Index first."), { type: "text", text: "" }, { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } }];
+  const { send, requests } = recorder([async () => thoughtful("One."), async () => ({ ...toolReply([readIndex]), content: toolTurn }), rejected(), async () => ({ ...toolReply([readIndex]), content: toolTurn }), async () => reply("Done.")]);
+  const session = startApiSession({ ...settings, tools }, send);
+  await session.ask("Hello?");
+  let restarts = 0;
+  const answer = await session.ask("Read it", { restart: () => restarts++ });
+  assert.equal(answer.text, "Done.");
+  assert.equal(answer.stats?.recovered, true);
+  assert.equal(answer.stats?.rounds, 3);
+  assert.equal(answer.stats?.toolUses, 2);
+  assert.equal(restarts, 1);
+  assert.equal(runs.length, 2);
+  assert.equal(requests[3].question, "Read it");
+  assert.deepEqual(requests[3].history, [
+    { role: "user", content: "Hello?" },
+    { role: "assistant", content: [{ type: "text", text: "One." }] },
+  ]);
+  assert.deepEqual(requests[4].history?.slice(2), [
+    { role: "user", content: "Read it" },
+    { role: "assistant", content: toolTurn },
+  ]);
+});
+
+test("only one retry per question, even if the API rejects again further on", async () => {
+  const { tools } = fakeTools();
+  const toolTurn = [thinking("Index first."), { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } }];
+  const toolRound = async () => ({ ...toolReply([readIndex]), content: toolTurn });
+  const { send, requests } = recorder([toolRound, rejected(), toolRound, rejected("The API replied 400: again"), toolRound, async () => reply("Never.")]);
+  await assert.rejects(startApiSession({ ...settings, tools }, send).ask("Read it"), { message: "The API replied 400: again" });
+  assert.equal(requests.length, 4);
+});
+
+test("the next question can recover again: the limit is one retry per question, not per chat", async () => {
+  const { send, requests } = recorder([async () => thoughtful("One."), rejected(), async () => thoughtful("Two."), rejected(), async () => reply("Three.")]);
+  const session = startApiSession(settings, send);
+  await session.ask("First?");
+  assert.equal((await session.ask("Second?")).stats?.recovered, true);
+  assert.equal((await session.ask("Third?")).stats?.recovered, true);
+  assert.equal(requests.length, 5);
+});
+
+test("closing during a rejected request doesn't retry", async () => {
+  let session: AgentSession | null = null;
+  const { send, requests } = recorder([
+    async () => thoughtful("One."),
+    async () => {
+      session?.close();
+      throw new Error("The API replied 400: bad");
+    },
+    async () => reply("Never."),
+  ]);
+  session = startApiSession(settings, send);
+  await session.ask("First?");
+  await assert.rejects(session.ask("Second?"), { message: closedMessage });
+  assert.equal(requests.length, 2);
+});
+
+test("withoutThinking leaves user turns and plain answers alone", () => {
+  const turns = [
+    { role: "user" as const, content: "Hi" },
+    { role: "assistant" as const, content: "Plain text answer." },
+    { role: "assistant" as const, content: [thinking("Hmm."), { type: "text" as const, text: "Kept." }, { type: "redacted_thinking" as const, data: "x" }] },
+  ];
+  assert.deepEqual(withoutThinking(turns), [
+    { role: "user", content: "Hi" },
+    { role: "assistant", content: "Plain text answer." },
+    { role: "assistant", content: [{ type: "text", text: "Kept." }] },
+  ]);
+});
+
+test("hasVisibleContent looks past thinking and blank text", () => {
+  assert.equal(hasVisibleContent([thinking("Hmm."), { type: "text", text: "  " }]), false);
+  assert.equal(hasVisibleContent([thinking("Hmm."), { type: "text", text: "Hi" }]), true);
+  assert.equal(hasVisibleContent([{ type: "tool_use", id: "t", name: "read_file", input: {} }]), true);
+  assert.equal(hasVisibleContent([]), false);
 });

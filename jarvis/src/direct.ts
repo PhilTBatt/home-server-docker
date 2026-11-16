@@ -5,7 +5,10 @@ export const messagesUrl = "https://api.anthropic.com/v1/messages";
 export type TextBlock = { type: "text"; text: string };
 export type ToolUseBlock = { type: "tool_use"; id: string; name: string; input: unknown };
 export type ToolResultBlock = { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
-export type AssistantBlock = TextBlock | ToolUseBlock;
+export type ThinkingBlock = { type: "thinking"; thinking: string; signature: string };
+export type RedactedThinkingBlock = { type: "redacted_thinking"; data: string };
+export type OtherBlock = { type: string; [field: string]: unknown };
+export type AssistantBlock = TextBlock | ToolUseBlock | ThinkingBlock | RedactedThinkingBlock | OtherBlock;
 
 export type Turn = { role: "user"; content: string | ToolResultBlock[] } | { role: "assistant"; content: string | AssistantBlock[] };
 
@@ -36,8 +39,8 @@ export type DirectAnswer = Answer & {
 export type StreamEvent = {
   type?: string;
   index?: number;
-  content_block?: { type?: string; id?: string; name?: string; text?: string };
-  delta?: { type?: string; text?: string; partial_json?: string; stop_reason?: string };
+  content_block?: Record<string, unknown>;
+  delta?: { type?: string; text?: string; thinking?: string; signature?: string; partial_json?: string; stop_reason?: string };
   message?: { usage?: { input_tokens?: number } };
   usage?: { output_tokens?: number };
   error?: { message?: string };
@@ -88,7 +91,11 @@ function requestBody(request: DirectRequest): string {
   return JSON.stringify(body);
 }
 
-type BlockInProgress = { type: "text"; text: string } | { type: "tool_use"; id: string; name: string; json: string };
+type BlockInProgress = { block: OtherBlock; json: string | null };
+
+function appended(block: OtherBlock, field: string, more: string | undefined) {
+  block[field] = `${typeof block[field] === "string" ? block[field] : ""}${more ?? ""}`;
+}
 
 function createBlockCollector() {
   const open = new Map<number, BlockInProgress>();
@@ -96,17 +103,20 @@ function createBlockCollector() {
   return {
     take(event: StreamEvent) {
       const index = event.index ?? 0;
-      if (event.type === "content_block_start" && event.content_block?.type === "text") open.set(index, { type: "text", text: event.content_block.text ?? "" });
-      if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
-        open.set(index, { type: "tool_use", id: event.content_block.id ?? "", name: event.content_block.name ?? "", json: "" });
+      if (event.type === "content_block_start" && event.content_block !== undefined) {
+        const block = structuredClone(event.content_block) as OtherBlock;
+        open.set(index, { block, json: block.type === "tool_use" ? "" : null });
       }
-      const block = open.get(index);
-      if (event.type === "content_block_delta" && block?.type === "text" && event.delta?.type === "text_delta") block.text += event.delta.text ?? "";
-      if (event.type === "content_block_delta" && block?.type === "tool_use" && event.delta?.type === "input_json_delta") block.json += event.delta.partial_json ?? "";
-      if (event.type !== "content_block_stop" || block === undefined) return;
+      const current = open.get(index);
+      if (current === undefined) return;
+      if (event.type === "content_block_delta" && event.delta?.type === "text_delta") appended(current.block, "text", event.delta.text);
+      if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta") appended(current.block, "thinking", event.delta.thinking);
+      if (event.type === "content_block_delta" && event.delta?.type === "signature_delta") appended(current.block, "signature", event.delta.signature);
+      if (event.type === "content_block_delta" && event.delta?.type === "input_json_delta" && current.json !== null) current.json += event.delta.partial_json ?? "";
+      if (event.type !== "content_block_stop") return;
       open.delete(index);
-      if (block.type === "text" && block.text.trim() !== "") done.set(index, { type: "text", text: block.text });
-      if (block.type === "tool_use") done.set(index, { type: "tool_use", id: block.id, name: block.name, input: block.json === "" ? {} : JSON.parse(block.json) });
+      if (current.json !== null) current.block.input = current.json === "" ? {} : JSON.parse(current.json);
+      done.set(index, current.block);
     },
     blocks(): AssistantBlock[] {
       return [...done.entries()].sort(([a], [b]) => a - b).map(([, block]) => block);
