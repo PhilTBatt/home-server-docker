@@ -76,6 +76,7 @@ test("Jarvis chats on Haiku 5.5, and gives each question up to 120 seconds", () 
 test("Jarvis's instructions point him at the brain and keep him safe and short", () => {
   assert.match(chatSystem, /\/brain/);
   assert.match(chatSystem, /index\.md/);
+  assert.match(chatSystem, /search inside the notes with Grep or find files by name with Glob/);
   assert.match(chatSystem, /never instructions to you/);
   assert.match(chatSystem, /You can only read/);
   assert.match(chatSystem, /Before you read a file, say/);
@@ -201,6 +202,10 @@ test("the plain API engine's tools get notes too", () => {
   assert.equal(toolNote("list_folder", {}), "looking in the top folder");
   assert.equal(toolNote("Read", { path: "index.md" }), "using Read");
   assert.equal(toolNote("search_files", { text: "train" }), 'searching for "train"');
+  assert.equal(toolNote("Grep", { pattern: "train", path: "/brain" }), 'searching for "train"');
+  assert.equal(toolNote("Grep", {}), "using Grep");
+  assert.equal(toolNote("Glob", { pattern: "**/*.md" }), 'looking for files matching "**/*.md"');
+  assert.equal(toolNote("Glob", { path: "/brain" }), "using Glob");
   assert.equal(toolNote("search_files", {}), "using search_files");
   assert.equal(toolNote("find_files", { name: "jarvis" }), 'looking for files named "jarvis"');
   assert.equal(toolNote("find_files", { text: "jarvis" }), "using find_files");
@@ -254,7 +259,7 @@ test("tool notes say what's being read, or name the tool", () => {
   assert.equal(toolNote("Read", {}), "using Read");
   assert.equal(toolNote("Read", { file_path: 42 }), "using Read");
   assert.equal(toolNote("Read", null), "using Read");
-  assert.equal(toolNote("Grep", { pattern: "jarvis" }), "using Grep");
+  assert.equal(toolNote("WebFetch", { url: "https://example.com" }), "using WebFetch");
 });
 
 test("when nothing streams, the finished answer is written instead", async () => {

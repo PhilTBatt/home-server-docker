@@ -99,12 +99,13 @@ function setup() {
   return { agent, session, clock, settings };
 }
 
-test("the engine gets only the Read tool, refuses anything else, loads no settings files or MCP servers, and skips naming the session", () => {
+test("the engine gets only Read, Grep and Glob, kept out of .git, refuses anything else, loads no settings files or MCP servers, and skips naming the session", () => {
   assert.deepEqual(agentOptions({ model: "claude-haiku-5-5", system: "Be brief.", cwd: "/brain", now: () => 0, env: {} }), {
     model: "claude-haiku-5-5",
     cwd: "/brain",
     systemPrompt: "Be brief.",
-    tools: ["Read"],
+    tools: ["Read", "Grep", "Glob"],
+    disallowedTools: ["Read(./.git/**)"],
     permissionMode: "dontAsk",
     settingSources: [],
     persistSession: false,

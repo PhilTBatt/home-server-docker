@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { dirname } from "node:path";
 
 export type SeenRequest = {
   path: string;
@@ -14,6 +15,8 @@ export type SeenRequest = {
 export type StandInScript = {
   insidePath: string;
   outsidePath: string;
+  gitPath: string;
+  linkedPath: string;
 };
 
 export type StandInApi = {
@@ -25,6 +28,14 @@ export type StandInApi = {
 export const plainAnswer = "Stand-in answer.";
 export const readInsideWord = "READ_INSIDE";
 export const readOutsideWord = "READ_OUTSIDE";
+export const searchInsideWord = "SEARCH_INSIDE";
+export const searchOutsideWord = "SEARCH_OUTSIDE";
+export const findInsideWord = "FIND_INSIDE";
+export const findOutsideWord = "FIND_OUTSIDE";
+export const readGitWord = "READ_GIT";
+export const readLinkedWord = "READ_LINKED";
+export const insideText = "stand-in brain";
+export const outsideText = "outside the brain";
 
 type Message = { role?: unknown; content?: unknown };
 
@@ -63,12 +74,16 @@ function textBlock(index: number, text: string): string {
   ].join("");
 }
 
-function readBlock(index: number, id: number, path: string): string {
+function toolBlock(index: number, id: number, name: string, input: Record<string, unknown>): string {
   return [
-    event("content_block_start", { index, content_block: { type: "tool_use", id: `toolu_stand_in_${id}`, name: "Read", input: {} } }),
-    event("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify({ file_path: path }) } }),
+    event("content_block_start", { index, content_block: { type: "tool_use", id: `toolu_stand_in_${id}`, name, input: {} } }),
+    event("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } }),
     event("content_block_stop", { index }),
   ].join("");
+}
+
+function readBlock(index: number, id: number, path: string): string {
+  return toolBlock(index, id, "Read", { file_path: path });
 }
 
 function finish(reason: string): string {
@@ -79,6 +94,19 @@ export function standInReply(script: StandInScript, id: number, userText: string
   if (userText.includes("[tool result]")) return start(id) + textBlock(0, `I read it. ${userText.replace(/\s+/g, " ").slice(0, 200)}`) + finish("end_turn");
   if (userText.includes(readInsideWord)) return start(id) + textBlock(0, "Let me check.") + readBlock(1, id, script.insidePath) + finish("tool_use");
   if (userText.includes(readOutsideWord)) return start(id) + textBlock(0, "Let me check.") + readBlock(1, id, script.outsidePath) + finish("tool_use");
+  const brain = dirname(script.insidePath);
+  const outside = dirname(script.outsidePath);
+  const tools: [string, string, Record<string, unknown>][] = [
+    [readGitWord, "Read", { file_path: script.gitPath }],
+    [readLinkedWord, "Read", { file_path: script.linkedPath }],
+    [searchInsideWord, "Grep", { pattern: "brain", path: brain, output_mode: "content" }],
+    [searchOutsideWord, "Grep", { pattern: outsideText, path: outside, output_mode: "files_with_matches" }],
+    [findInsideWord, "Glob", { pattern: "**/*", path: brain }],
+    [findOutsideWord, "Glob", { pattern: "**/*", path: outside }],
+  ];
+  for (const [word, name, input] of tools) {
+    if (userText.includes(word)) return start(id) + textBlock(0, "Let me look.") + toolBlock(1, id, name, input) + finish("tool_use");
+  }
   return start(id) + textBlock(0, plainAnswer) + finish("end_turn");
 }
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -26,10 +26,14 @@ try {
   const insideMarker = `stand-in brain ${randomUUID()}`;
   const outsideMarker = `outside the brain ${randomUUID()}`;
   const settingsMarker = `settings file ${randomUUID()}`;
+  const gitMarker = `git brain ${randomUUID()}`;
   await writeFile(join(brain, "index.md"), `# Index\n\n${insideMarker}\n`);
   await writeFile(join(brain, "CLAUDE.md"), `${settingsMarker}\n`);
   await writeFile(join(outside, "secret.md"), `${outsideMarker}\n`);
-  api = await startStandInApi({ insidePath: join(brain, "index.md"), outsidePath: join(outside, "secret.md") });
+  await mkdir(join(brain, ".git"));
+  await writeFile(join(brain, ".git", "config"), `${gitMarker}\n`);
+  await symlink(outside, join(brain, "linked"));
+  api = await startStandInApi({ insidePath: join(brain, "index.md"), outsidePath: join(outside, "secret.md"), gitPath: join(brain, ".git", "config"), linkedPath: join(brain, "linked", "secret.md") });
   process.env.HOME = home;
   process.env.ANTHROPIC_BASE_URL = api.url;
   process.env.ANTHROPIC_API_KEY = "sk-ant-test-key";
@@ -43,6 +47,7 @@ try {
     requests: api.requests,
     insideMarker,
     outsideMarker,
+    gitMarker,
     settingsMarker,
     systemMarker: chatSystem.slice(0, 40),
     model: chatModel,

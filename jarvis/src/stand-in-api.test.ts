@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { plainAnswer, readInsideWord, readOutsideWord, standInReply, startStandInApi } from "./stand-in-api.js";
+import { findInsideWord, findOutsideWord, outsideText, plainAnswer, readGitWord, readInsideWord, readLinkedWord, readOutsideWord, searchInsideWord, searchOutsideWord, standInReply, startStandInApi } from "./stand-in-api.js";
 
-const script = { insidePath: "/brain/index.md", outsidePath: "/elsewhere/secret.md" };
+const script = { insidePath: "/brain/index.md", outsidePath: "/elsewhere/secret.md", gitPath: "/brain/.git/config", linkedPath: "/brain/linked/secret.md" };
 
 function events(stream: string): { type: string; [field: string]: unknown }[] {
   return stream
@@ -32,6 +32,25 @@ test("the read words ask for a file inside or outside the brain, and stop to use
     const json = sent.find((event) => (event.delta as { type?: string } | undefined)?.type === "input_json_delta");
     assert.deepEqual(JSON.parse((json?.delta as { partial_json: string }).partial_json), { file_path: path });
     assert.equal((sent.find((event) => event.type === "message_delta")?.delta as { stop_reason: string }).stop_reason, "tool_use");
+  }
+});
+
+test("the .git, link, search and find words ask for the right tool, inside or outside the brain", () => {
+  const cases: [string, string, Record<string, unknown>][] = [
+    [readGitWord, "Read", { file_path: "/brain/.git/config" }],
+    [readLinkedWord, "Read", { file_path: "/brain/linked/secret.md" }],
+    [searchInsideWord, "Grep", { pattern: "brain", path: "/brain", output_mode: "content" }],
+    [searchOutsideWord, "Grep", { pattern: outsideText, path: "/elsewhere", output_mode: "files_with_matches" }],
+    [findInsideWord, "Glob", { pattern: "**/*", path: "/brain" }],
+    [findOutsideWord, "Glob", { pattern: "**/*", path: "/elsewhere" }],
+  ];
+  for (const [word, name, input] of cases) {
+    const sent = events(standInReply(script, 4, `Please ${word}`));
+    const toolStart = sent.find((event) => event.type === "content_block_start" && (event.content_block as { type: string }).type === "tool_use");
+    assert.equal((toolStart?.content_block as { name: string }).name, name, word);
+    const json = sent.find((event) => (event.delta as { type?: string } | undefined)?.type === "input_json_delta");
+    assert.deepEqual(JSON.parse((json?.delta as { partial_json: string }).partial_json), input, word);
+    assert.equal((sent.find((event) => event.type === "message_delta")?.delta as { stop_reason: string }).stop_reason, "tool_use", word);
   }
 });
 

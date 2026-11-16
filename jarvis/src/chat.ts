@@ -15,7 +15,7 @@ const reading = [
 ];
 export const chatSystem = [
   intro,
-  `His notes, which he calls his brain, are in your working folder, ${brainDir}. Start with index.md to find your way around.`,
+  `His notes, which he calls his brain, are in your working folder, ${brainDir}. Start with index.md to find your way around, and when you don't know where something is, search inside the notes with Grep or find files by name with Glob.`,
   style,
   ...reading,
 ].join(" ");
@@ -85,6 +85,9 @@ export function toolNote(name: string, input: unknown): string {
   const path = field(input, name === "Read" ? "file_path" : "path");
   if ((name === "Read" || name === "read_file") && path !== null) return `reading ${shortPath(path)}`;
   if (name === "list_folder") return path === null || path.trim() === "." || path.trim() === "" ? "looking in the top folder" : `looking in ${shortPath(path)}`;
+  const pattern = field(input, "pattern");
+  if (name === "Grep" && pattern !== null) return `searching for "${pattern}"`;
+  if (name === "Glob" && pattern !== null) return `looking for files matching "${pattern}"`;
   const words = field(input, "text");
   if (name === "search_files" && words !== null) return `searching for "${words}"`;
   const named = field(input, "name");
