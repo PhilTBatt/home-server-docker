@@ -22,3 +22,6 @@ jobs:
           node-version: 26
       - run: npm ci
       - run: npm test
+      - if: matrix.folder == 'jarvis'
+        run: npm run engine-check
+        timeout-minutes: 10
