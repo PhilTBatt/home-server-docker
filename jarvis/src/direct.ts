@@ -23,6 +23,7 @@ export type DirectRequest = {
   tools?: ToolDefinition[];
   maxTokens: number;
   thinkingOff: boolean;
+  cache?: boolean;
   now: () => number;
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -92,6 +93,7 @@ function requestBody(request: DirectRequest): string {
   };
   if (request.tools !== undefined && request.tools.length > 0) body.tools = request.tools;
   if (request.thinkingOff) body.thinking = { type: "disabled" };
+  if (request.cache) body.cache_control = { type: "ephemeral" };
   return JSON.stringify(body);
 }
 

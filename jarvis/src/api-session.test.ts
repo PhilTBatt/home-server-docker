@@ -64,7 +64,7 @@ test("an answer's cost uses the long-prompt prices, for input and output, above 
   assert.ok(Math.abs(answerCost(prices, { input: 100_001, cacheWrite: 0, cacheRead: 0, output: 1000 }) - (100_001 * 0.5 + 1000 * 2.5) / 1_000_000) < 1e-12);
 });
 
-test("a question goes to the API with the settings, the stop signal and thinking at its default", async () => {
+test("a question goes to the API with the settings, the stop signal, thinking at its default and caching on", async () => {
   const { send, requests } = recorder([async () => reply("Hi.")]);
   await startApiSession(settings, send).ask("Hello?");
   const [request] = requests;
@@ -75,6 +75,7 @@ test("a question goes to the API with the settings, the stop signal and thinking
   assert.equal(request.maxTokens, 4000);
   assert.equal(request.timeoutMs, 120_000);
   assert.equal(request.thinkingOff, false);
+  assert.equal(request.cache, true);
   assert.equal(request.now, settings.now);
   assert.ok(request.signal instanceof AbortSignal);
   assert.deepEqual(request.history, []);
@@ -744,4 +745,17 @@ test("an answer's input counts cached tokens too, with the cache's share shown a
   assert.equal(answer.stats?.cacheWriteTokens, 2000);
   assert.equal(answer.stats?.cacheReadTokens, 3500);
   assert.ok(Math.abs((answer.stats?.costUsd ?? 0) - (150 * 0.1 + 2000 * 0.125 + 3500 * 0.01 + 70 * 0.5) / 1_000_000) < 1e-12);
+});
+
+
+test("every round asks for caching, including tool rounds and a retry", async () => {
+  const { tools } = fakeTools();
+  const { send, requests } = recorder([async () => thoughtful("One."), async () => toolReply([readIndex]), rejected(), async () => reply("Done.")]);
+  const session = startApiSession({ ...settings, tools }, send);
+  await session.ask("Hello?");
+  await session.ask("Read it");
+  assert.deepEqual(
+    requests.map((request) => request.cache),
+    [true, true, true, true],
+  );
 });

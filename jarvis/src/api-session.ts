@@ -120,6 +120,7 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
         maxTokens: settings.maxTokens,
         timeoutMs: settings.timeoutMs,
         thinkingOff: false,
+        cache: true,
         now: settings.now,
         signal: stopping.signal,
         onText: (delta) => listener.text?.(delta),

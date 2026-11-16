@@ -77,6 +77,25 @@ test("asks for a streamed answer with the model, system prompt, question and tok
   });
 });
 
+test("asks the API to cache the prompt when told to, and changes nothing else", async () => {
+  const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
+  await askDirect(request({ cache: true }));
+  assert.deepEqual(JSON.parse(String(fetchMock.mock.calls[0].arguments[1]?.body)), {
+    model: "claude-haiku-5-5",
+    max_tokens: 300,
+    system: "Be brief.",
+    stream: true,
+    cache_control: { type: "ephemeral" },
+    messages: [{ role: "user", content: "Hello?" }],
+  });
+});
+
+test("doesn't ask for caching when told not to", async () => {
+  const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
+  await askDirect(request({ cache: false }));
+  assert.equal("cache_control" in JSON.parse(String(fetchMock.mock.calls[0].arguments[1]?.body)), false);
+});
+
 test("turns thinking off when asked, and changes nothing else", async () => {
   const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
   await askDirect(request({ thinkingOff: true }));
