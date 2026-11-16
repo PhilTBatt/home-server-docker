@@ -8,7 +8,7 @@ import { startAgentSession, type AgentSession } from "./agent.js";
 import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
-import { apiChatSystem, chatModel, chatSystem, engineLine, printable, promptWhileOpen, questionTimeoutMs, runChat } from "./chat.js";
+import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, engineLine, printable, promptWhileOpen, questionTimeoutMs, runChat } from "./chat.js";
 import { brainDir, readConfig } from "./config.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
@@ -28,7 +28,7 @@ try {
           apiKey: config.apiKey,
           model: chatModel,
           system: apiChatSystem,
-          maxTokens: 4000,
+          maxTokens: apiMaxTokens,
           timeoutMs: questionTimeoutMs,
           now,
           tools: createBrainTools(brainDir),

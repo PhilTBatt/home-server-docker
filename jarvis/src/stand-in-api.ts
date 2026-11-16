@@ -1,6 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { dirname } from "node:path";
+import { dirname, relative } from "node:path";
+import type { Engine } from "./config.js";
+
+export type SeenToolResult = { text: string; isError: boolean };
 
 export type SeenRequest = {
   path: string;
@@ -9,6 +12,8 @@ export type SeenRequest = {
   system: string;
   tools: string[];
   lastUserText: string;
+  toolResults: SeenToolResult[];
+  asked: string | null;
   body: string;
 };
 
@@ -25,6 +30,8 @@ export type StandInApi = {
   close(): Promise<void>;
 };
 
+export type ToolCall = { name: string; input: Record<string, unknown> };
+
 export const plainAnswer = "Stand-in answer.";
 export const readInsideWord = "READ_INSIDE";
 export const readOutsideWord = "READ_OUTSIDE";
@@ -34,26 +41,51 @@ export const findInsideWord = "FIND_INSIDE";
 export const findOutsideWord = "FIND_OUTSIDE";
 export const readGitWord = "READ_GIT";
 export const readLinkedWord = "READ_LINKED";
+export const searchHiddenWord = "SEARCH_HIDDEN";
+export const searchIgnoredWord = "SEARCH_IGNORED";
+export const findIgnoredWord = "FIND_IGNORED";
+export const searchCaseWord = "SEARCH_CASE";
+export const searchLongWord = "SEARCH_LONG";
 export const insideText = "stand-in brain";
 export const outsideText = "outside the brain";
+export const hiddenText = "hidden note";
+export const ignoredText = "ignored note";
+export const ignoredName = "ignored-note.md";
+export const caseText = "mixed case note";
+export const longText = "long line";
+export const longName = "long-line.md";
 
 type Message = { role?: unknown; content?: unknown };
+type Block = { type?: unknown; text?: unknown; content?: unknown; is_error?: unknown };
+
+function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block: Block) => block.type === "text" && typeof block.text === "string")
+    .map((block: Block) => block.text)
+    .join("\n");
+}
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .map((block: { type?: unknown; text?: unknown; content?: unknown }) => {
+    .map((block: Block) => {
       if (block.type === "text" && typeof block.text === "string") return block.text;
-      if (block.type === "tool_result") return `[tool result] ${textOf(block.content)}`;
+      if (block.type === "tool_result") return `[tool result] ${contentText(block.content)}`;
       return "";
     })
     .join("\n");
 }
 
-function lastUserText(messages: Message[]): string {
-  const last = [...messages].reverse().find((message) => message.role === "user");
-  return last === undefined ? "" : textOf(last.content);
+function lastUser(messages: Message[]): Message | undefined {
+  return [...messages].reverse().find((message) => message.role === "user");
+}
+
+function toolResultsOf(message: Message | undefined): SeenToolResult[] {
+  if (message === undefined || !Array.isArray(message.content)) return [];
+  return message.content.filter((block: Block) => block.type === "tool_result").map((block: Block) => ({ text: contentText(block.content), isError: block.is_error === true }));
 }
 
 function event(type: string, data: Record<string, unknown>): string {
@@ -74,39 +106,55 @@ function textBlock(index: number, text: string): string {
   ].join("");
 }
 
-function toolBlock(index: number, id: number, name: string, input: Record<string, unknown>): string {
+function toolBlock(index: number, id: number, call: ToolCall): string {
   return [
-    event("content_block_start", { index, content_block: { type: "tool_use", id: `toolu_stand_in_${id}`, name, input: {} } }),
-    event("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } }),
+    event("content_block_start", { index, content_block: { type: "tool_use", id: `toolu_stand_in_${id}`, name: call.name, input: {} } }),
+    event("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify(call.input) } }),
     event("content_block_stop", { index }),
   ].join("");
-}
-
-function readBlock(index: number, id: number, path: string): string {
-  return toolBlock(index, id, "Read", { file_path: path });
 }
 
 function finish(reason: string): string {
   return event("message_delta", { delta: { stop_reason: reason, stop_sequence: null }, usage: { output_tokens: 5 } }) + event("message_stop", {});
 }
 
-export function standInReply(script: StandInScript, id: number, userText: string): string {
-  if (userText.includes("[tool result]")) return start(id) + textBlock(0, `I read it. ${userText.replace(/\s+/g, " ").slice(0, 200)}`) + finish("end_turn");
-  if (userText.includes(readInsideWord)) return start(id) + textBlock(0, "Let me check.") + readBlock(1, id, script.insidePath) + finish("tool_use");
-  if (userText.includes(readOutsideWord)) return start(id) + textBlock(0, "Let me check.") + readBlock(1, id, script.outsidePath) + finish("tool_use");
+function calls(script: StandInScript): [string, Record<Engine, ToolCall>][] {
   const brain = dirname(script.insidePath);
   const outside = dirname(script.outsidePath);
-  const tools: [string, string, Record<string, unknown>][] = [
-    [readGitWord, "Read", { file_path: script.gitPath }],
-    [readLinkedWord, "Read", { file_path: script.linkedPath }],
-    [searchInsideWord, "Grep", { pattern: "brain", path: brain, output_mode: "content" }],
-    [searchOutsideWord, "Grep", { pattern: outsideText, path: outside, output_mode: "files_with_matches" }],
-    [findInsideWord, "Glob", { pattern: "**/*", path: brain }],
-    [findOutsideWord, "Glob", { pattern: "**/*", path: outside }],
+  const fromBrain = (path: string) => relative(brain, path) || ".";
+  const read = (path: string): Record<Engine, ToolCall> => ({ sdk: { name: "Read", input: { file_path: path } }, api: { name: "read_file", input: { path: fromBrain(path) } } });
+  const search = (text: string, path: string, mode = "content"): Record<Engine, ToolCall> => ({ sdk: { name: "Grep", input: { pattern: text, path, output_mode: mode } }, api: { name: "search_files", input: { text, path: fromBrain(path) } } });
+  const find = (pattern: string, name: string, path: string): Record<Engine, ToolCall> => ({ sdk: { name: "Glob", input: { pattern, path } }, api: { name: "find_files", input: { name, path: fromBrain(path) } } });
+  return [
+    [readInsideWord, read(script.insidePath)],
+    [readOutsideWord, read(script.outsidePath)],
+    [readGitWord, read(script.gitPath)],
+    [readLinkedWord, read(script.linkedPath)],
+    [searchInsideWord, search("brain", brain)],
+    [searchOutsideWord, search(outsideText, outside, "files_with_matches")],
+    [findInsideWord, find("**/*", ".", brain)],
+    [findOutsideWord, find("**/*", ".", outside)],
+    [searchHiddenWord, search(hiddenText, brain)],
+    [searchIgnoredWord, search(ignoredText, brain)],
+    [findIgnoredWord, find("**/*ignored*", "ignored", brain)],
+    [searchCaseWord, search(caseText.toUpperCase(), brain)],
+    [searchLongWord, search(longText, brain)],
   ];
-  for (const [word, name, input] of tools) {
-    if (userText.includes(word)) return start(id) + textBlock(0, "Let me look.") + toolBlock(1, id, name, input) + finish("tool_use");
-  }
+}
+
+export function toolCallFor(script: StandInScript, engine: Engine, userText: string): ToolCall | null {
+  const found = calls(script).find(([word]) => userText.includes(word));
+  return found === undefined ? null : found[1][engine];
+}
+
+export function echoFor(userText: string): string {
+  return `I read it. ${Array.from(userText.replace(/\s+/g, " ")).slice(0, 200).join("")}`;
+}
+
+export function standInReply(script: StandInScript, engine: Engine, id: number, userText: string): string {
+  if (userText.includes("[tool result]")) return start(id) + textBlock(0, echoFor(userText)) + finish("end_turn");
+  const call = toolCallFor(script, engine, userText);
+  if (call !== null) return start(id) + textBlock(0, "Let me look.") + toolBlock(1, id, call) + finish("tool_use");
   return start(id) + textBlock(0, plainAnswer) + finish("end_turn");
 }
 
@@ -129,7 +177,7 @@ function parsed(body: string): Record<string, unknown> {
   }
 }
 
-export async function startStandInApi(script: StandInScript): Promise<StandInApi> {
+export async function startStandInApi(script: StandInScript, engine: Engine = "sdk"): Promise<StandInApi> {
   const requests: SeenRequest[] = [];
   let count = 0;
   async function handle(request: IncomingMessage, response: ServerResponse) {
@@ -137,13 +185,16 @@ export async function startStandInApi(script: StandInScript): Promise<StandInApi
     const body = parsed(raw);
     const path = (request.url ?? "").split("?")[0];
     const messages = Array.isArray(body.messages) ? (body.messages as Message[]) : [];
+    const last = lastUser(messages);
     const seen: SeenRequest = {
       path,
       streamed: body.stream === true,
       model: typeof body.model === "string" ? body.model : null,
       system: typeof body.system === "string" ? body.system : JSON.stringify(body.system ?? ""),
       tools: Array.isArray(body.tools) ? body.tools.map((tool: { name?: unknown }) => String(tool.name)) : [],
-      lastUserText: lastUserText(messages),
+      lastUserText: last === undefined ? "" : textOf(last.content),
+      toolResults: toolResultsOf(last),
+      asked: null,
       body: raw,
     };
     requests.push(seen);
@@ -158,8 +209,9 @@ export async function startStandInApi(script: StandInScript): Promise<StandInApi
       response.end(JSON.stringify({ id: `msg_stand_in_${count}`, type: "message", role: "assistant", model: "claude-haiku-5-5", content: [{ type: "text", text: plainAnswer }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 } }));
       return;
     }
+    if (!seen.lastUserText.includes("[tool result]")) seen.asked = toolCallFor(script, engine, seen.lastUserText)?.name ?? null;
     response.writeHead(200, { "content-type": "text/event-stream" });
-    response.end(standInReply(script, count, seen.lastUserText));
+    response.end(standInReply(script, engine, count, seen.lastUserText));
   }
   const server = createServer((request, response) => {
     handle(request, response).catch(() => {

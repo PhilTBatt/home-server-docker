@@ -16,6 +16,7 @@ export type ToolDefinition = { name: string; description: string; input_schema: 
 
 export type DirectRequest = {
   apiKey: string;
+  url?: string;
   model: string;
   system: string;
   question: string | ToolResultBlock[];
@@ -137,7 +138,7 @@ function abortSignal(request: DirectRequest): AbortSignal {
 
 export async function askDirect(request: DirectRequest): Promise<DirectAnswer> {
   const started = request.now();
-  const response = await fetch(messagesUrl, {
+  const response = await fetch(request.url ?? messagesUrl, {
     method: "POST",
     headers: {
       "x-api-key": request.apiKey,

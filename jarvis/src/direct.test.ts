@@ -55,6 +55,13 @@ test("posts to the Messages API", async () => {
   assert.equal(fetchMock.mock.calls[0].arguments[1]?.method, "POST");
 });
 
+test("posts to another address when given one, such as a stand-in API, and sends the same body", async () => {
+  const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
+  await askDirect(request({ url: "http://127.0.0.1:9/v1/messages" }));
+  assert.equal(fetchMock.mock.calls[0].arguments[0], "http://127.0.0.1:9/v1/messages");
+  assert.equal("url" in JSON.parse(String(fetchMock.mock.calls[0].arguments[1]?.body)), false);
+});
+
 test("sends the key, the API version and JSON headers", async () => {
   const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
   await askDirect(request());

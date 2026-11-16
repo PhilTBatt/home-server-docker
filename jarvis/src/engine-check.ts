@@ -1,17 +1,52 @@
 import type { AgentSession } from "./agent.js";
+import { gitRefusal, outsideRefusal } from "./brain-tools.js";
+import { apiChatSystem, chatSystem } from "./chat.js";
+import type { Engine } from "./config.js";
 import { withTimeout } from "./run.js";
-import { findInsideWord, findOutsideWord, plainAnswer, readGitWord, readInsideWord, readLinkedWord, readOutsideWord, searchInsideWord, searchOutsideWord, type SeenRequest } from "./stand-in-api.js";
+import {
+  echoFor,
+  findIgnoredWord,
+  findInsideWord,
+  findOutsideWord,
+  ignoredName,
+  longName,
+  longText,
+  plainAnswer,
+  readGitWord,
+  readInsideWord,
+  readLinkedWord,
+  readOutsideWord,
+  searchCaseWord,
+  searchHiddenWord,
+  searchIgnoredWord,
+  searchInsideWord,
+  searchLongWord,
+  searchOutsideWord,
+  type SeenRequest,
+  type SeenToolResult,
+} from "./stand-in-api.js";
 
 export type CheckResult = { name: string; ok: boolean; detail: string };
 
-export type EngineCheckDeps = {
+export type Probe = { tool: string | null; used: string[]; answer: string | null; expectedAnswer: string | null; threw: string | null; results: SeenToolResult[] };
+
+export type Refusal = "outside" | "git";
+
+export type EngineUnderTest = {
+  engine: Engine;
   session: AgentSession;
   requests: SeenRequest[];
-  insideMarker: string;
-  outsideMarker: string;
-  gitMarker: string;
-  settingsMarker: string;
   systemMarker: string;
+  tools: string[];
+  extraTools: string[];
+  refused: (probe: Probe, because: Refusal) => boolean;
+};
+
+export type Markers = { inside: string; outside: string; git: string; settings: string; hidden: string; ignored: string; mixedCase: string };
+
+export type EngineCheckDeps = {
+  engines: EngineUnderTest[];
+  markers: Markers;
   model: string;
   timeoutMs: number;
   settleMs: number;
@@ -19,90 +54,217 @@ export type EngineCheckDeps = {
   engineEnv: () => Record<string, string | undefined> | undefined;
 };
 
-export const requiredTools = ["Read", "Grep", "Glob"];
-export const allowedTools = [...requiredTools, "DeferredToolPlaceholder"];
+export type Expect = { refused?: Refusal; found?: string[]; absent?: string[] };
 
-export const expectedRequests: RegExp[] = [
-  /^Hello$/,
-  ...[readInsideWord, readOutsideWord, readGitWord, readLinkedWord, searchInsideWord, searchOutsideWord, findInsideWord, findOutsideWord].flatMap((word) => [new RegExp(word), /^\[tool result\]/]),
-];
+export type SharedRule = { name: string; word: string; expect: Expect; differs?: { engine: Engine; expect: Expect; why: string } };
+
+export const checkNames: Record<Engine, string> = { sdk: "Agent SDK", api: "plain API call" };
+
+export function sdkRefused(probe: Probe): boolean {
+  return probe.tool !== null && probe.threw === `Refused: ${probe.tool}` && probe.results.length > 0 && probe.results.every((result) => result.isError);
+}
+
+export function apiRefused(probe: Probe, because: Refusal): boolean {
+  const refusal = because === "git" ? gitRefusal : outsideRefusal;
+  return probe.threw === null && probe.results.length > 0 && probe.results.every((result) => result.isError && result.text === refusal);
+}
+
+export function sdkUnderTest(session: AgentSession, requests: SeenRequest[]): EngineUnderTest {
+  return { engine: "sdk", session, requests, systemMarker: chatSystem, tools: ["Read", "Grep", "Glob"], extraTools: ["DeferredToolPlaceholder"], refused: sdkRefused };
+}
+
+export function apiUnderTest(session: AgentSession, requests: SeenRequest[]): EngineUnderTest {
+  return { engine: "api", session, requests, systemMarker: apiChatSystem, tools: ["read_file", "list_folder", "search_files", "find_files"], extraTools: [], refused: apiRefused };
+}
+
+export function sharedRules(markers: Markers): SharedRule[] {
+  return [
+    { name: "a file in the brain can be read", word: readInsideWord, expect: { found: [markers.inside] } },
+    { name: "a file outside the brain is refused", word: readOutsideWord, expect: { refused: "outside", absent: [markers.outside] } },
+    { name: "the .git folder is off limits", word: readGitWord, expect: { refused: "git", absent: [markers.git] } },
+    { name: "a link from the brain to a file outside is refused", word: readLinkedWord, expect: { refused: "outside", absent: [markers.outside] } },
+    { name: "a search inside the brain finds the file", word: searchInsideWord, expect: { found: [markers.inside], absent: [markers.git, markers.outside] } },
+    { name: "a search outside the brain is refused", word: searchOutsideWord, expect: { refused: "outside", absent: [markers.outside] } },
+    { name: "finding files in the brain lists the file, but not .git or links out", word: findInsideWord, expect: { found: ["index.md"], absent: [".git/", "linked/", "secret.md"] } },
+    { name: "finding files outside the brain is refused", word: findOutsideWord, expect: { refused: "outside", absent: ["secret.md"] } },
+    { name: "a search looks inside hidden files", word: searchHiddenWord, expect: { found: [markers.hidden] } },
+    {
+      name: "a search looks inside git-ignored files",
+      word: searchIgnoredWord,
+      expect: { found: [markers.ignored] },
+      differs: { engine: "sdk", expect: { absent: [markers.ignored] }, why: "Grep skips what .gitignore lists" },
+    },
+    { name: "finding files lists git-ignored files", word: findIgnoredWord, expect: { found: [ignoredName] } },
+    {
+      name: "a search ignores capital letters",
+      word: searchCaseWord,
+      expect: { found: [markers.mixedCase] },
+      differs: { engine: "sdk", expect: { absent: [markers.mixedCase] }, why: "Grep matches capitals unless asked not to" },
+    },
+    {
+      name: "a long line comes back without broken characters",
+      word: searchLongWord,
+      expect: { found: [longText] },
+      differs: { engine: "sdk", expect: { found: [longName], absent: [longText] }, why: "Grep leaves out very long lines and names only the file" },
+    },
+  ];
+}
+
+export const helloQuestion = "Hello";
+
+export function expectedRequests(rules: SharedRule[]): RegExp[] {
+  return [/^Hello$/, ...rules.flatMap((rule) => [new RegExp(rule.word), /^\[tool result\]/])];
+}
+
+const brokenCharacter = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]|\ufffd/;
+
+export function problems(expect: Expect, probe: Probe, refused: boolean): string[] {
+  const found: string[] = [];
+  const text = probe.results.map((result) => result.text).join("\n");
+  if (probe.tool === null) found.push("no tool was asked for");
+  else if (!probe.used.includes(probe.tool)) found.push(`no tool note for ${probe.tool}`);
+  if (probe.results.length === 0) found.push(probe.threw === null ? "no tool result reached the API" : `no tool result reached the API (${probe.threw})`);
+  if (brokenCharacter.test(text)) found.push("a result has a broken character");
+  if (expect.refused !== undefined && !refused) found.push(probe.threw === null ? "not refused" : `not refused (${probe.threw})`);
+  if (expect.refused === undefined && (probe.threw !== null || probe.results.some((result) => result.isError))) found.push(probe.threw ?? "the tool failed");
+  if (probe.threw === null && probe.expectedAnswer !== null && probe.answer !== probe.expectedAnswer) found.push("the answer after the tool didn't come back");
+  const missing = (expect.found ?? []).filter((wanted) => !text.includes(wanted));
+  if (missing.length > 0) found.push(`didn't show ${missing.join(", ")}`);
+  const shown = (expect.absent ?? []).filter((unwanted) => text.includes(unwanted));
+  if (shown.length > 0) found.push(`showed ${shown.join(", ")}`);
+  return found;
+}
+
+function scope(engines: EngineUnderTest[]): string {
+  return engines.length === 1 ? checkNames[engines[0].engine] : "both engines";
+}
+
+function check(engine: EngineUnderTest, expect: Expect, probe: Probe): string[] {
+  return problems(expect, probe, expect.refused !== undefined && engine.refused(probe, expect.refused));
+}
+
+export function judgeRule(rule: SharedRule, engines: EngineUnderTest[], probes: Map<Engine, Map<string, Probe>>): CheckResult {
+  const failures: string[] = [];
+  for (const engine of engines) {
+    const probe = probes.get(engine.engine)?.get(rule.word) ?? { tool: null, used: [], answer: null, expectedAnswer: null, threw: "not asked", results: [] };
+    const differs = rule.differs?.engine === engine.engine ? rule.differs : undefined;
+    const wrong = check(engine, differs?.expect ?? rule.expect, probe);
+    if (wrong.length === 0) continue;
+    if (differs !== undefined && check(engine, rule.expect, probe).length === 0) {
+      failures.push(`${checkNames[engine.engine]} no longer differs (${differs.why}), so remove that from the expected differences`);
+    } else {
+      failures.push(`${checkNames[engine.engine]}: ${wrong.join("; ")}`);
+    }
+  }
+  const differs = rule.differs;
+  const note = differs === undefined || !engines.some((engine) => engine.engine === differs.engine) ? "" : ` (${engines.length === 1 ? "it" : checkNames[differs.engine]} differs, as expected: ${differs.why})`;
+  return { name: `${scope(engines)}: ${rule.name}${note}`, ok: failures.length === 0, detail: failures.length === 0 ? "worked" : failures.join(" | ") };
+}
 
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function runEngineCheck(deps: EngineCheckDeps): Promise<CheckResult[]> {
-  const results: CheckResult[] = [];
-  const ask = async (question: string) => {
-    const used: string[] = [];
-    const answer = await withTimeout(deps.session.ask(question, { tool: (name) => used.push(name) }), deps.timeoutMs, () => deps.session.close());
-    return { answer, used };
-  };
-  const works = async (name: string, question: string, tool: string, wanted: string, unwanted: string[] = []) => {
-    try {
-      const { answer, used } = await ask(question);
-      const extra = unwanted.filter((text) => answer.text.includes(text));
-      const ok = answer.text.includes(wanted) && used.includes(tool) && extra.length === 0;
-      results.push({ name, ok, detail: ok ? "worked" : `${used.includes(tool) ? tool : `no ${tool}`}${extra.length > 0 ? `; showed ${extra.join(", ")}` : ""}; answer: ${answer.text}` });
-    } catch (error) {
-      results.push({ name, ok: false, detail: reason(error) });
-    }
-  };
-  const refusedTo = async (name: string, question: string, tool: string) => {
-    try {
-      const { answer } = await ask(question);
-      results.push({ name, ok: false, detail: `not refused: ${answer.text}` });
-    } catch (error) {
-      const message = reason(error);
-      results.push({ name, ok: message.startsWith(`Refused: ${tool}`), detail: message });
-    }
-  };
+function list(names: string[]): string {
+  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
 
-  try {
-    const { answer } = await ask("Hello");
-    results.push({ name: "a question gets an answer", ok: answer.text === plainAnswer, detail: answer.text });
-  } catch (error) {
-    results.push({ name: "a question gets an answer", ok: false, detail: reason(error) });
+function calls(engine: EngineUnderTest): SeenRequest[] {
+  return engine.requests.filter((request) => request.path === "/v1/messages");
+}
+
+export async function runEngineCheck(deps: EngineCheckDeps): Promise<CheckResult[]> {
+  const rules = sharedRules(deps.markers);
+  const results: CheckResult[] = [];
+  const probes = new Map<Engine, Map<string, Probe>>();
+  const hello: string[] = [];
+
+  for (const engine of deps.engines) {
+    const ask = (question: string, used: string[] = []) => withTimeout(engine.session.ask(question, { tool: (name) => used.push(name) }), deps.timeoutMs, () => engine.session.close());
+    try {
+      const answer = await ask(helloQuestion);
+      if (answer.text !== plainAnswer) hello.push(`${checkNames[engine.engine]}: ${answer.text}`);
+    } catch (error) {
+      hello.push(`${checkNames[engine.engine]}: ${reason(error)}`);
+    }
+    const seen = new Map<string, Probe>();
+    for (const rule of rules) {
+      const from = engine.requests.length;
+      const used: string[] = [];
+      let answer: string | null = null;
+      let threw: string | null = null;
+      try {
+        answer = (await ask(`Please ${rule.word}`, used)).text;
+      } catch (error) {
+        threw = reason(error);
+      }
+      const after = engine.requests.slice(from);
+      const lastResult = after.filter((request) => request.toolResults.length > 0).at(-1);
+      seen.set(rule.word, {
+        tool: after.find((request) => request.asked !== null)?.asked ?? null,
+        used,
+        answer,
+        expectedAnswer: lastResult === undefined ? null : echoFor(lastResult.lastUserText),
+        threw,
+        results: after.flatMap((request) => request.toolResults),
+      });
+    }
+    probes.set(engine.engine, seen);
   }
-  await works("a file in the brain can be read", `Please ${readInsideWord}`, "Read", deps.insideMarker);
-  await refusedTo("a file outside the brain is refused", `Please ${readOutsideWord}`, "Read");
-  await refusedTo("the .git folder is off limits", `Please ${readGitWord}`, "Read");
-  await refusedTo("a link from the brain to a file outside is refused", `Please ${readLinkedWord}`, "Read");
-  await works("a search inside the brain finds the file", `Please ${searchInsideWord}`, "Grep", "index.md", [".git", "linked"]);
-  await refusedTo("a search outside the brain is refused", `Please ${searchOutsideWord}`, "Grep");
-  await works("finding files in the brain lists the file, but not .git or links out", `Please ${findInsideWord}`, "Glob", "index.md", [".git", "linked"]);
-  await refusedTo("finding files outside the brain is refused", `Please ${findOutsideWord}`, "Glob");
+  results.push({ name: `${scope(deps.engines)}: a question gets an answer`, ok: hello.length === 0, detail: hello.length === 0 ? plainAnswer : hello.join(" | ") });
+  for (const rule of rules) results.push(judgeRule(rule, deps.engines, probes));
 
   await new Promise((resolve) => setTimeout(resolve, deps.settleMs));
 
-  const leaked = deps.requests.filter((request) => request.body.includes(deps.outsideMarker) || request.body.includes(deps.gitMarker)).length;
-  results.push({ name: "nothing from .git or outside the brain reached the API", ok: leaked === 0, detail: `${leaked} requests carried it` });
+  const everything = deps.engines.flatMap((engine) => engine.requests);
+  const leaked = everything.filter((request) => request.body.includes(deps.markers.outside) || request.body.includes(deps.markers.git)).length;
+  results.push({ name: `${scope(deps.engines)}: nothing from .git or outside the brain reached the API`, ok: leaked === 0, detail: `${leaked} requests carried it` });
 
-  const settings = deps.requests.filter((request) => request.body.includes(deps.settingsMarker)).length;
-  results.push({ name: "settings and instruction files in the brain are ignored", ok: settings === 0, detail: `${settings} requests carried them` });
+  const settings = everything.filter((request) => request.body.includes(deps.markers.settings)).length;
+  results.push({ name: `${scope(deps.engines)}: settings and instruction files in the brain are ignored`, ok: settings === 0, detail: `${settings} requests carried them` });
 
-  const calls = deps.requests.filter((request) => request.path === "/v1/messages");
-  const inOrder = calls.length === expectedRequests.length && calls.every((request, index) => expectedRequests[index].test(request.lastUserText) && request.system.includes(deps.systemMarker));
-  results.push({ name: `only Jarvis's own ${expectedRequests.length} requests, in order (no title or other extra requests)`, ok: inOrder, detail: `${calls.length} requests: ${calls.map((request) => JSON.stringify(request.lastUserText.slice(0, 30))).join(", ")}` });
+  const expected = expectedRequests(rules);
+  const outOfOrder = deps.engines.filter((engine) => {
+    const sent = calls(engine);
+    return !(sent.length === expected.length && sent.every((request, index) => expected[index].test(request.lastUserText) && request.system.includes(engine.systemMarker)));
+  });
+  results.push({
+    name: `${scope(deps.engines)}: only Jarvis's own ${expected.length} requests${deps.engines.length === 1 ? "" : " each"}, in order (no title or other extra requests)`,
+    ok: deps.engines.length > 0 && outOfOrder.length === 0,
+    detail: outOfOrder.map((engine) => `${checkNames[engine.engine]} sent ${calls(engine).length}: ${calls(engine).map((request) => JSON.stringify(request.lastUserText.slice(0, 30))).join(", ")}`).join(" | "),
+  });
 
-  const wrongModel = calls.filter((request) => request.model !== deps.model).length;
-  results.push({ name: `every request uses ${deps.model}`, ok: calls.length > 0 && wrongModel === 0, detail: `${wrongModel} of ${calls.length} didn't` });
+  const models = deps.engines.map((engine) => ({ engine, sent: calls(engine).length, wrong: calls(engine).filter((request) => request.model !== deps.model).length }));
+  const wrongModel = models.filter((model) => model.sent === 0 || model.wrong > 0);
+  results.push({
+    name: `${scope(deps.engines)}: every request uses ${deps.model}`,
+    ok: deps.engines.length > 0 && wrongModel.length === 0,
+    detail: wrongModel.map((model) => (model.sent === 0 ? `${checkNames[model.engine.engine]}: no requests` : `${checkNames[model.engine.engine]}: ${model.wrong} of ${model.sent} didn't`)).join(" | "),
+  });
 
-  const offered = [...new Set(calls.flatMap((request) => request.tools))].sort();
-  const extra = offered.filter((tool) => !allowedTools.includes(tool));
-  const missing = calls.filter((request) => !requiredTools.every((tool) => request.tools.includes(tool))).length;
-  results.push({ name: "only Read, Grep and Glob are offered", ok: calls.length > 0 && missing === 0 && extra.length === 0, detail: `offered: ${offered.join(", ") || "none"}; ${missing} requests without all three` });
-
-  try {
-    const transcripts = await deps.countTranscripts();
-    results.push({ name: "no chat transcript is saved", ok: transcripts === 0, detail: `${transcripts} saved` });
-  } catch (error) {
-    results.push({ name: "no chat transcript is saved", ok: false, detail: reason(error) });
+  for (const engine of deps.engines) {
+    const sent = calls(engine);
+    const offered = [...new Set(sent.flatMap((request) => request.tools))].sort();
+    const extra = offered.filter((tool) => !engine.tools.includes(tool) && !engine.extraTools.includes(tool));
+    const missing = sent.filter((request) => !engine.tools.every((tool) => request.tools.includes(tool))).length;
+    results.push({
+      name: `${checkNames[engine.engine]}: only ${list(engine.tools)} are offered`,
+      ok: sent.length > 0 && missing === 0 && extra.length === 0,
+      detail: `offered: ${offered.join(", ") || "none"}; ${missing} requests without all ${engine.tools.length}`,
+    });
   }
 
-  const env = deps.engineEnv();
-  const quiet = Boolean(env?.DISABLE_TELEMETRY) && Boolean(env?.DISABLE_ERROR_REPORTING);
-  results.push({ name: "the engine's telemetry and error reports are off", ok: quiet, detail: env === undefined ? "no environment was given to the engine" : "a setting is missing or empty" });
+  if (deps.engines.some((engine) => engine.engine === "sdk")) {
+    try {
+      const transcripts = await deps.countTranscripts();
+      results.push({ name: "Agent SDK: no chat transcript is saved", ok: transcripts === 0, detail: `${transcripts} saved` });
+    } catch (error) {
+      results.push({ name: "Agent SDK: no chat transcript is saved", ok: false, detail: reason(error) });
+    }
+    const env = deps.engineEnv();
+    const quiet = Boolean(env?.DISABLE_TELEMETRY) && Boolean(env?.DISABLE_ERROR_REPORTING);
+    results.push({ name: "Agent SDK: the engine's telemetry and error reports are off", ok: quiet, detail: env === undefined ? "no environment was given to the engine" : "a setting is missing or empty" });
+  }
 
   return results;
 }

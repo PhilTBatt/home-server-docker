@@ -93,9 +93,12 @@ function inGit(root: string, path: string): boolean {
   return relative(root, path).split(sep).includes(".git");
 }
 
+export const outsideRefusal = "That's outside the brain, so it can't be read.";
+export const gitRefusal = "The .git folder is off limits.";
+
 function check(root: string, path: string) {
-  if (!inside(root, path)) throw new Refusal("That's outside the brain, so it can't be read.");
-  if (inGit(root, path)) throw new Refusal("The .git folder is off limits.");
+  if (!inside(root, path)) throw new Refusal(outsideRefusal);
+  if (inGit(root, path)) throw new Refusal(gitRefusal);
 }
 
 async function refuseIfNearestIsOutside(top: string, path: string) {

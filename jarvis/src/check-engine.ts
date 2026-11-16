@@ -4,13 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
-import { chatModel, chatSystem } from "./chat.js";
-import { formatCheck, runEngineCheck } from "./engine-check.js";
-import { startStandInApi, type StandInApi } from "./stand-in-api.js";
+import { startApiSession } from "./api-session.js";
+import { createBrainTools } from "./brain-tools.js";
+import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs } from "./chat.js";
+import { askDirect } from "./direct.js";
+import { apiUnderTest, formatCheck, runEngineCheck, sdkUnderTest } from "./engine-check.js";
+import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi, type StandInApi } from "./stand-in-api.js";
 
 const folders: string[] = [];
-let api: StandInApi | null = null;
-let session: AgentSession | null = null;
+const apis: StandInApi[] = [];
+const sessions: AgentSession[] = [];
 let engineEnv: Record<string, string | undefined> | undefined;
 
 async function countFiles(folder: string, ending: string): Promise<number> {
@@ -23,33 +26,47 @@ try {
   const brain = await mkdtemp(join(tmpdir(), "jarvis-check-brain-"));
   const outside = await mkdtemp(join(tmpdir(), "jarvis-check-outside-"));
   folders.push(home, brain, outside);
-  const insideMarker = `stand-in brain ${randomUUID()}`;
-  const outsideMarker = `outside the brain ${randomUUID()}`;
-  const settingsMarker = `settings file ${randomUUID()}`;
-  const gitMarker = `git brain ${randomUUID()}`;
-  await writeFile(join(brain, "index.md"), `# Index\n\n${insideMarker}\n`);
-  await writeFile(join(brain, "CLAUDE.md"), `${settingsMarker}\n`);
-  await writeFile(join(outside, "secret.md"), `${outsideMarker}\n`);
+  const markers = {
+    inside: `stand-in brain ${randomUUID()}`,
+    outside: `outside the brain ${randomUUID()}`,
+    settings: `settings file ${randomUUID()}`,
+    git: `git brain ${randomUUID()}`,
+    hidden: `${hiddenText} ${randomUUID()}`,
+    ignored: `${ignoredText} ${randomUUID()}`,
+    mixedCase: `${caseText} ${randomUUID()}`,
+  };
+  await writeFile(join(brain, "index.md"), `# Index\n\n${markers.inside}\n`);
+  await writeFile(join(brain, "CLAUDE.md"), `${markers.settings}\n`);
+  await writeFile(join(brain, ".hidden-note.md"), `${markers.hidden}\n`);
+  await writeFile(join(brain, ".gitignore"), `${ignoredName}\n`);
+  await writeFile(join(brain, ignoredName), `${markers.ignored}\n`);
+  await writeFile(join(brain, "mixed-case.md"), `${markers.mixedCase}\n`);
+  await writeFile(join(brain, longName), `${longText} x${"🙂".repeat(1500)}\n`);
+  await writeFile(join(outside, "secret.md"), `${markers.outside}\n`);
   await mkdir(join(brain, ".git"));
-  await writeFile(join(brain, ".git", "config"), `${gitMarker}\n`);
+  await writeFile(join(brain, ".git", "config"), `${markers.git}\n`);
   await symlink(outside, join(brain, "linked"));
-  api = await startStandInApi({ insidePath: join(brain, "index.md"), outsidePath: join(outside, "secret.md"), gitPath: join(brain, ".git", "config"), linkedPath: join(brain, "linked", "secret.md") });
+  const script = { insidePath: join(brain, "index.md"), outsidePath: join(outside, "secret.md"), gitPath: join(brain, ".git", "config"), linkedPath: join(brain, "linked", "secret.md") };
+  const sdkApi = await startStandInApi(script, "sdk");
+  const plainApi = await startStandInApi(script, "api");
+  apis.push(sdkApi, plainApi);
   process.env.HOME = home;
-  process.env.ANTHROPIC_BASE_URL = api.url;
+  process.env.ANTHROPIC_BASE_URL = sdkApi.url;
   process.env.ANTHROPIC_API_KEY = "sk-ant-test-key";
   process.env.NO_PROXY = "127.0.0.1,localhost";
-  session = startAgentSession((prompt, options) => {
+  const now = () => performance.now();
+  const sdk = startAgentSession((prompt, options) => {
     engineEnv = options.env;
     return query({ prompt, options });
-  }, { model: chatModel, system: chatSystem, cwd: brain, now: () => performance.now() });
+  }, { model: chatModel, system: chatSystem, cwd: brain, now });
+  const plain = startApiSession(
+    { apiKey: "sk-ant-test-key", model: chatModel, system: apiChatSystem, maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: createBrainTools(brain), thinkingHistory: "keep" },
+    (request) => askDirect({ ...request, url: `${plainApi.url}/v1/messages` }),
+  );
+  sessions.push(sdk, plain);
   const results = await runEngineCheck({
-    session,
-    requests: api.requests,
-    insideMarker,
-    outsideMarker,
-    gitMarker,
-    settingsMarker,
-    systemMarker: chatSystem.slice(0, 40),
+    engines: [sdkUnderTest(sdk, sdkApi.requests), apiUnderTest(plain, plainApi.requests)],
+    markers,
     model: chatModel,
     timeoutMs: 60_000,
     settleMs: 2000,
@@ -62,7 +79,7 @@ try {
   console.error(`The engine check couldn't run: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 } finally {
-  session?.close();
-  await api?.close();
+  for (const session of sessions) session.close();
+  for (const api of apis) await api.close();
   for (const folder of folders) await rm(folder, { recursive: true, force: true });
 }

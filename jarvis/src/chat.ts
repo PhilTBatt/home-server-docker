@@ -6,6 +6,7 @@ import { seconds, type Answer } from "./timing.js";
 
 export const chatModel = "claude-haiku-5-5";
 export const questionTimeoutMs = 120_000;
+export const apiMaxTokens = 4000;
 const intro = "You are Jarvis, Phil's assistant on his home server.";
 const style = "Keep answers short and natural, as if spoken aloud: one to three sentences unless he asks for more. Use British English.";
 const reading = [
