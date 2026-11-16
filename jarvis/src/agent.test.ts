@@ -553,6 +553,8 @@ test("an answer's tokens include cached input, as the engine reports them", asyn
   await agent.emit({ ...success("Hi."), usage: usage(100, 20, 300, 4000) });
   const stats = (await answer).stats;
   assert.equal(stats?.inputTokens, 4400);
+  assert.equal(stats?.cacheWriteTokens, 300);
+  assert.equal(stats?.cacheReadTokens, 4000);
   assert.equal(stats?.outputTokens, 20);
 });
 

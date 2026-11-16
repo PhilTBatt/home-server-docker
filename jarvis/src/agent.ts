@@ -171,6 +171,8 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
           rounds: answered.rounds,
           toolUses: answered.toolUses,
           inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_creation_input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+          cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+          cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
           outputTokens: usage?.output_tokens ?? 0,
           costUsd: Math.max(0, message.total_cost_usd - costBefore),
           earlierThinkingBlocks: null,

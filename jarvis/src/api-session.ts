@@ -4,15 +4,30 @@ import { askDirect, type AssistantBlock, type DirectAnswer, type DirectRequest, 
 import type { ThinkingHistory } from "./config.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
-export type Prices = { input: number; output: number; longPromptOver: number; longInput: number; longOutput: number };
-
-export const pricesPerMTok: Record<string, Prices> = {
-  "claude-haiku-5-5": { input: 0.1, output: 0.5, longPromptOver: 100_000, longInput: 0.5, longOutput: 2.5 },
+export type Prices = {
+  input: number;
+  cacheWrite: number;
+  cacheRead: number;
+  output: number;
+  longPromptOver: number;
+  longInput: number;
+  longCacheWrite: number;
+  longCacheRead: number;
+  longOutput: number;
 };
 
-export function answerCost(prices: Prices, inputTokens: number, outputTokens: number): number {
-  const long = inputTokens > prices.longPromptOver;
-  return (inputTokens * (long ? prices.longInput : prices.input) + outputTokens * (long ? prices.longOutput : prices.output)) / 1_000_000;
+export const pricesPerMTok: Record<string, Prices> = {
+  "claude-haiku-5-5": { input: 0.1, cacheWrite: 0.125, cacheRead: 0.01, output: 0.5, longPromptOver: 100_000, longInput: 0.5, longCacheWrite: 0.625, longCacheRead: 0.05, longOutput: 2.5 },
+};
+
+export type TokenUse = { input: number; cacheWrite: number; cacheRead: number; output: number };
+
+export function answerCost(prices: Prices, used: TokenUse): number {
+  const long = used.input + used.cacheWrite + used.cacheRead > prices.longPromptOver;
+  const spent = long
+    ? used.input * prices.longInput + used.cacheWrite * prices.longCacheWrite + used.cacheRead * prices.longCacheRead + used.output * prices.longOutput
+    : used.input * prices.input + used.cacheWrite * prices.cacheWrite + used.cacheRead * prices.cacheRead + used.output * prices.output;
+  return spent / 1_000_000;
 }
 
 export const maxToolSteps = 10;
@@ -87,6 +102,8 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
       rounds: 0,
       toolUses: 0,
       inputTokens: 0,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
       outputTokens: 0,
       costUsd: prices === undefined ? null : 0,
       earlierThinkingBlocks: thinkingBlocksIn(history),
@@ -130,10 +147,12 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
         if (closed) throw new Error(closedMessage);
         const stepStarted = settings.now();
         const answer = await sendRoundOrRecover();
-        stats.inputTokens += answer.inputTokens;
+        stats.inputTokens += answer.inputTokens + answer.cacheWriteTokens + answer.cacheReadTokens;
+        stats.cacheWriteTokens += answer.cacheWriteTokens;
+        stats.cacheReadTokens += answer.cacheReadTokens;
         stats.outputTokens += answer.outputTokens;
         if (prices !== undefined) {
-          const spent = answerCost(prices, answer.inputTokens, answer.outputTokens);
+          const spent = answerCost(prices, { input: answer.inputTokens, cacheWrite: answer.cacheWriteTokens, cacheRead: answer.cacheReadTokens, output: answer.outputTokens });
           cost = (cost ?? 0) + spent;
           stats.costUsd = (stats.costUsd ?? 0) + spent;
         }

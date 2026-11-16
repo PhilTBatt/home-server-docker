@@ -29,6 +29,8 @@ export type LogLine = {
   rounds: number | null;
   toolUses: number | null;
   inputTokens: number | null;
+  cacheWriteTokens?: number | null;
+  cacheReadTokens?: number | null;
   outputTokens: number | null;
   costUsd: number | null;
   earlierThinkingBlocks: number | null;
@@ -88,6 +90,8 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     rounds: stats?.rounds ?? null,
     toolUses: stats?.toolUses ?? null,
     inputTokens: stats?.inputTokens ?? null,
+    cacheWriteTokens: stats?.cacheWriteTokens ?? null,
+    cacheReadTokens: stats?.cacheReadTokens ?? null,
     outputTokens: stats?.outputTokens ?? null,
     costUsd: tidyCost(answer === null ? failedCostUsd : (stats?.costUsd ?? null)),
     earlierThinkingBlocks: stats?.earlierThinkingBlocks ?? null,

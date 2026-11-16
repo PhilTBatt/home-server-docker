@@ -31,18 +31,22 @@ export type DirectRequest = {
 
 export type DirectAnswer = Answer & {
   inputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
   outputTokens: number;
   content: AssistantBlock[];
   stopReason: string | null;
 };
+
+type Usage = { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number; output_tokens?: number };
 
 export type StreamEvent = {
   type?: string;
   index?: number;
   content_block?: Record<string, unknown>;
   delta?: { type?: string; text?: string; thinking?: string; signature?: string; partial_json?: string; stop_reason?: string };
-  message?: { usage?: { input_tokens?: number } };
-  usage?: { output_tokens?: number };
+  message?: { usage?: Usage };
+  usage?: Usage;
   error?: { message?: string };
 };
 
@@ -151,6 +155,8 @@ export async function askDirect(request: DirectRequest): Promise<DirectAnswer> {
   let failure: string | null = null;
   let finished = false;
   let inputTokens = 0;
+  let cacheWriteTokens = 0;
+  let cacheReadTokens = 0;
   let outputTokens = 0;
   let stopReason: string | null = null;
   const collector = createBlockCollector();
@@ -158,8 +164,17 @@ export async function askDirect(request: DirectRequest): Promise<DirectAnswer> {
     collector.take(event);
     if (event.type === "error") failure = event.error?.message ?? "no details";
     if (event.type === "message_stop") finished = true;
-    if (event.type === "message_start") inputTokens = event.message?.usage?.input_tokens ?? 0;
-    if (event.type === "message_delta") outputTokens = event.usage?.output_tokens ?? outputTokens;
+    if (event.type === "message_start") {
+      inputTokens = event.message?.usage?.input_tokens ?? 0;
+      cacheWriteTokens = event.message?.usage?.cache_creation_input_tokens ?? 0;
+      cacheReadTokens = event.message?.usage?.cache_read_input_tokens ?? 0;
+    }
+    if (event.type === "message_delta") {
+      inputTokens = event.usage?.input_tokens ?? inputTokens;
+      cacheWriteTokens = event.usage?.cache_creation_input_tokens ?? cacheWriteTokens;
+      cacheReadTokens = event.usage?.cache_read_input_tokens ?? cacheReadTokens;
+      outputTokens = event.usage?.output_tokens ?? outputTokens;
+    }
     if (event.type === "message_delta") stopReason = event.delta?.stop_reason ?? stopReason;
     if (event.type !== "content_block_delta" || event.delta?.type !== "text_delta") return;
     if (firstWordsMs === null) firstWordsMs = request.now() - started;
@@ -176,5 +191,5 @@ export async function askDirect(request: DirectRequest): Promise<DirectAnswer> {
   }
   if (failure !== null) throw new Error(`The API stopped with an error: ${failure}`);
   if (!finished) throw new Error("The answer was cut off");
-  return { text, firstWordsMs, totalMs: request.now() - started, inputTokens, outputTokens, content: collector.blocks(), stopReason };
+  return { text, firstWordsMs, totalMs: request.now() - started, inputTokens, cacheWriteTokens, cacheReadTokens, outputTokens, content: collector.blocks(), stopReason };
 }

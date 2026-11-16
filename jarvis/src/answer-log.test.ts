@@ -11,7 +11,7 @@ const answered: Answer = {
   text: "Your notes cover the hub and your family.",
   firstWordsMs: 640,
   totalMs: 2100,
-  stats: { rounds: 2, toolUses: 1, inputTokens: 5200, outputTokens: 90, costUsd: 0.000565, earlierThinkingBlocks: 3, recovered: true },
+  stats: { rounds: 2, toolUses: 1, inputTokens: 5200, cacheWriteTokens: 1200, cacheReadTokens: 3000, outputTokens: 90, costUsd: 0.000565, earlierThinkingBlocks: 3, recovered: true },
 };
 
 function fakeLog(context: LogContext = apiKeep, failAppends = 0) {
@@ -52,6 +52,8 @@ test("an answer becomes one line of numbers, with none of its words", () => {
     rounds: 2,
     toolUses: 1,
     inputTokens: 5200,
+    cacheWriteTokens: 1200,
+    cacheReadTokens: 3000,
     outputTokens: 90,
     costUsd: 0.000565,
     earlierThinkingBlocks: 3,
@@ -66,6 +68,7 @@ test("a failure is logged as a kind of failure, never its message", () => {
   assert.equal(line.error, "other");
   assert.equal(line.totalMs, null);
   assert.equal(line.inputTokens, null);
+  assert.equal(line.cacheReadTokens, null);
   assert.equal(line.recovered, null);
   assert.doesNotMatch(JSON.stringify(line), /spare key|blue pot/);
 });

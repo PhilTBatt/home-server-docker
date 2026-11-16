@@ -2,6 +2,8 @@ export type AnswerStats = {
   rounds: number;
   toolUses: number;
   inputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
   outputTokens: number;
   costUsd: number | null;
   earlierThinkingBlocks: number | null;

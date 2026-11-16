@@ -97,6 +97,8 @@ test("times the first words from the first text, and the full answer from the en
     firstWordsMs: 400,
     totalMs: 1100,
     inputTokens: 0,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
     outputTokens: 0,
     content: [{ type: "text", text: "Morning, Phil." }],
     stopReason: "end_turn",
@@ -144,6 +146,8 @@ test("no first-words time when the answer has no text", async () => {
     firstWordsMs: null,
     totalMs: 700,
     inputTokens: 0,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
     outputTokens: 0,
     content: [{ type: "text", text: "" }],
     stopReason: "end_turn",
@@ -251,7 +255,33 @@ test("tokens count as zero when the stream doesn't say", async () => {
   fakeApi([...opening, textDelta("Hi."), ...closing]);
   const answer = await askDirect(request());
   assert.equal(answer.inputTokens, 0);
+  assert.equal(answer.cacheWriteTokens, 0);
+  assert.equal(answer.cacheReadTokens, 0);
   assert.equal(answer.outputTokens, 0);
+});
+
+test("reads cache writes and reads from the start of the stream, apart from the uncached input", async () => {
+  fakeApi([
+    event({ type: "message_start", message: { id: "msg_1", usage: { input_tokens: 30, cache_creation_input_tokens: 1800, cache_read_input_tokens: 5200, output_tokens: 1 } } }),
+    textDelta("Hi."),
+    event({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 45 } }),
+    event({ type: "message_stop" }),
+  ]);
+  const answer = await askDirect(request());
+  assert.equal(answer.inputTokens, 30);
+  assert.equal(answer.cacheWriteTokens, 1800);
+  assert.equal(answer.cacheReadTokens, 5200);
+});
+
+test("if the end of the stream gives whole-message totals, they replace the start's, never add to them", async () => {
+  fakeApi([
+    event({ type: "message_start", message: { id: "msg_1", usage: { input_tokens: 30, cache_creation_input_tokens: 1800, cache_read_input_tokens: 5200, output_tokens: 1 } } }),
+    textDelta("Hi."),
+    event({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { input_tokens: 35, cache_creation_input_tokens: 1900, cache_read_input_tokens: 5300, output_tokens: 45 } }),
+    event({ type: "message_stop" }),
+  ]);
+  const answer = await askDirect(request());
+  assert.deepEqual([answer.inputTokens, answer.cacheWriteTokens, answer.cacheReadTokens, answer.outputTokens], [35, 1900, 5300, 45]);
 });
 
 test("stopping from outside cancels the request, and the timeout still applies", async () => {

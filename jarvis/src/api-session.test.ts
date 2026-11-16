@@ -9,7 +9,7 @@ const settings: ApiSettings = { apiKey: "sk-ant-test-key", model: "claude-haiku-
 
 function reply(text: string, inputTokens = 100, outputTokens = 20): DirectAnswer {
   const content = text.trim() === "" ? [] : [{ type: "text" as const, text }];
-  return { text, firstWordsMs: 300, totalMs: 900, inputTokens, outputTokens, content, stopReason: "end_turn" };
+  return { text, firstWordsMs: 300, totalMs: 900, inputTokens, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens, content, stopReason: "end_turn" };
 }
 
 function recorder(answers: ((request: DirectRequest) => Promise<DirectAnswer>)[]) {
@@ -28,18 +28,40 @@ function hanging(request: DirectRequest): Promise<DirectAnswer> {
   });
 }
 
-test("Haiku 5.5 is priced at $0.10 in and $0.50 out per million tokens, and five times that for prompts over 100,000 tokens", () => {
-  assert.deepEqual(pricesPerMTok["claude-haiku-5-5"], { input: 0.1, output: 0.5, longPromptOver: 100_000, longInput: 0.5, longOutput: 2.5 });
+test("Haiku 5.5 is priced at $0.10 in, $0.125 to write the cache, $0.01 to read it and $0.50 out per million tokens, and five times that for prompts over 100,000 tokens", () => {
+  assert.deepEqual(pricesPerMTok["claude-haiku-5-5"], {
+    input: 0.1,
+    cacheWrite: 0.125,
+    cacheRead: 0.01,
+    output: 0.5,
+    longPromptOver: 100_000,
+    longInput: 0.5,
+    longCacheWrite: 0.625,
+    longCacheRead: 0.05,
+    longOutput: 2.5,
+  });
+});
+
+test("cache writes and reads are priced on their own", () => {
+  const prices = pricesPerMTok["claude-haiku-5-5"];
+  assert.ok(Math.abs(answerCost(prices, { input: 1000, cacheWrite: 3000, cacheRead: 40_000, output: 200 }) - (1000 * 0.1 + 3000 * 0.125 + 40_000 * 0.01 + 200 * 0.5) / 1_000_000) < 1e-12);
+});
+
+test("cached tokens count towards the 100,000-token long-prompt line", () => {
+  const prices = pricesPerMTok["claude-haiku-5-5"];
+  assert.ok(Math.abs(answerCost(prices, { input: 1, cacheWrite: 0, cacheRead: 100_000, output: 100 }) - (1 * 0.5 + 100_000 * 0.05 + 100 * 2.5) / 1_000_000) < 1e-12);
+  assert.ok(Math.abs(answerCost(prices, { input: 1, cacheWrite: 100_000, cacheRead: 0, output: 100 }) - (1 * 0.5 + 100_000 * 0.625 + 100 * 2.5) / 1_000_000) < 1e-12);
+  assert.ok(Math.abs(answerCost(prices, { input: 0, cacheWrite: 50_000, cacheRead: 50_000, output: 100 }) - (50_000 * 0.125 + 50_000 * 0.01 + 100 * 0.5) / 1_000_000) < 1e-12);
 });
 
 test("an answer's cost uses the normal prices up to 100,000 prompt tokens", () => {
   const prices = pricesPerMTok["claude-haiku-5-5"];
-  assert.ok(Math.abs(answerCost(prices, 100_000, 1000) - (100_000 * 0.1 + 1000 * 0.5) / 1_000_000) < 1e-12);
+  assert.ok(Math.abs(answerCost(prices, { input: 100_000, cacheWrite: 0, cacheRead: 0, output: 1000 }) - (100_000 * 0.1 + 1000 * 0.5) / 1_000_000) < 1e-12);
 });
 
 test("an answer's cost uses the long-prompt prices, for input and output, above 100,000 prompt tokens", () => {
   const prices = pricesPerMTok["claude-haiku-5-5"];
-  assert.ok(Math.abs(answerCost(prices, 100_001, 1000) - (100_001 * 0.5 + 1000 * 2.5) / 1_000_000) < 1e-12);
+  assert.ok(Math.abs(answerCost(prices, { input: 100_001, cacheWrite: 0, cacheRead: 0, output: 1000 }) - (100_001 * 0.5 + 1000 * 2.5) / 1_000_000) < 1e-12);
 });
 
 test("a question goes to the API with the settings, the stop signal and thinking at its default", async () => {
@@ -240,7 +262,7 @@ test("closing twice is harmless", () => {
 
 function toolReply(calls: { id: string; name: string; input: unknown }[], text = ""): DirectAnswer {
   const content = [...(text === "" ? [] : [{ type: "text" as const, text }]), ...calls.map((call) => ({ type: "tool_use" as const, ...call }))];
-  return { text, firstWordsMs: text === "" ? null : 100, totalMs: 500, inputTokens: 200, outputTokens: 30, content, stopReason: "tool_use" };
+  return { text, firstWordsMs: text === "" ? null : 100, totalMs: 500, inputTokens: 200, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 30, content, stopReason: "tool_use" };
 }
 
 function fakeTools(outcomes: Record<string, ToolOutcome> = {}) {
@@ -711,4 +733,15 @@ test("hasVisibleContent looks past thinking and blank text", () => {
   assert.equal(hasVisibleContent([thinking("Hmm."), { type: "text", text: "Hi" }]), true);
   assert.equal(hasVisibleContent([{ type: "tool_use", id: "t", name: "read_file", input: {} }]), true);
   assert.equal(hasVisibleContent([]), false);
+});
+
+
+test("an answer's input counts cached tokens too, with the cache's share shown and priced on its own", async () => {
+  const { tools } = fakeTools();
+  const { send } = recorder([async () => ({ ...toolReply([readIndex]), inputTokens: 50, cacheWriteTokens: 2000, cacheReadTokens: 500 }), async () => ({ ...reply("Done.", 100, 40), cacheReadTokens: 3000 })]);
+  const answer = await startApiSession({ ...settings, tools }, send).ask("Read it");
+  assert.equal(answer.stats?.inputTokens, 5650);
+  assert.equal(answer.stats?.cacheWriteTokens, 2000);
+  assert.equal(answer.stats?.cacheReadTokens, 3500);
+  assert.ok(Math.abs((answer.stats?.costUsd ?? 0) - (150 * 0.1 + 2000 * 0.125 + 3500 * 0.01 + 70 * 0.5) / 1_000_000) < 1e-12);
 });

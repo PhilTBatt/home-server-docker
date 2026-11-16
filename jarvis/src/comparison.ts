@@ -13,6 +13,7 @@ export type Group = {
 };
 
 const numberFields = ["firstWordsMs", "totalMs", "rounds", "toolUses", "inputTokens", "outputTokens", "costUsd", "earlierThinkingBlocks"] as const;
+const laterNumberFields = ["cacheWriteTokens", "cacheReadTokens"] as const;
 const lastQuestionColumn = 6;
 
 function isNumberOrNull(value: unknown): boolean {
@@ -34,6 +35,7 @@ export function isLogLine(value: unknown): value is LogLine {
     typeof line.ok === "boolean" &&
     (line.error === null || typeof line.error === "string") &&
     numberFields.every((field) => isNumberOrNull(line[field])) &&
+    laterNumberFields.every((field) => line[field] === undefined || isNumberOrNull(line[field])) &&
     (line.recovered === null || typeof line.recovered === "boolean")
   );
 }
@@ -86,8 +88,8 @@ export function groupLines(lines: LogLine[]): Group[] {
     .sort(compareGroups);
 }
 
-function numbers(lines: LogLine[], pick: (line: LogLine) => number | null): number[] {
-  return lines.map(pick).filter((value): value is number => value !== null);
+function numbers(lines: LogLine[], pick: (line: LogLine) => number | null | undefined): number[] {
+  return lines.map(pick).filter((value): value is number => typeof value === "number");
 }
 
 function median(values: number[]): number | null {
@@ -146,6 +148,8 @@ function summaryRows(groups: Group[]): string[][] {
     row("Rounds, average", (_group, lines) => shown(average(numbers(lines, (line) => line.rounds)), oneDecimal)),
     row("Tool uses, average", (_group, lines) => shown(average(numbers(lines, (line) => line.toolUses)), oneDecimal)),
     row("Input tokens, median", (_group, lines) => shown(median(numbers(lines, (line) => line.inputTokens)), withCommas)),
+    row("Read from cache, median", (_group, lines) => shown(median(numbers(lines, (line) => line.cacheReadTokens)), withCommas)),
+    row("Written to cache, median", (_group, lines) => shown(median(numbers(lines, (line) => line.cacheWriteTokens)), withCommas)),
     row("Output tokens, median", (_group, lines) => shown(median(numbers(lines, (line) => line.outputTokens)), withCommas)),
     row("Earlier thinking blocks, median", (group, lines) => (group.engine === "api" ? shown(median(numbers(lines, (line) => line.earlierThinkingBlocks)), withCommas) : "-")),
     row("Cost per answer, median", (_group, lines) => shown(median(numbers(lines, (line) => line.costUsd)), fineDollars)),
@@ -197,6 +201,8 @@ export function compareReport({ lines, skipped }: ReadLog): string {
   out.push("", table(["", ...groups.map((group) => group.label)], summaryRows(groups)));
   out.push("", "Input tokens by question number in the chat, median:");
   out.push(table(["", ...Array.from({ length: lastQuestionColumn }, (_unused, index) => (index + 1 === lastQuestionColumn ? `${index + 1}+` : String(index + 1)))], questionRows(groups)));
+  const uncached = lines.filter((line) => line.ok && (line.cacheReadTokens === undefined || line.cacheWriteTokens === undefined)).length;
+  if (uncached > 0) out.push("", `The cache rows leave out ${plural(uncached, "answer")} logged before cache tokens were counted.`);
   const failures = failureLines(groups);
   if (failures.length > 0) out.push("", "Failures:", ...failures);
   out.push("", "Medians and averages leave out failed questions; the total cost includes them. Costs are estimates: the Agent SDK's own, and the plain API's from list prices.");

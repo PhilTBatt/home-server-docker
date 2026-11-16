@@ -19,6 +19,8 @@ function line(overrides: Partial<LogLine> = {}): LogLine {
     rounds: 1,
     toolUses: 0,
     inputTokens: 3000,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
     outputTokens: 100,
     costUsd: 0.00035,
     earlierThinkingBlocks: 0,
@@ -68,6 +70,8 @@ test("a line is only trusted if every field has the right shape", () => {
     { totalMs: Number.NaN },
     { inputTokens: Number.POSITIVE_INFINITY },
     { costUsd: "0.1" },
+    { cacheReadTokens: "40" },
+    { cacheWriteTokens: Number.NaN },
     { recovered: "no" },
   ];
   for (const change of broken) assert.equal(isLogLine({ ...line(), ...change }), false, JSON.stringify(change));
@@ -200,4 +204,22 @@ test("input tokens are shown by question number, so a chat's growth can be compa
 
 test("the report ends with what its numbers leave out", () => {
   assert.match(compareReport({ lines: [line()], skipped: 0 }), /\n\nMedians and averages leave out failed questions; the total cost includes them\. Costs are estimates: the Agent SDK's own, and the plain API's from list prices\.\n$/);
+});
+
+
+test("cache reads and writes get their own rows, and lines from before they were logged still count", () => {
+  const { cacheWriteTokens: _write, cacheReadTokens: _read, ...older } = line({ engine: "sdk", thinking: null, inputTokens: 5000 });
+  assert.equal(isLogLine(older), true);
+  const lines = [
+    older as LogLine,
+    line({ engine: "sdk", thinking: null, inputTokens: 9000, cacheReadTokens: 8000, cacheWriteTokens: 600 }),
+    line({ inputTokens: 2000, cacheReadTokens: 0, cacheWriteTokens: 0 }),
+  ];
+  const report = compareReport({ lines, skipped: 0 });
+  assert.deepEqual(rowOf(report, "Input tokens, median"), ["7,000", "2,000"]);
+  assert.deepEqual(rowOf(report, "Read from cache, median"), ["8,000", "0"]);
+  assert.deepEqual(rowOf(report, "Written to cache, median"), ["600", "0"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine], skipped: 0 }), "Read from cache, median"), ["-"]);
+  assert.match(report, /\n\nThe cache rows leave out 1 answer logged before cache tokens were counted\.\n/);
+  assert.doesNotMatch(compareReport({ lines: [line()], skipped: 0 }), /cache rows leave out/);
 });
