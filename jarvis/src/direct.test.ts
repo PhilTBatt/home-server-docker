@@ -92,7 +92,15 @@ test("turns thinking off when asked, and changes nothing else", async () => {
 
 test("times the first words from the first text, and the full answer from the end of the stream", async () => {
   fakeApi([...opening, textDelta("Morning, "), textDelta("Phil."), ...closing]);
-  assert.deepEqual(await askDirect(request()), { text: "Morning, Phil.", firstWordsMs: 400, totalMs: 1100, inputTokens: 0, outputTokens: 0 });
+  assert.deepEqual(await askDirect(request()), {
+    text: "Morning, Phil.",
+    firstWordsMs: 400,
+    totalMs: 1100,
+    inputTokens: 0,
+    outputTokens: 0,
+    content: [{ type: "text", text: "Morning, Phil." }],
+    stopReason: "end_turn",
+  });
 });
 
 test("only reads the clock three times: start, first words and end", async () => {
@@ -131,7 +139,15 @@ test("non-text deltas don't count as first words", async () => {
 
 test("no first-words time when the answer has no text", async () => {
   fakeApi([...opening, ...closing]);
-  assert.deepEqual(await askDirect(request({ now: clock([0, 700]) })), { text: "", firstWordsMs: null, totalMs: 700, inputTokens: 0, outputTokens: 0 });
+  assert.deepEqual(await askDirect(request({ now: clock([0, 700]) })), {
+    text: "",
+    firstWordsMs: null,
+    totalMs: 700,
+    inputTokens: 0,
+    outputTokens: 0,
+    content: [],
+    stopReason: "end_turn",
+  });
 });
 
 test("an error event in the stream stops with the API's message", async () => {
@@ -275,6 +291,120 @@ test("stopping from outside while waiting for the API stops the request", async 
   const answer = askDirect(request({ signal: stopping.signal }));
   stopping.abort();
   await assert.rejects(answer, { message: "Couldn't reach the API" });
+});
+
+function toolUse(index: number, id: string, name: string, jsonParts: string[]): string[] {
+  return [
+    event({ type: "content_block_start", index, content_block: { type: "tool_use", id, name, input: {} } }),
+    ...jsonParts.map((part) => event({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: part } })),
+    event({ type: "content_block_stop", index }),
+  ];
+}
+
+const toolStop = [event({ type: "message_delta", delta: { stop_reason: "tool_use" } }), event({ type: "message_stop" })];
+
+const readFileTool = { name: "read_file", description: "Read a file.", input_schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } };
+
+test("tools are sent when there are some", async () => {
+  const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
+  await askDirect(request({ tools: [readFileTool] }));
+  const body = JSON.parse(String(fetchMock.mock.calls[0].arguments[1]?.body)) as { tools?: unknown };
+  assert.deepEqual(body.tools, [readFileTool]);
+});
+
+test("an empty tool list isn't sent", async () => {
+  const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
+  await askDirect(request({ tools: [] }));
+  const body = JSON.parse(String(fetchMock.mock.calls[0].arguments[1]?.body)) as Record<string, unknown>;
+  assert.equal("tools" in body, false);
+});
+
+test("a tool request is put back together from its pieces, after the text before it", async () => {
+  fakeApi([
+    ...opening,
+    textDelta("Let me check."),
+    event({ type: "content_block_stop", index: 0 }),
+    ...toolUse(1, "toolu_1", "read_file", ['{"pa', 'th": "index', '.md"}']),
+    ...toolStop,
+  ]);
+  const answer = await askDirect(request());
+  assert.deepEqual(answer.content, [
+    { type: "text", text: "Let me check." },
+    { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "index.md" } },
+  ]);
+  assert.equal(answer.stopReason, "tool_use");
+  assert.equal(answer.text, "Let me check.");
+});
+
+test("several tool requests in one answer come back in order", async () => {
+  fakeApi([
+    event({ type: "message_start", message: { id: "msg_1" } }),
+    ...toolUse(0, "toolu_1", "read_file", ['{"path": "a.md"}']),
+    ...toolUse(1, "toolu_2", "list_folder", ['{"path": "."}']),
+    ...toolStop,
+  ]);
+  const answer = await askDirect(request());
+  assert.deepEqual(answer.content, [
+    { type: "tool_use", id: "toolu_1", name: "read_file", input: { path: "a.md" } },
+    { type: "tool_use", id: "toolu_2", name: "list_folder", input: { path: "." } },
+  ]);
+});
+
+test("a tool request with no input pieces has an empty input", async () => {
+  fakeApi([event({ type: "message_start", message: { id: "msg_1" } }), ...toolUse(0, "toolu_1", "list_folder", []), ...toolStop]);
+  const answer = await askDirect(request());
+  assert.deepEqual(answer.content, [{ type: "tool_use", id: "toolu_1", name: "list_folder", input: {} }]);
+});
+
+test("a tool request whose input isn't valid JSON is unreadable", async () => {
+  fakeApi([event({ type: "message_start", message: { id: "msg_1" } }), ...toolUse(0, "toolu_1", "read_file", ['{"path": ']), ...toolStop]);
+  await assert.rejects(askDirect(request()), { message: "The API sent something unreadable" });
+});
+
+test("blank text isn't kept as a block, since the API refuses empty text when it's sent back", async () => {
+  fakeApi([...opening, textDelta("  "), event({ type: "content_block_stop", index: 0 }), ...toolUse(1, "toolu_1", "list_folder", ['{"path": "."}']), ...toolStop]);
+  const answer = await askDirect(request());
+  assert.deepEqual(answer.content, [{ type: "tool_use", id: "toolu_1", name: "list_folder", input: { path: "." } }]);
+});
+
+test("a block that never finishes isn't kept", async () => {
+  fakeApi([...opening, textDelta("Half"), event({ type: "message_delta", delta: { stop_reason: "max_tokens" } }), event({ type: "message_stop" })]);
+  const answer = await askDirect(request());
+  assert.deepEqual(answer.content, []);
+  assert.equal(answer.stopReason, "max_tokens");
+});
+
+test("thinking isn't shown, timed or kept", async () => {
+  fakeApi([
+    event({ type: "message_start", message: { id: "msg_1" } }),
+    event({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
+    event({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Hmm." } }),
+    event({ type: "content_block_stop", index: 0 }),
+    event({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+    event({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Hi." } }),
+    event({ type: "content_block_stop", index: 1 }),
+    ...closing.slice(1),
+  ]);
+  const answer = await askDirect(request());
+  assert.equal(answer.text, "Hi.");
+  assert.deepEqual(answer.content, [{ type: "text", text: "Hi." }]);
+});
+
+test("the stop reason is empty when the stream doesn't give one", async () => {
+  fakeApi([...opening, textDelta("Hi."), event({ type: "content_block_stop", index: 0 }), event({ type: "message_stop" })]);
+  assert.equal((await askDirect(request())).stopReason, null);
+});
+
+test("tool results go back as the user's turn, after the earlier turns", async () => {
+  const fetchMock = fakeApi([...opening, textDelta("It covers your life."), ...closing]);
+  const history = [
+    { role: "user" as const, content: "What's in my notes?" },
+    { role: "assistant" as const, content: [{ type: "tool_use" as const, id: "toolu_1", name: "read_file", input: { path: "index.md" } }] },
+  ];
+  const results = [{ type: "tool_result" as const, tool_use_id: "toolu_1", content: "# Index" }];
+  await askDirect(request({ history, question: results }));
+  const body = JSON.parse(String(fetchMock.mock.calls[0].arguments[1]?.body)) as { messages: unknown[] };
+  assert.deepEqual(body.messages, [...history, { role: "user", content: results }]);
 });
 
 test("no error message ever includes the key", async () => {

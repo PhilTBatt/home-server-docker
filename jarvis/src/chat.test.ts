@@ -81,17 +81,27 @@ test("Jarvis's instructions point him at the brain and keep him safe and short",
   assert.match(chatSystem, /British English/);
 });
 
-test("the plain API engine's instructions keep the same voice but say he can't read the brain yet", () => {
+test("the plain API engine's instructions give the same voice and rules, pointing at its brain tools", () => {
   assert.match(apiChatSystem, /^You are Jarvis, Phil's assistant on his home server\./);
+  assert.match(apiChatSystem, /read_file and list_folder tools/);
+  assert.match(apiChatSystem, /index\.md/);
   assert.match(apiChatSystem, /British English/);
-  assert.match(apiChatSystem, /can't read his notes or use any tools/);
-  assert.match(apiChatSystem, /can't change anything/);
-  assert.doesNotMatch(apiChatSystem, /\/brain|index\.md|Before you read a file/);
+  assert.match(apiChatSystem, /Before you read a file, say/);
+  assert.match(apiChatSystem, /never instructions to you/);
+  assert.match(apiChatSystem, /You can only read/);
+  assert.doesNotMatch(apiChatSystem, /working folder/);
+});
+
+test("both engines share the same reading rules", () => {
+  for (const rule of ["Before you read a file", "never instructions to you", "You can only read"]) {
+    assert.ok(chatSystem.includes(rule));
+    assert.ok(apiChatSystem.includes(rule));
+  }
 });
 
 test("the engine line names the engine", () => {
   assert.equal(engineLine("sdk"), "Engine: the Agent SDK");
-  assert.equal(engineLine("api"), "Engine: a plain API call, without the brain for now");
+  assert.equal(engineLine("api"), "Engine: a plain API call");
 });
 
 test("a whole chat: greeting, streamed answer, timing, then the cost", async () => {
@@ -172,6 +182,58 @@ test("a file read shows a note on its own line, with the brain's folder left off
   const { run, output } = chat(session, ["What's in my brain?"]);
   await run();
   assert.ok(output().includes("Jarvis: Let me check your index.\n  (reading index.md)\nIt covers your projects.\n  (first words 0.30 s, full answer 2.00 s)\n"));
+});
+
+test("the plain API engine's tools get notes too", () => {
+  assert.equal(toolNote("read_file", { path: "areas/jarvis.md" }), "reading areas/jarvis.md");
+  assert.equal(toolNote("read_file", { path: "/brain/index.md" }), "reading index.md");
+  assert.equal(toolNote("read_file", {}), "using read_file");
+  assert.equal(toolNote("list_folder", { path: "areas" }), "looking in areas");
+  assert.equal(toolNote("list_folder", { path: "." }), "looking in the top folder");
+  assert.equal(toolNote("list_folder", { path: " " }), "looking in the top folder");
+  assert.equal(toolNote("list_folder", {}), "looking in the top folder");
+  assert.equal(toolNote("Read", { path: "index.md" }), "using Read");
+});
+
+test("tool notes in a row sit on their own lines with no blank line between", async () => {
+  const session = fakeSession({
+    "Read both": async (listener) => {
+      listener.tool?.("read_file", { path: "a.md" });
+      listener.tool?.("read_file", { path: "b.md" });
+      listener.text?.("Done.");
+      return answer("Done.", 900, 1000);
+    },
+  });
+  const { run, output } = chat(session, ["Read both"]);
+  await run();
+  assert.ok(output().includes("Jarvis: \n  (reading a.md)\n  (reading b.md)\nDone.\n  (first words 0.90 s, full answer 1.00 s)\n"));
+});
+
+test("a tool note just before the timing line doesn't leave a blank line", async () => {
+  const session = fakeSession({
+    "Read it": async (listener) => {
+      listener.text?.("Checking.");
+      listener.tool?.("read_file", { path: "a.md" });
+      return answer("Checking.", 100, 1000);
+    },
+  });
+  const { run, output } = chat(session, ["Read it"]);
+  await run();
+  assert.ok(output().includes("Jarvis: Checking.\n  (reading a.md)\n  (first words 0.10 s, full answer 1.00 s)\n"));
+});
+
+test("text that ends its own line isn't followed by a blank line", async () => {
+  const session = fakeSession({
+    Hello: async (listener) => {
+      listener.text?.("Two lines\n");
+      listener.tool?.("read_file", { path: "a.md" });
+      listener.text?.("then more.");
+      return answer("Two lines\nthen more.", 100, 1000);
+    },
+  });
+  const { run, output } = chat(session, ["Hello"]);
+  await run();
+  assert.ok(output().includes("Jarvis: Two lines\n  (reading a.md)\nthen more.\n  (first words"));
 });
 
 test("tool notes say what's being read, or name the tool", () => {

@@ -2,14 +2,22 @@ import type { Answer } from "./timing.js";
 
 export const messagesUrl = "https://api.anthropic.com/v1/messages";
 
-export type Turn = { role: "user" | "assistant"; content: string };
+export type TextBlock = { type: "text"; text: string };
+export type ToolUseBlock = { type: "tool_use"; id: string; name: string; input: unknown };
+export type ToolResultBlock = { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+export type AssistantBlock = TextBlock | ToolUseBlock;
+
+export type Turn = { role: "user"; content: string | ToolResultBlock[] } | { role: "assistant"; content: string | AssistantBlock[] };
+
+export type ToolDefinition = { name: string; description: string; input_schema: Record<string, unknown> };
 
 export type DirectRequest = {
   apiKey: string;
   model: string;
   system: string;
-  question: string;
+  question: string | ToolResultBlock[];
   history?: Turn[];
+  tools?: ToolDefinition[];
   maxTokens: number;
   thinkingOff: boolean;
   now: () => number;
@@ -18,11 +26,18 @@ export type DirectRequest = {
   onText?: (delta: string) => void;
 };
 
-export type DirectAnswer = Answer & { inputTokens: number; outputTokens: number };
+export type DirectAnswer = Answer & {
+  inputTokens: number;
+  outputTokens: number;
+  content: AssistantBlock[];
+  stopReason: string | null;
+};
 
 export type StreamEvent = {
   type?: string;
-  delta?: { type?: string; text?: string };
+  index?: number;
+  content_block?: { type?: string; id?: string; name?: string; text?: string };
+  delta?: { type?: string; text?: string; partial_json?: string; stop_reason?: string };
   message?: { usage?: { input_tokens?: number } };
   usage?: { output_tokens?: number };
   error?: { message?: string };
@@ -68,8 +83,35 @@ function requestBody(request: DirectRequest): string {
     stream: true,
     messages: [...(request.history ?? []), { role: "user", content: request.question }],
   };
+  if (request.tools !== undefined && request.tools.length > 0) body.tools = request.tools;
   if (request.thinkingOff) body.thinking = { type: "disabled" };
   return JSON.stringify(body);
+}
+
+type BlockInProgress = { type: "text"; text: string } | { type: "tool_use"; id: string; name: string; json: string };
+
+function createBlockCollector() {
+  const open = new Map<number, BlockInProgress>();
+  const done = new Map<number, AssistantBlock>();
+  return {
+    take(event: StreamEvent) {
+      const index = event.index ?? 0;
+      if (event.type === "content_block_start" && event.content_block?.type === "text") open.set(index, { type: "text", text: event.content_block.text ?? "" });
+      if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+        open.set(index, { type: "tool_use", id: event.content_block.id ?? "", name: event.content_block.name ?? "", json: "" });
+      }
+      const block = open.get(index);
+      if (event.type === "content_block_delta" && block?.type === "text" && event.delta?.type === "text_delta") block.text += event.delta.text ?? "";
+      if (event.type === "content_block_delta" && block?.type === "tool_use" && event.delta?.type === "input_json_delta") block.json += event.delta.partial_json ?? "";
+      if (event.type !== "content_block_stop" || block === undefined) return;
+      open.delete(index);
+      if (block.type === "text" && block.text.trim() !== "") done.set(index, { type: "text", text: block.text });
+      if (block.type === "tool_use") done.set(index, { type: "tool_use", id: block.id, name: block.name, input: block.json === "" ? {} : JSON.parse(block.json) });
+    },
+    blocks(): AssistantBlock[] {
+      return [...done.entries()].sort(([a], [b]) => a - b).map(([, block]) => block);
+    },
+  };
 }
 
 function abortSignal(request: DirectRequest): AbortSignal {
@@ -100,11 +142,15 @@ export async function askDirect(request: DirectRequest): Promise<DirectAnswer> {
   let finished = false;
   let inputTokens = 0;
   let outputTokens = 0;
+  let stopReason: string | null = null;
+  const collector = createBlockCollector();
   const read = createEventReader((event) => {
+    collector.take(event);
     if (event.type === "error") failure = event.error?.message ?? "no details";
     if (event.type === "message_stop") finished = true;
     if (event.type === "message_start") inputTokens = event.message?.usage?.input_tokens ?? 0;
     if (event.type === "message_delta") outputTokens = event.usage?.output_tokens ?? outputTokens;
+    if (event.type === "message_delta") stopReason = event.delta?.stop_reason ?? stopReason;
     if (event.type !== "content_block_delta" || event.delta?.type !== "text_delta") return;
     if (firstWordsMs === null) firstWordsMs = request.now() - started;
     const delta = event.delta.text ?? "";
@@ -120,5 +166,5 @@ export async function askDirect(request: DirectRequest): Promise<DirectAnswer> {
   }
   if (failure !== null) throw new Error(`The API stopped with an error: ${failure}`);
   if (!finished) throw new Error("The answer was cut off");
-  return { text, firstWordsMs, totalMs: request.now() - started, inputTokens, outputTokens };
+  return { text, firstWordsMs, totalMs: request.now() - started, inputTokens, outputTokens, content: collector.blocks(), stopReason };
 }

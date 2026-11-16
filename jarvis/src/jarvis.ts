@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
 import { startApiSession } from "./api-session.js";
+import { createBrainTools } from "./brain-tools.js";
 import { apiChatSystem, chatModel, chatSystem, engineLine, promptWhileOpen, questionTimeoutMs, runChat } from "./chat.js";
 import { brainDir, readConfig } from "./config.js";
 
@@ -19,7 +20,7 @@ try {
   const now = () => performance.now();
   session =
     config.engine === "api"
-      ? startApiSession({ apiKey: config.apiKey, model: chatModel, system: apiChatSystem, maxTokens: 4000, timeoutMs: questionTimeoutMs, now })
+      ? startApiSession({ apiKey: config.apiKey, model: chatModel, system: apiChatSystem, maxTokens: 4000, timeoutMs: questionTimeoutMs, now, tools: createBrainTools(brainDir) })
       : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brainDir, now });
   process.stdout.write(`${engineLine(config.engine)}\n`);
   await runChat({
