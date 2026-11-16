@@ -4,6 +4,7 @@ updates:
     directories:
       - /api
       - /mcp
+      - /jarvis
     schedule:
       interval: weekly
   - package-ecosystem: github-actions
