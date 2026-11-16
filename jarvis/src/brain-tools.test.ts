@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { brainToolDefinitions, createBrainTools, maxListEntries, maxReadBytes } from "./brain-tools.js";
+import { brainToolDefinitions, createBrainTools, maxFoundFiles, maxLineChars, maxListEntries, maxReadBytes, maxSearchFiles, maxSearchResults, maxSearchText, safeName } from "./brain-tools.js";
 
 const base = mkdtempSync(join(tmpdir(), "brain-tools-"));
 const root = join(base, "brain");
@@ -45,15 +45,17 @@ const read = (path: unknown) => tools.run("read_file", { path });
 const list = (path?: unknown) => tools.run("list_folder", path === undefined ? {} : { path });
 const outsideMessage = { content: "That's outside the brain, so it can't be read.", isError: true };
 
-test("there are two tools, each needing a path, both described as Phil's notes", () => {
+test("there are four tools, all described as Phil's notes, each needing what it works on", () => {
   assert.deepEqual(
-    brainToolDefinitions.map((tool) => tool.name),
-    ["read_file", "list_folder"],
+    brainToolDefinitions.map((tool) => [tool.name, tool.input_schema.required]),
+    [
+      ["read_file", ["path"]],
+      ["list_folder", ["path"]],
+      ["search_files", ["text"]],
+      ["find_files", ["name"]],
+    ],
   );
-  for (const tool of brainToolDefinitions) {
-    assert.deepEqual(tool.input_schema.required, ["path"]);
-    assert.match(tool.description, /Phil's notes/);
-  }
+  for (const tool of brainToolDefinitions) assert.match(tool.description, /Phil's notes/);
   assert.equal(tools.definitions, brainToolDefinitions);
 });
 
@@ -236,4 +238,189 @@ test("an unknown tool is refused by name", async () => {
 test("a brain folder that doesn't exist gives an error result, not a crash", async () => {
   const missing = createBrainTools(join(base, "no-brain"));
   assert.deepEqual(await missing.run("read_file", { path: "index.md" }), { content: "There's nothing at that path.", isError: true });
+});
+
+const searchBase = mkdtempSync(join(tmpdir(), "brain-search-"));
+const searchRoot = join(searchBase, "brain");
+const searchOutside = join(searchBase, "outside");
+mkdirSync(join(searchRoot, "areas", "deep", "more"), { recursive: true });
+mkdirSync(join(searchRoot, ".git"));
+mkdirSync(searchOutside);
+writeFileSync(join(searchRoot, "index.md"), "# Index\nThe train to work\nnothing here");
+writeFileSync(join(searchRoot, "areas", "jarvis.md"), "Jarvis TRAIN notes\r\nline two");
+writeFileSync(join(searchRoot, "areas", "deep", "more", "note.md"), "a deep Train");
+writeFileSync(join(searchRoot, ".git", "config"), "train in git");
+writeFileSync(join(searchRoot, "bin.dat"), Buffer.concat([Buffer.from("train"), Buffer.from([0])]));
+writeFileSync(join(searchRoot, "long.md"), `${"x".repeat(300)} train`);
+writeFileSync(join(searchRoot, "late.md"), `${"y".repeat(maxReadBytes)}\ntrain after the cut`);
+writeFileSync(join(searchOutside, "secret.txt"), "train outside the brain");
+symlinkSync(join(searchOutside, "secret.txt"), join(searchRoot, "link-out.md"));
+symlinkSync(searchOutside, join(searchRoot, "folder-out"));
+symlinkSync(join(searchRoot, "index.md"), join(searchRoot, "link-in.md"));
+symlinkSync("..", join(searchRoot, "areas", "loop"));
+
+after(() => {
+  rmSync(searchBase, { recursive: true, force: true });
+});
+
+const searchTools = createBrainTools(searchRoot);
+const search = (input: unknown) => searchTools.run("search_files", input);
+const find = (input: unknown) => searchTools.run("find_files", input);
+
+test("search finds matching lines in every folder, ignoring capitals, with each file's path and line number", async () => {
+  assert.deepEqual(await search({ text: "train" }), {
+    content: [`index.md:2: The train to work`, `long.md:1: ${"x".repeat(maxLineChars)}…`, "areas/jarvis.md:1: Jarvis TRAIN notes", "areas/deep/more/note.md:1: a deep Train"].join("\n"),
+    isError: false,
+  });
+});
+
+test("search never looks in .git, binary files or anything behind a link, so nothing outside can be reached", async () => {
+  const { content } = await search({ text: "train" });
+  assert.doesNotMatch(content, /git|bin\.dat|outside|link/);
+  assert.equal((await search({ text: "outside the brain" })).content, "No matches.");
+});
+
+test("search can stay in one folder", async () => {
+  assert.deepEqual(await search({ text: "train", path: "areas/deep" }), { content: "areas/deep/more/note.md:1: a deep Train", isError: false });
+  assert.deepEqual(await search({ text: "train", path: " ./areas/ " }), { content: "areas/jarvis.md:1: Jarvis TRAIN notes\nareas/deep/more/note.md:1: a deep Train", isError: false });
+});
+
+test("search refuses folders outside the brain, .git, files, and paths that don't exist", async () => {
+  for (const path of ["..", "../outside", "/", searchOutside, "folder-out", "folder-out/sub", "areas/../.."]) {
+    const result = await search({ text: "train", path });
+    assert.equal(result.isError, true, path);
+    assert.doesNotMatch(result.content, /train outside/, path);
+  }
+  assert.deepEqual(await search({ text: "train", path: "../outside" }), { content: "That's outside the brain, so it can't be read.", isError: true });
+  assert.deepEqual(await search({ text: "train", path: ".git" }), { content: "The .git folder is off limits.", isError: true });
+  assert.deepEqual(await search({ text: "train", path: "index.md" }), { content: "That's a file, not a folder. Use read_file to read it.", isError: true });
+  assert.deepEqual(await search({ text: "train", path: "nowhere" }), { content: "There's nothing at that path.", isError: true });
+});
+
+test("a path through a link that loops back is worked out by its words, so it stays inside the brain", async () => {
+  assert.match((await search({ text: "train", path: "areas/loop/../.." })).content, /^index\.md:2: /);
+  assert.match((await search({ text: "train", path: "areas/loop" })).content, /^index\.md:2: /);
+});
+
+test("search says when nothing matches, and needs words to look for", async () => {
+  assert.deepEqual(await search({ text: "zebra" }), { content: "No matches.", isError: false });
+  for (const input of [{}, { text: "" }, { text: "  " }, { text: 7 }, null, "train"]) assert.deepEqual(await search(input), { content: "Give the words to search for.", isError: true }, JSON.stringify(input));
+});
+
+test("search words are limited in length", async () => {
+  assert.equal((await search({ text: "a".repeat(maxSearchText) })).isError, false);
+  assert.deepEqual(await search({ text: "a".repeat(maxSearchText + 1) }), { content: `Search for ${maxSearchText} characters or fewer.`, isError: true });
+});
+
+test("only the first 50 KB of a file is searched", async () => {
+  assert.equal((await search({ text: "train after the cut" })).content, "No matches.");
+});
+
+test("search stops at 50 matching lines and says there are more", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "brain-many-matches-"));
+  try {
+    writeFileSync(join(folder, "lots.md"), Array.from({ length: maxSearchResults + 3 }, (_, i) => `match ${i}`).join("\n"));
+    const { content } = await createBrainTools(folder).run("search_files", { text: "match" });
+    const lines = content.split("\n");
+    assert.equal(lines.length, maxSearchResults + 1);
+    assert.equal(lines[0], "lots.md:1: match 0");
+    assert.equal(lines.at(-1), "[more matches not shown]");
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("search and find stop after 2,000 files and say so", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "brain-many-files-"));
+  try {
+    for (let i = 0; i < maxSearchFiles + 2; i++) writeFileSync(join(folder, `f${String(i).padStart(4, "0")}.md`), "same words");
+    const searchTool = createBrainTools(folder);
+    const searched = (await searchTool.run("search_files", { text: "zebra" })).content;
+    assert.equal(searched, `No matches.\n[stopped after ${maxSearchFiles} files]`);
+    const found = (await searchTool.run("find_files", { name: "f2001" })).content;
+    assert.equal(found, `No files match.\n[stopped after ${maxSearchFiles} files]`);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("find lists files whose path contains the text, ignoring capitals, in every folder", async () => {
+  assert.deepEqual(await find({ name: "JARVIS" }), { content: "areas/jarvis.md", isError: false });
+  assert.deepEqual(await find({ name: "deep" }), { content: "areas/deep/more/note.md", isError: false });
+  assert.deepEqual(await find({ name: ".md" }), { content: ["index.md", "late.md", "long.md", "areas/jarvis.md", "areas/deep/more/note.md"].join("\n"), isError: false });
+});
+
+test("find skips .git and links, and can stay in one folder", async () => {
+  assert.deepEqual(await find({ name: "config" }), { content: "No files match.", isError: false });
+  assert.deepEqual(await find({ name: "link" }), { content: "No files match.", isError: false });
+  assert.deepEqual(await find({ name: ".md", path: "areas" }), { content: "areas/jarvis.md\nareas/deep/more/note.md", isError: false });
+  assert.deepEqual(await find({ name: ".md", path: "../outside" }), { content: "That's outside the brain, so it can't be read.", isError: true });
+});
+
+test("find needs some text, limited in length", async () => {
+  for (const input of [{}, { name: "" }, { name: " " }, { path: "areas" }]) assert.deepEqual(await find(input), { content: "Give some text the file's path should contain.", isError: true });
+  assert.deepEqual(await find({ name: "a".repeat(maxSearchText + 1) }), { content: `Look for ${maxSearchText} characters or fewer.`, isError: true });
+});
+
+test("find shows at most 100 paths and says how many more there are", async () => {
+  const { content } = await tools.run("find_files", { name: "note-" });
+  const lines = content.split("\n");
+  assert.equal(lines.length, maxFoundFiles + 1);
+  assert.equal(lines[0], "many/note-000.md");
+  assert.equal(lines.at(-1), `[${maxListEntries + 5 - maxFoundFiles} more not shown]`);
+});
+
+test("searching a brain full of awkward things finishes: links that loop, a pipe, big and binary files", async () => {
+  const result = await tools.run("search_files", { text: "outside the brain" });
+  assert.deepEqual(result, { content: "No matches.", isError: false });
+  assert.deepEqual(await tools.run("find_files", { name: "pipe" }), { content: "No files match.", isError: false });
+});
+
+
+test("a long line is cut between whole characters, never through the middle of an emoji", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "brain-emoji-"));
+  try {
+    writeFileSync(join(folder, "emoji.md"), `needle ${"x".repeat(maxLineChars - 8)}😀😀 tail`);
+    const { content } = await createBrainTools(folder).run("search_files", { text: "needle" });
+    assert.equal(content, `emoji.md:1: needle ${"x".repeat(maxLineChars - 8)}😀…`);
+    assert.equal(content.isWellFormed(), true);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("file names with line breaks or control characters are shown escaped, so they can't pass for other lines", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "brain-names-"));
+  try {
+    writeFileSync(join(folder, "zz.md\nbank.md:3: my PIN is 1234"), "needle");
+    writeFileSync(join(folder, "tab\there.md"), "needle");
+    const odd = createBrainTools(folder);
+    assert.equal((await odd.run("find_files", { name: ".md" })).content, "tab\\u0009here.md\nzz.md\\u000abank.md:3: my PIN is 1234");
+    assert.equal((await odd.run("search_files", { text: "needle" })).content, "tab\\u0009here.md:1: needle\nzz.md\\u000abank.md:3: my PIN is 1234:1: needle");
+    assert.equal((await odd.run("list_folder", { path: "." })).content, "tab\\u0009here.md\nzz.md\\u000abank.md:3: my PIN is 1234");
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("safeName escapes control characters and line separators, and leaves everything else alone", () => {
+  assert.equal(safeName("areas/jarvis.md"), "areas/jarvis.md");
+  assert.equal(safeName("café ☕.md"), "café ☕.md");
+  assert.equal(safeName("a\rb\u2028c\u2029d\u007fe\u0000"), "a\\u000db\\u2028c\\u2029d\\u007fe\\u0000");
+});
+
+test("a folder that can't be opened is skipped and counted, and the search carries on", { skip: process.getuid?.() === 0 ? "root can open any folder" : false }, async () => {
+  const folder = mkdtempSync(join(tmpdir(), "brain-locked-"));
+  mkdirSync(join(folder, "locked"));
+  writeFileSync(join(folder, "locked", "hidden.md"), "needle");
+  writeFileSync(join(folder, "open.md"), "needle");
+  chmodSync(join(folder, "locked"), 0o000);
+  try {
+    const locked = createBrainTools(folder);
+    assert.equal((await locked.run("search_files", { text: "needle" })).content, "open.md:1: needle\n[1 folder couldn't be read]");
+    assert.equal((await locked.run("find_files", { name: ".md" })).content, "open.md\n[1 folder couldn't be read]");
+  } finally {
+    chmodSync(join(folder, "locked"), 0o755);
+    rmSync(folder, { recursive: true, force: true });
+  }
 });

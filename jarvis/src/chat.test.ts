@@ -84,7 +84,7 @@ test("Jarvis's instructions point him at the brain and keep him safe and short",
 
 test("the plain API engine's instructions give the same voice and rules, pointing at its brain tools", () => {
   assert.match(apiChatSystem, /^You are Jarvis, Phil's assistant on his home server\./);
-  assert.match(apiChatSystem, /read_file and list_folder tools/);
+  assert.match(apiChatSystem, /read_file and list_folder tools, and searched with search_files and find_files/);
   assert.match(apiChatSystem, /index\.md/);
   assert.match(apiChatSystem, /British English/);
   assert.match(apiChatSystem, /Before you read a file, say/);
@@ -200,6 +200,10 @@ test("the plain API engine's tools get notes too", () => {
   assert.equal(toolNote("list_folder", { path: " " }), "looking in the top folder");
   assert.equal(toolNote("list_folder", {}), "looking in the top folder");
   assert.equal(toolNote("Read", { path: "index.md" }), "using Read");
+  assert.equal(toolNote("search_files", { text: "train" }), 'searching for "train"');
+  assert.equal(toolNote("search_files", {}), "using search_files");
+  assert.equal(toolNote("find_files", { name: "jarvis" }), 'looking for files named "jarvis"');
+  assert.equal(toolNote("find_files", { text: "jarvis" }), "using find_files");
 });
 
 test("tool notes in a row sit on their own lines with no blank line between", async () => {

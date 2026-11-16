@@ -1,10 +1,14 @@
 import { constants } from "node:fs";
 import { open, readdir, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ToolDefinition } from "./direct.js";
 
 export const maxReadBytes = 50 * 1024;
 export const maxListEntries = 500;
+export const maxSearchResults = 50;
+export const maxSearchFiles = 2000;
+export const maxSearchText = 200;
+export const maxLineChars = 200;
 
 export type ToolOutcome = { content: string; isError: boolean };
 
@@ -32,7 +36,33 @@ export const brainToolDefinitions: ToolDefinition[] = [
       required: ["path"],
     },
   },
+  {
+    name: "search_files",
+    description: "Search inside Phil's notes for some words, ignoring capitals. Gives each matching line with its file's path and line number, up to 50 lines. Only the first 50 KB of each file is searched. Use path to search one folder only.",
+    input_schema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The words to look for, exactly as they'd appear in the notes." },
+        path: { type: "string", description: "Optional: a folder's path from the brain's top folder, to search only there." },
+      },
+      required: ["text"],
+    },
+  },
+  {
+    name: "find_files",
+    description: "Find files in Phil's notes whose path contains some text, ignoring capitals, looking in every folder. Gives up to 100 paths. Use path to look in one folder only.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Text the file's path should contain, for example jarvis or .md." },
+        path: { type: "string", description: "Optional: a folder's path from the brain's top folder, to look only there." },
+      },
+      required: ["name"],
+    },
+  },
 ];
+
+export const maxFoundFiles = 100;
 
 class Refusal extends Error {}
 
@@ -44,9 +74,14 @@ function refused(content: string): ToolOutcome {
   return { content, isError: true };
 }
 
+function textField(input: unknown, field: string): string | null {
+  if (typeof input !== "object" || input === null || !(field in input)) return null;
+  const value = (input as Record<string, unknown>)[field];
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
 function pathOf(input: unknown): string | null {
-  if (typeof input !== "object" || input === null || !("path" in input)) return null;
-  return typeof input.path === "string" && input.path.trim() !== "" ? input.path.trim() : null;
+  return textField(input, "path");
 }
 
 function inside(root: string, path: string): boolean {
@@ -88,6 +123,10 @@ async function locate(root: string, asked: string): Promise<string> {
   return real;
 }
 
+export function safeName(name: string): string {
+  return name.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 function kilobytes(bytes: number): string {
   return `${Math.ceil(bytes / 1024)} KB`;
 }
@@ -123,11 +162,116 @@ async function listFolderTool(root: string, input: unknown): Promise<ToolOutcome
   const entries = await readdir(real, { withFileTypes: true });
   const names = entries
     .filter((entry) => entry.name !== ".git")
-    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+    .map((entry) => (entry.isDirectory() ? `${safeName(entry.name)}/` : safeName(entry.name)))
     .sort();
   if (names.length === 0) return ok("(empty folder)");
   const shown = names.slice(0, maxListEntries).join("\n");
   return ok(names.length > maxListEntries ? `${shown}\n[${names.length - maxListEntries} more not shown]` : shown);
+}
+
+type Walked = { files: string[]; stopped: boolean; unreadable: number };
+
+async function entriesOf(folder: string) {
+  try {
+    return (await readdir(folder, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  } catch {
+    return null;
+  }
+}
+
+async function filesUnder(folder: string): Promise<Walked> {
+  const files: string[] = [];
+  const waiting = [folder];
+  let unreadable = 0;
+  while (waiting.length > 0) {
+    const current = waiting.shift() as string;
+    const entries = await entriesOf(current);
+    if (entries === null) {
+      unreadable++;
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name === ".git") continue;
+      if (entry.isDirectory()) waiting.push(join(current, entry.name));
+      else if (entry.isFile()) {
+        if (files.length === maxSearchFiles) return { files, stopped: true, unreadable };
+        files.push(join(current, entry.name));
+      }
+    }
+  }
+  return { files, stopped: false, unreadable };
+}
+
+function walkNotes(walked: Walked): string {
+  const notes: string[] = [];
+  if (walked.unreadable > 0) notes.push(`[${walked.unreadable} ${walked.unreadable === 1 ? "folder" : "folders"} couldn't be read]`);
+  if (walked.stopped) notes.push(`[stopped after ${maxSearchFiles} files]`);
+  return notes.map((note) => `\n${note}`).join("");
+}
+
+async function searchStart(root: string, input: unknown): Promise<{ top: string; folder: string } | ToolOutcome> {
+  const folder = await locate(root, pathOf(input) ?? ".");
+  const info = await stat(folder);
+  if (!info.isDirectory()) return refused("That's a file, not a folder. Use read_file to read it.");
+  return { top: await realpath(resolve(root)), folder };
+}
+
+async function textStart(path: string): Promise<string | null> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(() => null);
+  if (handle === null) return null;
+  try {
+    const buffer = Buffer.alloc(maxReadBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxReadBytes, 0);
+    const bytes = buffer.subarray(0, bytesRead);
+    return bytes.includes(0) ? null : new TextDecoder().decode(bytes, { stream: true });
+  } catch {
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+function shortLine(line: string): string {
+  const characters = Array.from(line.trim());
+  return characters.length > maxLineChars ? `${characters.slice(0, maxLineChars).join("")}…` : characters.join("");
+}
+
+async function searchFilesTool(root: string, input: unknown): Promise<ToolOutcome> {
+  const text = textField(input, "text");
+  if (text === null) return refused("Give the words to search for.");
+  if (text.length > maxSearchText) return refused(`Search for ${maxSearchText} characters or fewer.`);
+  const start = await searchStart(root, input);
+  if ("isError" in start) return start;
+  const wanted = text.toLowerCase();
+  const walked = await filesUnder(start.folder);
+  const found: string[] = [];
+  for (const file of walked.files) {
+    const content = await textStart(file);
+    if (content === null) continue;
+    const lines = content.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index++) {
+      if (!lines[index].toLowerCase().includes(wanted)) continue;
+      if (found.length === maxSearchResults) return ok(`${found.join("\n")}\n[more matches not shown]`);
+      found.push(`${safeName(relative(start.top, file))}:${index + 1}: ${shortLine(lines[index])}`);
+    }
+  }
+  const note = walkNotes(walked);
+  return ok(found.length === 0 ? `No matches.${note}` : `${found.join("\n")}${note}`);
+}
+
+async function findFilesTool(root: string, input: unknown): Promise<ToolOutcome> {
+  const name = textField(input, "name");
+  if (name === null) return refused("Give some text the file's path should contain.");
+  if (name.length > maxSearchText) return refused(`Look for ${maxSearchText} characters or fewer.`);
+  const start = await searchStart(root, input);
+  if ("isError" in start) return start;
+  const wanted = name.toLowerCase();
+  const walked = await filesUnder(start.folder);
+  const paths = walked.files.map((file) => relative(start.top, file)).filter((path) => path.toLowerCase().includes(wanted)).map(safeName);
+  const note = walkNotes(walked);
+  if (paths.length === 0) return ok(`No files match.${note}`);
+  const shown = paths.slice(0, maxFoundFiles).join("\n");
+  return ok(paths.length > maxFoundFiles ? `${shown}\n[${paths.length - maxFoundFiles} more not shown]${note}` : `${shown}${note}`);
 }
 
 function failure(error: unknown): ToolOutcome {
@@ -144,6 +288,8 @@ export function createBrainTools(root: string): BrainTools {
       try {
         if (name === "read_file") return await readFileTool(root, input);
         if (name === "list_folder") return await listFolderTool(root, input);
+        if (name === "search_files") return await searchFilesTool(root, input);
+        if (name === "find_files") return await findFilesTool(root, input);
         return refused(`There's no tool called ${name}.`);
       } catch (error) {
         return failure(error);

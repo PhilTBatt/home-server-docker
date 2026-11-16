@@ -21,7 +21,7 @@ export const chatSystem = [
 ].join(" ");
 export const apiChatSystem = [
   intro,
-  "His notes, which he calls his brain, can be read with your read_file and list_folder tools. Start with index.md to find your way around.",
+  "His notes, which he calls his brain, can be read with your read_file and list_folder tools, and searched with search_files and find_files. Start with index.md to find your way around, and search when you don't know where something is.",
   style,
   ...reading,
 ].join(" ");
@@ -85,6 +85,10 @@ export function toolNote(name: string, input: unknown): string {
   const path = field(input, name === "Read" ? "file_path" : "path");
   if ((name === "Read" || name === "read_file") && path !== null) return `reading ${shortPath(path)}`;
   if (name === "list_folder") return path === null || path.trim() === "." || path.trim() === "" ? "looking in the top folder" : `looking in ${shortPath(path)}`;
+  const words = field(input, "text");
+  if (name === "search_files" && words !== null) return `searching for "${words}"`;
+  const named = field(input, "name");
+  if (name === "find_files" && named !== null) return `looking for files named "${named}"`;
   return `using ${name}`;
 }
 
