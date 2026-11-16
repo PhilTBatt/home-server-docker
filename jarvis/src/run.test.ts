@@ -43,6 +43,7 @@ function fakeSession(options: SessionOptions = {}): FakeSession {
       return answer("Warm.", 600, 1000);
     },
     readyMs: () => (options.ready === undefined ? 400 : options.ready),
+    stoppedReason: () => (session.closed > 0 ? "The agent was closed" : null),
     costUsd: () => (options.cost === undefined ? 0.002 : options.cost),
     close() {
       session.closed++;

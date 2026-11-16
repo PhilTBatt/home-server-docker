@@ -5,7 +5,8 @@
   "description": "Jarvis for my home hub",
   "scripts": {
     "test": "tsc && node --test \"dist/**/*.test.js\"",
-    "speed-test": "tsc && node dist/speed-test.js"
+    "speed-test": "tsc && node dist/speed-test.js",
+    "chat": "tsc && node dist/jarvis.js"
   },
   "keywords": [],
   "author": "",

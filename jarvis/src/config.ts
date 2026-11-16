@@ -1,3 +1,5 @@
+export const brainDir = "/brain";
+
 export type Config = {
   apiKey: string;
 };

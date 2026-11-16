@@ -1,6 +1,8 @@
 import type { Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Answer } from "./timing.js";
 
+export const closedMessage = "The agent was closed";
+
 export type AgentStream = AsyncIterable<SDKMessage> & { close(): void };
 export type StartAgent = (prompt: AsyncIterable<SDKUserMessage>, options: Options) => AgentStream;
 
@@ -11,10 +13,16 @@ export type AgentSettings = {
   now: () => number;
 };
 
+export type AnswerListener = {
+  text?: (delta: string) => void;
+  tool?: (name: string, input: unknown) => void;
+};
+
 export type AgentSession = {
-  ask(question: string): Promise<Answer>;
+  ask(question: string, listener?: AnswerListener): Promise<Answer>;
   readyMs(): number | null;
   costUsd(): number | null;
+  stoppedReason(): string | null;
   close(): void;
 };
 
@@ -29,6 +37,7 @@ type Pending = {
   firstWordsMs: number | null;
   resolve: (answer: Answer) => void;
   reject: (error: Error) => void;
+  listener: AnswerListener;
 };
 
 export function agentOptions(settings: AgentSettings): Options {
@@ -41,6 +50,7 @@ export function agentOptions(settings: AgentSettings): Options {
     settingSources: [],
     persistSession: false,
     strictMcpConfig: true,
+    title: "Jarvis",
     includePartialMessages: true,
   };
 }
@@ -88,9 +98,15 @@ export function createInputQueue(): InputQueue {
   };
 }
 
-function isTextDelta(message: SDKMessage): boolean {
-  if (message.type !== "stream_event" || message.parent_tool_use_id !== null) return false;
-  return message.event.type === "content_block_delta" && message.event.delta.type === "text_delta";
+function textDelta(message: SDKMessage): string | null {
+  if (message.type !== "stream_event" || message.parent_tool_use_id !== null) return null;
+  if (message.event.type !== "content_block_delta" || message.event.delta.type !== "text_delta") return null;
+  return message.event.delta.text;
+}
+
+function toolCalls(message: SDKMessage): { name: string; input: unknown }[] {
+  if (message.type !== "assistant" || message.parent_tool_use_id !== null) return [];
+  return message.message.content.flatMap((block) => (block.type === "tool_use" ? [{ name: block.name, input: block.input }] : []));
 }
 
 function denials(message: SDKResultMessage): string[] {
@@ -123,7 +139,12 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
   function handle(message: SDKMessage) {
     if (message.type === "system" && message.subtype === "init" && ready === null) ready = settings.now() - began;
     if (pending === null) return;
-    if (pending.firstWordsMs === null && isTextDelta(message)) pending.firstWordsMs = settings.now() - pending.started;
+    const text = textDelta(message);
+    if (text !== null) {
+      if (pending.firstWordsMs === null) pending.firstWordsMs = settings.now() - pending.started;
+      pending.listener.text?.(text);
+    }
+    for (const call of toolCalls(message)) pending.listener.tool?.(call.name, call.input);
     if (message.type !== "result") return;
     cost = message.total_cost_usd;
     const answered = pending;
@@ -147,22 +168,23 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
   void listen();
 
   return {
-    ask(question: string) {
+    ask(question: string, listener: AnswerListener = {}) {
       if (stopped !== null) return Promise.reject(stopped);
       if (pending !== null) return Promise.reject(new Error("One question at a time"));
       return new Promise<Answer>((resolve, reject) => {
-        pending = { started: settings.now(), firstWordsMs: null, resolve, reject };
+        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener };
         input.push(question);
       });
     },
     readyMs: () => ready,
     costUsd: () => cost,
+    stoppedReason: () => stopped?.message ?? null,
     close() {
       if (closed) return;
       closed = true;
       input.end();
       stream.close();
-      stop(new Error("The agent was closed"));
+      stop(new Error(closedMessage));
     },
   };
 }

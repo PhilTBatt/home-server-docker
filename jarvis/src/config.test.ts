@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readConfig } from "./config.js";
+import { brainDir, readConfig } from "./config.js";
 
 const key = "sk-ant-test-key";
+
+test("the brain is always mounted at /brain", () => {
+  assert.equal(brainDir, "/brain");
+});
 
 test("reads the API key", () => {
   assert.deepEqual(readConfig({ ANTHROPIC_API_KEY: key }), { apiKey: key });

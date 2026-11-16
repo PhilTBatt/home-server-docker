@@ -1,12 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession } from "./agent.js";
-import { readConfig } from "./config.js";
+import { brainDir, readConfig } from "./config.js";
 import { askDirect } from "./direct.js";
 import { readAnonMemoryMb } from "./memory.js";
 import { formatReport, model, runSpeedTest, system } from "./run.js";
 
-const brainDir = "/brain";
 const now = () => performance.now();
 
 try {

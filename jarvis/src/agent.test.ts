@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { agentOptions, createInputQueue, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
+import { agentOptions, closedMessage, createInputQueue, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
 
 function tick() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -99,7 +99,7 @@ function setup() {
   return { agent, session, clock, settings };
 }
 
-test("the engine gets only the Read tool, refuses anything else, and loads no settings files or MCP servers", () => {
+test("the engine gets only the Read tool, refuses anything else, loads no settings files or MCP servers, and skips naming the session", () => {
   assert.deepEqual(agentOptions({ model: "claude-haiku-5-5", system: "Be brief.", cwd: "/brain", now: () => 0 }), {
     model: "claude-haiku-5-5",
     cwd: "/brain",
@@ -109,6 +109,7 @@ test("the engine gets only the Read tool, refuses anything else, and loads no se
     settingSources: [],
     persistSession: false,
     strictMcpConfig: true,
+    title: "Jarvis",
     includePartialMessages: true,
   });
 });
@@ -215,6 +216,116 @@ test("each question is timed from its own start", async () => {
   await agent.emit(success("2"));
   assert.deepEqual(await second, { text: "2", firstWordsMs: 300, totalMs: 500 });
   assert.equal(agent.sent.length, 2);
+});
+
+function assistant(content: object[], parent: string | null = null) {
+  return { type: "assistant", parent_tool_use_id: parent, message: { role: "assistant", content } };
+}
+
+test("the listener hears Jarvis's text as it streams, in order", async () => {
+  const { agent, session } = setup();
+  const heard: string[] = [];
+  const answer = session.ask("Hello?", { text: (delta) => heard.push(delta) });
+  await tick();
+  await agent.emit(textDelta("Hi "));
+  assert.deepEqual(heard, ["Hi "]);
+  await agent.emit(textDelta("Phil."), success("Hi Phil."));
+  await answer;
+  assert.deepEqual(heard, ["Hi ", "Phil."]);
+});
+
+test("the listener doesn't hear a subagent's text or tool input", async () => {
+  const { agent, session } = setup();
+  const heard: string[] = [];
+  const answer = session.ask("Hello?", { text: (delta) => heard.push(delta) });
+  await tick();
+  const toolInput = { type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{" } } };
+  await agent.emit(textDelta("Inside", "toolu_1"), toolInput, textDelta("Done."), success("Done."));
+  await answer;
+  assert.deepEqual(heard, ["Done."]);
+});
+
+test("the listener hears each tool Jarvis uses, with its input", async () => {
+  const { agent, session } = setup();
+  const tools: { name: string; input: unknown }[] = [];
+  const answer = session.ask("What's in my brain?", { tool: (name, input) => tools.push({ name, input }) });
+  await tick();
+  await agent.emit(
+    assistant([{ type: "text", text: "Let me check." }]),
+    assistant([{ type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "/brain/index.md" } }]),
+    assistant([
+      { type: "tool_use", id: "toolu_2", name: "Read", input: { file_path: "/brain/a.md" } },
+      { type: "tool_use", id: "toolu_3", name: "Read", input: { file_path: "/brain/b.md" } },
+    ]),
+    success("It covers your life."),
+  );
+  await answer;
+  assert.deepEqual(tools, [
+    { name: "Read", input: { file_path: "/brain/index.md" } },
+    { name: "Read", input: { file_path: "/brain/a.md" } },
+    { name: "Read", input: { file_path: "/brain/b.md" } },
+  ]);
+});
+
+test("the listener doesn't hear a subagent's tools", async () => {
+  const { agent, session } = setup();
+  const tools: string[] = [];
+  const answer = session.ask("Hello?", { tool: (name) => tools.push(name) });
+  await tick();
+  await agent.emit(assistant([{ type: "tool_use", id: "toolu_9", name: "Read", input: {} }], "toolu_1"), success("Hi."));
+  await answer;
+  assert.deepEqual(tools, []);
+});
+
+test("nothing is heard when no question is waiting", async () => {
+  const { agent, session } = setup();
+  const heard: string[] = [];
+  const answer = session.ask("Hello?", { text: (delta) => heard.push(delta), tool: (name) => heard.push(name) });
+  await tick();
+  await agent.emit(success("Hi."));
+  await answer;
+  await agent.emit(textDelta("Late"), assistant([{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }]));
+  assert.deepEqual(heard, []);
+});
+
+test("each question's listener only hears its own answer", async () => {
+  const { agent, session } = setup();
+  const first: string[] = [];
+  const second: string[] = [];
+  const one = session.ask("One", { text: (delta) => first.push(delta) });
+  await tick();
+  await agent.emit(textDelta("First."), success("First."));
+  await one;
+  const two = session.ask("Two", { text: (delta) => second.push(delta) });
+  await tick();
+  await agent.emit(textDelta("Second."), success("Second."));
+  await two;
+  assert.deepEqual(first, ["First."]);
+  assert.deepEqual(second, ["Second."]);
+});
+
+test("the stop reason is empty while the session is open", () => {
+  const { session } = setup();
+  assert.equal(session.stoppedReason(), null);
+});
+
+test("the stop reason says when the session was closed", () => {
+  const { session } = setup();
+  session.close();
+  assert.equal(session.stoppedReason(), closedMessage);
+  assert.equal(closedMessage, "The agent was closed");
+});
+
+test("the stop reason says when the engine stopped by itself", async () => {
+  const { agent, session } = setup();
+  await agent.end();
+  assert.equal(session.stoppedReason(), "The agent stopped");
+});
+
+test("the stop reason passes on the engine's crash", async () => {
+  const { agent, session } = setup();
+  await agent.fail(new Error("Engine crashed"));
+  assert.equal(session.stoppedReason(), "Engine crashed");
 });
 
 test("only one question at a time", async () => {
