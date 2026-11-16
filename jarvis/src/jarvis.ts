@@ -37,7 +37,7 @@ try {
       : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brainDir, now });
   process.stdout.write(`${engineLine(config.engine, config.thinkingHistory)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
-  const record = config.log
+  const log = config.log
     ? startAnswerLog(
         { engine: config.engine, thinking: config.thinkingHistory, model: chatModel },
         {
@@ -58,7 +58,8 @@ try {
     write: (text) => process.stdout.write(text),
     prompt: promptWhileOpen(lines),
     questionTimeoutMs,
-    record,
+    record: log?.record,
+    rate: log?.rate,
   });
 } catch (error) {
   console.error(`Jarvis couldn't start: ${error instanceof Error ? error.message : String(error)}`);

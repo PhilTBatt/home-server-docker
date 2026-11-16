@@ -3,10 +3,27 @@ import type { Engine, ThinkingHistory } from "./config.js";
 import type { Answer } from "./timing.js";
 
 export const answerLogFile = fileURLToPath(new URL("../data/answers.jsonl", import.meta.url));
-export const loggingNote = "Logging: each answer's numbers, never its words, go to data/answers.jsonl";
+export const loggingNote = "Logging: each answer's numbers, never its words, go to data/answers.jsonl. Type + or - after an answer to rate it.";
 export const logVersion = 1;
 
 export type Outcome = { answer: Answer } | { error: string };
+
+export type Rating = "good" | "bad";
+export type RateResult = "saved" | "nothing to rate" | "last failed" | "log broken";
+
+export type RatingLine = {
+  v: number;
+  kind: "rating";
+  at: string;
+  chat: string;
+  question: number;
+  rating: Rating;
+};
+
+export type AnswerLog = {
+  record: (outcome: Outcome) => Promise<void>;
+  rate: (rating: Rating) => Promise<RateResult>;
+};
 
 export type LogContext = {
   engine: Engine;
@@ -99,21 +116,39 @@ export function logLine(context: LogContext, chat: string, question: number, at:
   };
 }
 
-export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): (outcome: Outcome) => Promise<void> {
+export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): AnswerLog {
   let questions = 0;
+  let lastAnswered: number | null = null;
   let broken = false;
   let costBefore = deps.costSoFar();
-  return async (outcome) => {
-    questions++;
-    const costNow = deps.costSoFar();
-    const spent = costNow === null ? null : Math.max(0, costNow - (costBefore ?? 0));
-    costBefore = costNow;
-    if (broken) return;
+
+  async function write(line: LogLine | RatingLine): Promise<boolean> {
     try {
-      await deps.append(`${JSON.stringify(logLine(context, deps.chat, questions, deps.now(), outcome, spent))}\n`);
+      await deps.append(`${JSON.stringify(line)}\n`);
+      return true;
     } catch (error) {
       broken = true;
       deps.warn(`Couldn't write to the answer log, so the rest of this chat won't be logged: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
+  }
+
+  return {
+    async record(outcome) {
+      questions++;
+      lastAnswered = "answer" in outcome ? questions : null;
+      const costNow = deps.costSoFar();
+      const spent = costNow === null ? null : Math.max(0, costNow - (costBefore ?? 0));
+      costBefore = costNow;
+      if (broken) return;
+      await write(logLine(context, deps.chat, questions, deps.now(), outcome, spent));
+    },
+    async rate(rating) {
+      if (broken) return "log broken";
+      if (questions === 0) return "nothing to rate";
+      if (lastAnswered === null) return "last failed";
+      const saved = await write({ v: logVersion, kind: "rating", at: deps.now().toISOString(), chat: deps.chat, question: lastAnswered, rating });
+      return saved ? "saved" : "log broken";
+    },
   };
 }

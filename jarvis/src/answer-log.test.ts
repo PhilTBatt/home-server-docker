@@ -18,7 +18,7 @@ function fakeLog(context: LogContext = apiKeep, failAppends = 0) {
   const written: string[] = [];
   const warnings: string[] = [];
   let attempts = 0;
-  const record = startAnswerLog(context, {
+  const { record, rate } = startAnswerLog(context, {
     append: async (text) => {
       attempts++;
       if (attempts <= failAppends) throw new Error("EACCES: permission denied");
@@ -29,7 +29,7 @@ function fakeLog(context: LogContext = apiKeep, failAppends = 0) {
     warn: (message) => warnings.push(message),
     costSoFar: () => null,
   });
-  return { record, written, warnings, attempts: () => attempts };
+  return { record, rate, written, warnings, attempts: () => attempts };
 }
 
 test("the log lives in jarvis/data, next to src and dist", () => {
@@ -155,7 +155,7 @@ test("if the log can't be written, it says so once, stops trying, and the chat c
 
 test("a write failure that isn't an Error is still reported", async () => {
   const warnings: string[] = [];
-  const record = startAnswerLog(apiKeep, {
+  const { record } = startAnswerLog(apiKeep, {
     append: () => Promise.reject("disk full"),
     now: () => at,
     chat: "c",
@@ -170,7 +170,7 @@ test("a failed question's cost is what the chat's running total grew by, so the 
   const written: string[] = [];
   const totals: (number | null)[] = [null, 0.001, 0.0025, 0.0025, 0.004];
   let reads = 0;
-  const record = startAnswerLog(apiKeep, {
+  const { record } = startAnswerLog(apiKeep, {
     append: async (text) => {
       written.push(text);
     },
@@ -191,7 +191,7 @@ test("a failed question's cost is what the chat's running total grew by, so the 
 
 test("a failed question's cost is unknown when the chat's cost is", async () => {
   const written: string[] = [];
-  const record = startAnswerLog(apiKeep, {
+  const { record } = startAnswerLog(apiKeep, {
     append: async (text) => {
       written.push(text);
     },
@@ -202,4 +202,57 @@ test("a failed question's cost is unknown when the chat's cost is", async () => 
   });
   await record({ error: "No answer within 120 seconds" });
   assert.equal(JSON.parse(written[0]).costUsd, null);
+});
+
+
+test("a rating marks the latest question, as its own line with no words in it", async () => {
+  const { record, rate, written } = fakeLog();
+  await record({ answer: answered });
+  await record({ answer: answered });
+  assert.equal(await rate("good"), "saved");
+  assert.deepEqual(JSON.parse(written[2]), { v: logVersion, kind: "rating", at: "2026-11-16T18:30:00.000Z", chat: "chat-1", question: 2, rating: "good" });
+});
+
+test("rating again adds another line, so the last one counts", async () => {
+  const { record, rate, written } = fakeLog();
+  await record({ answer: answered });
+  await rate("good");
+  await rate("bad");
+  assert.deepEqual(
+    written.slice(1).map((text) => [JSON.parse(text).question, JSON.parse(text).rating]),
+    [
+      [1, "good"],
+      [1, "bad"],
+    ],
+  );
+});
+
+test("there's nothing to rate before the first answer, or when the latest question failed, and the two are told apart", async () => {
+  const { record, rate, written } = fakeLog();
+  assert.equal(await rate("good"), "nothing to rate");
+  await record({ answer: answered });
+  await record({ error: "No answer within 120 seconds" });
+  assert.equal(await rate("bad"), "last failed");
+  assert.equal(written.length, 2);
+});
+
+test("a rating isn't saved once the log is broken, and a rating that can't be written breaks it", async () => {
+  const broken = fakeLog(apiKeep, 1);
+  await broken.record({ answer: answered });
+  assert.equal(await broken.rate("good"), "log broken");
+  assert.equal(broken.attempts(), 1);
+  const warnings: string[] = [];
+  const { record, rate } = startAnswerLog(apiKeep, {
+    append: async (text) => {
+      if (text.includes('"kind":"rating"')) throw new Error("disk full");
+    },
+    now: () => at,
+    chat: "c",
+    warn: (message) => warnings.push(message),
+    costSoFar: () => null,
+  });
+  await record({ answer: answered });
+  assert.equal(await rate("good"), "log broken");
+  assert.equal(await rate("bad"), "log broken");
+  assert.equal(warnings.length, 1);
 });

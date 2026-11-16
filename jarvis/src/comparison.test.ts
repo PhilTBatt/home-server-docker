@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { logVersion, type LogLine } from "./answer-log.js";
-import { compareReport, groupLines, isLogLine, readLog, table, withCommas } from "./comparison.js";
+import { compareReport, groupLines, isLogLine, isRatingLine, readLog, table, withCommas } from "./comparison.js";
 
 function line(overrides: Partial<LogLine> = {}): LogLine {
   return {
@@ -47,8 +47,8 @@ test("reading the log keeps good lines and counts the rest as skipped", () => {
 });
 
 test("reading an empty log finds nothing and skips nothing", () => {
-  assert.deepEqual(readLog(""), { lines: [], skipped: 0 });
-  assert.deepEqual(readLog("\n\n"), { lines: [], skipped: 0 });
+  assert.deepEqual(readLog(""), { lines: [], ratings: [], skipped: 0 });
+  assert.deepEqual(readLog("\n\n"), { lines: [], ratings: [], skipped: 0 });
 });
 
 test("a line is only trusted if every field has the right shape", () => {
@@ -222,4 +222,42 @@ test("cache reads and writes get their own rows, and lines from before they were
   assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine], skipped: 0 }), "Read from cache, median"), ["-"]);
   assert.match(report, /\n\nThe cache rows leave out 1 answer logged before cache tokens were counted\.\n/);
   assert.doesNotMatch(compareReport({ lines: [line()], skipped: 0 }), /cache rows leave out/);
+});
+
+
+function rating(question: number, value: "good" | "bad", chat = "chat-1") {
+  return { v: logVersion, kind: "rating" as const, at: "2026-11-16T18:31:00.000Z", chat, question, rating: value };
+}
+
+test("reading the log keeps ratings apart from answers", () => {
+  const { lines, ratings, skipped } = readLog(jsonl(line(), rating(1, "good"), { ...rating(1, "good"), rating: "great" }, { ...rating(1, "bad"), question: 0 }));
+  assert.equal(lines.length, 1);
+  assert.deepEqual(ratings, [rating(1, "good")]);
+  assert.equal(skipped, 2);
+});
+
+test("a rating line is only trusted if every field has the right shape", () => {
+  assert.equal(isRatingLine(rating(1, "bad")), true);
+  for (const change of [{ v: 2 }, { kind: "rate" }, { at: 1 }, { chat: null }, { question: 1.5 }, { rating: "Good" }]) assert.equal(isRatingLine({ ...rating(1, "good"), ...change }), false, JSON.stringify(change));
+  assert.equal(isLogLine(rating(1, "good")), false);
+});
+
+test("ratings are counted per setting, the latest rating of each answer counts, and stray ratings are ignored", () => {
+  const lines = [
+    line({ question: 1 }),
+    line({ question: 2 }),
+    line({ question: 3 }),
+    line({ question: 4, ok: false, error: "timeout" }),
+    line({ thinking: "drop", chat: "chat-2", question: 1 }),
+  ];
+  const ratings = [rating(1, "bad"), rating(1, "good"), rating(2, "bad"), rating(4, "good"), rating(9, "good"), rating(1, "bad", "chat-2"), rating(1, "good", "chat-3")];
+  const report = compareReport({ lines, ratings, skipped: 0 });
+  assert.deepEqual(rowOf(report, "Rated good"), ["1", "0"]);
+  assert.deepEqual(rowOf(report, "Rated bad"), ["1", "1"]);
+});
+
+test("with no ratings, the rating rows show zero", () => {
+  const report = compareReport({ lines: [line()], skipped: 0 });
+  assert.deepEqual(rowOf(report, "Rated good"), ["0"]);
+  assert.deepEqual(rowOf(report, "Rated bad"), ["0"]);
 });

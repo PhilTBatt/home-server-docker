@@ -3,8 +3,8 @@ import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
-import type { Outcome } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatSystem, costLine, engineLine, exitWords, greeting, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
+import type { Outcome, Rating, RateResult } from "./answer-log.js";
+import { apiChatSystem, chatModel, chatSystem, costLine, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
 import type { Answer } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -559,4 +559,52 @@ test("a failure is logged before the next prompt too", async () => {
   });
   await run();
   assert.deepEqual(events, ["prompt", "log started", "log finished", "prompt", "log started", "log finished", "prompt"]);
+});
+
+
+test("+ and - on their own rate the last answer, and aren't sent to Jarvis", async () => {
+  const session = fakeSession({ Hello: hello });
+  const rated: Rating[] = [];
+  const { run, output } = chat(session, ["Hello", "+", " - "], {
+    rate: async (rating) => {
+      rated.push(rating);
+      return "saved";
+    },
+  });
+  await run();
+  assert.deepEqual(rated, ["good", "bad"]);
+  assert.deepEqual(session.asked, ["Hello"]);
+  assert.ok(output().includes("You:   (rated good)\nYou:   (rated bad)\nYou: "));
+});
+
+test("a rating that can't be saved says why", async () => {
+  const results: RateResult[] = ["nothing to rate", "last failed", "log broken"];
+  const session = fakeSession({});
+  const { run, output } = chat(session, ["+", "-", "+"], { rate: async () => results.shift() ?? "saved" });
+  await run();
+  assert.ok(output().includes("(there's no answer to rate yet)"));
+  assert.ok(output().includes("(the last question failed, so there's nothing to rate)"));
+  assert.ok(output().includes("(not saved: the answer log can't be written)"));
+});
+
+test("with logging off, a rating says it isn't kept, and still isn't sent to Jarvis", async () => {
+  const session = fakeSession({});
+  const { run, output } = chat(session, ["+"]);
+  await run();
+  assert.ok(output().includes(`(${notLoggingNote})`));
+  assert.deepEqual(session.asked, []);
+});
+
+test("only a lone + or - is a rating; anything longer is a question", async () => {
+  const session = fakeSession({ "++": hello, "+ good one": hello, "-1": hello, constructor: hello, __proto__: hello, toString: hello });
+  const rated: Rating[] = [];
+  const { run } = chat(session, ["++", "+ good one", "-1", "constructor", "__proto__", "toString"], {
+    rate: async (rating) => {
+      rated.push(rating);
+      return "saved";
+    },
+  });
+  await run();
+  assert.deepEqual(rated, []);
+  assert.deepEqual(session.asked, ["++", "+ good one", "-1", "constructor", "__proto__", "toString"]);
 });

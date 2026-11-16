@@ -1,5 +1,5 @@
 import { closedMessage, type AgentSession } from "./agent.js";
-import type { Outcome } from "./answer-log.js";
+import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { brainDir, type Engine, type ThinkingHistory } from "./config.js";
 import { withTimeout } from "./run.js";
 import { seconds, type Answer } from "./timing.js";
@@ -30,6 +30,14 @@ export const engineNames: Record<Engine, string> = {
   api: "a plain API call",
 };
 export const exitWords = ["exit", "quit"];
+export const ratingWords: Record<string, Rating> = { "+": "good", "-": "bad" };
+export const notLoggingNote = "ratings are only kept when JARVIS_LOG is on";
+export const rateNotes: Record<RateResult, string> = {
+  saved: "rated",
+  "nothing to rate": "there's no answer to rate yet",
+  "last failed": "the last question failed, so there's nothing to rate",
+  "log broken": "not saved: the answer log can't be written",
+};
 export const greeting = "Jarvis is listening. Type a message and press Enter, or type exit to stop.";
 export const stoppedMessage = "Jarvis has stopped. Start him again to carry on.";
 export const restartNote = "that went wrong, so starting again without the earlier thinking";
@@ -41,6 +49,7 @@ export type ChatDeps = {
   prompt: () => void;
   questionTimeoutMs: number;
   record?: (outcome: Outcome) => Promise<void>;
+  rate?: (rating: Rating) => Promise<RateResult>;
 };
 
 export type PromptLine = {
@@ -97,6 +106,12 @@ export function costLine(costUsd: number | null): string {
   return costUsd === null ? "Cost of this chat: unknown" : `Cost of this chat: about $${costUsd.toFixed(4)}`;
 }
 
+async function rateLast(deps: ChatDeps, rating: Rating): Promise<string> {
+  if (deps.rate === undefined) return notLoggingNote;
+  const result = await deps.rate(rating);
+  return result === "saved" ? `${rateNotes.saved} ${rating}` : rateNotes[result];
+}
+
 async function reply(deps: ChatDeps, message: string): Promise<"answered" | "stopped" | "failed"> {
   let streamed = false;
   let lineEnded = false;
@@ -143,7 +158,10 @@ export async function runChat(deps: ChatDeps): Promise<void> {
     for await (const line of deps.lines) {
       const message = line.trim();
       if (exitWords.includes(message.toLowerCase())) break;
-      if (message !== "") {
+      const rating = Object.hasOwn(ratingWords, message) ? ratingWords[message] : undefined;
+      if (rating !== undefined) {
+        deps.write(`  (${await rateLast(deps, rating)})\n`);
+      } else if (message !== "") {
         const outcome = await reply(deps, message);
         if (deps.session.stoppedReason() !== null) {
           if (outcome !== "stopped") deps.write(`${stoppedMessage}\n`);

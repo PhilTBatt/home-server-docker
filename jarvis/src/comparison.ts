@@ -1,8 +1,8 @@
-import { logVersion, type LogLine } from "./answer-log.js";
+import { logVersion, type LogLine, type Rating, type RatingLine } from "./answer-log.js";
 import { engines, thinkingHistories, type Engine, type ThinkingHistory } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
-export type ReadLog = { lines: LogLine[]; skipped: number };
+export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; skipped: number };
 
 export type Group = {
   label: string;
@@ -40,8 +40,23 @@ export function isLogLine(value: unknown): value is LogLine {
   );
 }
 
+export function isRatingLine(value: unknown): value is RatingLine {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const line = value as Record<string, unknown>;
+  return (
+    line.v === logVersion &&
+    line.kind === "rating" &&
+    typeof line.at === "string" &&
+    typeof line.chat === "string" &&
+    Number.isInteger(line.question) &&
+    (line.question as number) >= 1 &&
+    (line.rating === "good" || line.rating === "bad")
+  );
+}
+
 export function readLog(text: string): ReadLog {
   const lines: LogLine[] = [];
+  const ratings: RatingLine[] = [];
   let skipped = 0;
   for (const raw of text.split("\n")) {
     if (raw.trim() === "") continue;
@@ -52,10 +67,11 @@ export function readLog(text: string): ReadLog {
       skipped++;
       continue;
     }
-    if (isLogLine(parsed)) lines.push(parsed);
+    if (isRatingLine(parsed)) ratings.push(parsed);
+    else if (isLogLine(parsed)) lines.push(parsed);
     else skipped++;
   }
-  return { lines, skipped };
+  return { lines, ratings, skipped };
 }
 
 function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
@@ -136,13 +152,25 @@ export function table(header: string[], rows: string[][]): string {
   return [render(header), ...rows.map(render)].join("\n");
 }
 
-function summaryRows(groups: Group[]): string[][] {
+function questionKey(line: { chat: string; question: number }): string {
+  return JSON.stringify([line.chat, line.question]);
+}
+
+function latestRatings(ratings: RatingLine[]): Map<string, Rating> {
+  const latest = new Map<string, Rating>();
+  for (const rating of ratings) latest.set(questionKey(rating), rating.rating);
+  return latest;
+}
+
+function summaryRows(groups: Group[], ratings: Map<string, Rating>): string[][] {
   const answered = groups.map((group) => group.lines.filter((line) => line.ok));
   const row = (label: string, cell: (group: Group, answered: LogLine[]) => string) => [label, ...groups.map((group, index) => cell(group, answered[index]))];
   return [
     row("Answers", (_group, lines) => String(lines.length)),
     row("Failed", (group) => String(group.lines.filter((line) => !line.ok).length)),
     row("Recovered", (group, lines) => (group.engine === "api" ? String(lines.filter((line) => line.recovered === true).length) : "-")),
+    row("Rated good", (_group, lines) => String(lines.filter((line) => ratings.get(questionKey(line)) === "good").length)),
+    row("Rated bad", (_group, lines) => String(lines.filter((line) => ratings.get(questionKey(line)) === "bad").length)),
     row("First words, median", (_group, lines) => shown(median(numbers(lines, (line) => line.firstWordsMs)), seconds)),
     row("Full answer, median", (_group, lines) => shown(median(numbers(lines, (line) => line.totalMs)), seconds)),
     row("Rounds, average", (_group, lines) => shown(average(numbers(lines, (line) => line.rounds)), oneDecimal)),
@@ -184,7 +212,7 @@ function failureLines(groups: Group[]): string[] {
   });
 }
 
-export function compareReport({ lines, skipped }: ReadLog): string {
+export function compareReport({ lines, ratings = [], skipped }: ReadLog): string {
   const out: string[] = [];
   const skippedNote = `${plural(skipped, "line")} couldn't be read and ${skipped === 1 ? "was" : "were"} left out.`;
   if (lines.length === 0) {
@@ -198,7 +226,7 @@ export function compareReport({ lines, skipped }: ReadLog): string {
   out.push(`${plural(lines.length, "question")} logged in ${plural(chats, "chat")}, ${span} (UTC).`);
   if (skipped > 0) out.push(skippedNote);
   const groups = groupLines(lines);
-  out.push("", table(["", ...groups.map((group) => group.label)], summaryRows(groups)));
+  out.push("", table(["", ...groups.map((group) => group.label)], summaryRows(groups, latestRatings(ratings))));
   out.push("", "Input tokens by question number in the chat, median:");
   out.push(table(["", ...Array.from({ length: lastQuestionColumn }, (_unused, index) => (index + 1 === lastQuestionColumn ? `${index + 1}+` : String(index + 1)))], questionRows(groups)));
   const uncached = lines.filter((line) => line.ok && (line.cacheReadTokens === undefined || line.cacheWriteTokens === undefined)).length;
