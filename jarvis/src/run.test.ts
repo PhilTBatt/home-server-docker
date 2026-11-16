@@ -91,14 +91,14 @@ test("the outside question points outside /brain", () => {
   assert.match(outsideQuestion, /\/app\//);
 });
 
-test("option A asks every question in every round, with thinking at its default and then off", async () => {
+test("the plain API call is asked every question in every round, with thinking at its default and then off", async () => {
   const { given, directQuestions } = deps();
   await runSpeedTest(given);
   const oneRound = [coldQuestion, ...warmQuestions].flatMap((question) => [`default: ${question}`, `off: ${question}`]);
   assert.deepEqual(directQuestions, [...oneRound, ...oneRound, ...oneRound]);
 });
 
-test("option A's two settings are timed separately", async () => {
+test("the plain API call's two settings are timed separately", async () => {
   const { given } = deps();
   const results = await runSpeedTest(given);
   const asked = rounds * (1 + warmQuestions.length);
@@ -106,7 +106,7 @@ test("option A's two settings are timed separately", async () => {
   assert.deepEqual(results.directThinkingOff, { firstWords: Array(asked).fill(450), total: Array(asked).fill(700) });
 });
 
-test("option B starts a fresh session each round and closes it", async () => {
+test("the Agent SDK starts a fresh session each round and closes it", async () => {
   const { given, sessions } = deps();
   await runSpeedTest(given);
   assert.equal(sessions.length, rounds);
@@ -209,7 +209,7 @@ test("answers with no first words only count towards the full answer", async () 
 test("keeps one example of each kind from the first round", async () => {
   const { given } = deps();
   const results = await runSpeedTest(given);
-  assert.deepEqual(results.examples, ["A: Direct.", "B: Cold.", "B, brain: It covers your life."]);
+  assert.deepEqual(results.examples, ["Plain API call: Direct.", "Agent SDK: Cold.", "Agent SDK, brain: It covers your life."]);
 });
 
 test("a failing question stops the test and still closes the session", async () => {
@@ -245,7 +245,7 @@ test("a question that times out closes its session straight away", async () => {
   assert.equal(setup.sessions.length, rounds);
 });
 
-test("a failure in option A stops before option B starts", async () => {
+test("a failure in the plain API call stops before the Agent SDK starts", async () => {
   const { given, sessions } = deps({
     askDirect: async () => {
       throw new Error("The API replied 401: invalid x-api-key");
@@ -259,12 +259,12 @@ test("logs each round as it goes", async () => {
   const { given, lines } = deps();
   await runSpeedTest(given);
   assert.deepEqual(lines, [
-    "Option A, round 1 of 3",
-    "Option A, round 2 of 3",
-    "Option A, round 3 of 3",
-    "Option B, round 1 of 3",
-    "Option B, round 2 of 3",
-    "Option B, round 3 of 3",
+    "Plain API call, round 1 of 3",
+    "Plain API call, round 2 of 3",
+    "Plain API call, round 3 of 3",
+    "Agent SDK, round 1 of 3",
+    "Agent SDK, round 2 of 3",
+    "Agent SDK, round 3 of 3",
   ]);
 });
 
@@ -333,7 +333,7 @@ function sampleResults(overrides: Partial<Results> = {}): Results {
     memoryMb: 310,
     costUsd: 0.0123,
     confinement: "refused, as it should be",
-    examples: ["A: Hi.", "B: Hello."],
+    examples: ["Plain API call: Hi.", "Agent SDK: Hello."],
     ...overrides,
   };
 }
@@ -341,8 +341,8 @@ function sampleResults(overrides: Partial<Results> = {}): Results {
 test("the report names the model and rounds and shows every measure", () => {
   const report = formatReport(sampleResults());
   assert.ok(report.includes("Jarvis speed test: claude-haiku-5-5, 3 rounds"));
-  assert.ok(report.includes("Option A, a plain API call, thinking left at Haiku's default (B's engine sends the same):"));
-  assert.ok(report.includes("Option A with thinking off (B's engine ignored this setting in testing):"));
+  assert.ok(report.includes("Plain API call, thinking left at Haiku's default (the Agent SDK sends the same):"));
+  assert.ok(report.includes("Plain API call, thinking off (the Agent SDK ignored this setting in testing):"));
   assert.ok(report.includes("  first words: 0.30 s"));
   assert.ok(report.includes("  full answer: 0.60 s"));
   assert.ok(report.includes("  first words: 0.60 s (0.50 s to 0.70 s, 3 tries)"));
@@ -354,17 +354,17 @@ test("the report names the model and rounds and shows every measure", () => {
   assert.ok(report.includes("  warm conversation, full answer: 1.05 s (1.00 s to 1.10 s, 2 tries)"));
   assert.ok(report.includes("  reading the brain, first words (can come before the file is read): no data"));
   assert.ok(report.includes("  memory while running (highest reading): 310 MB"));
-  assert.ok(report.includes("  cost of option B's runs: about $0.0123"));
+  assert.ok(report.includes("  cost of the Agent SDK's runs: about $0.0123"));
   assert.ok(report.includes("  reading outside /brain: refused, as it should be"));
 });
 
 test("the report lists the example answers, indented", () => {
   const report = formatReport(sampleResults());
-  assert.deepEqual(report.slice(-3), ["Example answers:", "  A: Hi.", "  B: Hello."]);
+  assert.deepEqual(report.slice(-3), ["Example answers:", "  Plain API call: Hi.", "  Agent SDK: Hello."]);
 });
 
 test("the report says when memory and cost are unknown", () => {
   const report = formatReport(sampleResults({ memoryMb: null, costUsd: null }));
   assert.ok(report.includes("  memory while running (highest reading): unknown"));
-  assert.ok(report.includes("  cost of option B's runs: unknown"));
+  assert.ok(report.includes("  cost of the Agent SDK's runs: unknown"));
 });

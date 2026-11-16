@@ -92,7 +92,7 @@ test("turns thinking off when asked, and changes nothing else", async () => {
 
 test("times the first words from the first text, and the full answer from the end of the stream", async () => {
   fakeApi([...opening, textDelta("Morning, "), textDelta("Phil."), ...closing]);
-  assert.deepEqual(await askDirect(request()), { text: "Morning, Phil.", firstWordsMs: 400, totalMs: 1100 });
+  assert.deepEqual(await askDirect(request()), { text: "Morning, Phil.", firstWordsMs: 400, totalMs: 1100, inputTokens: 0, outputTokens: 0 });
 });
 
 test("only reads the clock three times: start, first words and end", async () => {
@@ -131,7 +131,7 @@ test("non-text deltas don't count as first words", async () => {
 
 test("no first-words time when the answer has no text", async () => {
   fakeApi([...opening, ...closing]);
-  assert.deepEqual(await askDirect(request({ now: clock([0, 700]) })), { text: "", firstWordsMs: null, totalMs: 700 });
+  assert.deepEqual(await askDirect(request({ now: clock([0, 700]) })), { text: "", firstWordsMs: null, totalMs: 700, inputTokens: 0, outputTokens: 0 });
 });
 
 test("an error event in the stream stops with the API's message", async () => {
@@ -191,6 +191,90 @@ test("says when the API doesn't answer in time", async () => {
     });
   });
   await assert.rejects(askDirect(request({ timeoutMs: 50 })), { message: "The API didn't answer in time" });
+});
+
+test("earlier turns go before the question, in order", async () => {
+  const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
+  const history = [
+    { role: "user" as const, content: "First?" },
+    { role: "assistant" as const, content: "First answer." },
+  ];
+  await askDirect(request({ history }));
+  const body = JSON.parse(String(fetchMock.mock.calls[0].arguments[1]?.body)) as { messages: unknown[] };
+  assert.deepEqual(body.messages, [...history, { role: "user", content: "Hello?" }]);
+});
+
+test("the history it was given isn't changed", async () => {
+  fakeApi([...opening, textDelta("Hi."), ...closing]);
+  const history = [{ role: "user" as const, content: "First?" }];
+  await askDirect(request({ history }));
+  assert.deepEqual(history, [{ role: "user", content: "First?" }]);
+});
+
+test("each piece of text is handed on as it arrives", async () => {
+  fakeApi([...opening, textDelta("Hi "), event({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{" } }), textDelta("Phil."), ...closing]);
+  const heard: string[] = [];
+  const answer = await askDirect(request({ onText: (delta) => heard.push(delta) }));
+  assert.deepEqual(heard, ["Hi ", "Phil."]);
+  assert.equal(answer.text, "Hi Phil.");
+});
+
+test("reads the tokens used from the start and the end of the stream", async () => {
+  fakeApi([
+    event({ type: "message_start", message: { id: "msg_1", usage: { input_tokens: 120, output_tokens: 1 } } }),
+    textDelta("Hi."),
+    event({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 45 } }),
+    event({ type: "message_stop" }),
+  ]);
+  const answer = await askDirect(request());
+  assert.equal(answer.inputTokens, 120);
+  assert.equal(answer.outputTokens, 45);
+});
+
+test("tokens count as zero when the stream doesn't say", async () => {
+  fakeApi([...opening, textDelta("Hi."), ...closing]);
+  const answer = await askDirect(request());
+  assert.equal(answer.inputTokens, 0);
+  assert.equal(answer.outputTokens, 0);
+});
+
+test("stopping from outside cancels the request, and the timeout still applies", async () => {
+  const fetchMock = fakeApi([...opening, textDelta("Hi."), ...closing]);
+  const timeoutMock = mock.method(AbortSignal, "timeout");
+  const stopping = new AbortController();
+  await askDirect(request({ signal: stopping.signal, timeoutMs: 5000 }));
+  const signal = fetchMock.mock.calls[0].arguments[1]?.signal;
+  assert.equal(timeoutMock.mock.calls[0].arguments[0], 5000);
+  assert.equal(signal?.aborted, false);
+  stopping.abort();
+  assert.equal(signal?.aborted, true);
+});
+
+test("with a stop signal from outside, the timeout still ends a request that never answers", async () => {
+  mock.method(globalThis, "fetch", (_input: unknown, init?: RequestInit) => {
+    return new Promise<Response>((_resolve, reject) => {
+      const neverAborted = setTimeout(() => reject(new Error("never aborted")), 1000);
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(neverAborted);
+        reject(init.signal?.reason);
+      });
+    });
+  });
+  const stopping = new AbortController();
+  await assert.rejects(askDirect(request({ signal: stopping.signal, timeoutMs: 50 })), { message: "The API didn't answer in time" });
+  assert.equal(stopping.signal.aborted, false);
+});
+
+test("stopping from outside while waiting for the API stops the request", async () => {
+  mock.method(globalThis, "fetch", (_input: unknown, init?: RequestInit) => {
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    });
+  });
+  const stopping = new AbortController();
+  const answer = askDirect(request({ signal: stopping.signal }));
+  stopping.abort();
+  await assert.rejects(answer, { message: "Couldn't reach the API" });
 });
 
 test("no error message ever includes the key", async () => {

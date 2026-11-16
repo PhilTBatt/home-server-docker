@@ -2,20 +2,29 @@ import type { Answer } from "./timing.js";
 
 export const messagesUrl = "https://api.anthropic.com/v1/messages";
 
+export type Turn = { role: "user" | "assistant"; content: string };
+
 export type DirectRequest = {
   apiKey: string;
   model: string;
   system: string;
   question: string;
+  history?: Turn[];
   maxTokens: number;
   thinkingOff: boolean;
   now: () => number;
   timeoutMs?: number;
+  signal?: AbortSignal;
+  onText?: (delta: string) => void;
 };
+
+export type DirectAnswer = Answer & { inputTokens: number; outputTokens: number };
 
 export type StreamEvent = {
   type?: string;
   delta?: { type?: string; text?: string };
+  message?: { usage?: { input_tokens?: number } };
+  usage?: { output_tokens?: number };
   error?: { message?: string };
 };
 
@@ -57,13 +66,18 @@ function requestBody(request: DirectRequest): string {
     max_tokens: request.maxTokens,
     system: request.system,
     stream: true,
-    messages: [{ role: "user", content: request.question }],
+    messages: [...(request.history ?? []), { role: "user", content: request.question }],
   };
   if (request.thinkingOff) body.thinking = { type: "disabled" };
   return JSON.stringify(body);
 }
 
-export async function askDirect(request: DirectRequest): Promise<Answer> {
+function abortSignal(request: DirectRequest): AbortSignal {
+  const timeout = AbortSignal.timeout(request.timeoutMs ?? 60_000);
+  return request.signal === undefined ? timeout : AbortSignal.any([timeout, request.signal]);
+}
+
+export async function askDirect(request: DirectRequest): Promise<DirectAnswer> {
   const started = request.now();
   const response = await fetch(messagesUrl, {
     method: "POST",
@@ -73,7 +87,7 @@ export async function askDirect(request: DirectRequest): Promise<Answer> {
       "content-type": "application/json",
     },
     body: requestBody(request),
-    signal: AbortSignal.timeout(request.timeoutMs ?? 60_000),
+    signal: abortSignal(request),
   }).catch((error: Error) => {
     throw new Error(error.name === "TimeoutError" ? "The API didn't answer in time" : "Couldn't reach the API");
   });
@@ -84,12 +98,18 @@ export async function askDirect(request: DirectRequest): Promise<Answer> {
   let firstWordsMs: number | null = null;
   let failure: string | null = null;
   let finished = false;
+  let inputTokens = 0;
+  let outputTokens = 0;
   const read = createEventReader((event) => {
     if (event.type === "error") failure = event.error?.message ?? "no details";
     if (event.type === "message_stop") finished = true;
+    if (event.type === "message_start") inputTokens = event.message?.usage?.input_tokens ?? 0;
+    if (event.type === "message_delta") outputTokens = event.usage?.output_tokens ?? outputTokens;
     if (event.type !== "content_block_delta" || event.delta?.type !== "text_delta") return;
     if (firstWordsMs === null) firstWordsMs = request.now() - started;
-    text += event.delta.text ?? "";
+    const delta = event.delta.text ?? "";
+    text += delta;
+    request.onText?.(delta);
   });
   const decoder = new TextDecoder();
   try {
@@ -100,5 +120,5 @@ export async function askDirect(request: DirectRequest): Promise<Answer> {
   }
   if (failure !== null) throw new Error(`The API stopped with an error: ${failure}`);
   if (!finished) throw new Error("The answer was cut off");
-  return { text, firstWordsMs, totalMs: request.now() - started };
+  return { text, firstWordsMs, totalMs: request.now() - started, inputTokens, outputTokens };
 }

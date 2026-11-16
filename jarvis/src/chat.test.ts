@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
-import { chatModel, chatSystem, costLine, exitWords, greeting, printable, promptWhileOpen, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
+import { apiChatSystem, chatModel, chatSystem, costLine, engineLine, exitWords, greeting, printable, promptWhileOpen, questionTimeoutMs, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
 import type { Answer } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -67,8 +67,9 @@ const hello: Script = async (listener) => {
   return answer("Hi Phil.", 500, 1200);
 };
 
-test("Jarvis chats on Haiku 5.5", () => {
+test("Jarvis chats on Haiku 5.5, and gives each question up to 120 seconds", () => {
   assert.equal(chatModel, "claude-haiku-5-5");
+  assert.equal(questionTimeoutMs, 120_000);
 });
 
 test("Jarvis's instructions point him at the brain and keep him safe and short", () => {
@@ -78,6 +79,19 @@ test("Jarvis's instructions point him at the brain and keep him safe and short",
   assert.match(chatSystem, /You can only read/);
   assert.match(chatSystem, /Before you read a file, say/);
   assert.match(chatSystem, /British English/);
+});
+
+test("the plain API engine's instructions keep the same voice but say he can't read the brain yet", () => {
+  assert.match(apiChatSystem, /^You are Jarvis, Phil's assistant on his home server\./);
+  assert.match(apiChatSystem, /British English/);
+  assert.match(apiChatSystem, /can't read his notes or use any tools/);
+  assert.match(apiChatSystem, /can't change anything/);
+  assert.doesNotMatch(apiChatSystem, /\/brain|index\.md|Before you read a file/);
+});
+
+test("the engine line names the engine", () => {
+  assert.equal(engineLine("sdk"), "Engine: the Agent SDK");
+  assert.equal(engineLine("api"), "Engine: a plain API call, without the brain for now");
 });
 
 test("a whole chat: greeting, streamed answer, timing, then the cost", async () => {

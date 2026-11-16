@@ -88,17 +88,17 @@ export async function runSpeedTest(deps: SpeedTestDeps): Promise<Results> {
   };
 
   for (let round = 1; round <= rounds; round++) {
-    deps.log(`Option A, round ${round} of ${rounds}`);
+    deps.log(`Plain API call, round ${round} of ${rounds}`);
     for (const question of [coldQuestion, ...warmQuestions]) {
       const answer = await deps.askDirect(question, false);
       record(results.direct, answer);
-      if (round === 1 && question === coldQuestion) results.examples.push(`A: ${answer.text}`);
+      if (round === 1 && question === coldQuestion) results.examples.push(`Plain API call: ${answer.text}`);
       record(results.directThinkingOff, await deps.askDirect(question, true));
     }
   }
 
   for (let round = 1; round <= rounds; round++) {
-    deps.log(`Option B, round ${round} of ${rounds}`);
+    deps.log(`Agent SDK, round ${round} of ${rounds}`);
     const session = deps.startSession();
     const ask = (question: string) => withTimeout(session.ask(question), deps.questionTimeoutMs, () => session.close());
     try {
@@ -110,7 +110,7 @@ export async function runSpeedTest(deps: SpeedTestDeps): Promise<Results> {
       const brain = await ask(brainQuestion);
       record(results.brain, brain);
       if (round === 1) {
-        results.examples.push(`B: ${cold.text}`, `B, brain: ${brain.text}`);
+        results.examples.push(`Agent SDK: ${cold.text}`, `Agent SDK, brain: ${brain.text}`);
         results.confinement = await checkConfinement(ask);
       }
       results.memoryMb = larger(results.memoryMb, deps.readMemoryMb());
@@ -129,15 +129,15 @@ export function formatReport(results: Results): string[] {
     "",
     `Jarvis speed test: ${model}, ${rounds} rounds`,
     "",
-    "Option A, a plain API call, thinking left at Haiku's default (B's engine sends the same):",
+    "Plain API call, thinking left at Haiku's default (the Agent SDK sends the same):",
     `  first words: ${describe(results.direct.firstWords)}`,
     `  full answer: ${describe(results.direct.total)}`,
     "",
-    "Option A with thinking off (B's engine ignored this setting in testing):",
+    "Plain API call, thinking off (the Agent SDK ignored this setting in testing):",
     `  first words: ${describe(results.directThinkingOff.firstWords)}`,
     `  full answer: ${describe(results.directThinkingOff.total)}`,
     "",
-    "Option B, the Agent SDK:",
+    "Agent SDK:",
     `  engine ready after starting: ${describe(results.ready)}`,
     `  new conversation, first words: ${describe(results.cold.firstWords)}`,
     `  new conversation, full answer: ${describe(results.cold.total)}`,
@@ -146,7 +146,7 @@ export function formatReport(results: Results): string[] {
     `  reading the brain, first words (can come before the file is read): ${describe(results.brain.firstWords)}`,
     `  reading the brain, full answer: ${describe(results.brain.total)}`,
     `  memory while running (highest reading): ${results.memoryMb === null ? "unknown" : `${results.memoryMb} MB`}`,
-    `  cost of option B's runs: ${results.costUsd === null ? "unknown" : `about $${results.costUsd.toFixed(4)}`}`,
+    `  cost of the Agent SDK's runs: ${results.costUsd === null ? "unknown" : `about $${results.costUsd.toFixed(4)}`}`,
     `  reading outside /brain: ${results.confinement}`,
     "",
     "Example answers:",
