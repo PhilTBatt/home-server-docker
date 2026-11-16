@@ -15,6 +15,7 @@ export type EngineCheckDeps = {
   timeoutMs: number;
   settleMs: number;
   countTranscripts: () => Promise<number>;
+  engineEnv: () => Record<string, string | undefined> | undefined;
 };
 
 export const allowedTools = ["Read", "DeferredToolPlaceholder"];
@@ -79,6 +80,10 @@ export async function runEngineCheck(deps: EngineCheckDeps): Promise<CheckResult
   } catch (error) {
     results.push({ name: "no chat transcript is saved", ok: false, detail: reason(error) });
   }
+
+  const env = deps.engineEnv();
+  const quiet = Boolean(env?.DISABLE_TELEMETRY) && Boolean(env?.DISABLE_ERROR_REPORTING);
+  results.push({ name: "the engine's telemetry and error reports are off", ok: quiet, detail: env === undefined ? "no environment was given to the engine" : "a setting is missing or empty" });
 
   return results;
 }

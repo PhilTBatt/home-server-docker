@@ -11,6 +11,7 @@ import { startStandInApi, type StandInApi } from "./stand-in-api.js";
 const folders: string[] = [];
 let api: StandInApi | null = null;
 let session: AgentSession | null = null;
+let engineEnv: Record<string, string | undefined> | undefined;
 
 async function countFiles(folder: string, ending: string): Promise<number> {
   const entries = await readdir(folder, { recursive: true }).catch(() => []);
@@ -32,10 +33,11 @@ try {
   process.env.HOME = home;
   process.env.ANTHROPIC_BASE_URL = api.url;
   process.env.ANTHROPIC_API_KEY = "sk-ant-test-key";
-  process.env.DISABLE_TELEMETRY = "1";
-  process.env.DISABLE_ERROR_REPORTING = "1";
   process.env.NO_PROXY = "127.0.0.1,localhost";
-  session = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brain, now: () => performance.now() });
+  session = startAgentSession((prompt, options) => {
+    engineEnv = options.env;
+    return query({ prompt, options });
+  }, { model: chatModel, system: chatSystem, cwd: brain, now: () => performance.now() });
   const results = await runEngineCheck({
     session,
     requests: api.requests,
@@ -47,6 +49,7 @@ try {
     timeoutMs: 60_000,
     settleMs: 2000,
     countTranscripts: () => countFiles(join(home, ".claude", "projects"), ".jsonl"),
+    engineEnv: () => engineEnv,
   });
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;

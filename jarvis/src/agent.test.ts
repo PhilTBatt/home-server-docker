@@ -100,7 +100,7 @@ function setup() {
 }
 
 test("the engine gets only the Read tool, refuses anything else, loads no settings files or MCP servers, and skips naming the session", () => {
-  assert.deepEqual(agentOptions({ model: "claude-haiku-5-5", system: "Be brief.", cwd: "/brain", now: () => 0 }), {
+  assert.deepEqual(agentOptions({ model: "claude-haiku-5-5", system: "Be brief.", cwd: "/brain", now: () => 0, env: {} }), {
     model: "claude-haiku-5-5",
     cwd: "/brain",
     systemPrompt: "Be brief.",
@@ -111,7 +111,20 @@ test("the engine gets only the Read tool, refuses anything else, loads no settin
     strictMcpConfig: true,
     title: "Jarvis",
     includePartialMessages: true,
+    env: { DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" },
   });
+});
+
+test("the engine keeps the rest of the environment, and the privacy settings can't be undone by it", () => {
+  const env = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-ant-test-key", DISABLE_TELEMETRY: "", DISABLE_ERROR_REPORTING: undefined } }).env;
+  assert.deepEqual(env, { PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-ant-test-key", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" });
+});
+
+test("without an environment given, the engine gets this process's own, plus the privacy settings", () => {
+  const env = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0 }).env;
+  assert.equal(env?.PATH, process.env.PATH);
+  assert.equal(env?.DISABLE_TELEMETRY, "1");
+  assert.equal(env?.DISABLE_ERROR_REPORTING, "1");
 });
 
 test("starting a session hands those options to the engine", () => {

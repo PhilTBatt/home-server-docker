@@ -11,7 +11,10 @@ export type AgentSettings = {
   system: string;
   cwd: string;
   now: () => number;
+  env?: Record<string, string | undefined>;
 };
+
+export const privacyEnv = { DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" };
 
 export type AnswerListener = {
   text?: (delta: string) => void;
@@ -55,6 +58,7 @@ export function agentOptions(settings: AgentSettings): Options {
     strictMcpConfig: true,
     title: "Jarvis",
     includePartialMessages: true,
+    env: { ...(settings.env ?? process.env), ...privacyEnv },
   };
 }
 

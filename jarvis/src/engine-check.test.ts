@@ -65,6 +65,7 @@ function deps(overrides: Partial<EngineCheckDeps> = {}): EngineCheckDeps {
     timeoutMs: 1000,
     settleMs: 0,
     countTranscripts: async () => 0,
+    engineEnv: () => ({ PATH: "/usr/bin", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" }),
     ...overrides,
   };
 }
@@ -75,9 +76,9 @@ function failed(results: { name: string; ok: boolean }[]): string[] {
 
 const inOrder = "only Jarvis's own five requests, in order (no title or other extra requests)";
 
-test("an engine that behaves passes all nine checks", async () => {
+test("an engine that behaves passes all ten checks", async () => {
   const results = await runEngineCheck(deps());
-  assert.equal(results.length, 9);
+  assert.equal(results.length, 10);
   assert.deepEqual(failed(results), []);
 });
 
@@ -217,4 +218,16 @@ test("the report ticks passes, gives the reason for failures, and ends with a co
 test("a closed session's error is reported as it is", async () => {
   const results = await runEngineCheck(deps({ session: fakeSession({ plain: () => Promise.reject(new Error(closedMessage)) }).session }));
   assert.equal(results[0].detail, closedMessage);
+});
+
+
+test("the engine must be started with telemetry and error reports off", async () => {
+  const quiet = "the engine's telemetry and error reports are off";
+  for (const env of [{ DISABLE_ERROR_REPORTING: "1" }, { DISABLE_TELEMETRY: "1" }, { DISABLE_TELEMETRY: "", DISABLE_ERROR_REPORTING: "1" }, {}]) {
+    assert.deepEqual(failed(await runEngineCheck(deps({ engineEnv: () => env }))), [quiet], JSON.stringify(env));
+  }
+  const none = await runEngineCheck(deps({ engineEnv: () => undefined }));
+  assert.deepEqual(failed(none), [quiet]);
+  assert.equal(none[9].detail, "no environment was given to the engine");
+  assert.deepEqual(failed(await runEngineCheck(deps({ engineEnv: () => ({ DISABLE_TELEMETRY: "0", DISABLE_ERROR_REPORTING: "true" }) }))), []);
 });
