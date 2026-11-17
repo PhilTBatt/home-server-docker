@@ -44,6 +44,9 @@ type Pending = {
   listener: AnswerListener;
   rounds: number;
   toolUses: number;
+  largestRequestTokens: number | null;
+  spoke: boolean;
+  spokeFirst: boolean | null;
 };
 
 export function agentOptions(settings: AgentSettings): Options {
@@ -112,8 +115,11 @@ function textDelta(message: SDKMessage): string | null {
   return message.event.delta.text;
 }
 
-function startsRound(message: SDKMessage): boolean {
-  return message.type === "stream_event" && message.parent_tool_use_id === null && message.event.type === "message_start";
+function roundStart(message: SDKMessage): { tokens: number | null } | null {
+  if (message.type !== "stream_event" || message.parent_tool_use_id !== null || message.event.type !== "message_start") return null;
+  const usage = message.event.message?.usage;
+  if (usage === undefined || usage === null) return { tokens: null };
+  return { tokens: (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) };
 }
 
 function toolCalls(message: SDKMessage): { name: string; input: unknown }[] {
@@ -126,7 +132,6 @@ function denials(message: SDKResultMessage): string[] {
 }
 
 function resultError(message: SDKResultMessage): string {
-  if (denials(message).length > 0) return `Refused: ${denials(message).join(", ")}`;
   if (message.subtype === "success") return message.result || "The agent reported an error";
   return message.errors.length > 0 ? message.errors.join("; ") : message.subtype;
 }
@@ -154,10 +159,16 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
     const text = textDelta(message);
     if (text !== null) {
       if (pending.firstWordsMs === null) pending.firstWordsMs = settings.now() - pending.started;
+      if (text.trim() !== "") pending.spoke = true;
       pending.listener.text?.(text);
     }
-    if (startsRound(message)) pending.rounds++;
+    const round = roundStart(message);
+    if (round !== null) {
+      pending.rounds++;
+      if (round.tokens !== null) pending.largestRequestTokens = Math.max(pending.largestRequestTokens ?? 0, round.tokens);
+    }
     for (const call of toolCalls(message)) {
+      if (pending.spokeFirst === null) pending.spokeFirst = pending.spoke;
       pending.toolUses++;
       pending.listener.tool?.(call.name, call.input);
     }
@@ -166,7 +177,7 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
     cost = message.total_cost_usd;
     const answered = pending;
     pending = null;
-    if (message.subtype === "success" && !message.is_error && denials(message).length === 0) {
+    if (message.subtype === "success" && !message.is_error) {
       const usage = message.usage;
       answered.resolve({
         text: message.result,
@@ -182,6 +193,9 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
           costUsd: Math.max(0, message.total_cost_usd - costBefore),
           earlierThinkingBlocks: null,
           recovered: false,
+          largestRequestTokens: answered.largestRequestTokens,
+          refusedTools: denials(message),
+          spokeFirst: answered.spokeFirst,
         },
       });
     } else {
@@ -205,7 +219,7 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
       if (stopped !== null) return Promise.reject(stopped);
       if (pending !== null) return Promise.reject(new Error("One question at a time"));
       return new Promise<Answer>((resolve, reject) => {
-        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener, rounds: 0, toolUses: 0 };
+        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener, rounds: 0, toolUses: 0, largestRequestTokens: null, spoke: false, spokeFirst: null };
         input.push(question);
       });
     },

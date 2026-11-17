@@ -49,6 +49,11 @@ function toolCalls(content: AssistantBlock[]): ToolUseBlock[] {
   return content.filter((block): block is ToolUseBlock => block.type === "tool_use");
 }
 
+export function spokeBeforeTools(content: AssistantBlock[]): boolean {
+  const firstTool = content.findIndex((block) => block.type === "tool_use");
+  return content.slice(0, firstTool === -1 ? content.length : firstTool).some((block) => block.type === "text" && typeof block.text === "string" && block.text.trim() !== "");
+}
+
 function hasThinking(content: AssistantBlock[]): boolean {
   return content.some((block) => block.type === "thinking" || block.type === "redacted_thinking");
 }
@@ -108,6 +113,9 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
       costUsd: prices === undefined ? null : 0,
       earlierThinkingBlocks: thinkingBlocksIn(history),
       recovered: false,
+      largestRequestTokens: 0,
+      refusedTools: [],
+      spokeFirst: null,
     };
     const sendRound = async () => {
       const answer = await send({
@@ -148,7 +156,9 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
         if (closed) throw new Error(closedMessage);
         const stepStarted = settings.now();
         const answer = await sendRoundOrRecover();
-        stats.inputTokens += answer.inputTokens + answer.cacheWriteTokens + answer.cacheReadTokens;
+        const requestTokens = answer.inputTokens + answer.cacheWriteTokens + answer.cacheReadTokens;
+        stats.inputTokens += requestTokens;
+        stats.largestRequestTokens = Math.max(stats.largestRequestTokens ?? 0, requestTokens);
         stats.cacheWriteTokens += answer.cacheWriteTokens;
         stats.cacheReadTokens += answer.cacheReadTokens;
         stats.outputTokens += answer.outputTokens;
@@ -160,6 +170,7 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
         if (firstWordsMs === null && answer.firstWordsMs !== null) firstWordsMs = stepStarted - started + answer.firstWordsMs;
         turns.push({ role: "user", content: next }, { role: "assistant", content: echoed(answer.content) });
         const calls = toolCalls(answer.content);
+        if (calls.length > 0 && stats.spokeFirst === null) stats.spokeFirst = spokeBeforeTools(answer.content);
         if (calls.length === 0) {
           if (hasVisibleContent(answer.content)) history.push(...(thinkingHistory === "keep" ? turns : withoutThinking(turns)));
           return { text: answer.text, firstWordsMs, totalMs: settings.now() - started, stats };
@@ -171,6 +182,7 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
           stats.toolUses++;
           listener.tool?.(call.name, call.input);
           const outcome = await settings.tools.run(call.name, call.input);
+          if (outcome.refused) stats.refusedTools.push(call.name);
           results.push(outcome.isError ? { type: "tool_result", tool_use_id: call.id, content: outcome.content, is_error: true } : { type: "tool_result", tool_use_id: call.id, content: outcome.content });
         }
         next = results;

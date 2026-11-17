@@ -28,7 +28,7 @@ import {
 
 export type CheckResult = { name: string; ok: boolean; detail: string };
 
-export type Probe = { tool: string | null; used: string[]; answer: string | null; expectedAnswer: string | null; threw: string | null; results: SeenToolResult[] };
+export type Probe = { tool: string | null; used: string[]; refusedTools: string[]; spokeFirst: boolean | null; answer: string | null; expectedAnswer: string | null; threw: string | null; results: SeenToolResult[] };
 
 export type Refusal = "outside" | "git";
 
@@ -60,13 +60,17 @@ export type SharedRule = { name: string; word: string; expect: Expect; differs?:
 
 export const checkNames: Record<Engine, string> = { sdk: "Agent SDK", api: "plain API call" };
 
+function refusedBy(probe: Probe): boolean {
+  return probe.tool !== null && probe.threw === null && probe.refusedTools.length > 0 && probe.refusedTools.every((name) => name === probe.tool) && probe.results.length > 0 && probe.results.every((result) => result.isError);
+}
+
 export function sdkRefused(probe: Probe): boolean {
-  return probe.tool !== null && probe.threw === `Refused: ${probe.tool}` && probe.results.length > 0 && probe.results.every((result) => result.isError);
+  return refusedBy(probe);
 }
 
 export function apiRefused(probe: Probe, because: Refusal): boolean {
   const refusal = because === "git" ? gitRefusal : outsideRefusal;
-  return probe.threw === null && probe.results.length > 0 && probe.results.every((result) => result.isError && result.text === refusal);
+  return refusedBy(probe) && probe.results.every((result) => result.text === refusal);
 }
 
 export function sdkUnderTest(session: AgentSession, requests: SeenRequest[]): EngineUnderTest {
@@ -125,9 +129,10 @@ export function problems(expect: Expect, probe: Probe, refused: boolean): string
   else if (!probe.used.includes(probe.tool)) found.push(`no tool note for ${probe.tool}`);
   if (probe.results.length === 0) found.push(probe.threw === null ? "no tool result reached the API" : `no tool result reached the API (${probe.threw})`);
   if (brokenCharacter.test(text)) found.push("a result has a broken character");
-  if (expect.refused !== undefined && !refused) found.push(probe.threw === null ? "not refused" : `not refused (${probe.threw})`);
+  if (expect.refused !== undefined && !refused) found.push(probe.threw !== null ? `not refused (${probe.threw})` : `not refused (${probe.refusedTools.length === 0 ? "nothing reported refused" : `reported refused: ${probe.refusedTools.join(", ")}`})`);
   if (expect.refused === undefined && (probe.threw !== null || probe.results.some((result) => result.isError))) found.push(probe.threw ?? "the tool failed");
   if (probe.threw === null && probe.expectedAnswer !== null && probe.answer !== probe.expectedAnswer) found.push("the answer after the tool didn't come back");
+  if (probe.threw === null && probe.tool !== null && probe.spokeFirst !== true) found.push("didn't report the words said before the tool");
   const missing = (expect.found ?? []).filter((wanted) => !text.includes(wanted));
   if (missing.length > 0) found.push(`didn't show ${missing.join(", ")}`);
   const shown = (expect.absent ?? []).filter((unwanted) => text.includes(unwanted));
@@ -146,7 +151,7 @@ function check(engine: EngineUnderTest, expect: Expect, probe: Probe): string[] 
 export function judgeRule(rule: SharedRule, engines: EngineUnderTest[], probes: Map<Engine, Map<string, Probe>>): CheckResult {
   const failures: string[] = [];
   for (const engine of engines) {
-    const probe = probes.get(engine.engine)?.get(rule.word) ?? { tool: null, used: [], answer: null, expectedAnswer: null, threw: "not asked", results: [] };
+    const probe = probes.get(engine.engine)?.get(rule.word) ?? { tool: null, used: [], refusedTools: [], spokeFirst: null, answer: null, expectedAnswer: null, threw: "not asked", results: [] };
     const differs = rule.differs?.engine === engine.engine ? rule.differs : undefined;
     const wrong = check(engine, differs?.expect ?? rule.expect, probe);
     if (wrong.length === 0) continue;
@@ -192,9 +197,14 @@ export async function runEngineCheck(deps: EngineCheckDeps): Promise<CheckResult
       const from = engine.requests.length;
       const used: string[] = [];
       let answer: string | null = null;
+      let refusedTools: string[] = [];
+      let spokeFirst: boolean | null = null;
       let threw: string | null = null;
       try {
-        answer = (await ask(`Please ${rule.word}`, used)).text;
+        const answered = await ask(`Please ${rule.word}`, used);
+        answer = answered.text;
+        refusedTools = answered.stats?.refusedTools ?? [];
+        spokeFirst = answered.stats?.spokeFirst ?? null;
       } catch (error) {
         threw = reason(error);
       }
@@ -203,6 +213,8 @@ export async function runEngineCheck(deps: EngineCheckDeps): Promise<CheckResult
       seen.set(rule.word, {
         tool: after.find((request) => request.asked !== null)?.asked ?? null,
         used,
+        refusedTools,
+        spokeFirst,
         answer,
         expectedAnswer: lastResult === undefined ? null : echoFor(lastResult.lastUserText),
         threw,

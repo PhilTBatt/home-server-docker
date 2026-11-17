@@ -10,7 +10,7 @@ export const maxSearchFiles = 2000;
 export const maxSearchText = 200;
 export const maxLineChars = 200;
 
-export type ToolOutcome = { content: string; isError: boolean };
+export type ToolOutcome = { content: string; isError: boolean; refused?: true };
 
 export type BrainTools = {
   definitions: ToolDefinition[];
@@ -70,7 +70,7 @@ function ok(content: string): ToolOutcome {
   return { content, isError: false };
 }
 
-function refused(content: string): ToolOutcome {
+function toolError(content: string): ToolOutcome {
   return { content, isError: true };
 }
 
@@ -136,17 +136,17 @@ function kilobytes(bytes: number): string {
 
 async function readFileTool(root: string, input: unknown): Promise<ToolOutcome> {
   const asked = pathOf(input);
-  if (asked === null) return refused("Give the file's path, for example index.md.");
+  if (asked === null) return toolError("Give the file's path, for example index.md.");
   const real = await locate(root, asked);
   const info = await stat(real);
-  if (info.isDirectory()) return refused("That's a folder. Use list_folder to see what's in it.");
-  if (!info.isFile()) return refused("That isn't a file.");
+  if (info.isDirectory()) return toolError("That's a folder. Use list_folder to see what's in it.");
+  if (!info.isFile()) return toolError("That isn't a file.");
   const handle = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const buffer = Buffer.alloc(Math.min(info.size, maxReadBytes));
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     const bytes = buffer.subarray(0, bytesRead);
-    if (bytes.includes(0)) return refused("That isn't a text file.");
+    if (bytes.includes(0)) return toolError("That isn't a text file.");
     if (info.size > maxReadBytes) {
       const start = new TextDecoder().decode(bytes, { stream: true });
       return ok(`${start}\n[cut at ${kilobytes(maxReadBytes)} of ${kilobytes(info.size)}]`);
@@ -161,7 +161,7 @@ async function readFileTool(root: string, input: unknown): Promise<ToolOutcome> 
 async function listFolderTool(root: string, input: unknown): Promise<ToolOutcome> {
   const real = await locate(root, pathOf(input) ?? ".");
   const info = await stat(real);
-  if (!info.isDirectory()) return refused("That's a file. Use read_file to read it.");
+  if (!info.isDirectory()) return toolError("That's a file. Use read_file to read it.");
   const entries = await readdir(real, { withFileTypes: true });
   const names = entries
     .filter((entry) => entry.name !== ".git")
@@ -215,7 +215,7 @@ function walkNotes(walked: Walked): string {
 async function searchStart(root: string, input: unknown): Promise<{ top: string; folder: string } | ToolOutcome> {
   const folder = await locate(root, pathOf(input) ?? ".");
   const info = await stat(folder);
-  if (!info.isDirectory()) return refused("That's a file, not a folder. Use read_file to read it.");
+  if (!info.isDirectory()) return toolError("That's a file, not a folder. Use read_file to read it.");
   return { top: await realpath(resolve(root)), folder };
 }
 
@@ -241,8 +241,8 @@ function shortLine(line: string): string {
 
 async function searchFilesTool(root: string, input: unknown): Promise<ToolOutcome> {
   const text = textField(input, "text");
-  if (text === null) return refused("Give the words to search for.");
-  if (text.length > maxSearchText) return refused(`Search for ${maxSearchText} characters or fewer.`);
+  if (text === null) return toolError("Give the words to search for.");
+  if (text.length > maxSearchText) return toolError(`Search for ${maxSearchText} characters or fewer.`);
   const start = await searchStart(root, input);
   if ("isError" in start) return start;
   const wanted = text.toLowerCase();
@@ -264,8 +264,8 @@ async function searchFilesTool(root: string, input: unknown): Promise<ToolOutcom
 
 async function findFilesTool(root: string, input: unknown): Promise<ToolOutcome> {
   const name = textField(input, "name");
-  if (name === null) return refused("Give some text the file's path should contain.");
-  if (name.length > maxSearchText) return refused(`Look for ${maxSearchText} characters or fewer.`);
+  if (name === null) return toolError("Give some text the file's path should contain.");
+  if (name.length > maxSearchText) return toolError(`Look for ${maxSearchText} characters or fewer.`);
   const start = await searchStart(root, input);
   if ("isError" in start) return start;
   const wanted = name.toLowerCase();
@@ -278,10 +278,10 @@ async function findFilesTool(root: string, input: unknown): Promise<ToolOutcome>
 }
 
 function failure(error: unknown): ToolOutcome {
-  if (error instanceof Refusal) return refused(error.message);
+  if (error instanceof Refusal) return { content: error.message, isError: true, refused: true };
   const code = (error as NodeJS.ErrnoException).code;
-  if (code === "ENOENT" || code === "ENOTDIR") return refused("There's nothing at that path.");
-  return refused("That couldn't be read.");
+  if (code === "ENOENT" || code === "ENOTDIR") return toolError("There's nothing at that path.");
+  return toolError("That couldn't be read.");
 }
 
 export function createBrainTools(root: string): BrainTools {
@@ -293,7 +293,7 @@ export function createBrainTools(root: string): BrainTools {
         if (name === "list_folder") return await listFolderTool(root, input);
         if (name === "search_files") return await searchFilesTool(root, input);
         if (name === "find_files") return await findFilesTool(root, input);
-        return refused(`There's no tool called ${name}.`);
+        return toolError(`There's no tool called ${name}.`);
       } catch (error) {
         return failure(error);
       }

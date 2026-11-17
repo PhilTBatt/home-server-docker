@@ -8,6 +8,9 @@ export type AnswerStats = {
   costUsd: number | null;
   earlierThinkingBlocks: number | null;
   recovered: boolean;
+  largestRequestTokens: number | null;
+  refusedTools: string[];
+  spokeFirst: boolean | null;
 };
 
 export type Answer = {

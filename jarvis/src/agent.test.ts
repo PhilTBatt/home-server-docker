@@ -388,20 +388,29 @@ test("a failed run with no errors names the kind of failure", async () => {
   await check;
 });
 
-test("a refused tool call fails the question, even when the answer looks fine", async () => {
+test("a refused tool comes back with the answer, named, so the question still counts as answered", async () => {
   const { agent, session } = setup();
   const answer = session.ask("Read /app/.env");
   await tick();
-  const check = assert.rejects(answer, { message: "Refused: Read" });
   await agent.emit({ ...success("I can't read that file."), permission_denials: [{ tool_name: "Read", tool_use_id: "toolu_1", tool_input: { file_path: "/app/.env" } }] });
-  await check;
+  const { text, stats } = await answer;
+  assert.equal(text, "I can't read that file.");
+  assert.deepEqual(stats?.refusedTools, ["Read"]);
 });
 
-test("every refused tool is named", async () => {
+test("an answer with nothing refused reports an empty list", async () => {
+  const { agent, session } = setup();
+  const answer = session.ask("Hello?");
+  await tick();
+  await agent.emit(success("Hi."));
+  assert.deepEqual((await answer).stats?.refusedTools, []);
+});
+
+test("an error after refused tools is reported as the error, not as a refusal", async () => {
   const { agent, session } = setup();
   const answer = session.ask("Do things");
   await tick();
-  const check = assert.rejects(answer, { message: "Refused: Read, Bash" });
+  const check = assert.rejects(answer, { message: "Gave up" });
   const refused = [
     { tool_name: "Read", tool_use_id: "toolu_1", tool_input: {} },
     { tool_name: "Bash", tool_use_id: "toolu_2", tool_input: {} },
@@ -543,6 +552,27 @@ function usage(input: number, output: number, cacheWrite = 0, cacheRead = 0) {
   return { input_tokens: input, output_tokens: output, cache_creation_input_tokens: cacheWrite, cache_read_input_tokens: cacheRead };
 }
 
+test("an answer reports its largest single request, counting only Jarvis's own rounds and every kind of input", async () => {
+  const { agent, session } = setup();
+  const answer = session.ask("What's in my notes?");
+  await tick();
+  const start = (parent: string | null, input: number, cacheWrite: number, cacheRead: number) => ({ type: "stream_event", parent_tool_use_id: parent, event: { type: "message_start", message: { id: "msg", usage: usage(input, 1, cacheWrite, cacheRead) } } });
+  await agent.emit(start(null, 100, 50, 900), start("toolu_9", 9000, 0, 0), start(null, 20, 10, 1200), success("It covers your life."));
+  const stats = (await answer).stats;
+  assert.equal(stats?.largestRequestTokens, 1230);
+  assert.equal(stats?.rounds, 2);
+});
+
+test("a round that reports no token counts adds a round, and the largest request stays unknown", async () => {
+  const { agent, session } = setup();
+  const answer = session.ask("Hello?");
+  await tick();
+  await agent.emit(roundStart(), success("Hi."));
+  const stats = (await answer).stats;
+  assert.equal(stats?.rounds, 1);
+  assert.equal(stats?.largestRequestTokens, null);
+});
+
 test("an answer reports its rounds and tool uses, counting only Jarvis's own", async () => {
   const { agent, session } = setup();
   const answer = session.ask("What's in my notes?");
@@ -616,4 +646,20 @@ test("the engine's thinking isn't counted, and nothing is ever recovered", async
   const stats = (await answer).stats;
   assert.equal(stats?.earlierThinkingBlocks, null);
   assert.equal(stats?.recovered, false);
+});
+
+test("an answer says whether Jarvis said something before his first tool, from the order the engine streamed them", async () => {
+  const tool = (parent: string | null = null) => ({ type: "assistant", parent_tool_use_id: parent, message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }] } });
+  const run = async (...messages: object[]) => {
+    const { agent, session } = setup();
+    const answer = session.ask("Read it");
+    await tick();
+    await agent.emit(...messages, success("Done."));
+    return (await answer).stats?.spokeFirst;
+  };
+  assert.equal(await run(textDelta("Let me check."), tool()), true);
+  assert.equal(await run(textDelta("  "), tool(), textDelta("After."), tool()), false);
+  assert.equal(await run(tool(), textDelta("After.")), false);
+  assert.equal(await run({ type: "stream_event", parent_tool_use_id: "toolu_9", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "A helper spoke." } } }, tool()), false);
+  assert.equal(await run(textDelta("Hi.")), null);
 });

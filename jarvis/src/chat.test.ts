@@ -4,8 +4,8 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatSystem, costLine, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
-import type { Answer } from "./timing.js";
+import { apiChatSystem, chatModel, chatSystem, costLine, refusedNote, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
+import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
 
@@ -304,21 +304,19 @@ test("when an answer starts again, a note says so before the new attempt's words
   assert.ok(output().includes(`Jarvis: Let me check.\n  (reading index.md)\n  (${restartNote})\nLet me check.\n  (first words`));
 });
 
-test("a refused file read shows as a note, not a failure, and the chat carries on", async () => {
+test("an error after a refused tool is shown as the error it was, not as a refusal", async () => {
   const session = fakeSession({
     "Read /etc/passwd": async (listener) => {
-      listener.text?.("I'll try that.");
       listener.tool?.("Read", { file_path: "/etc/passwd" });
-      listener.text?.("I can only read your notes.");
-      throw new Error("Refused: Read");
+      throw new Error("The API replied 500: overloaded");
     },
     Again: hello,
   });
   const { run, output } = chat(session, ["Read /etc/passwd", "Again"]);
   await run();
-  assert.ok(output().includes("(reading /etc/passwd)\nI can only read your notes.\n  (Refused: Read)\nYou: Jarvis: Hi Phil."));
-  assert.ok(!output().includes("couldn't answer"));
+  assert.ok(output().includes("(reading /etc/passwd)\nJarvis couldn't answer: The API replied 500: overloaded\nYou: Jarvis: Hi Phil."), output());
 });
+
 
 test("a question that takes too long closes Jarvis and ends the chat", async () => {
   const session = fakeSession({ Hello: () => new Promise<Answer>(() => {}), Again: hello });
@@ -504,20 +502,49 @@ test("each answer is handed to the log after its timing line is shown", async ()
   assert.ok(log.seen[0].endsWith("Jarvis: Hi Phil.\n  (first words 0.50 s, full answer 1.20 s)\n"));
 });
 
-test("failures, refusals and time-outs are handed to the log with what went wrong", async () => {
+function withStats(base: Answer, refusedTools: string[]): Answer {
+  const stats: AnswerStats = { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, refusedTools, spokeFirst: null };
+  return { ...base, stats };
+}
+
+test("a refused tool shows a note after the answer, once per tool, on either engine, and the answer is still logged", async () => {
+  const session = fakeSession({
+    Refused: async (listener) => {
+      listener.tool?.("Read", { file_path: "/app/package.json" });
+      listener.text?.("I can't read that.");
+      return withStats(answer("I can't read that.", 400, 800), ["Read", "Read", "Grep"]);
+    },
+  });
+  const log = recorder();
+  const { run, output } = chat(session, ["Refused"], { record: log.record });
+  await run();
+  assert.ok(output().includes("I can't read that.\n  (refused: Read, Grep)\n  (first words 0.40 s, full answer 0.80 s)\n"), output());
+  assert.equal(log.outcomes.length, 1);
+  assert.ok("answer" in log.outcomes[0]);
+  assert.equal(refusedNote(["read_file"]), "refused: read_file");
+});
+
+test("an answer with nothing refused shows no refusal note", async () => {
+  const session = fakeSession({ Hello: async (listener) => withStats(await hello(listener), []) });
+  const { run, output } = chat(session, ["Hello"]);
+  await run();
+  assert.doesNotMatch(output(), /refused/);
+});
+
+test("failures and time-outs are handed to the log with what went wrong", async () => {
   const session = fakeSession({
     Hello: async () => {
       throw new Error("Overloaded");
     },
     Refused: async () => {
-      throw new Error("Refused: Read");
+      throw new Error("The API replied 529: overloaded");
     },
     Slow: () => new Promise<Answer>(() => {}),
   });
   const log = recorder();
   const { run } = chat(session, ["Hello", "Refused", "Slow"], { record: log.record, questionTimeoutMs: 20 });
   await run();
-  assert.deepEqual(log.outcomes, [{ error: "Overloaded" }, { error: "Refused: Read" }, { error: "No answer within 0.02 seconds" }]);
+  assert.deepEqual(log.outcomes, [{ error: "Overloaded" }, { error: "The API replied 529: overloaded" }, { error: "No answer within 0.02 seconds" }]);
 });
 
 test("a question stopped with Ctrl+C isn't logged, since it says nothing about the engine", async () => {

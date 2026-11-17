@@ -25,6 +25,9 @@ function line(overrides: Partial<LogLine> = {}): LogLine {
     costUsd: 0.00035,
     earlierThinkingBlocks: 0,
     recovered: false,
+    largestRequestTokens: 3000,
+    refusedTools: 0,
+    spokeFirst: null,
     ...overrides,
   };
 }
@@ -184,22 +187,48 @@ test("with no failures, there's no failures list", () => {
   assert.doesNotMatch(compareReport({ lines: [line()], skipped: 0 }), /Failures/);
 });
 
-test("input tokens are shown by question number, so a chat's growth can be compared", () => {
+test("the largest single request is shown by question number, so a chat's growth can be compared", () => {
   const lines = [
-    line({ question: 1, inputTokens: 1000 }),
-    line({ question: 1, inputTokens: 3000 }),
-    line({ question: 2, inputTokens: 4000 }),
-    line({ question: 6, inputTokens: 9000 }),
-    line({ question: 40, inputTokens: 21000 }),
-    line({ question: 3, ok: false, inputTokens: 5000 }),
-    line({ thinking: "drop", question: 5, inputTokens: 7000 }),
+    line({ question: 1, largestRequestTokens: 1000, inputTokens: 99000 }),
+    line({ question: 1, largestRequestTokens: 3000 }),
+    line({ question: 2, largestRequestTokens: 4000 }),
+    line({ question: 6, largestRequestTokens: 9000 }),
+    line({ question: 40, largestRequestTokens: 21000 }),
+    line({ question: 3, ok: false, largestRequestTokens: 5000 }),
+    line({ thinking: "drop", question: 5, largestRequestTokens: 7000 }),
   ];
   const report = compareReport({ lines, skipped: 0 });
-  const section = report.slice(report.indexOf("Input tokens by question number"));
-  assert.match(section, /^Input tokens by question number in the chat, median:\n/);
+  const section = report.slice(report.indexOf("Largest single request by question number"));
+  assert.match(section, /^Largest single request by question number in the chat, median \(tokens\):\n/);
   assert.deepEqual(rowOf(section.split("\n").slice(1).join("\n"), ""), ["1", "2", "3", "4", "5", "6+"]);
   assert.deepEqual(rowOf(section.split("\n").slice(1).join("\n"), "API, keep"), ["2,000", "4,000", "-", "-", "-", "15,000"]);
   assert.deepEqual(rowOf(section.split("\n").slice(1).join("\n"), "API, drop"), ["-", "-", "-", "-", "7,000", "-"]);
+});
+
+test("refused tools, speaking before the first tool, and the largest request get their own rows", () => {
+  const lines = [
+    line({ engine: "sdk", thinking: null, refusedTools: 1, spokeFirst: false, largestRequestTokens: 9000 }),
+    line({ engine: "sdk", thinking: null, refusedTools: 0, spokeFirst: true, largestRequestTokens: 7000 }),
+    line({ engine: "sdk", thinking: null, refusedTools: 2, spokeFirst: null, largestRequestTokens: 8000 }),
+    line({ refusedTools: 0, spokeFirst: null, largestRequestTokens: 3000 }),
+    line({ ok: false, refusedTools: null, spokeFirst: null, largestRequestTokens: null }),
+  ];
+  const report = compareReport({ lines, skipped: 0 });
+  assert.deepEqual(rowOf(report, "Refused tool calls, total"), ["3", "0"]);
+  assert.deepEqual(rowOf(report, "Spoke before first tool"), ["1 of 2", "-"]);
+  assert.deepEqual(rowOf(report, "Largest request, median"), ["8,000", "3,000"]);
+});
+
+test("lines from before the new numbers were logged still count, and the report says what they leave out", () => {
+  const { largestRequestTokens: _largest, refusedTools: _refused, spokeFirst: _spoke, ...older } = line({ engine: "sdk", thinking: null });
+  assert.equal(isLogLine(older), true);
+  const report = compareReport({ lines: [older as LogLine, line()], skipped: 0 });
+  assert.deepEqual(rowOf(report, "Answers"), ["1", "1"]);
+  assert.deepEqual(rowOf(report, "Refused tool calls, total"), ["-", "0"]);
+  assert.match(report, /\n\nThe refused, spoke-first and largest-request numbers leave out 1 answer logged before they were counted\.\n/);
+  assert.equal(isLogLine({ ...line(), spokeFirst: "yes" }), false);
+  assert.equal(isLogLine({ ...line(), refusedTools: "1" }), false);
+  assert.equal(isLogLine({ ...line(), largestRequestTokens: Number.NaN }), false);
 });
 
 test("the report ends with what its numbers leave out", () => {

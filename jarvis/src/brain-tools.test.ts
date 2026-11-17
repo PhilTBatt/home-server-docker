@@ -43,7 +43,7 @@ after(() => {
 const tools = createBrainTools(root);
 const read = (path: unknown) => tools.run("read_file", { path });
 const list = (path?: unknown) => tools.run("list_folder", path === undefined ? {} : { path });
-const outsideMessage = { content: "That's outside the brain, so it can't be read.", isError: true };
+const outsideMessage = { content: "That's outside the brain, so it can't be read.", isError: true, refused: true };
 
 test("there are four tools, all described as Phil's notes, each needing what it works on", () => {
   assert.deepEqual(
@@ -96,7 +96,7 @@ test("a symlink that stays inside the brain works", async () => {
 });
 
 test("the .git folder is off limits, however it's reached", async () => {
-  const offLimits = { content: "The .git folder is off limits.", isError: true };
+  const offLimits = { content: "The .git folder is off limits.", isError: true, refused: true };
   for (const path of [".git/config", "areas/../.git/config", join(root, ".git", "config"), "git-file.md", "git-folder/config", "git-folder/missing", "git-folder/deeper/missing"]) {
     assert.deepEqual(await read(path), offLimits, path);
   }
@@ -291,8 +291,8 @@ test("search refuses folders outside the brain, .git, files, and paths that don'
     assert.equal(result.isError, true, path);
     assert.doesNotMatch(result.content, /train outside/, path);
   }
-  assert.deepEqual(await search({ text: "train", path: "../outside" }), { content: "That's outside the brain, so it can't be read.", isError: true });
-  assert.deepEqual(await search({ text: "train", path: ".git" }), { content: "The .git folder is off limits.", isError: true });
+  assert.deepEqual(await search({ text: "train", path: "../outside" }), { content: "That's outside the brain, so it can't be read.", isError: true, refused: true });
+  assert.deepEqual(await search({ text: "train", path: ".git" }), { content: "The .git folder is off limits.", isError: true, refused: true });
   assert.deepEqual(await search({ text: "train", path: "index.md" }), { content: "That's a file, not a folder. Use read_file to read it.", isError: true });
   assert.deepEqual(await search({ text: "train", path: "nowhere" }), { content: "There's nothing at that path.", isError: true });
 });
@@ -354,7 +354,7 @@ test("find skips .git and links, and can stay in one folder", async () => {
   assert.deepEqual(await find({ name: "config" }), { content: "No files match.", isError: false });
   assert.deepEqual(await find({ name: "link" }), { content: "No files match.", isError: false });
   assert.deepEqual(await find({ name: ".md", path: "areas" }), { content: "areas/jarvis.md\nareas/deep/more/note.md", isError: false });
-  assert.deepEqual(await find({ name: ".md", path: "../outside" }), { content: "That's outside the brain, so it can't be read.", isError: true });
+  assert.deepEqual(await find({ name: ".md", path: "../outside" }), { content: "That's outside the brain, so it can't be read.", isError: true, refused: true });
 });
 
 test("find needs some text, limited in length", async () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { closedMessage, type AgentSession } from "./agent.js";
-import { answerCost, echoed, hasVisibleContent, maxToolSteps, pricesPerMTok, startApiSession, thinkingBlocksIn, withoutThinking, type ApiSettings, type SendRequest } from "./api-session.js";
+import { answerCost, echoed, hasVisibleContent, maxToolSteps, spokeBeforeTools, pricesPerMTok, startApiSession, thinkingBlocksIn, withoutThinking, type ApiSettings, type SendRequest } from "./api-session.js";
 import type { BrainTools, ToolOutcome } from "./brain-tools.js";
 import type { DirectAnswer, DirectRequest } from "./direct.js";
 
@@ -333,6 +333,30 @@ test("a refused or failed tool goes back marked as an error, and the question ca
   const answer = await startApiSession({ ...settings, tools }, send).ask("Read ../secret");
   assert.equal(answer.text, "I can only read your notes.");
   assert.deepEqual(requests[1].question, [{ type: "tool_result", tool_use_id: "toolu_9", content: "That's outside the brain, so it can't be read.", is_error: true }]);
+});
+
+test("refusals are counted by tool, but other tool errors, like a missing file, aren't refusals", async () => {
+  const { tools } = fakeTools({
+    '{"path":"../secret"}': { content: "That's outside the brain, so it can't be read.", isError: true, refused: true },
+    '{"path":"nope.md"}': { content: "There's nothing at that path.", isError: true },
+  });
+  const outside = { id: "toolu_9", name: "read_file", input: { path: "../secret" } };
+  const missing = { id: "toolu_8", name: "read_file", input: { path: "nope.md" } };
+  const { send } = recorder([async () => toolReply([outside, missing, readIndex]), async () => reply("I can only read your notes.")]);
+  const answer = await startApiSession({ ...settings, tools }, send).ask("Read them");
+  assert.deepEqual(answer.stats?.refusedTools, ["read_file"]);
+  const plain = recorder([async () => reply("Hi.")]);
+  assert.deepEqual((await startApiSession(settings, plain.send).ask("Hello")).stats?.refusedTools, []);
+});
+
+test("an answer reports its largest single request, counting cached input too", async () => {
+  const { tools } = fakeTools();
+  const first = { ...toolReply([readIndex]), inputTokens: 50, cacheWriteTokens: 900, cacheReadTokens: 0 };
+  const second = { ...reply("Done."), inputTokens: 30, cacheWriteTokens: 200, cacheReadTokens: 900 };
+  const { send } = recorder([async () => first, async () => second]);
+  const stats = (await startApiSession({ ...settings, tools }, send).ask("Read it")).stats;
+  assert.equal(stats?.largestRequestTokens, 1130);
+  assert.equal(stats?.inputTokens, 950 + 1130);
 });
 
 test("a tool that worked isn't marked as an error", async () => {
@@ -758,4 +782,23 @@ test("every round asks for caching, including tool rounds and a retry", async ()
     requests.map((request) => request.cache),
     [true, true, true, true],
   );
+});
+
+test("spoke-first looks at the order of blocks in the first round that uses a tool", () => {
+  const tool = { type: "tool_use" as const, id: "t", name: "read_file", input: {} };
+  assert.equal(spokeBeforeTools([{ type: "text", text: "Let me check." }, tool]), true);
+  assert.equal(spokeBeforeTools([{ type: "text", text: "  " }, tool, { type: "text", text: "After." }]), false);
+  assert.equal(spokeBeforeTools([thinking("Hmm."), tool, { type: "text", text: "After." }]), false);
+  assert.equal(spokeBeforeTools([tool]), false);
+});
+
+test("an answer says whether Jarvis spoke before his first tool, judged by that first tool round only", async () => {
+  const { tools } = fakeTools();
+  const silent = { ...toolReply([readIndex]), content: [{ type: "text" as const, text: " " }, { type: "tool_use" as const, ...readIndex }, { type: "text" as const, text: "After." }] };
+  const first = recorder([async () => silent, async () => toolReply([readIndex], "Now I'll look."), async () => reply("Done.")]);
+  assert.equal((await startApiSession({ ...settings, tools }, first.send).ask("Read it")).stats?.spokeFirst, false);
+  const second = recorder([async () => toolReply([readIndex], "Let me check."), async () => reply("Done.")]);
+  assert.equal((await startApiSession({ ...settings, tools }, second.send).ask("Read it")).stats?.spokeFirst, true);
+  const none = recorder([async () => reply("Hi.")]);
+  assert.equal((await startApiSession(settings, none.send).ask("Hello")).stats?.spokeFirst, null);
 });

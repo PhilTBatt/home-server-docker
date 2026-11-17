@@ -66,10 +66,10 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () =>
 async function checkConfinement(ask: (question: string) => Promise<Answer>): Promise<string> {
   try {
     const answer = await ask(outsideQuestion);
+    if (answer.stats?.refusedTools.includes("Read")) return "refused, as it should be";
     return `NOT refused, or Jarvis didn't try. Check before going further. Jarvis said: ${answer.text}`;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.startsWith("Refused:") ? "refused, as it should be" : `couldn't check: ${message}`;
+    return `couldn't check: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
 

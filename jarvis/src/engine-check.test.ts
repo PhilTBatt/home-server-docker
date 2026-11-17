@@ -39,11 +39,11 @@ import {
   type SeenRequest,
   type SeenToolResult,
 } from "./stand-in-api.js";
-import type { Answer } from "./timing.js";
+import type { Answer, AnswerStats } from "./timing.js";
 
 const markers: Markers = { inside: "inside-123", outside: "outside-456", git: "git-321", settings: "settings-789", hidden: "hidden-111", ignored: "ignored-222", mixedCase: "mixed-333" };
 
-type Reply = { tool: string | null; result?: SeenToolResult; threw?: string; hang?: boolean; note?: boolean; answer?: string };
+type Reply = { tool: string | null; result?: SeenToolResult; refused?: string[]; spoke?: boolean | null; threw?: string; hang?: boolean; note?: boolean; answer?: string };
 
 function fine(text: string): SeenToolResult {
   return { text, isError: false };
@@ -53,13 +53,13 @@ function error(text: string): SeenToolResult {
   return { text, isError: true };
 }
 
-const sdkDenied = (tool: string): Reply => ({ tool, result: error(`Permission to use ${tool} has been denied.`), threw: `Refused: ${tool}` });
+const sdkDenied = (tool: string): Reply => ({ tool, result: error(`Permission to use ${tool} has been denied.`), refused: [tool] });
 
 const goodReplies: Record<Engine, Record<string, Reply>> = {
   sdk: {
     [readInsideWord]: { tool: "Read", result: fine(`1\t# Index\n3\t${markers.inside}`) },
     [readOutsideWord]: sdkDenied("Read"),
-    [readGitWord]: { tool: "Read", result: error("<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"), threw: "Refused: Read" },
+    [readGitWord]: { tool: "Read", result: error("<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"), refused: ["Read"] },
     [readLinkedWord]: sdkDenied("Read"),
     [searchInsideWord]: { tool: "Grep", result: fine(`index.md:3:${markers.inside}`) },
     [searchOutsideWord]: sdkDenied("Grep"),
@@ -73,13 +73,13 @@ const goodReplies: Record<Engine, Record<string, Reply>> = {
   },
   api: {
     [readInsideWord]: { tool: "read_file", result: fine(`# Index\n\n${markers.inside}`) },
-    [readOutsideWord]: { tool: "read_file", result: error(outsideRefusal) },
-    [readGitWord]: { tool: "read_file", result: error(gitRefusal) },
-    [readLinkedWord]: { tool: "read_file", result: error(outsideRefusal) },
+    [readOutsideWord]: { tool: "read_file", result: error(outsideRefusal), refused: ["read_file"] },
+    [readGitWord]: { tool: "read_file", result: error(gitRefusal), refused: ["read_file"] },
+    [readLinkedWord]: { tool: "read_file", result: error(outsideRefusal), refused: ["read_file"] },
     [searchInsideWord]: { tool: "search_files", result: fine(`index.md:3: ${markers.inside}`) },
-    [searchOutsideWord]: { tool: "search_files", result: error(outsideRefusal) },
+    [searchOutsideWord]: { tool: "search_files", result: error(outsideRefusal), refused: ["search_files"] },
     [findInsideWord]: { tool: "find_files", result: fine(".gitignore\n.hidden-note.md\nignored-note.md\nindex.md") },
-    [findOutsideWord]: { tool: "find_files", result: error(outsideRefusal) },
+    [findOutsideWord]: { tool: "find_files", result: error(outsideRefusal), refused: ["find_files"] },
     [searchHiddenWord]: { tool: "search_files", result: fine(`.hidden-note.md:1: ${markers.hidden}`) },
     [searchIgnoredWord]: { tool: "search_files", result: fine(`ignored-note.md:1: ${markers.ignored}`) },
     [findIgnoredWord]: { tool: "find_files", result: fine("ignored-note.md") },
@@ -90,6 +90,10 @@ const goodReplies: Record<Engine, Record<string, Reply>> = {
 
 const systems: Record<Engine, string> = { sdk: chatSystem, api: apiChatSystem };
 const offered: Record<Engine, string[]> = { sdk: ["Read", "Grep", "Glob", "DeferredToolPlaceholder"], api: ["read_file", "list_folder", "search_files", "find_files"] };
+
+function statsWith(refusedTools: string[], spokeFirst: boolean | null = true): AnswerStats {
+  return { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, refusedTools, spokeFirst };
+}
 
 type Fake = {
   replies?: Record<string, Partial<Reply>>;
@@ -119,7 +123,7 @@ function fakeEngine(engine: Engine, fake: Fake = {}) {
       if (reply.tool !== null && reply.note !== false) listener.tool?.(reply.tool, {});
       if (reply.result !== undefined) record(`[tool result] ${reply.result.text}`, { toolResults: [reply.result], body: JSON.stringify({ result: reply.result.text }) });
       if (reply.threw !== undefined) throw new Error(reply.threw);
-      return { text: reply.answer ?? echoFor(`[tool result] ${reply.result?.text ?? ""}`), firstWordsMs: 1, totalMs: 2 };
+      return { text: reply.answer ?? echoFor(`[tool result] ${reply.result?.text ?? ""}`), firstWordsMs: 1, totalMs: 2, stats: statsWith(reply.refused ?? [], reply.spoke === undefined ? true : reply.spoke) };
     },
     readyMs: () => null,
     costUsd: () => null,
@@ -219,7 +223,7 @@ test("each engine's 27 requests are the question, then each rule's question and 
 test("a rule that one engine breaks fails, naming that engine and what went wrong", async () => {
   const results = await runEngineCheck(deps({}, {}, { replies: { [readGitWord]: { result: fine(`[core] ${markers.git}`) } } }));
   assert.deepEqual(failed(results), [rule("the .git folder is off limits"), leakCheck]);
-  assert.equal(named(results, rule("the .git folder is off limits")).detail, `plain API call: not refused; showed ${markers.git}`);
+  assert.equal(named(results, rule("the .git folder is off limits")).detail, `plain API call: not refused (reported refused: read_file); showed ${markers.git}`);
   const both = await runEngineCheck(deps({}, { replies: { [searchInsideWord]: { result: fine("No matches found") } } }, { replies: { [searchInsideWord]: { result: fine("No matches.") } } }));
   assert.equal(named(both, rule("a search inside the brain finds the file")).detail, `Agent SDK: didn't show ${markers.inside} | plain API call: didn't show ${markers.inside}`);
 });
@@ -227,11 +231,11 @@ test("a rule that one engine breaks fails, naming that engine and what went wron
 test("each read, search and find rule fails when either engine gets it wrong", async () => {
   const wrong: [string, string, Partial<Reply>][] = [
     [readInsideWord, "a file in the brain can be read", { result: error("There's nothing at that path.") }],
-    [readOutsideWord, "a file outside the brain is refused", { result: fine("here it is"), threw: undefined }],
-    [readLinkedWord, "a link from the brain to a file outside is refused", { result: fine("here it is"), threw: undefined }],
-    [searchOutsideWord, "a search outside the brain is refused", { result: fine("secret.md"), threw: undefined }],
+    [readOutsideWord, "a file outside the brain is refused", { result: fine("here it is"), refused: [] }],
+    [readLinkedWord, "a link from the brain to a file outside is refused", { result: fine("here it is"), refused: [] }],
+    [searchOutsideWord, "a search outside the brain is refused", { result: fine("secret.md"), refused: [] }],
     [findInsideWord, "finding files in the brain lists the file, but not .git or links out", { result: fine("index.md\nlinked/secret.md") }],
-    [findOutsideWord, "finding files outside the brain is refused", { result: fine("secret.md"), threw: undefined }],
+    [findOutsideWord, "finding files outside the brain is refused", { result: fine("secret.md"), refused: [] }],
     [searchHiddenWord, "a search looks inside hidden files", { result: fine("No matches found") }],
     [findIgnoredWord, "finding files lists git-ignored files", { result: fine("No files match.") }],
   ];
@@ -256,20 +260,28 @@ test("a .gitignore file isn't mistaken for the .git folder", async () => {
   assert.deepEqual(failed(results), []);
 });
 
-test("the Agent SDK's refusal must be a refusal by the tool that was asked for", async () => {
-  assert.equal(sdkRefused({ tool: "Grep", used: ["Grep"], answer: null, expectedAnswer: null, threw: "Refused: Grep", results: [error("Permission to use Grep has been denied.")] }), true);
-  assert.equal(sdkRefused({ tool: "Grep", used: ["Grep"], answer: null, expectedAnswer: null, threw: "Refused: Read", results: [error("Permission denied.")] }), false);
-  assert.equal(sdkRefused({ tool: "Read", used: ["Read"], answer: null, expectedAnswer: null, threw: "Couldn't reach the API", results: [error("x")] }), false);
-  assert.equal(sdkRefused({ tool: "Read", used: ["Read"], answer: null, expectedAnswer: null, threw: "Refused: Read", results: [] }), false);
-  assert.equal(sdkRefused({ tool: "Read", used: ["Read"], answer: null, expectedAnswer: null, threw: "Refused: Read", results: [fine("the file")] }), false);
-  assert.equal(sdkRefused({ tool: null, used: [], answer: null, expectedAnswer: null, threw: "Refused: null", results: [error("x")] }), false);
-  const wrongTool = await runEngineCheck(deps({}, { replies: { [searchOutsideWord]: { threw: "Refused: Read" } } }));
+test("a refusal must be reported by the engine as a refusal of the tool that was asked for, with an error result", async () => {
+  const probe = (tool: string | null, refusedTools: string[], results: SeenToolResult[], threw: string | null = null) => ({ tool, used: tool === null ? [] : [tool], refusedTools, spokeFirst: true, answer: null, expectedAnswer: null, threw, results });
+  assert.equal(sdkRefused(probe("Grep", ["Grep"], [error("Permission to use Grep has been denied.")])), true);
+  assert.equal(sdkRefused(probe("Grep", ["Read"], [error("Permission denied.")])), false);
+  assert.equal(sdkRefused(probe("Grep", [], [error("Permission denied.")])), false);
+  assert.equal(sdkRefused(probe("Read", ["Read"], [error("x")], "Couldn't reach the API")), false);
+  assert.equal(sdkRefused(probe("Read", ["Read"], [])), false);
+  assert.equal(sdkRefused(probe("Read", ["Read"], [fine("the file")])), false);
+  assert.equal(sdkRefused(probe(null, ["Read"], [error("x")])), false);
+  const wrongTool = await runEngineCheck(deps({}, { replies: { [searchOutsideWord]: { refused: ["Read"] } } }));
   assert.deepEqual(failed(wrongTool), [rule("a search outside the brain is refused")]);
-  assert.equal(named(wrongTool, rule("a search outside the brain is refused")).detail, "Agent SDK: not refused (Refused: Read)");
+  assert.equal(named(wrongTool, rule("a search outside the brain is refused")).detail, "Agent SDK: not refused (reported refused: Read)");
+  const extra = await runEngineCheck(deps({}, { replies: { [searchOutsideWord]: { refused: ["Grep", "Read"] } } }));
+  assert.equal(named(extra, rule("a search outside the brain is refused")).detail, "Agent SDK: not refused (reported refused: Grep, Read)");
+  const nothing = await runEngineCheck(deps({}, {}, { replies: { [findOutsideWord]: { refused: [] } } }));
+  assert.equal(named(nothing, rule("finding files outside the brain is refused")).detail, "plain API call: not refused (nothing reported refused)");
+  const unreported = await runEngineCheck(deps({}, {}, { replies: { [readLinkedWord]: { refused: [] } } }));
+  assert.deepEqual(failed(unreported), [rule("a link from the brain to a file outside is refused")]);
 });
 
 test("the plain API call's refusal must be the refusal that rule expects, not the other one, a missing file or another error", () => {
-  const probe = (threw: string | null, results: SeenToolResult[]) => ({ tool: "read_file", used: ["read_file"], answer: null, expectedAnswer: null, threw, results });
+  const probe = (threw: string | null, results: SeenToolResult[]) => ({ tool: "read_file", used: ["read_file"], refusedTools: ["read_file"], spokeFirst: true, answer: null, expectedAnswer: null, threw, results });
   assert.equal(apiRefused(probe(null, [error(outsideRefusal)]), "outside"), true);
   assert.equal(apiRefused(probe(null, [error(gitRefusal)]), "git"), true);
   assert.equal(apiRefused(probe(null, [error(outsideRefusal)]), "git"), false);
@@ -308,7 +320,7 @@ test("the long line must come back whole or left out, never with half a characte
 });
 
 test("half a character is spotted at either end of a pair, as is a replacement character, and whole emoji pass", () => {
-  const ok = { tool: "Grep", used: ["Grep"], answer: "I read it.", expectedAnswer: "I read it.", threw: null, results: [fine("🙂 fine 👍")] };
+  const ok = { tool: "Grep", used: ["Grep"], refusedTools: [], spokeFirst: true, answer: "I read it.", expectedAnswer: "I read it.", threw: null, results: [fine("🙂 fine 👍")] };
   assert.deepEqual(problems({}, ok, false), []);
   for (const text of ["\ud83d end", "start \ude42", "\ude42\ud83d", "cut by bytes \ufffd"]) {
     assert.deepEqual(problems({}, { ...ok, results: [fine(text)] }, false), ["a result has a broken character"], JSON.stringify(text));
@@ -316,9 +328,9 @@ test("half a character is spotted at either end of a pair, as is a replacement c
 });
 
 test("a rule with no tool asked for, or no tool result, fails rather than passing by default", () => {
-  assert.deepEqual(problems({}, { tool: null, used: [], answer: "I read it.", expectedAnswer: "I read it.", threw: null, results: [fine("x")] }, false), ["no tool was asked for"]);
-  assert.deepEqual(problems({ refused: "outside" }, { tool: "Read", used: ["Read"], answer: null, expectedAnswer: null, threw: "Couldn't reach the API", results: [] }, false), ["no tool result reached the API (Couldn't reach the API)", "not refused (Couldn't reach the API)"]);
-  assert.deepEqual(problems({ found: ["x"] }, { tool: "Read", used: ["Read"], answer: "I read it.", expectedAnswer: "I read it.", threw: null, results: [] }, false), ["no tool result reached the API", "didn't show x"]);
+  assert.deepEqual(problems({}, { tool: null, used: [], refusedTools: [], spokeFirst: true, answer: "I read it.", expectedAnswer: "I read it.", threw: null, results: [fine("x")] }, false), ["no tool was asked for"]);
+  assert.deepEqual(problems({ refused: "outside" }, { tool: "Read", used: ["Read"], refusedTools: [], spokeFirst: null, answer: null, expectedAnswer: null, threw: "Couldn't reach the API", results: [] }, false), ["no tool result reached the API (Couldn't reach the API)", "not refused (Couldn't reach the API)"]);
+  assert.deepEqual(problems({ found: ["x"] }, { tool: "Read", used: ["Read"], refusedTools: [], spokeFirst: true, answer: "I read it.", expectedAnswer: "I read it.", threw: null, results: [] }, false), ["no tool result reached the API", "didn't show x"]);
   assert.equal(judgeRule(sharedRules(markers)[0], [fakeEngine("api").underTest], new Map()).detail, `plain API call: no tool was asked for; no tool result reached the API (not asked); not asked; didn't show ${markers.inside}`);
 });
 
@@ -498,6 +510,14 @@ test("checking only the Agent SDK says it differs, as expected, without naming i
   const results = await runEngineCheck({ ...deps(), engines: [fakeEngine("sdk").underTest] });
   assert.deepEqual(failed(results), []);
   assert.ok(results.some((result) => result.name === "Agent SDK: a search looks inside git-ignored files (it differs, as expected: Grep skips what .gitignore lists)"));
+});
+
+test("an engine that doesn't report the words it said before a tool fails, naming the engine", async () => {
+  const results = await runEngineCheck(deps({}, {}, { replies: { [searchHiddenWord]: { spoke: false } } }));
+  assert.deepEqual(failed(results), [rule("a search looks inside hidden files")]);
+  assert.equal(named(results, rule("a search looks inside hidden files")).detail, "plain API call: didn't report the words said before the tool");
+  const unknown = await runEngineCheck(deps({}, { replies: { [readInsideWord]: { spoke: null } } }));
+  assert.deepEqual(failed(unknown), [rule("a file in the brain can be read")]);
 });
 
 test("the report ticks passes, gives the reason for failures, and ends with a count", () => {

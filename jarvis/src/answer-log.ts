@@ -52,6 +52,9 @@ export type LogLine = {
   costUsd: number | null;
   earlierThinkingBlocks: number | null;
   recovered: boolean | null;
+  largestRequestTokens?: number | null;
+  refusedTools?: number | null;
+  spokeFirst?: boolean | null;
 };
 
 export type AnswerLogDeps = {
@@ -70,7 +73,6 @@ const errorKinds: [RegExp, string][] = [
   [/^No answer within \d+ seconds$/, "timeout"],
   [/^The answer was cut off/, "cut off"],
   [/^Gave up after \d+ rounds of tool use$/, "too many tool rounds"],
-  [/^Refused:/, "refused"],
   [/^error_[a-z_]+$/, "engine error"],
   [/^The agent stopped$/, "engine stopped"],
 ];
@@ -113,6 +115,9 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     costUsd: tidyCost(answer === null ? failedCostUsd : (stats?.costUsd ?? null)),
     earlierThinkingBlocks: stats?.earlierThinkingBlocks ?? null,
     recovered: stats?.recovered ?? null,
+    largestRequestTokens: stats?.largestRequestTokens ?? null,
+    refusedTools: stats === null ? null : stats.refusedTools.length,
+    spokeFirst: stats?.spokeFirst ?? null,
   };
 }
 

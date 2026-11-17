@@ -13,7 +13,7 @@ export type Group = {
 };
 
 const numberFields = ["firstWordsMs", "totalMs", "rounds", "toolUses", "inputTokens", "outputTokens", "costUsd", "earlierThinkingBlocks"] as const;
-const laterNumberFields = ["cacheWriteTokens", "cacheReadTokens"] as const;
+const laterNumberFields = ["cacheWriteTokens", "cacheReadTokens", "largestRequestTokens", "refusedTools"] as const;
 const lastQuestionColumn = 6;
 
 function isNumberOrNull(value: unknown): boolean {
@@ -36,7 +36,8 @@ export function isLogLine(value: unknown): value is LogLine {
     (line.error === null || typeof line.error === "string") &&
     numberFields.every((field) => isNumberOrNull(line[field])) &&
     laterNumberFields.every((field) => line[field] === undefined || isNumberOrNull(line[field])) &&
-    (line.recovered === null || typeof line.recovered === "boolean")
+    (line.recovered === null || typeof line.recovered === "boolean") &&
+    (line.spokeFirst === undefined || line.spokeFirst === null || typeof line.spokeFirst === "boolean")
   );
 }
 
@@ -175,7 +176,16 @@ function summaryRows(groups: Group[], ratings: Map<string, Rating>): string[][] 
     row("Full answer, median", (_group, lines) => shown(median(numbers(lines, (line) => line.totalMs)), seconds)),
     row("Rounds, average", (_group, lines) => shown(average(numbers(lines, (line) => line.rounds)), oneDecimal)),
     row("Tool uses, average", (_group, lines) => shown(average(numbers(lines, (line) => line.toolUses)), oneDecimal)),
+    row("Refused tool calls, total", (_group, lines) => {
+      const refused = numbers(lines, (line) => line.refusedTools);
+      return refused.length === 0 ? "-" : String(refused.reduce((sum, count) => sum + count, 0));
+    }),
+    row("Spoke before first tool", (_group, lines) => {
+      const used = lines.filter((line) => typeof line.spokeFirst === "boolean");
+      return used.length === 0 ? "-" : `${used.filter((line) => line.spokeFirst).length} of ${used.length}`;
+    }),
     row("Input tokens, median", (_group, lines) => shown(median(numbers(lines, (line) => line.inputTokens)), withCommas)),
+    row("Largest request, median", (_group, lines) => shown(median(numbers(lines, (line) => line.largestRequestTokens)), withCommas)),
     row("Read from cache, median", (_group, lines) => shown(median(numbers(lines, (line) => line.cacheReadTokens)), withCommas)),
     row("Written to cache, median", (_group, lines) => shown(median(numbers(lines, (line) => line.cacheWriteTokens)), withCommas)),
     row("Output tokens, median", (_group, lines) => shown(median(numbers(lines, (line) => line.outputTokens)), withCommas)),
@@ -197,7 +207,7 @@ function questionRows(groups: Group[]): string[][] {
     group.label,
     ...Array.from({ length: lastQuestionColumn }, (_unused, index) => {
       const lines = group.lines.filter((line) => line.ok && questionColumn(line.question) === index + 1);
-      return shown(median(numbers(lines, (line) => line.inputTokens)), withCommas);
+      return shown(median(numbers(lines, (line) => line.largestRequestTokens)), withCommas);
     }),
   ]);
 }
@@ -227,10 +237,12 @@ export function compareReport({ lines, ratings = [], skipped }: ReadLog): string
   if (skipped > 0) out.push(skippedNote);
   const groups = groupLines(lines);
   out.push("", table(["", ...groups.map((group) => group.label)], summaryRows(groups, latestRatings(ratings))));
-  out.push("", "Input tokens by question number in the chat, median:");
+  out.push("", "Largest single request by question number in the chat, median (tokens):");
   out.push(table(["", ...Array.from({ length: lastQuestionColumn }, (_unused, index) => (index + 1 === lastQuestionColumn ? `${index + 1}+` : String(index + 1)))], questionRows(groups)));
   const uncached = lines.filter((line) => line.ok && (line.cacheReadTokens === undefined || line.cacheWriteTokens === undefined)).length;
   if (uncached > 0) out.push("", `The cache rows leave out ${plural(uncached, "answer")} logged before cache tokens were counted.`);
+  const older = lines.filter((line) => line.ok && line.largestRequestTokens === undefined).length;
+  if (older > 0) out.push("", `The refused, spoke-first and largest-request numbers leave out ${plural(older, "answer")} logged before they were counted.`);
   const failures = failureLines(groups);
   if (failures.length > 0) out.push("", "Failures:", ...failures);
   out.push("", "Medians and averages leave out failed questions; the total cost includes them. Costs are estimates: the Agent SDK's own, and the plain API's from list prices.");

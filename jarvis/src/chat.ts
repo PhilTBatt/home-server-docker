@@ -120,6 +120,10 @@ async function rateLast(deps: ChatDeps, rating: Rating): Promise<string> {
   return result === "saved" ? `${rateNotes.saved} ${rating}` : rateNotes[result];
 }
 
+export function refusedNote(tools: string[]): string {
+  return `refused: ${[...new Set(tools)].join(", ")}`;
+}
+
 async function reply(deps: ChatDeps, message: string): Promise<"answered" | "stopped" | "failed"> {
   let streamed = false;
   let lineEnded = false;
@@ -149,11 +153,13 @@ async function reply(deps: ChatDeps, message: string): Promise<"answered" | "sto
       show(`${newLine()}  (stopped)\n`);
       return "stopped";
     }
-    show(reason.startsWith("Refused:") ? `${newLine()}  (${reason})\n` : `${newLine()}Jarvis couldn't answer: ${reason}\n`);
+    show(`${newLine()}Jarvis couldn't answer: ${reason}\n`);
     await deps.record?.({ error: reason });
     return "failed";
   }
   if (!streamed) show(printable(answer.text));
+  const refused = answer.stats?.refusedTools ?? [];
+  if (refused.length > 0) show(`${newLine()}  (${printable(refusedNote(refused))})\n`);
   show(`${newLine()}  ${timingLine(answer)}\n`);
   await deps.record?.({ answer });
   return "answered";

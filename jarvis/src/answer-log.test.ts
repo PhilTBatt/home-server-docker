@@ -11,7 +11,7 @@ const answered: Answer = {
   text: "Your notes cover the hub and your family.",
   firstWordsMs: 640,
   totalMs: 2100,
-  stats: { rounds: 2, toolUses: 1, inputTokens: 5200, cacheWriteTokens: 1200, cacheReadTokens: 3000, outputTokens: 90, costUsd: 0.000565, earlierThinkingBlocks: 3, recovered: true },
+  stats: { rounds: 2, toolUses: 1, inputTokens: 5200, cacheWriteTokens: 1200, cacheReadTokens: 3000, outputTokens: 90, costUsd: 0.000565, earlierThinkingBlocks: 3, recovered: true, largestRequestTokens: 2900, refusedTools: ["read_file"], spokeFirst: true },
 };
 
 function fakeLog(context: LogContext = apiKeep, failAppends = 0) {
@@ -58,8 +58,11 @@ test("an answer becomes one line of numbers, with none of its words", () => {
     costUsd: 0.000565,
     earlierThinkingBlocks: 3,
     recovered: true,
+    largestRequestTokens: 2900,
+    refusedTools: 1,
+    spokeFirst: true,
   });
-  assert.doesNotMatch(JSON.stringify(logLine(apiKeep, "chat-1", 3, at, { answer: answered })), /notes|family/);
+  assert.doesNotMatch(JSON.stringify(logLine(apiKeep, "chat-1", 3, at, { answer: answered })), /notes|family|read_file/);
 });
 
 test("a failure is logged as a kind of failure, never its message", () => {
@@ -70,7 +73,28 @@ test("a failure is logged as a kind of failure, never its message", () => {
   assert.equal(line.inputTokens, null);
   assert.equal(line.cacheReadTokens, null);
   assert.equal(line.recovered, null);
+  assert.equal(line.largestRequestTokens, null);
+  assert.equal(line.refusedTools, null);
+  assert.equal(line.spokeFirst, null);
   assert.doesNotMatch(JSON.stringify(line), /spare key|blue pot/);
+});
+
+test("whether Jarvis spoke before his first tool is logged as the engine reported it: yes, no, or no tool used", () => {
+  const spoke = (spokeFirst: boolean | null) => ({ answer: { ...answered, stats: { ...answered.stats!, spokeFirst } } });
+  assert.equal(logLine(apiKeep, "chat-1", 1, at, spoke(false)).spokeFirst, false);
+  assert.equal(logLine(apiKeep, "chat-1", 1, at, spoke(null)).spokeFirst, null);
+  assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: { text: "Hi.", firstWordsMs: null, totalMs: 900 } }).spokeFirst, null);
+});
+
+test("an unknown largest request is logged as unknown, not zero", () => {
+  assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, largestRequestTokens: null } } }).largestRequestTokens, null);
+});
+
+test("refused tools are counted, not named, and an answer with none counts zero", () => {
+  const none = { ...answered, stats: { ...answered.stats!, refusedTools: [] } };
+  assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: none }).refusedTools, 0);
+  const two = { ...answered, stats: { ...answered.stats!, refusedTools: ["Read", "Grep"] } };
+  assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: two }).refusedTools, 2);
 });
 
 test("an answer without numbers logs its timings and leaves the rest empty", () => {
@@ -109,7 +133,7 @@ test("failures are sorted into kinds", () => {
     ["The answer was cut off", "cut off"],
     ["The answer was cut off part-way through using a tool", "cut off"],
     ["Gave up after 10 rounds of tool use", "too many tool rounds"],
-    ["Refused: Read", "refused"],
+    ["Refused: Read", "other"],
     ["error_max_turns", "engine error"],
     ["The agent stopped", "engine stopped"],
     ["Something new", "other"],
