@@ -20,9 +20,19 @@ export type RatingLine = {
   rating: Rating;
 };
 
+export type NewChatLine = {
+  v: number;
+  kind: "new chat";
+  at: string;
+  chat: string;
+  questions: number;
+  lastRequestTokens: number | null;
+};
+
 export type AnswerLog = {
   record: (outcome: Outcome) => Promise<void>;
   rate: (rating: Rating) => Promise<RateResult>;
+  newChat: (lastRequestTokens: number | null) => Promise<void>;
 };
 
 export type LogContext = {
@@ -132,7 +142,7 @@ export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): Answer
   let broken = false;
   let costBefore = deps.costSoFar();
 
-  async function write(line: LogLine | RatingLine): Promise<boolean> {
+  async function write(line: LogLine | RatingLine | NewChatLine): Promise<boolean> {
     try {
       await deps.append(`${JSON.stringify(line)}\n`);
       return true;
@@ -159,6 +169,10 @@ export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): Answer
       if (lastAnswered === null) return "last failed";
       const saved = await write({ v: logVersion, kind: "rating", at: deps.now().toISOString(), chat: deps.chat, question: lastAnswered, rating });
       return saved ? "saved" : "log broken";
+    },
+    async newChat(lastRequestTokens) {
+      if (broken || questions === 0) return;
+      await write({ v: logVersion, kind: "new chat", at: deps.now().toISOString(), chat: deps.chat, questions, lastRequestTokens });
     },
   };
 }

@@ -533,7 +533,7 @@ test("the report ticks passes, gives the reason for failures, and ends with a co
   assert.deepEqual(formatCheck([{ name: "one", ok: true, detail: "" }]), ["✓ one", "All 1 checks passed."]);
 });
 
-type SavedFake = { freshSaves?: boolean; resumeLoads?: boolean; freshLoads?: boolean; resumeSaves?: boolean; freshOverwrites?: boolean; resumeSavesOnce?: boolean; savesOnlyLatest?: boolean; losesAnswers?: boolean; freshDeletes?: boolean; resumeAddsFile?: boolean; answer?: string };
+type SavedFake = { freshSaves?: boolean; resumeLoads?: boolean; freshLoads?: boolean; resumeSaves?: boolean; freshOverwrites?: boolean; resumeSavesOnce?: boolean; savesOnlyLatest?: boolean; losesAnswers?: boolean; freshDeletes?: boolean; resumeAddsFile?: boolean; newKeepsOld?: boolean; newSavesNothing?: boolean; answer?: string };
 
 function savedChatsEngine(engine: Engine, fake: SavedFake = {}): SavedChatsUnderTest {
   const requests: SeenRequest[] = [];
@@ -543,11 +543,13 @@ function savedChatsEngine(engine: Engine, fake: SavedFake = {}): SavedChatsUnder
     engine,
     requests,
     saved: async () => (store === null ? 0 : 1 + extraFiles),
-    start: async (chats: ChatMode) => {
-      const loads = chats === "resume" ? fake.resumeLoads !== false : fake.freshLoads === true;
+    start: async (mode: ChatMode | "new") => {
+      if (mode === "new" && fake.newKeepsOld !== true) store = null;
+      const chats: ChatMode = mode === "new" ? "resume" : mode;
+      const loads = chats === "resume" ? (mode !== "new" || fake.newKeepsOld === true) && fake.resumeLoads !== false : fake.freshLoads === true;
       const saves =
         chats === "resume"
-          ? fake.resumeSaves !== false && !(fake.resumeSavesOnce === true && store !== null)
+          ? fake.resumeSaves !== false && !(fake.resumeSavesOnce === true && store !== null) && !(mode === "new" && fake.newSavesNothing === true)
           : fake.freshSaves === true || (fake.freshOverwrites === true && store !== null);
       const history = loads ? [...(store ?? [])] : [];
       const session: AgentSession = {
@@ -570,7 +572,8 @@ function savedChatsEngine(engine: Engine, fake: SavedFake = {}): SavedChatsUnder
   };
 }
 
-const savedNames = ["both engines: a fresh chat saves nothing", "both engines: with nothing saved yet, a resumed chat starts one and saves it", "both engines: a resumed chat picks up where the last one stopped", "both engines: a fresh chat leaves a saved one alone"];
+const savedNamesBeforeNew = ["both engines: a fresh chat saves nothing", "both engines: with nothing saved yet, a resumed chat starts one and saves it", "both engines: a resumed chat picks up where the last one stopped", "both engines: a fresh chat leaves a saved one alone"];
+const savedNames = [...savedNamesBeforeNew, "both engines: new starts a chat without the old one, and that's the one picked up next"];
 
 function savedDeps(sdk: SavedFake = {}, api: SavedFake = {}) {
   return { engines: [savedChatsEngine("sdk", sdk), savedChatsEngine("api", api)], marker: "saved-999", timeoutMs: 1000, settleMs: 0 };
@@ -584,15 +587,17 @@ test("two engines that save and pick up chats properly pass all four saved-chat 
 
 test("each way of getting saved chats wrong fails its own check, naming the engine", async () => {
   const cases: [SavedFake, string[]][] = [
-    [{ freshSaves: true }, savedNames],
-    [{ resumeSaves: false }, [savedNames[1], savedNames[2]]],
-    [{ resumeLoads: false }, [savedNames[2]]],
+    [{ freshSaves: true }, savedNamesBeforeNew],
+    [{ resumeSaves: false }, [savedNames[1], savedNames[2], savedNames[4]]],
+    [{ resumeLoads: false }, [savedNames[2], savedNames[4]]],
     [{ savesOnlyLatest: true }, [savedNames[2]]],
     [{ losesAnswers: true }, [savedNames[2]]],
     [{ freshDeletes: true }, [savedNames[2], savedNames[3]]],
     [{ freshLoads: true }, [savedNames[3]]],
     [{ freshOverwrites: true }, [savedNames[2], savedNames[3]]],
     [{ resumeSavesOnce: true }, [savedNames[2]]],
+    [{ newKeepsOld: true }, [savedNames[4]]],
+    [{ newSavesNothing: true }, [savedNames[4]]],
     [{ answer: "Something else" }, savedNames],
   ];
   for (const [fake, names] of cases) {
@@ -610,7 +615,7 @@ test("a saved-chat question that never answers fails within the time limit", asy
     return { ...session, ask: () => new Promise<Answer>(() => {}) };
   };
   const results = await runSavedChatsCheck({ engines: [engine], marker: "saved-999", timeoutMs: 20, settleMs: 0 });
-  assert.equal(results.length, 4);
+  assert.equal(results.length, 5);
   assert.ok(results.every((result) => !result.ok && result.name.startsWith("plain API call: ")));
   assert.match(results[0].detail, /answered "failed: No answer within 0\.02 seconds"/);
 });

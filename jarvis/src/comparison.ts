@@ -1,8 +1,8 @@
-import { logVersion, type LogLine, type Rating, type RatingLine } from "./answer-log.js";
+import { logVersion, type LogLine, type NewChatLine, type Rating, type RatingLine } from "./answer-log.js";
 import { chatModes, engines, thinkingHistories, type ChatMode, type Engine, type ThinkingHistory } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
-export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; skipped: number };
+export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; skipped: number };
 
 export type Group = {
   label: string;
@@ -58,9 +58,24 @@ export function isRatingLine(value: unknown): value is RatingLine {
   );
 }
 
+export function isNewChatLine(value: unknown): value is NewChatLine {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const line = value as Record<string, unknown>;
+  return (
+    line.v === logVersion &&
+    line.kind === "new chat" &&
+    typeof line.at === "string" &&
+    typeof line.chat === "string" &&
+    Number.isInteger(line.questions) &&
+    (line.questions as number) >= 1 &&
+    (line.lastRequestTokens === null || (Number.isInteger(line.lastRequestTokens) && (line.lastRequestTokens as number) >= 0))
+  );
+}
+
 export function readLog(text: string): ReadLog {
   const lines: LogLine[] = [];
   const ratings: RatingLine[] = [];
+  const newChats: NewChatLine[] = [];
   let skipped = 0;
   for (const raw of text.split("\n")) {
     if (raw.trim() === "") continue;
@@ -72,10 +87,11 @@ export function readLog(text: string): ReadLog {
       continue;
     }
     if (isRatingLine(parsed)) ratings.push(parsed);
+    else if (isNewChatLine(parsed)) newChats.push(parsed);
     else if (isLogLine(parsed)) lines.push(parsed);
     else skipped++;
   }
-  return { lines, ratings, skipped };
+  return { lines, ratings, newChats, skipped };
 }
 
 function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
@@ -172,8 +188,12 @@ function latestRatings(ratings: RatingLine[]): Map<string, Rating> {
   return latest;
 }
 
-function summaryRows(groups: Group[], ratings: Map<string, Rating>): string[][] {
+function summaryRows(groups: Group[], ratings: Map<string, Rating>, newChats: NewChatLine[]): string[][] {
   const answered = groups.map((group) => group.lines.filter((line) => line.ok));
+  const startedAnew = (group: Group) => {
+    const chats = new Set(group.lines.map((line) => line.chat));
+    return newChats.filter((line) => chats.has(line.chat));
+  };
   const row = (label: string, cell: (group: Group, answered: LogLine[]) => string) => [label, ...groups.map((group, index) => cell(group, answered[index]))];
   return [
     row("Answers", (_group, lines) => String(lines.length)),
@@ -200,6 +220,8 @@ function summaryRows(groups: Group[], ratings: Map<string, Rating>): string[][] 
     row("Written to cache, median", (_group, lines) => shown(median(numbers(lines, (line) => line.cacheWriteTokens)), withCommas)),
     row("Output tokens, median", (_group, lines) => shown(median(numbers(lines, (line) => line.outputTokens)), withCommas)),
     row("Earlier thinking blocks, median", (group, lines) => (group.engine === "api" ? shown(median(numbers(lines, (line) => line.earlierThinkingBlocks)), withCommas) : "-")),
+    row("New chats started", (group) => String(startedAnew(group).length)),
+    row("Size when a new chat was started, median", (group) => shown(median(startedAnew(group).flatMap((line) => (line.lastRequestTokens === null ? [] : [line.lastRequestTokens]))), withCommas)),
     row("Cost per answer, median", (_group, lines) => shown(median(numbers(lines, (line) => line.costUsd)), fineDollars)),
     row("Cost, total", (group) => {
       const costs = numbers(group.lines, (line) => line.costUsd);
@@ -232,7 +254,7 @@ function failureLines(groups: Group[]): string[] {
   });
 }
 
-export function compareReport({ lines, ratings = [], skipped }: ReadLog): string {
+export function compareReport({ lines, ratings = [], newChats = [], skipped }: ReadLog): string {
   const out: string[] = [];
   const skippedNote = `${plural(skipped, "line")} couldn't be read and ${skipped === 1 ? "was" : "were"} left out.`;
   if (lines.length === 0) {
@@ -246,7 +268,7 @@ export function compareReport({ lines, ratings = [], skipped }: ReadLog): string
   out.push(`${plural(lines.length, "question")} logged in ${plural(chats, "chat")}, ${span} (UTC).`);
   if (skipped > 0) out.push(skippedNote);
   const groups = groupLines(lines);
-  out.push("", table(["", ...groups.map((group) => group.label)], summaryRows(groups, latestRatings(ratings))));
+  out.push("", table(["", ...groups.map((group) => group.label)], summaryRows(groups, latestRatings(ratings), newChats)));
   out.push("", "Largest single request by question number in the chat, median (tokens):");
   out.push(table(["", ...Array.from({ length: lastQuestionColumn }, (_unused, index) => (index + 1 === lastQuestionColumn ? `${index + 1}+` : String(index + 1)))], questionRows(groups)));
   const uncached = lines.filter((line) => line.ok && (line.cacheReadTokens === undefined || line.cacheWriteTokens === undefined)).length;
@@ -255,6 +277,6 @@ export function compareReport({ lines, ratings = [], skipped }: ReadLog): string
   if (older > 0) out.push("", `The refused, spoke-first and largest-request numbers leave out ${plural(older, "answer")} logged before they were counted.`);
   const failures = failureLines(groups);
   if (failures.length > 0) out.push("", "Failures:", ...failures);
-  out.push("", "Medians and averages leave out failed questions; the total cost includes them. Costs are estimates: the Agent SDK's own, and the plain API's from list prices.");
+  out.push("", "Medians and averages leave out failed questions; the total cost includes them. Costs are estimates: the Agent SDK's own (apart from a resumed chat's first answer), and the plain API's from list prices.");
   return `${out.join("\n")}\n`;
 }

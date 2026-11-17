@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { pricesPerMTok } from "./prices.js";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatsLine, chatSystem, costLine, lengthLineFor, listenNow, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
+import { apiChatSystem, chatModel, chatsLine, chatSystem, commandNote, costLine, lengthLineFor, listenNow, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -762,4 +762,90 @@ test("an empty answer, which isn't kept in the chat, gets no length note", async
   const { run, output } = chat(session, ["Hello"], { lengthNote: startLengthNotes(haikuLine) });
   await run();
   assert.doesNotMatch(output(), /This chat/);
+});
+
+function newChatOf(chat: Partial<NewChat> & { session: AgentSession }): NewChat {
+  return { record: undefined, rate: undefined, failureHint: undefined, lengthNote: undefined, recordNewChat: undefined, notes: [], ...chat };
+}
+
+function withSize(text: string, lastRequestTokens: number | null): Script {
+  return async (listener) => {
+    listener.text?.(text);
+    return { ...answer(text, 100, 400), stats: { ...answer(text, 100, 400).stats!, lastRequestTokens } };
+  };
+}
+
+test("the greeting says how to start a new chat", () => {
+  assert.equal(greeting, "Jarvis is listening. Type a message and press Enter, new for a new chat, or exit to stop.");
+});
+
+test("new ends this chat with its cost, logs how big it got, and carries on in a new one", async () => {
+  const old = fakeSession({ One: withSize("First.", 64_000) }, 0.0021);
+  const fresh = fakeSession({ Two: withSize("Second.", 900) }, 0.0003);
+  const logged: (number | null)[] = [];
+  const records: string[] = [];
+  const { run, output } = chat(old, ["One", "New", "Two"], {
+    recordNewChat: async (tokens) => void logged.push(tokens),
+    record: async () => void records.push("old"),
+    newChat: async () => newChatOf({ session: fresh, record: async () => void records.push("new"), notes: ["Chats: starting a new chat, which will be saved"] }),
+  });
+  await run();
+  assert.deepEqual(old.asked, ["One"]);
+  assert.deepEqual(fresh.asked, ["Two"]);
+  assert.equal(old.closes(), 1);
+  assert.deepEqual(logged, [64_000]);
+  assert.deepEqual(records, ["old", "new"]);
+  assert.ok(output().includes("You: Cost of this chat: about $0.0021\nChats: starting a new chat, which will be saved\nYou: Jarvis: Second."), output());
+  assert.ok(output().endsWith("Cost of this chat: about $0.0003\n"), output());
+});
+
+test("a new chat's size starts again, and an empty answer doesn't count as the chat's size", async () => {
+  const sessions = [fakeSession({ One: withSize("First.", 64_000), Two: withSize(" ", 70_000) }), fakeSession({}), fakeSession({})];
+  const logged: (number | null)[] = [];
+  let next = 1;
+  const { run } = chat(sessions[0], ["One", "Two", "new", "new"], {
+    recordNewChat: async (tokens) => void logged.push(tokens),
+    newChat: async () => newChatOf({ session: sessions[next++], recordNewChat: async (tokens) => void logged.push(tokens) }),
+  });
+  await run();
+  assert.deepEqual(logged, [64_000, null]);
+});
+
+test("without a way to start a new chat, new says so and the chat carries on", async () => {
+  const session = fakeSession({ Hello: withSize("Hi.", 10) });
+  const { run, output } = chat(session, ["new", "Hello"]);
+  await run();
+  assert.ok(output().includes(`You:   (${noNewChatNote})\nYou: Jarvis: Hi.`), output());
+  assert.equal(session.closes(), 1);
+});
+
+test("lines shaped like a / command aren't sent to the engine, on either engine, and say why", async () => {
+  const session = fakeSession({ Hello: withSize("Hi.", 10), "/brain/index.md what's in this?": withSize("Your index.", 10) });
+  const { run, output } = chat(session, ["/clear", "  /compact now", "/brain/index.md what's in this?", "Hello"]);
+  await run();
+  assert.deepEqual(session.asked, ["/brain/index.md what's in this?", "Hello"]);
+  assert.equal(output().split(`(${commandNote})`).length - 1, 2);
+  assert.equal(commandNote, "Jarvis doesn't take / commands. To start a new chat, type new");
+});
+
+test("a / command is a slash then one word; a path isn't", () => {
+  for (const command of ["/clear", "/compact now", "/cost", "/add-dir x", "/Clear"]) assert.equal(looksLikeCommand(command), true, command);
+  for (const other of ["/etc/hosts what is this", "/brain/index.md", "/", "/ hello", "/1st try", "hello /clear", "//clear"]) assert.equal(looksLikeCommand(other), false, other);
+});
+
+test("everything about the old chat is swapped for the new chat's, even settings the new one doesn't have", async () => {
+  const old = fakeSession({ One: async () => Promise.reject(new Error("Overloaded")) });
+  const fresh = fakeSession({ Two: async () => Promise.reject(new Error("Overloaded")), Three: withSize("Three.", 90_000) });
+  const { run, output } = chat(old, ["One", "new", "Two", "+", "Three"], {
+    failureHint: "old hint",
+    rate: async () => "saved",
+    lengthNote: () => "old length note",
+    newChat: async () => newChatOf({ session: fresh }),
+  });
+  await run();
+  const afterNew = output().slice(output().indexOf("Cost of this chat"));
+  assert.ok(output().includes("(old hint)"), output());
+  assert.ok(!afterNew.includes("old hint"), afterNew);
+  assert.ok(!afterNew.includes("old length note"), afterNew);
+  assert.ok(afterNew.includes("ratings are only kept when JARVIS_LOG is on"), afterNew);
 });

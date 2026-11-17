@@ -6,7 +6,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
-import { savedSdkChats, setUpChats } from "./chat-store.js";
+import { savedSdkChats, setUpChats, setUpNewChat } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs } from "./chat.js";
 import { askDirect } from "./direct.js";
 import { apiUnderTest, formatCheck, runEngineCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
@@ -87,7 +87,7 @@ try {
         requests: savedSdkApi.requests,
         saved: () => savedSdkChats(places.sdkChatsFolder),
         start: async (mode) => {
-          const setup = await setUpChats(mode, "sdk", places);
+          const setup = mode === "new" ? await setUpNewChat("resume", "sdk", places) : await setUpChats(mode, "sdk", places);
           const session = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: savedSdkApi.url }, savedChats: setup.savedChats });
           sessions.push(session);
           return session;
@@ -98,7 +98,7 @@ try {
         requests: savedPlainApi.requests,
         saved: () => access(places.apiChatFile).then(() => 1, () => 0),
         start: async (mode) => {
-          const setup = await setUpChats(mode, "api", places);
+          const setup = mode === "new" ? await setUpNewChat("resume", "api", places) : await setUpChats(mode, "api", places);
           const session = startApiSession(
             { apiKey: "sk-ant-test-key", model: chatModel, system: apiChatSystem, maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: createBrainTools(brain), thinkingHistory: "keep", history: setup.history, save: setup.save },
             (request) => askDirect({ ...request, url: `${savedPlainApi.url}/v1/messages` }),

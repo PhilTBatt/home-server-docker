@@ -32,6 +32,10 @@ export const engineNames: Record<Engine, string> = {
   api: "a plain API call",
 };
 export const exitWords = ["exit", "quit"];
+export const newWords = ["new"];
+export const newChatAdvice = "type new";
+export const commandNote = "Jarvis doesn't take / commands. To start a new chat, type new";
+export const noNewChatNote = "starting a new chat isn't available here";
 export const ratingWords: Record<string, Rating> = { "+": "good", "-": "bad" };
 export const notLoggingNote = "ratings are only kept when JARVIS_LOG is on";
 export const rateNotes: Record<RateResult, string> = {
@@ -40,7 +44,7 @@ export const rateNotes: Record<RateResult, string> = {
   "last failed": "the last question failed, so there's nothing to rate",
   "log broken": "not saved: the answer log can't be written",
 };
-export const greeting = "Jarvis is listening. Type a message and press Enter, or type exit to stop.";
+export const greeting = "Jarvis is listening. Type a message and press Enter, new for a new chat, or exit to stop.";
 export const stoppedMessage = "Jarvis has stopped. Start him again to carry on.";
 export const restartNote = "that went wrong, so starting again without the earlier thinking";
 export const retryNote = "couldn't reach the API, so trying once more";
@@ -55,7 +59,17 @@ export type ChatDeps = {
   rate?: (rating: Rating) => Promise<RateResult>;
   failureHint?: string;
   lengthNote?: (tokens: number | null) => string | null;
+  recordNewChat?: (lastRequestTokens: number | null) => Promise<void>;
+  newChat?: () => Promise<NewChat>;
 };
+
+export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat"]-?: ChatDeps[Key] } & { notes: string[] };
+
+export function looksLikeCommand(message: string): boolean {
+  return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
+}
+
+type ChatState = { lastRequestTokens: number | null };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
@@ -171,7 +185,7 @@ export function refusedNote(tools: string[]): string {
   return `refused: ${[...new Set(tools)].join(", ")}`;
 }
 
-async function reply(deps: ChatDeps, message: string): Promise<"answered" | "stopped" | "failed"> {
+async function reply(deps: ChatDeps, message: string, state: ChatState): Promise<"answered" | "stopped" | "failed"> {
   let streamed = false;
   let lineEnded = false;
   const show = (text: string) => {
@@ -213,31 +227,53 @@ async function reply(deps: ChatDeps, message: string): Promise<"answered" | "sto
   show(`${newLine()}  ${timingLine(answer)}\n`);
   const length = answer.text.trim() === "" ? null : (deps.lengthNote?.(answer.stats?.lastRequestTokens ?? null) ?? null);
   if (length !== null) show(`  (${length})\n`);
+  if (answer.text.trim() !== "") state.lastRequestTokens = answer.stats?.lastRequestTokens ?? null;
   await deps.record?.({ answer });
   return "answered";
 }
 
+async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps> {
+  if (deps.newChat === undefined) {
+    deps.write(`  (${noNewChatNote})\n`);
+    return deps;
+  }
+  await deps.recordNewChat?.(state.lastRequestTokens);
+  deps.session.close();
+  deps.write(`${costLine(deps.session.costUsd())}\n`);
+  const next = await deps.newChat();
+  state.lastRequestTokens = null;
+  const { notes, ...chat } = next;
+  for (const note of notes) deps.write(`${note}\n`);
+  return { ...deps, ...chat };
+}
+
 export async function runChat(deps: ChatDeps): Promise<void> {
-  deps.write(`${greeting}\n`);
+  let current = deps;
+  const state: ChatState = { lastRequestTokens: null };
+  current.write(`${greeting}\n`);
   try {
-    deps.prompt();
-    for await (const line of deps.lines) {
+    current.prompt();
+    for await (const line of current.lines) {
       const message = line.trim();
       if (exitWords.includes(message.toLowerCase())) break;
       const rating = Object.hasOwn(ratingWords, message) ? ratingWords[message] : undefined;
-      if (rating !== undefined) {
-        deps.write(`  (${await rateLast(deps, rating)})\n`);
+      if (newWords.includes(message.toLowerCase())) {
+        current = await startNewChat(current, state);
+      } else if (looksLikeCommand(message)) {
+        current.write(`  (${commandNote})\n`);
+      } else if (rating !== undefined) {
+        current.write(`  (${await rateLast(current, rating)})\n`);
       } else if (message !== "") {
-        const outcome = await reply(deps, message);
-        if (deps.session.stoppedReason() !== null) {
-          if (outcome !== "stopped") deps.write(`${stoppedMessage}\n`);
+        const outcome = await reply(current, message, state);
+        if (current.session.stoppedReason() !== null) {
+          if (outcome !== "stopped") current.write(`${stoppedMessage}\n`);
           break;
         }
       }
-      deps.prompt();
+      current.prompt();
     }
   } finally {
-    deps.session.close();
+    current.session.close();
   }
-  deps.write(`\n${costLine(deps.session.costUsd())}\n`);
+  current.write(`\n${costLine(current.session.costUsd())}\n`);
 }

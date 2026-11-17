@@ -18,7 +18,7 @@ function fakeLog(context: LogContext = apiKeep, failAppends = 0) {
   const written: string[] = [];
   const warnings: string[] = [];
   let attempts = 0;
-  const { record, rate } = startAnswerLog(context, {
+  const { record, rate, newChat } = startAnswerLog(context, {
     append: async (text) => {
       attempts++;
       if (attempts <= failAppends) throw new Error("EACCES: permission denied");
@@ -29,7 +29,7 @@ function fakeLog(context: LogContext = apiKeep, failAppends = 0) {
     warn: (message) => warnings.push(message),
     costSoFar: () => null,
   });
-  return { record, rate, written, warnings, attempts: () => attempts };
+  return { record, rate, newChat, written, warnings, attempts: () => attempts };
 }
 
 test("the log lives in jarvis/data, next to src and dist", () => {
@@ -292,4 +292,23 @@ test("a rating isn't saved once the log is broken, and a rating that can't be wr
   assert.equal(await rate("good"), "log broken");
   assert.equal(await rate("bad"), "log broken");
   assert.equal(warnings.length, 1);
+});
+
+test("starting a new chat logs how many questions the old one had and how big its last request was, never its words", async () => {
+  const log = fakeLog();
+  await log.newChat(5000);
+  assert.deepEqual(log.written, []);
+  await log.record({ answer: answered });
+  await log.record({ error: "api 529" });
+  await log.newChat(2900);
+  assert.deepEqual(JSON.parse(log.written.at(-1) ?? ""), { v: logVersion, kind: "new chat", at: at.toISOString(), chat: "chat-1", questions: 2, lastRequestTokens: 2900 });
+  await log.newChat(null);
+  assert.equal(JSON.parse(log.written.at(-1) ?? "").lastRequestTokens, null);
+});
+
+test("a broken log doesn't try to log a new chat", async () => {
+  const log = fakeLog(apiKeep, 1);
+  await log.record({ answer: answered });
+  await log.newChat(2900);
+  assert.equal(log.attempts(), 1);
 });

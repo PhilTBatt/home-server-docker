@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { logVersion, type LogLine } from "./answer-log.js";
-import { compareReport, groupLines, isLogLine, isRatingLine, readLog, table, withCommas } from "./comparison.js";
+import { logVersion, type LogLine, type NewChatLine } from "./answer-log.js";
+import { compareReport, isNewChatLine, groupLines, isLogLine, isRatingLine, readLog, table, withCommas } from "./comparison.js";
 
 function line(overrides: Partial<LogLine> = {}): LogLine {
   return {
@@ -50,8 +50,8 @@ test("reading the log keeps good lines and counts the rest as skipped", () => {
 });
 
 test("reading an empty log finds nothing and skips nothing", () => {
-  assert.deepEqual(readLog(""), { lines: [], ratings: [], skipped: 0 });
-  assert.deepEqual(readLog("\n\n"), { lines: [], ratings: [], skipped: 0 });
+  assert.deepEqual(readLog(""), { lines: [], ratings: [], newChats: [], skipped: 0 });
+  assert.deepEqual(readLog("\n\n"), { lines: [], ratings: [], newChats: [], skipped: 0 });
 });
 
 test("a line is only trusted if every field has the right shape", () => {
@@ -241,7 +241,7 @@ test("lines from before the new numbers were logged still count, and the report 
 });
 
 test("the report ends with what its numbers leave out", () => {
-  assert.match(compareReport({ lines: [line()], skipped: 0 }), /\n\nMedians and averages leave out failed questions; the total cost includes them\. Costs are estimates: the Agent SDK's own, and the plain API's from list prices\.\n$/);
+  assert.match(compareReport({ lines: [line()], skipped: 0 }), /\n\nMedians and averages leave out failed questions; the total cost includes them\. Costs are estimates: the Agent SDK's own \(apart from a resumed chat's first answer\), and the plain API's from list prices\.\n$/);
 });
 
 
@@ -308,4 +308,31 @@ test("fresh and resumed chats are compared side by side, named only when both ar
   assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine, line({ engine: "sdk", thinking: null, chats: "fresh" })], skipped: 0 }), ""), ["Agent SDK"]);
   assert.deepEqual(rowOf(compareReport({ lines: [line({ chats: "resume" })], skipped: 0 }), ""), ["API, keep"]);
   assert.equal(isLogLine({ ...line(), chats: "continue" }), false);
+});
+
+const newChatLine: NewChatLine = { v: logVersion, kind: "new chat", at: "2026-11-17T20:00:00.000Z", chat: "chat-1", questions: 4, lastRequestTokens: 61_000 };
+
+test("a new-chat line is read only when every field is the right kind", () => {
+  assert.equal(isNewChatLine(newChatLine), true);
+  assert.equal(isNewChatLine({ ...newChatLine, lastRequestTokens: null }), true);
+  for (const bad of [{ ...newChatLine, kind: "rating" }, { ...newChatLine, questions: 0 }, { ...newChatLine, questions: 1.5 }, { ...newChatLine, lastRequestTokens: -1 }, { ...newChatLine, lastRequestTokens: "61000" }, { ...newChatLine, chat: 3 }, { ...newChatLine, v: 2 }, null, [newChatLine]]) {
+    assert.equal(isNewChatLine(bad), false, JSON.stringify(bad));
+  }
+  const read = readLog([JSON.stringify(line()), JSON.stringify(newChatLine)].join("\n"));
+  assert.deepEqual(read.newChats, [newChatLine]);
+  assert.equal(read.lines.length, 1);
+});
+
+test("compare counts the new chats started from each setting's chats, and the median size they were started at", () => {
+  const lines = [line({ chat: "sdk-1", engine: "sdk", thinking: null }), line({ chat: "sdk-2", engine: "sdk", thinking: null }), line({ chat: "api-1" }), line({ chat: "api-2" })];
+  const newChats: NewChatLine[] = [
+    { ...newChatLine, chat: "sdk-1", lastRequestTokens: 40_000 },
+    { ...newChatLine, chat: "sdk-2", lastRequestTokens: 90_000 },
+    { ...newChatLine, chat: "api-1", lastRequestTokens: null },
+    { ...newChatLine, chat: "somewhere-else", lastRequestTokens: 5 },
+  ];
+  const report = compareReport({ lines, newChats, skipped: 0 });
+  assert.deepEqual(rowOf(report, "New chats started"), ["2", "1"]);
+  assert.deepEqual(rowOf(report, "Size when a new chat was started, median"), ["65,000", "-"]);
+  assert.deepEqual(rowOf(compareReport({ lines, skipped: 0 }), "New chats started"), ["0", "0"]);
 });
