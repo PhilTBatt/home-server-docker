@@ -86,14 +86,14 @@ function success(result: string, cost = 0.001) {
   return { type: "result", subtype: "success", is_error: false, result, total_cost_usd: cost, errors: [], permission_denials: [] };
 }
 
-function setup() {
+function setup(overrides: Partial<AgentSettings> = {}) {
   let time = 1000;
   const clock = {
     set(value: number) {
       time = value;
     },
   };
-  const settings: AgentSettings = { model: "claude-haiku-5-5", system: "Be brief.", cwd: "/brain", now: () => time };
+  const settings: AgentSettings = { model: "claude-haiku-5-5", system: "Be brief.", cwd: "/brain", now: () => time, ...overrides };
   const agent = fakeAgent();
   const session = startAgentSession(agent.start, settings);
   return { agent, session, clock, settings };
@@ -109,11 +109,22 @@ test("the engine gets only Read, Grep and Glob, kept out of .git, refuses anythi
     permissionMode: "dontAsk",
     settingSources: [],
     persistSession: false,
+    continue: false,
     strictMcpConfig: true,
     title: "Jarvis",
     includePartialMessages: true,
     env: { DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" },
   });
+});
+
+test("with saved chats, the engine saves to Jarvis's own folder and carries on the last chat there; without, it saves nothing", () => {
+  const saved = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin", CLAUDE_CONFIG_DIR: "/elsewhere" }, savedChats: "/app/data/chats/agent-sdk" });
+  assert.equal(saved.persistSession, true);
+  assert.equal(saved.continue, true);
+  assert.deepEqual(saved.env, { PATH: "/usr/bin", CLAUDE_CONFIG_DIR: "/app/data/chats/agent-sdk", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" });
+  assert.equal(saved.resume, undefined);
+  const fresh = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" } });
+  assert.deepEqual([fresh.persistSession, fresh.continue, fresh.env?.CLAUDE_CONFIG_DIR], [false, false, undefined]);
 });
 
 test("the engine keeps the rest of the environment, and the privacy settings can't be undone by it", () => {
@@ -639,6 +650,74 @@ test("a failed question's cost isn't charged to the next answer", async () => {
   assert.ok(Math.abs(((await second).stats?.costUsd ?? 0) - 0.002) < 1e-12);
 });
 
+test("when the engine's running total starts again from nothing, as after /clear, each answer still gets its own cost", async () => {
+  const { agent, session } = setup();
+  const costs: (number | null | undefined)[] = [];
+  for (const [question, total] of [["One", 0.002], ["/clear", 0], ["Two", 0.003], ["Three", 0.0045], ["Four, after the engine started again", 0.001]] as const) {
+    const answer = session.ask(question);
+    await tick();
+    await agent.emit(success(question, total));
+    costs.push((await answer).stats?.costUsd);
+  }
+  [0.002, 0, 0.003, 0.0015, 0.001].forEach((expected, index) => assert.ok(Math.abs((costs[index] ?? -1) - expected) < 1e-12, `answer ${index + 1}: ${costs[index]}`));
+  assert.ok(Math.abs((session.costUsd() ?? 0) - 0.0075) < 1e-12);
+});
+
+const request = (input: number, cacheRead = 0) => ({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { id: "msg", usage: usage(input, 1, 0, cacheRead) } } });
+const requestEnd = (output: number, more: Record<string, number> = {}) => ({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: output, ...more } } });
+
+test("in a picked-up chat, the earlier runs' cost that the engine carries into its running total isn't counted again", async () => {
+  const { agent, session } = setup({ savedChats: "/data/chats/agent-sdk" });
+  const first = session.ask("One");
+  await tick();
+  await agent.emit(request(1000));
+  await agent.emit(requestEnd(100));
+  await agent.emit({ ...success("1", 0.25), usage: usage(1000, 100) });
+  const firstCost = (1000 * 0.1 + 100 * 0.5) / 1_000_000;
+  assert.ok(Math.abs(((await first).stats?.costUsd ?? 0) - firstCost) < 1e-12);
+  const second = session.ask("Two");
+  await tick();
+  await agent.emit(success("2", 0.251));
+  assert.ok(Math.abs(((await second).stats?.costUsd ?? 0) - 0.001) < 1e-12);
+  assert.ok(Math.abs((session.costUsd() ?? 0) - (firstCost + 0.001)) < 1e-12);
+});
+
+test("a picked-up chat's first answer is priced request by request, so only a request over 100,000 tokens costs the long rate", async () => {
+  const { agent, session } = setup({ savedChats: "/data/chats/agent-sdk" });
+  const answer = session.ask("One");
+  await tick();
+  await agent.emit(request(0, 95_000));
+  await agent.emit(requestEnd(50));
+  await agent.emit(request(0, 105_000));
+  await agent.emit(requestEnd(60));
+  await agent.emit({ ...success("1", 0.5), usage: usage(0, 110, 0, 200_000) });
+  const expected = (95_000 * 0.01 + 50 * 0.5) / 1_000_000 + (105_000 * 0.05 + 60 * 2.5) / 1_000_000;
+  assert.ok(Math.abs(((await answer).stats?.costUsd ?? 0) - expected) < 1e-12);
+});
+
+test("a picked-up chat's first answer is priced from its whole usage when the engine streamed no request sizes", async () => {
+  const { agent, session } = setup({ savedChats: "/data/chats/agent-sdk" });
+  const answer = session.ask("One");
+  await tick();
+  await agent.emit(roundStart());
+  await agent.emit({ ...success("1", 0.5), usage: usage(1000, 100, 300, 4000) });
+  assert.ok(Math.abs(((await answer).stats?.costUsd ?? 0) - (1000 * 0.1 + 300 * 0.125 + 4000 * 0.01 + 100 * 0.5) / 1_000_000) < 1e-12);
+});
+
+test("in a picked-up chat with a model that has no prices, the cost is unknown; in a fresh one it's the engine's", async () => {
+  const resumed = setup({ model: "claude-unknown", savedChats: "/data/chats/agent-sdk" });
+  const answer = resumed.session.ask("One");
+  await tick();
+  await resumed.agent.emit({ ...success("1", 0.5), usage: usage(1000, 100) });
+  assert.equal((await answer).stats?.costUsd, null);
+  assert.equal(resumed.session.costUsd(), null);
+  const fresh = setup({ model: "claude-unknown" });
+  const other = fresh.session.ask("One");
+  await tick();
+  await fresh.agent.emit(success("1", 0.5));
+  assert.equal((await other).stats?.costUsd, 0.5);
+});
+
 test("the engine's thinking isn't counted, and nothing is ever recovered", async () => {
   const { agent, session } = setup();
   const answer = session.ask("Hello?");
@@ -663,4 +742,67 @@ test("an answer says whether Jarvis said something before his first tool, from t
   assert.equal(await run(tool(), textDelta("After.")), false);
   assert.equal(await run({ type: "stream_event", parent_tool_use_id: "toolu_9", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "A helper spoke." } } }, tool()), false);
   assert.equal(await run(textDelta("Hi.")), null);
+});
+
+test("a picked-up chat's first answer is priced from its whole usage when the engine streamed no requests at all", async () => {
+  const { agent, session } = setup({ savedChats: "/data/chats/agent-sdk" });
+  const answer = session.ask("One");
+  await tick();
+  await agent.emit({ ...success("1", 0.5), usage: usage(1000, 100) });
+  assert.ok(Math.abs(((await answer).stats?.costUsd ?? 0) - (1000 * 0.1 + 100 * 0.5) / 1_000_000) < 1e-12);
+});
+
+test("in a picked-up chat that's cleared, later answers still get their own cost", async () => {
+  const { agent, session } = setup({ savedChats: "/data/chats/agent-sdk" });
+  const costs: (number | null | undefined)[] = [];
+  const first = session.ask("One");
+  await tick();
+  await agent.emit({ ...success("1", 0.25), usage: usage(1000, 100) });
+  costs.push((await first).stats?.costUsd);
+  for (const [question, total] of [["/clear", 0], ["Two", 0.004]] as const) {
+    const answer = session.ask(question);
+    await tick();
+    await agent.emit(success(question, total));
+    costs.push((await answer).stats?.costUsd);
+  }
+  [(1000 * 0.1 + 100 * 0.5) / 1_000_000, 0, 0.004].forEach((expected, index) => assert.ok(Math.abs((costs[index] ?? -1) - expected) < 1e-12, `answer ${index + 1}: ${costs[index]}`));
+});
+
+test("a request's end that reports no input or cache tokens leaves the sizes from its start alone", async () => {
+  const { agent, session } = setup({ savedChats: "/data/chats/agent-sdk" });
+  const answer = session.ask("One");
+  await tick();
+  for (const _ of [1, 2]) {
+    await agent.emit(request(10, 60_000));
+    await agent.emit(requestEnd(50, { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }));
+  }
+  await agent.emit({ ...success("1", 0.5), usage: usage(20, 100, 0, 120_000) });
+  assert.ok(Math.abs(((await answer).stats?.costUsd ?? 0) - 2 * (10 * 0.1 + 60_000 * 0.01 + 50 * 0.5) / 1_000_000) < 1e-12);
+});
+
+test("when the requests the engine streamed don't add up to its answer's tokens, as when it retried without streaming, the answer's own tokens are priced", async () => {
+  const { agent, session } = setup({ savedChats: "/data/chats/agent-sdk" });
+  const answer = session.ask("One");
+  await tick();
+  await agent.emit(request(60_000));
+  await agent.emit({ ...success("1", 0.5), usage: usage(60_000, 400) });
+  assert.ok(Math.abs(((await answer).stats?.costUsd ?? 0) - (60_000 * 0.1 + 400 * 0.5) / 1_000_000) < 1e-12);
+});
+
+test("an error whose running total comes back as nothing, as after an engine crash, doesn't charge the next answer for the whole chat", async () => {
+  const { agent, session } = setup();
+  const first = session.ask("One");
+  await tick();
+  await agent.emit(success("1", 0.004));
+  await first;
+  const second = session.ask("Two");
+  await tick();
+  const check = assert.rejects(second);
+  await agent.emit({ type: "result", subtype: "error_during_execution", is_error: true, total_cost_usd: 0, errors: ["Crashed"], permission_denials: [] });
+  await check;
+  const third = session.ask("Three");
+  await tick();
+  await agent.emit(success("3", 0.005));
+  assert.ok(Math.abs(((await third).stats?.costUsd ?? 0) - 0.001) < 1e-12);
+  assert.ok(Math.abs((session.costUsd() ?? 0) - 0.005) < 1e-12);
 });

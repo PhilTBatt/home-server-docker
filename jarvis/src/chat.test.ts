@@ -4,7 +4,7 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatSystem, costLine, refusedNote, retryNote, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
+import { apiChatSystem, chatModel, chatsLine, chatSystem, costLine, listenNow, refusedNote, retryNote, settingsLine, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -658,4 +658,56 @@ test("only a lone + or - is a rating; anything longer is a question", async () =
   await run();
   assert.deepEqual(rated, []);
   assert.deepEqual(session.asked, ["++", "+ good one", "-1", "constructor", "__proto__", "toString"]);
+});
+
+test("Jarvis's settings are printed in one line, as they're written in jarvis/.env", () => {
+  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LOG=on");
+  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LOG=off");
+});
+
+test("the chats line says whether this chat is saved, and what it picks up", () => {
+  assert.equal(chatsLine("fresh", 0), "Chats: starting fresh, and nothing is saved");
+  assert.equal(chatsLine("fresh", 3), "Chats: starting fresh, and nothing is saved");
+  assert.equal(chatsLine("resume", 0), "Chats: starting a new chat, which will be saved");
+  assert.equal(chatsLine("resume", null), "Chats: picking up the last saved chat");
+  assert.equal(chatsLine("resume", 1), "Chats: picking up the saved chat (1 earlier question)");
+  assert.equal(chatsLine("resume", 7), "Chats: picking up the saved chat (7 earlier questions)");
+});
+
+test("lines typed before the chat starts reading are kept, not lost", { timeout: 5000 }, async () => {
+  const input = new PassThrough();
+  const lines = createInterface({ input });
+  const typed = listenNow(lines);
+  input.end("first\nsecond\n");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const heard: string[] = [];
+  for await (const line of typed) heard.push(line);
+  assert.deepEqual(heard, ["first", "second"]);
+});
+
+test("a note from the engine, like a chat that couldn't be saved, goes on its own line after the answer's words", async () => {
+  const session = fakeSession({
+    Hello: async (listener) => {
+      listener.text?.("Hi Phil.");
+      listener.note?.("Couldn't save the chat, so the rest of it won't be saved: disk full\u001b[2J");
+      return answer("Hi Phil.", 100, 400);
+    },
+  });
+  const { run, output } = chat(session, ["Hello"]);
+  await run();
+  assert.ok(output().includes("Jarvis: Hi Phil.\n  (Couldn't save the chat, so the rest of it won't be saved: disk full[2J)\n  (first words"), output());
+});
+
+test("in a chat that carries on a saved one, a failed question says how to start over", async () => {
+  const session = fakeSession({
+    Hello: async () => {
+      throw new Error("The API replied 400: prompt is too long");
+    },
+  });
+  const { run, output } = chat(session, ["Hello"], { failureHint: "delete the saved chat" });
+  await run();
+  assert.ok(output().includes("Jarvis couldn't answer: The API replied 400: prompt is too long\n  (delete the saved chat)\nYou: "), output());
+  const plain = chat(fakeSession({ Hello: async () => Promise.reject(new Error("Overloaded")) }), ["Hello"]);
+  await plain.run();
+  assert.ok(plain.output().includes("Jarvis couldn't answer: Overloaded\nYou: "), plain.output());
 });

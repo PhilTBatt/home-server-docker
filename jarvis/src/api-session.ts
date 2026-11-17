@@ -2,33 +2,8 @@ import { closedMessage, type AgentSession, type AnswerListener } from "./agent.j
 import type { BrainTools } from "./brain-tools.js";
 import { askDirect, type AssistantBlock, type DirectAnswer, type DirectRequest, type ToolResultBlock, type ToolUseBlock, type Turn } from "./direct.js";
 import type { ThinkingHistory } from "./config.js";
+import { answerCost, pricesPerMTok } from "./prices.js";
 import type { Answer, AnswerStats } from "./timing.js";
-
-export type Prices = {
-  input: number;
-  cacheWrite: number;
-  cacheRead: number;
-  output: number;
-  longPromptOver: number;
-  longInput: number;
-  longCacheWrite: number;
-  longCacheRead: number;
-  longOutput: number;
-};
-
-export const pricesPerMTok: Record<string, Prices> = {
-  "claude-haiku-5-5": { input: 0.1, cacheWrite: 0.125, cacheRead: 0.01, output: 0.5, longPromptOver: 100_000, longInput: 0.5, longCacheWrite: 0.625, longCacheRead: 0.05, longOutput: 2.5 },
-};
-
-export type TokenUse = { input: number; cacheWrite: number; cacheRead: number; output: number };
-
-export function answerCost(prices: Prices, used: TokenUse): number {
-  const long = used.input + used.cacheWrite + used.cacheRead > prices.longPromptOver;
-  const spent = long
-    ? used.input * prices.longInput + used.cacheWrite * prices.longCacheWrite + used.cacheRead * prices.longCacheRead + used.output * prices.longOutput
-    : used.input * prices.input + used.cacheWrite * prices.cacheWrite + used.cacheRead * prices.cacheRead + used.output * prices.output;
-  return spent / 1_000_000;
-}
 
 export const maxToolSteps = 10;
 export const networkRetryMs = 1000;
@@ -43,6 +18,8 @@ export type ApiSettings = {
   tools?: BrainTools;
   thinkingHistory?: ThinkingHistory;
   retryMs?: number;
+  history?: Turn[];
+  save?: (history: Turn[]) => Promise<string | null>;
 };
 
 export type SendRequest = (request: DirectRequest) => Promise<DirectAnswer>;
@@ -111,13 +88,13 @@ function rejectedByApi(error: unknown): boolean {
 }
 
 export function startApiSession(settings: ApiSettings, send: SendRequest = askDirect): AgentSession {
-  const history: Turn[] = [];
+  const thinkingHistory = settings.thinkingHistory ?? "keep";
+  const history: Turn[] = thinkingHistory === "keep" ? [...(settings.history ?? [])] : withoutThinking(settings.history ?? []);
   const prices = pricesPerMTok[settings.model];
   const stopping = new AbortController();
   let busy = false;
   let closed = false;
   let cost: number | null = null;
-  const thinkingHistory = settings.thinkingHistory ?? "keep";
 
   async function ask(question: string, listener: AnswerListener = {}): Promise<Answer> {
     if (closed) throw new Error(closedMessage);
@@ -204,7 +181,11 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
         const calls = toolCalls(answer.content);
         if (calls.length > 0 && stats.spokeFirst === null) stats.spokeFirst = spokeBeforeTools(answer.content);
         if (calls.length === 0) {
-          if (hasVisibleContent(answer.content)) history.push(...(thinkingHistory === "keep" ? turns : withoutThinking(turns)));
+          if (hasVisibleContent(answer.content)) {
+            history.push(...(thinkingHistory === "keep" ? turns : withoutThinking(turns)));
+            const problem = (await settings.save?.(history)) ?? null;
+            if (problem !== null) listener.note?.(problem);
+          }
           return { text: answer.text, firstWordsMs, totalMs: settings.now() - started, stats };
         }
         if (settings.tools === undefined || answer.stopReason !== "tool_use") throw new Error("The answer was cut off part-way through using a tool");

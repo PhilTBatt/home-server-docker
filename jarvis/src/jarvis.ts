@@ -8,10 +8,13 @@ import { startAgentSession, type AgentSession } from "./agent.js";
 import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
-import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, engineLine, printable, promptWhileOpen, questionTimeoutMs, runChat } from "./chat.js";
+import { setUpChats } from "./chat-store.js";
+import { apiChatSystem, apiMaxTokens, chatModel, chatsLine, chatSystem, engineLine, listenNow, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine } from "./chat.js";
 import { brainDir, readConfig } from "./config.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
+const typed = listenNow(lines);
+const prompt = promptWhileOpen(lines);
 let session: AgentSession | null = null;
 lines.on("SIGINT", () => {
   lines.close();
@@ -22,6 +25,9 @@ try {
   const config = readConfig(process.env);
   if (!existsSync(`${brainDir}/index.md`)) throw new Error(`No brain at ${brainDir}. Mount ~/hub-memory there, read-only.`);
   const now = () => performance.now();
+  const warn = (message: string) => process.stdout.write(`  (${printable(message)})\n`);
+  const chats = await setUpChats(config.chats, config.engine);
+  if (chats.problem !== null) warn(chats.problem);
   session =
     config.engine === "api"
       ? startApiSession({
@@ -33,13 +39,17 @@ try {
           now,
           tools: createBrainTools(brainDir),
           thinkingHistory: config.thinkingHistory,
+          history: chats.history,
+          save: chats.save,
         })
-      : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brainDir, now });
+      : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brainDir, now, savedChats: chats.savedChats });
   process.stdout.write(`${engineLine(config.engine, config.thinkingHistory)}\n`);
+  process.stdout.write(`${settingsLine(config)}\n`);
+  process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
   const log = config.log
     ? startAnswerLog(
-        { engine: config.engine, thinking: config.thinkingHistory, model: chatModel },
+        { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: chats.chats },
         {
           append: async (text) => {
             await mkdir(dirname(answerLogFile), { recursive: true });
@@ -47,19 +57,20 @@ try {
           },
           now: () => new Date(),
           chat: randomUUID(),
-          warn: (message) => process.stdout.write(`  (${printable(message)})\n`),
+          warn,
           costSoFar: () => session?.costUsd() ?? null,
         },
       )
     : undefined;
   await runChat({
-    lines,
+    lines: typed,
     session,
     write: (text) => process.stdout.write(text),
-    prompt: promptWhileOpen(lines),
+    prompt,
     questionTimeoutMs,
     record: log?.record,
     rate: log?.rate,
+    failureHint: chats.failureHint ?? undefined,
   });
 } catch (error) {
   console.error(`Jarvis couldn't start: ${error instanceof Error ? error.message : String(error)}`);

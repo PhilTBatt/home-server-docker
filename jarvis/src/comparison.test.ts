@@ -299,3 +299,13 @@ test("with no ratings, the rating rows show zero", () => {
   assert.deepEqual(rowOf(report, "Rated good"), ["0"]);
   assert.deepEqual(rowOf(report, "Rated bad"), ["0"]);
 });
+
+test("fresh and resumed chats are compared side by side, named only when both are in the log", () => {
+  const both = [line({ engine: "sdk", thinking: null, chats: "resume" }), line({ engine: "sdk", thinking: null, chats: "fresh" }), line({ chats: "resume" }), line()];
+  assert.deepEqual(rowOf(compareReport({ lines: both, skipped: 0 }), ""), ["Agent SDK, fresh", "Agent SDK, resumed", "API, keep, fresh", "API, keep, resumed"]);
+  const { chats: _chats, ...older } = line({ engine: "sdk", thinking: null });
+  assert.equal(isLogLine(older), true);
+  assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine, line({ engine: "sdk", thinking: null, chats: "fresh" })], skipped: 0 }), ""), ["Agent SDK"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ chats: "resume" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.equal(isLogLine({ ...line(), chats: "continue" }), false);
+});

@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
+import { savedSdkChats, setUpChats } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs } from "./chat.js";
 import { askDirect } from "./direct.js";
-import { apiUnderTest, formatCheck, runEngineCheck, sdkUnderTest } from "./engine-check.js";
+import { apiUnderTest, formatCheck, runEngineCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
 import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi, type StandInApi } from "./stand-in-api.js";
 
 const folders: string[] = [];
@@ -64,7 +65,7 @@ try {
     (request) => askDirect({ ...request, url: `${plainApi.url}/v1/messages` }),
   );
   sessions.push(sdk, plain);
-  const results = await runEngineCheck({
+  const shared = await runEngineCheck({
     engines: [sdkUnderTest(sdk, sdkApi.requests), apiUnderTest(plain, plainApi.requests)],
     markers,
     model: chatModel,
@@ -73,6 +74,45 @@ try {
     countTranscripts: () => countFiles(join(home, ".claude", "projects"), ".jsonl"),
     engineEnv: () => engineEnv,
   });
+  const chatsDir = await mkdtemp(join(tmpdir(), "jarvis-check-chats-"));
+  folders.push(chatsDir);
+  const places = { sdkChatsFolder: join(chatsDir, "agent-sdk"), apiChatFile: join(chatsDir, "plain-api.json") };
+  const savedSdkApi = await startStandInApi(script, "sdk");
+  const savedPlainApi = await startStandInApi(script, "api");
+  apis.push(savedSdkApi, savedPlainApi);
+  const saved = await runSavedChatsCheck({
+    engines: [
+      {
+        engine: "sdk",
+        requests: savedSdkApi.requests,
+        saved: () => savedSdkChats(places.sdkChatsFolder),
+        start: async (mode) => {
+          const setup = await setUpChats(mode, "sdk", places);
+          const session = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: savedSdkApi.url }, savedChats: setup.savedChats });
+          sessions.push(session);
+          return session;
+        },
+      },
+      {
+        engine: "api",
+        requests: savedPlainApi.requests,
+        saved: () => access(places.apiChatFile).then(() => 1, () => 0),
+        start: async (mode) => {
+          const setup = await setUpChats(mode, "api", places);
+          const session = startApiSession(
+            { apiKey: "sk-ant-test-key", model: chatModel, system: apiChatSystem, maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: createBrainTools(brain), thinkingHistory: "keep", history: setup.history, save: setup.save },
+            (request) => askDirect({ ...request, url: `${savedPlainApi.url}/v1/messages` }),
+          );
+          sessions.push(session);
+          return session;
+        },
+      },
+    ],
+    marker: `saved chat ${randomUUID()}`,
+    timeoutMs: 60_000,
+    settleMs: 1000,
+  });
+  const results = [...shared, ...saved];
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;
 } catch (error) {

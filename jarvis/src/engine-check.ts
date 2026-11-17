@@ -1,7 +1,7 @@
 import type { AgentSession } from "./agent.js";
 import { gitRefusal, outsideRefusal } from "./brain-tools.js";
 import { apiChatSystem, chatSystem } from "./chat.js";
-import type { Engine } from "./config.js";
+import type { ChatMode, Engine } from "./config.js";
 import { withTimeout } from "./run.js";
 import {
   echoFor,
@@ -279,6 +279,73 @@ export async function runEngineCheck(deps: EngineCheckDeps): Promise<CheckResult
   }
 
   return results;
+}
+
+export type SavedChatsUnderTest = {
+  engine: Engine;
+  start: (chats: ChatMode) => Promise<AgentSession>;
+  requests: SeenRequest[];
+  saved: () => Promise<number>;
+};
+
+export type SavedChatsDeps = {
+  engines: SavedChatsUnderTest[];
+  marker: string;
+  timeoutMs: number;
+  settleMs: number;
+};
+
+export const pickedQuestion = "What did I ask you to remember?";
+export const freshQuestion = "Hello from a fresh chat";
+export const lastQuestion = "Anything else?";
+
+export async function runSavedChatsCheck(deps: SavedChatsDeps): Promise<CheckResult[]> {
+  const scope = deps.engines.length === 1 ? checkNames[deps.engines[0].engine] : "both engines";
+  const failures: Record<string, string[]> = { fresh: [], first: [], picked: [], ignored: [] };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, deps.settleMs));
+  for (const engine of deps.engines) {
+    const name = checkNames[engine.engine];
+    const chat = async (chats: ChatMode, question: string) => {
+      const session = await engine.start(chats);
+      const from = engine.requests.length;
+      try {
+        const answer = await withTimeout(session.ask(question, {}), deps.timeoutMs, () => session.close());
+        return { answer: answer.text, sent: engine.requests.slice(from).filter((request) => request.path === "/v1/messages") };
+      } catch (error) {
+        return { answer: `failed: ${reason(error)}`, sent: engine.requests.slice(from).filter((request) => request.path === "/v1/messages") };
+      } finally {
+        session.close();
+        await settle();
+      }
+    };
+    const remember = `Please remember ${deps.marker}`;
+    const count = (sent: SeenRequest[], text: string) => (sent.length === 0 ? 0 : sent[0].body.split(text).length - 1);
+    const fresh = await chat("fresh", remember);
+    const afterFresh = await engine.saved();
+    if (fresh.answer !== plainAnswer || afterFresh !== 0) failures.fresh.push(`${name}: answered "${fresh.answer}", ${afterFresh} saved`);
+    const first = await chat("resume", remember);
+    const afterFirst = await engine.saved();
+    if (first.answer !== plainAnswer || afterFirst !== 1 || count(first.sent, deps.marker) !== 1) failures.first.push(`${name}: answered "${first.answer}", ${afterFirst} saved, the question appeared ${count(first.sent, deps.marker)} times in its first request`);
+    const picked = await chat("resume", pickedQuestion);
+    const beforeIgnored = await engine.saved();
+    const ignored = await chat("fresh", freshQuestion);
+    const afterIgnored = await engine.saved();
+    const last = await chat("resume", lastQuestion);
+    const carried = { marker: count(last.sent, deps.marker), picked: count(last.sent, pickedQuestion), answers: count(last.sent, plainAnswer), fresh: count(last.sent, freshQuestion) };
+    if (picked.answer !== plainAnswer || last.answer !== plainAnswer || count(picked.sent, deps.marker) !== 1 || carried.marker !== 1 || carried.picked !== 1 || carried.answers !== 2) {
+      failures.picked.push(`${name}: answered "${picked.answer}" then "${last.answer}"; the second resumed chat's first request carried the first question ${count(picked.sent, deps.marker)} times, the third's carried the first question ${carried.marker} times, the second ${carried.picked} times and the answers ${carried.answers} times`);
+    }
+    if (ignored.answer !== plainAnswer || ignored.sent.length === 0 || ignored.sent.some((request) => request.body.includes(deps.marker)) || afterIgnored !== beforeIgnored || carried.fresh !== 0) {
+      failures.ignored.push(`${name}: answered "${ignored.answer}", ${ignored.sent.some((request) => request.body.includes(deps.marker)) ? "carried the saved chat" : "didn't carry the saved chat"}, ${afterIgnored} saved after it; the next resumed chat carried the fresh chat's question ${carried.fresh} times`);
+    }
+  }
+  const result = (key: string, name: string): CheckResult => ({ name: `${scope}: ${name}`, ok: deps.engines.length > 0 && failures[key].length === 0, detail: failures[key].join(" | ") });
+  return [
+    result("fresh", "a fresh chat saves nothing"),
+    result("first", "with nothing saved yet, a resumed chat starts one and saves it"),
+    result("picked", "a resumed chat picks up where the last one stopped"),
+    result("ignored", "a fresh chat leaves a saved one alone"),
+  ];
 }
 
 export function formatCheck(results: CheckResult[]): string[] {

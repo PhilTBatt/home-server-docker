@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { Engine, ThinkingHistory } from "./config.js";
+import type { ChatMode, Engine, ThinkingHistory } from "./config.js";
 import type { Answer } from "./timing.js";
 
 export const answerLogFile = fileURLToPath(new URL("../data/answers.jsonl", import.meta.url));
@@ -29,6 +29,7 @@ export type LogContext = {
   engine: Engine;
   thinking: ThinkingHistory | null;
   model: string;
+  chats: ChatMode;
 };
 
 export type LogLine = {
@@ -39,6 +40,7 @@ export type LogLine = {
   engine: Engine;
   thinking: ThinkingHistory | null;
   model: string;
+  chats?: ChatMode;
   ok: boolean;
   error: string | null;
   firstWordsMs: number | null;
@@ -103,6 +105,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     engine: context.engine,
     thinking: context.engine === "api" ? context.thinking : null,
     model: context.model,
+    chats: context.chats,
     ok: answer !== null,
     error: "error" in outcome ? errorKind(outcome.error) : null,
     firstWordsMs: wholeMs(answer?.firstWordsMs ?? null),

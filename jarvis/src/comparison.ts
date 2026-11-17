@@ -1,5 +1,5 @@
 import { logVersion, type LogLine, type Rating, type RatingLine } from "./answer-log.js";
-import { engines, thinkingHistories, type Engine, type ThinkingHistory } from "./config.js";
+import { chatModes, engines, thinkingHistories, type ChatMode, type Engine, type ThinkingHistory } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
 export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; skipped: number };
@@ -9,6 +9,7 @@ export type Group = {
   engine: Engine;
   thinking: ThinkingHistory | null;
   model: string;
+  chats: ChatMode;
   lines: LogLine[];
 };
 
@@ -32,6 +33,7 @@ export function isLogLine(value: unknown): value is LogLine {
     (engines as readonly unknown[]).includes(line.engine) &&
     (line.thinking === null || (thinkingHistories as readonly unknown[]).includes(line.thinking)) &&
     typeof line.model === "string" &&
+    (line.chats === undefined || (chatModes as readonly unknown[]).includes(line.chats)) &&
     typeof line.ok === "boolean" &&
     (line.error === null || typeof line.error === "string") &&
     numberFields.every((field) => isNumberOrNull(line[field])) &&
@@ -81,29 +83,35 @@ function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
   return thinking === null ? "API" : `API, ${thinking}`;
 }
 
-function order(group: Group): [number, number, string] {
-  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model];
+function order(group: Group): [number, number, string, number] {
+  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats)];
 }
 
 function compareGroups(a: Group, b: Group): number {
-  const [engineA, thinkingA, modelA] = order(a);
-  const [engineB, thinkingB, modelB] = order(b);
-  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0);
+  const [engineA, thinkingA, modelA, chatsA] = order(a);
+  const [engineB, thinkingB, modelB, chatsB] = order(b);
+  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB;
 }
+
+const chatNames: Record<ChatMode, string> = { fresh: "fresh", resume: "resumed" };
 
 export function groupLines(lines: LogLine[]): Group[] {
   const groups = new Map<string, Group>();
   for (const line of lines) {
     const thinking = line.engine === "api" ? line.thinking : null;
-    const key = JSON.stringify([line.engine, thinking, line.model]);
-    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, lines: [] };
+    const chats = line.chats ?? "fresh";
+    const key = JSON.stringify([line.engine, thinking, line.model, chats]);
+    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lines: [] };
     group.lines.push(line);
     groups.set(key, group);
   }
   const models = new Set(lines.map((line) => line.model));
-  return [...groups.values()]
-    .map((group) => ({ ...group, label: models.size > 1 ? `${settingName(group.engine, group.thinking)} (${group.model})` : settingName(group.engine, group.thinking) }))
-    .sort(compareGroups);
+  const chatSettings = new Set(lines.map((line) => line.chats ?? "fresh"));
+  const label = (group: Group) => {
+    const name = chatSettings.size > 1 ? `${settingName(group.engine, group.thinking)}, ${chatNames[group.chats]}` : settingName(group.engine, group.thinking);
+    return models.size > 1 ? `${name} (${group.model})` : name;
+  };
+  return [...groups.values()].map((group) => ({ ...group, label: label(group) })).sort(compareGroups);
 }
 
 function numbers(lines: LogLine[], pick: (line: LogLine) => number | null | undefined): number[] {

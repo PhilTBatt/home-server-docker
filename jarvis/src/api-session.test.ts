@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { closedMessage, type AgentSession } from "./agent.js";
-import { answerCost, echoed, hasVisibleContent, maxToolSteps, networkRetryMs, spokeBeforeTools, pricesPerMTok, startApiSession, thinkingBlocksIn, withoutThinking, type ApiSettings, type SendRequest } from "./api-session.js";
+import { echoed, hasVisibleContent, maxToolSteps, networkRetryMs, spokeBeforeTools, startApiSession, thinkingBlocksIn, withoutThinking, type ApiSettings, type SendRequest } from "./api-session.js";
 import type { BrainTools, ToolOutcome } from "./brain-tools.js";
-import type { DirectAnswer, DirectRequest } from "./direct.js";
+import type { DirectAnswer, DirectRequest, Turn } from "./direct.js";
 
 const settings: ApiSettings = { apiKey: "sk-ant-test-key", model: "claude-haiku-5-5", system: "Be brief.", maxTokens: 4000, timeoutMs: 120_000, now: () => 0 };
 
@@ -27,42 +27,6 @@ function hanging(request: DirectRequest): Promise<DirectAnswer> {
     request.signal?.addEventListener("abort", () => reject(new Error("Couldn't reach the API")));
   });
 }
-
-test("Haiku 5.5 is priced at $0.10 in, $0.125 to write the cache, $0.01 to read it and $0.50 out per million tokens, and five times that for prompts over 100,000 tokens", () => {
-  assert.deepEqual(pricesPerMTok["claude-haiku-5-5"], {
-    input: 0.1,
-    cacheWrite: 0.125,
-    cacheRead: 0.01,
-    output: 0.5,
-    longPromptOver: 100_000,
-    longInput: 0.5,
-    longCacheWrite: 0.625,
-    longCacheRead: 0.05,
-    longOutput: 2.5,
-  });
-});
-
-test("cache writes and reads are priced on their own", () => {
-  const prices = pricesPerMTok["claude-haiku-5-5"];
-  assert.ok(Math.abs(answerCost(prices, { input: 1000, cacheWrite: 3000, cacheRead: 40_000, output: 200 }) - (1000 * 0.1 + 3000 * 0.125 + 40_000 * 0.01 + 200 * 0.5) / 1_000_000) < 1e-12);
-});
-
-test("cached tokens count towards the 100,000-token long-prompt line", () => {
-  const prices = pricesPerMTok["claude-haiku-5-5"];
-  assert.ok(Math.abs(answerCost(prices, { input: 1, cacheWrite: 0, cacheRead: 100_000, output: 100 }) - (1 * 0.5 + 100_000 * 0.05 + 100 * 2.5) / 1_000_000) < 1e-12);
-  assert.ok(Math.abs(answerCost(prices, { input: 1, cacheWrite: 100_000, cacheRead: 0, output: 100 }) - (1 * 0.5 + 100_000 * 0.625 + 100 * 2.5) / 1_000_000) < 1e-12);
-  assert.ok(Math.abs(answerCost(prices, { input: 0, cacheWrite: 50_000, cacheRead: 50_000, output: 100 }) - (50_000 * 0.125 + 50_000 * 0.01 + 100 * 0.5) / 1_000_000) < 1e-12);
-});
-
-test("an answer's cost uses the normal prices up to 100,000 prompt tokens", () => {
-  const prices = pricesPerMTok["claude-haiku-5-5"];
-  assert.ok(Math.abs(answerCost(prices, { input: 100_000, cacheWrite: 0, cacheRead: 0, output: 1000 }) - (100_000 * 0.1 + 1000 * 0.5) / 1_000_000) < 1e-12);
-});
-
-test("an answer's cost uses the long-prompt prices, for input and output, above 100,000 prompt tokens", () => {
-  const prices = pricesPerMTok["claude-haiku-5-5"];
-  assert.ok(Math.abs(answerCost(prices, { input: 100_001, cacheWrite: 0, cacheRead: 0, output: 1000 }) - (100_001 * 0.5 + 1000 * 2.5) / 1_000_000) < 1e-12);
-});
 
 test("a question goes to the API with the settings, the stop signal, thinking at its default and caching on", async () => {
   const { send, requests } = recorder([async () => reply("Hi.")]);
@@ -900,4 +864,67 @@ test("Ctrl+C part-way through a request isn't mistaken for a network error, so n
   await assert.rejects(session.ask("Hello?", { retry: () => retries++ }), { message: closedMessage });
   assert.equal(retries, 0);
   assert.equal(requests.length, 1);
+});
+
+test("a saved chat is sent as the history of the first question, and the rest of the chat builds on it", async () => {
+  const saved = [
+    { role: "user" as const, content: "Remember PINEAPPLE." },
+    { role: "assistant" as const, content: [thinking("Noted."), { type: "text" as const, text: "Remembered." }] },
+  ];
+  const { send, requests } = recorder([async () => reply("It was PINEAPPLE."), async () => reply("Yes.")]);
+  const session = startApiSession({ ...settings, history: saved }, send);
+  await session.ask("What was the word?");
+  await session.ask("Sure?");
+  assert.deepEqual(requests[0].history, saved);
+  assert.equal(requests[1].history?.length, 4);
+  assert.equal(saved.length, 2);
+});
+
+test("with thinking dropped, a saved chat's thinking is dropped before it's sent", async () => {
+  const saved = [
+    { role: "user" as const, content: "Remember PINEAPPLE." },
+    { role: "assistant" as const, content: [thinking("Noted."), { type: "text" as const, text: "Remembered." }] },
+  ];
+  const { send, requests } = recorder([async () => reply("It was PINEAPPLE.")]);
+  await startApiSession({ ...settings, history: saved, thinkingHistory: "drop" }, send).ask("What was the word?");
+  assert.deepEqual(requests[0].history, [saved[0], { role: "assistant", content: [{ type: "text", text: "Remembered." }] }]);
+});
+
+test("the whole chat is saved after each answer, before the answer returns, but not after a failed question or an empty answer", async () => {
+  const saves: number[] = [];
+  const { send } = recorder([async () => reply("One."), rejected("The API replied 529: overloaded"), async () => reply(" "), async () => reply("Two.")]);
+  const save = async (history: Turn[]) => {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    saves.push(history.length);
+    return null;
+  };
+  const session = startApiSession({ ...settings, save }, send);
+  await session.ask("First?");
+  assert.deepEqual(saves, [2]);
+  await assert.rejects(session.ask("Second?"));
+  await session.ask("Third?");
+  await session.ask("Fourth?");
+  assert.deepEqual(saves, [2, 4]);
+});
+
+test("a problem saving the chat is shown as a note on the answer, and the answer still comes back", async () => {
+  const { send } = recorder([async () => reply("One.")]);
+  const notes: string[] = [];
+  const answer = await startApiSession({ ...settings, save: async () => "Couldn't save the chat" }, send).ask("First?", { note: (text) => notes.push(text) });
+  assert.equal(answer.text, "One.");
+  assert.deepEqual(notes, ["Couldn't save the chat"]);
+});
+
+test("after a thinking restart, the saved chat has no earlier thinking either, as that's what's sent from then on", async () => {
+  const saved: Turn[][] = [];
+  const { send, requests } = recorder([async () => thoughtful("One."), rejected(), async () => reply("Two.")]);
+  const session = startApiSession({ ...settings, save: async (history) => {
+    saved.push(structuredClone(history));
+    return null;
+  } }, send);
+  await session.ask("First?");
+  const second = await session.ask("Second?");
+  assert.equal(second.stats?.recovered, true);
+  assert.deepEqual(saved.at(-1), [...(requests.at(-1)?.history ?? []), { role: "user", content: "Second?" }, { role: "assistant", content: [{ type: "text", text: "Two." }] }]);
+  assert.equal(thinkingBlocksIn(saved.at(-1) ?? []), 0);
 });

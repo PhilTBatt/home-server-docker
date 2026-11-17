@@ -39,10 +39,24 @@ I built it using my own ideas, with AI helping me plan and learn what I needed t
 ## Switches
 New features are built switched off. Each switch is a line in `api/.env` set to exactly `on` or `off`. Anything else, or a missing switch, stops the API starting, so a typo can't quietly change what's on. `GET /system/features`, the phone page and the daily summary all show what's off. The MCP server has one switch of its own, `MCP_ACTIONS`, which `bash host/hub-mcp.sh read-only` turns off. Jobs that run on the server itself, like the nightly backup, are switched on and off by enabling or disabling their systemd timer.
 
+### Jarvis's settings
+Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he starts.
+- `ANTHROPIC_API_KEY`: required.
+- `JARVIS_LOG`: `on` or `off`, required, like the API's switches. Logs each answer's numbers, never its words, for `npm run compare`.
+- `JARVIS_ENGINE`: `sdk` (default) or `api`.
+- `JARVIS_THINKING_HISTORY`: `keep` (default) or `drop`. Only the plain API engine uses it.
+- `JARVIS_CHATS`: `fresh` (default) saves nothing; `resume` saves the chat in `jarvis/data/chats/` and picks it up next time.
+  - Saved chats hold everything said, brain text included. Only their owner can read them, and backups copy them.
+  - Every question sends the whole saved chat. On Haiku 5.5, a request over 100,000 tokens costs five times as much. Jarvis doesn't trim saved chats yet. The Agent SDK only summarises a chat when it nears its context limit (about 990,000 tokens in a test), so it pays the higher rate long before that.
+  - To start a new saved chat, delete `plain-api.json` or the `agent-sdk` folder there. A leftover `*.saving` file is a save that was cut off, and is safe to delete.
+  - Run one Jarvis at a time on a saved chat: with two, one of them's questions won't be carried on.
+  - The engines save differently: the Agent SDK also keeps questions that failed or were stopped, and the plain API engine keeps only answered ones. On the plain API engine, thinking is left out of the saved chat for good with `JARVIS_THINKING_HISTORY=drop`, or after a thinking restart.
+
 ## Folders
 - `api/`: the API. Fastify and TypeScript on Node 26, one module per folder in `src/modules/`, with each module's tests beside its code.
 - `hub/`: the phone page.
 - `mcp/`: the MCP server for Claude Code. Same setup as `api/`.
+- `jarvis/`: Jarvis, a text chat (voice later) that reads the brain, with two engines to compare: the Agent SDK and a plain API call. Its settings live in `jarvis/.env` (below), and `jarvis/data/` (git-ignored) holds the answer log and any saved chats.
 - `host/`: files that run outside Docker (the Wi-Fi watchdog, and the backup script with its service and timer), plus helper scripts: `hub-update.sh` pulls and rebuilds only what changed, `hub-mcp.sh` starts the MCP server, and `hub-get.sh` and `hub-post.sh` try an API route.
 - `caddy/`: the Caddyfile.
 - `homepage/config/`: Homepage's settings. Logins and keys come from `homepage/.env`.

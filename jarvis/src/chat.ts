@@ -1,6 +1,6 @@
 import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { brainDir, type Engine, type ThinkingHistory } from "./config.js";
+import { brainDir, type ChatMode, type Config, type Engine, type ThinkingHistory } from "./config.js";
 import { withTimeout } from "./run.js";
 import { seconds, type Answer } from "./timing.js";
 
@@ -52,12 +52,18 @@ export type ChatDeps = {
   questionTimeoutMs: number;
   record?: (outcome: Outcome) => Promise<void>;
   rate?: (rating: Rating) => Promise<RateResult>;
+  failureHint?: string;
 };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
   on(event: "close", listener: () => void): unknown;
 };
+
+export function listenNow(lines: AsyncIterable<string>): AsyncIterable<string> {
+  const heard = lines[Symbol.asyncIterator]();
+  return { [Symbol.asyncIterator]: () => heard };
+}
 
 export function promptWhileOpen(lines: PromptLine): () => void {
   let open = true;
@@ -106,6 +112,17 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+}
+
+export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
+  if (chats === "fresh") return "Chats: starting fresh, and nothing is saved";
+  if (earlierQuestions === 0) return "Chats: starting a new chat, which will be saved";
+  if (earlierQuestions === null) return "Chats: picking up the last saved chat";
+  return `Chats: picking up the saved chat (${earlierQuestions} earlier question${earlierQuestions === 1 ? "" : "s"})`;
+}
+
 export function timingLine(answer: Answer): string {
   const full = `full answer ${seconds(answer.totalMs)}`;
   return answer.firstWordsMs === null ? `(${full})` : `(first words ${seconds(answer.firstWordsMs)}, ${full})`;
@@ -145,6 +162,7 @@ async function reply(deps: ChatDeps, message: string): Promise<"answered" | "sto
         tool: (name, input) => show(`${newLine()}  (${printable(toolNote(name, input))})\n`),
         restart: () => show(`${newLine()}  (${restartNote})\n`),
         retry: () => show(`${newLine()}  (${retryNote})\n`),
+        note: (text) => show(`${newLine()}  (${printable(text)})\n`),
       }),
       deps.questionTimeoutMs,
       () => deps.session.close(),
@@ -156,6 +174,7 @@ async function reply(deps: ChatDeps, message: string): Promise<"answered" | "sto
       return "stopped";
     }
     show(`${newLine()}Jarvis couldn't answer: ${reason}\n`);
+    if (deps.failureHint !== undefined) show(`  (${deps.failureHint})\n`);
     await deps.record?.({ error: reason });
     return "failed";
   }

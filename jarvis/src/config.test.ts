@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainDir, engines, readConfig, thinkingHistories } from "./config.js";
+import { brainDir, chatModes, engines, readConfig, thinkingHistories } from "./config.js";
 
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -51,6 +51,22 @@ test("an unknown JARVIS_THINKING_HISTORY is refused and named", () => {
   assert.throws(() => readConfig({ ...base, JARVIS_THINKING_HISTORY: "forget" }), { message: 'JARVIS_THINKING_HISTORY must be keep or drop, not "forget"' });
 });
 
+test("there are two ways to start a chat: fresh, or resume the last saved one", () => {
+  assert.deepEqual(chatModes, ["fresh", "resume"]);
+});
+
+test("JARVIS_CHATS picks fresh or resume, ignoring spaces, and starts fresh unless told otherwise", () => {
+  assert.equal(readConfig({ ...base, JARVIS_CHATS: "resume" }).chats, "resume");
+  assert.equal(readConfig({ ...base, JARVIS_CHATS: " fresh " }).chats, "fresh");
+  assert.equal(readConfig({ ...base, JARVIS_CHATS: "" }).chats, "fresh");
+  assert.equal(readConfig(base).chats, "fresh");
+});
+
+test("an unknown JARVIS_CHATS is refused and named, so a typo can't quietly start saving chats or stop picking them up", () => {
+  assert.throws(() => readConfig({ ...base, JARVIS_CHATS: "Resume" }), { message: 'JARVIS_CHATS must be fresh or resume, not "Resume"' });
+  assert.throws(() => readConfig({ ...base, JARVIS_CHATS: "on" }), { message: 'JARVIS_CHATS must be fresh or resume, not "on"' });
+});
+
 test("JARVIS_LOG turns the answer log on or off", () => {
   assert.equal(readConfig({ ...base, JARVIS_LOG: "on" }).log, true);
   assert.equal(readConfig({ ...base, JARVIS_LOG: "off" }).log, false);
@@ -84,5 +100,5 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", log: false });
 });

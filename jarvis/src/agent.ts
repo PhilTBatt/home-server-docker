@@ -1,4 +1,5 @@
 import type { Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { answerCost, pricesPerMTok, type Prices, type TokenUse } from "./prices.js";
 import type { Answer } from "./timing.js";
 
 export const closedMessage = "The agent was closed";
@@ -12,6 +13,7 @@ export type AgentSettings = {
   cwd: string;
   now: () => number;
   env?: Record<string, string | undefined>;
+  savedChats?: string;
 };
 
 export const privacyEnv = { DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" };
@@ -21,6 +23,7 @@ export type AnswerListener = {
   tool?: (name: string, input: unknown) => void;
   restart?: () => void;
   retry?: () => void;
+  note?: (text: string) => void;
 };
 
 export type AgentSession = {
@@ -46,6 +49,7 @@ type Pending = {
   rounds: number;
   toolUses: number;
   largestRequestTokens: number | null;
+  requests: TokenUse[] | null;
   spoke: boolean;
   spokeFirst: boolean | null;
 };
@@ -59,11 +63,12 @@ export function agentOptions(settings: AgentSettings): Options {
     disallowedTools: ["Read(./.git/**)"],
     permissionMode: "dontAsk",
     settingSources: [],
-    persistSession: false,
+    persistSession: settings.savedChats !== undefined,
+    continue: settings.savedChats !== undefined,
     strictMcpConfig: true,
     title: "Jarvis",
     includePartialMessages: true,
-    env: { ...(settings.env ?? process.env), ...privacyEnv },
+    env: { ...(settings.env ?? process.env), ...privacyEnv, ...(settings.savedChats === undefined ? {} : { CLAUDE_CONFIG_DIR: settings.savedChats }) },
   };
 }
 
@@ -116,11 +121,29 @@ function textDelta(message: SDKMessage): string | null {
   return message.event.delta.text;
 }
 
-function roundStart(message: SDKMessage): { tokens: number | null } | null {
+function roundStart(message: SDKMessage): { tokens: number | null; used: TokenUse | null } | null {
   if (message.type !== "stream_event" || message.parent_tool_use_id !== null || message.event.type !== "message_start") return null;
   const usage = message.event.message?.usage;
-  if (usage === undefined || usage === null) return { tokens: null };
-  return { tokens: (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) };
+  if (usage === undefined || usage === null) return { tokens: null, used: null };
+  const used = { input: usage.input_tokens ?? 0, cacheWrite: usage.cache_creation_input_tokens ?? 0, cacheRead: usage.cache_read_input_tokens ?? 0, output: usage.output_tokens ?? 0 };
+  return { tokens: used.input + used.cacheWrite + used.cacheRead, used };
+}
+
+function roundEnd(message: SDKMessage): Partial<TokenUse> | null {
+  if (message.type !== "stream_event" || message.parent_tool_use_id !== null || message.event.type !== "message_delta") return null;
+  const usage = message.event.usage;
+  if (usage === undefined || usage === null) return null;
+  const counted = (value: number | null | undefined) => (typeof value === "number" && value > 0 ? value : undefined);
+  return { input: counted(usage.input_tokens), cacheWrite: counted(usage.cache_creation_input_tokens), cacheRead: counted(usage.cache_read_input_tokens), output: typeof usage.output_tokens === "number" ? usage.output_tokens : undefined };
+}
+
+function sameTokens(requests: TokenUse[], whole: TokenUse): boolean {
+  return (["input", "cacheWrite", "cacheRead", "output"] as const).every((key) => requests.reduce((sum, request) => sum + request[key], 0) === whole[key]);
+}
+
+function priceByRequest(prices: Prices, requests: TokenUse[] | null, whole: TokenUse): number {
+  if (requests === null || !sameTokens(requests, whole)) return answerCost(prices, whole);
+  return requests.reduce((sum, request) => sum + answerCost(prices, request), 0);
 }
 
 function toolCalls(message: SDKMessage): { name: string; input: unknown }[] {
@@ -143,6 +166,8 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
   const stream = start(input.messages, agentOptions(settings));
   let pending: Pending | null = null;
   let ready: number | null = null;
+  const prices = pricesPerMTok[settings.model];
+  let lastTotal: number | null = settings.savedChats === undefined ? 0 : null;
   let cost: number | null = null;
   let stopped: Error | null = null;
   let closed = false;
@@ -167,6 +192,12 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
     if (round !== null) {
       pending.rounds++;
       if (round.tokens !== null) pending.largestRequestTokens = Math.max(pending.largestRequestTokens ?? 0, round.tokens);
+      pending.requests = round.used === null || pending.requests === null ? null : [...pending.requests, round.used];
+    }
+    const ended = roundEnd(message);
+    const last = pending.requests?.at(-1);
+    if (ended !== null && last !== undefined) {
+      for (const key of ["input", "cacheWrite", "cacheRead", "output"] as const) last[key] = ended[key] ?? last[key];
     }
     for (const call of toolCalls(message)) {
       if (pending.spokeFirst === null) pending.spokeFirst = pending.spoke;
@@ -174,12 +205,19 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
       pending.listener.tool?.(call.name, call.input);
     }
     if (message.type !== "result") return;
-    const costBefore = cost ?? 0;
-    cost = message.total_cost_usd;
+    const usage = message.usage;
+    const used = { input: usage?.input_tokens ?? 0, cacheWrite: usage?.cache_creation_input_tokens ?? 0, cacheRead: usage?.cache_read_input_tokens ?? 0, output: usage?.output_tokens ?? 0 };
+    const total = message.total_cost_usd;
+    let spent: number | null = null;
+    if (lastTotal !== null) spent = total >= lastTotal ? total - lastTotal : total;
+    else if (prices !== undefined) spent = priceByRequest(prices, pending.requests, used);
+    if (spent !== null) {
+      if (!(message.is_error && total === 0)) lastTotal = total;
+      cost = (cost ?? 0) + spent;
+    }
     const answered = pending;
     pending = null;
     if (message.subtype === "success" && !message.is_error) {
-      const usage = message.usage;
       answered.resolve({
         text: message.result,
         firstWordsMs: answered.firstWordsMs,
@@ -187,11 +225,11 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
         stats: {
           rounds: answered.rounds,
           toolUses: answered.toolUses,
-          inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_creation_input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-          cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
-          cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-          outputTokens: usage?.output_tokens ?? 0,
-          costUsd: Math.max(0, message.total_cost_usd - costBefore),
+          inputTokens: used.input + used.cacheWrite + used.cacheRead,
+          cacheWriteTokens: used.cacheWrite,
+          cacheReadTokens: used.cacheRead,
+          outputTokens: used.output,
+          costUsd: spent,
           earlierThinkingBlocks: null,
           recovered: false,
           largestRequestTokens: answered.largestRequestTokens,
@@ -221,7 +259,7 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
       if (stopped !== null) return Promise.reject(stopped);
       if (pending !== null) return Promise.reject(new Error("One question at a time"));
       return new Promise<Answer>((resolve, reject) => {
-        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener, rounds: 0, toolUses: 0, largestRequestTokens: null, spoke: false, spokeFirst: null };
+        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener, rounds: 0, toolUses: 0, largestRequestTokens: null, requests: [], spoke: false, spokeFirst: null };
         input.push(question);
       });
     },
