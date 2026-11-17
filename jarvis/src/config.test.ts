@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,5 +100,13 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", log: false });
+});
+test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
+  assert.equal(readConfig(base).lengthHints, "note");
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_HINTS: "" }).lengthHints, "note");
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_HINTS: " jarvis " }).lengthHints, "jarvis");
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_HINTS: "note" }).lengthHints, "note");
+  assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_HINTS: "Jarvis" }), { message: 'JARVIS_LENGTH_HINTS must be note or jarvis, not "Jarvis"' });
+  assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_HINTS: "both" }), { message: 'JARVIS_LENGTH_HINTS must be note or jarvis, not "both"' });
 });

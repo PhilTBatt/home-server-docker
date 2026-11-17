@@ -9,7 +9,7 @@ import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
-import { apiChatSystem, apiMaxTokens, chatModel, chatsLine, chatSystem, engineLine, lengthLineFor, listenNow, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, startLengthNotes } from "./chat.js";
+import { apiChatSystem, apiMaxTokens, chatModel, chatsLine, chatSystem, engineLine, lengthHintsFor, lengthLineFor, listenNow, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine } from "./chat.js";
 import { brainDir, readConfig } from "./config.js";
 import { pricesPerMTok } from "./prices.js";
 
@@ -27,7 +27,7 @@ try {
   if (!existsSync(`${brainDir}/index.md`)) throw new Error(`No brain at ${brainDir}. Mount ~/hub-memory there, read-only.`);
   const now = () => performance.now();
   const warn = (message: string) => process.stdout.write(`  (${printable(message)})\n`);
-  const lengthLine = lengthLineFor(pricesPerMTok[chatModel], newChatAdvice);
+  const hints = lengthHintsFor(config.lengthHints, lengthLineFor(pricesPerMTok[chatModel], newChatAdvice));
   const open = (setup: ChatSetup) => {
     const chat =
       config.engine === "api"
@@ -47,7 +47,7 @@ try {
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -66,7 +66,7 @@ try {
       rate: log?.rate,
       recordNewChat: log?.newChat,
       failureHint: setup.failureHint ?? undefined,
-      lengthNote: lengthLine === null ? undefined : startLengthNotes(lengthLine),
+      lengthNote: hints.newLengthNote(),
     };
   };
   const chats = await setUpChats(config.chats, config.engine);
@@ -82,6 +82,7 @@ try {
     write: (text) => process.stdout.write(text),
     prompt,
     questionTimeoutMs,
+    sizeLine: hints.sizeLine,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));

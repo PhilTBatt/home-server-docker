@@ -1,5 +1,5 @@
 import { logVersion, type LogLine, type NewChatLine, type Rating, type RatingLine } from "./answer-log.js";
-import { chatModes, engines, thinkingHistories, type ChatMode, type Engine, type ThinkingHistory } from "./config.js";
+import { chatModes, engines, lengthHintModes, thinkingHistories, type ChatMode, type Engine, type LengthHints, type ThinkingHistory } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
 export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; skipped: number };
@@ -10,6 +10,7 @@ export type Group = {
   thinking: ThinkingHistory | null;
   model: string;
   chats: ChatMode;
+  lengthHints: LengthHints;
   lines: LogLine[];
 };
 
@@ -34,6 +35,7 @@ export function isLogLine(value: unknown): value is LogLine {
     (line.thinking === null || (thinkingHistories as readonly unknown[]).includes(line.thinking)) &&
     typeof line.model === "string" &&
     (line.chats === undefined || (chatModes as readonly unknown[]).includes(line.chats)) &&
+    (line.lengthHints === undefined || (lengthHintModes as readonly unknown[]).includes(line.lengthHints)) &&
     typeof line.ok === "boolean" &&
     (line.error === null || typeof line.error === "string") &&
     numberFields.every((field) => isNumberOrNull(line[field])) &&
@@ -99,32 +101,36 @@ function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
   return thinking === null ? "API" : `API, ${thinking}`;
 }
 
-function order(group: Group): [number, number, string, number] {
-  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats)];
+function order(group: Group): [number, number, string, number, number] {
+  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints)];
 }
 
 function compareGroups(a: Group, b: Group): number {
-  const [engineA, thinkingA, modelA, chatsA] = order(a);
-  const [engineB, thinkingB, modelB, chatsB] = order(b);
-  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB;
+  const [engineA, thinkingA, modelA, chatsA, hintsA] = order(a);
+  const [engineB, thinkingB, modelB, chatsB, hintsB] = order(b);
+  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB;
 }
 
 const chatNames: Record<ChatMode, string> = { fresh: "fresh", resume: "resumed" };
+const hintNames: Record<LengthHints, string> = { note: "length note", jarvis: "Jarvis says" };
 
 export function groupLines(lines: LogLine[]): Group[] {
   const groups = new Map<string, Group>();
   for (const line of lines) {
     const thinking = line.engine === "api" ? line.thinking : null;
     const chats = line.chats ?? "fresh";
-    const key = JSON.stringify([line.engine, thinking, line.model, chats]);
-    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lines: [] };
+    const lengthHints = line.lengthHints ?? "note";
+    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints]);
+    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, lines: [] };
     group.lines.push(line);
     groups.set(key, group);
   }
   const models = new Set(lines.map((line) => line.model));
   const chatSettings = new Set(lines.map((line) => line.chats ?? "fresh"));
+  const hintSettings = new Set(lines.map((line) => line.lengthHints ?? "note"));
   const label = (group: Group) => {
-    const name = chatSettings.size > 1 ? `${settingName(group.engine, group.thinking)}, ${chatNames[group.chats]}` : settingName(group.engine, group.thinking);
+    const parts = [settingName(group.engine, group.thinking), ...(chatSettings.size > 1 ? [chatNames[group.chats]] : []), ...(hintSettings.size > 1 ? [hintNames[group.lengthHints]] : [])];
+    const name = parts.join(", ");
     return models.size > 1 ? `${name} (${group.model})` : name;
   };
   return [...groups.values()].map((group) => ({ ...group, label: label(group) })).sort(compareGroups);

@@ -9,11 +9,15 @@ export type ThinkingHistory = (typeof thinkingHistories)[number];
 export const chatModes = ["fresh", "resume"] as const;
 export type ChatMode = (typeof chatModes)[number];
 
+export const lengthHintModes = ["note", "jarvis"] as const;
+export type LengthHints = (typeof lengthHintModes)[number];
+
 export type Config = {
   apiKey: string;
   engine: Engine;
   thinkingHistory: ThinkingHistory;
   chats: ChatMode;
+  lengthHints: LengthHints;
   log: boolean;
 };
 
@@ -29,6 +33,10 @@ function isChatMode(value: string): value is ChatMode {
   return (chatModes as readonly string[]).includes(value);
 }
 
+function isLengthHints(value: string): value is LengthHints {
+  return (lengthHintModes as readonly string[]).includes(value);
+}
+
 export function readConfig(env: Record<string, string | undefined>): Config {
   const apiKey = env.ANTHROPIC_API_KEY ?? "";
   if (apiKey === "") throw new Error("Missing setting: ANTHROPIC_API_KEY");
@@ -38,8 +46,10 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (!isThinkingHistory(thinkingHistory)) throw new Error(`JARVIS_THINKING_HISTORY must be keep or drop, not "${thinkingHistory}"`);
   const chats = env.JARVIS_CHATS?.trim() || "fresh";
   if (!isChatMode(chats)) throw new Error(`JARVIS_CHATS must be fresh or resume, not "${chats}"`);
+  const lengthHints = env.JARVIS_LENGTH_HINTS?.trim() || "note";
+  if (!isLengthHints(lengthHints)) throw new Error(`JARVIS_LENGTH_HINTS must be note or jarvis, not "${lengthHints}"`);
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, log: log === "on" };
 }

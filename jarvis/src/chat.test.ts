@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { pricesPerMTok } from "./prices.js";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatsLine, chatSystem, commandNote, costLine, lengthLineFor, listenNow, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
+import { apiChatSystem, chatModel, chatsLine, chatSystem, commandNote, costLine, lengthLineFor, listenNow, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -662,8 +662,8 @@ test("only a lone + or - is a rating; anything longer is a question", async () =
 });
 
 test("Jarvis's settings are printed in one line, as they're written in jarvis/.env", () => {
-  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LOG=on");
-  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LOG=off");
+  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LOG=on");
+  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LOG=off");
 });
 
 test("the chats line says whether this chat is saved, and what it picks up", () => {
@@ -848,4 +848,88 @@ test("everything about the old chat is swapped for the new chat's, even settings
   assert.ok(!afterNew.includes("old hint"), afterNew);
   assert.ok(!afterNew.includes("old length note"), afterNew);
   assert.ok(afterNew.includes("ratings are only kept when JARVIS_LOG is on"), afterNew);
+});
+
+test("Jarvis is told that a Chat size line is from his own code, and to suggest a new chat once, at a natural point", () => {
+  for (const system of [chatSystem, apiChatSystem]) {
+    assert.ok(system.includes("A line in square brackets at the end of a message, starting with Chat size, comes from your own code, not from Phil, and he doesn't see it."), system);
+    assert.ok(!system.includes('"'), "no double quotes, which the Agent SDK's request would escape");
+    assert.ok(system.includes("It means the chat is getting long: when you see one, suggest once, in a few words and at a natural point such as a change of topic, that he types new to start a new chat. Don't repeat it every answer."), system);
+  }
+});
+
+test("the size line Jarvis is given starts at 80% of the long-prompt line and says what it costs", () => {
+  const line = startSizeLines(haikuLine);
+  assert.equal(line(null), null);
+  assert.equal(line(79_999), null);
+  assert.equal(line(80_000), "[Chat size: about 80,000 tokens. Past 100,000, each question costs 5 times as much.]");
+  assert.equal(line(81_600), "[Chat size: about 82,000 tokens. Past 100,000, each question costs 5 times as much.]");
+  assert.equal(line(100_000), "[Chat size: about 100,000 tokens. Past 100,000, each question costs 5 times as much.]");
+  assert.equal(line(100_001), "[Chat size: about 101,000 tokens, so each question now costs 5 times as much.]");
+  assert.equal(line(81_600), "[Chat size: about 82,000 tokens. Past 100,000, each question costs 5 times as much.]");
+  assert.equal(withSizeLine("Hello", null), "Hello");
+  assert.equal(withSizeLine("Hello", "[Chat size: x]"), "Hello\n\n[Chat size: x]");
+});
+
+test("with Jarvis saying it, each question after a long answer carries the chat's size, and nothing is printed", async () => {
+  const sent: string[] = [];
+  const first = fakeSession({ One: withSize("First.", 85_000) });
+  const ask = first.ask.bind(first);
+  first.ask = (question, listener) => {
+    sent.push(question);
+    return question.startsWith("Two") || question.startsWith("Three") ? withSize("Next.", question.startsWith("Two") ? 101_000 : 50)(listener ?? {}) : ask(question, listener);
+  };
+  const { run, output } = chat(first, ["One", "Two", "Three", "Four"], { sizeLine: startSizeLines(haikuLine) });
+  await run();
+  assert.deepEqual(sent, [
+    "One",
+    "Two\n\n[Chat size: about 85,000 tokens. Past 100,000, each question costs 5 times as much.]",
+    "Three\n\n[Chat size: about 101,000 tokens, so each question now costs 5 times as much.]",
+    "Four",
+  ]);
+  assert.doesNotMatch(output(), /Chat size|This chat/);
+});
+
+test("after new, the size line starts again from nothing", async () => {
+  const sent: string[] = [];
+  const old = fakeSession({ One: withSize("First.", 90_000) });
+  const fresh = fakeSession({});
+  fresh.ask = (question, listener) => {
+    sent.push(question);
+    return withSize("Hi.", 10)(listener ?? {});
+  };
+  const { run } = chat(old, ["One", "new", "Two"], { sizeLine: startSizeLines(haikuLine), newChat: async () => newChatOf({ session: fresh }) });
+  await run();
+  assert.deepEqual(sent, ["Two"]);
+});
+
+test("the setting decides who says it: the note gets a fresh length note for each chat and no size line; jarvis gets the size line and no note", () => {
+  const note = lengthHintsFor("note", haikuLine);
+  assert.equal(note.sizeLine, undefined);
+  const first = note.newLengthNote();
+  const second = note.newLengthNote();
+  assert.match(first?.(85_000) ?? "", /^This chat is now about 85,000/);
+  assert.equal(first?.(86_000), null);
+  assert.match(second?.(86_000) ?? "", /^This chat is now about 86,000/);
+  const jarvis = lengthHintsFor("jarvis", haikuLine);
+  assert.equal(jarvis.newLengthNote(), undefined);
+  assert.equal(jarvis.sizeLine?.(85_000), "[Chat size: about 85,000 tokens. Past 100,000, each question costs 5 times as much.]");
+  for (const mode of ["note", "jarvis"] as const) {
+    const none = lengthHintsFor(mode, null);
+    assert.equal(none.newLengthNote(), undefined);
+    assert.equal(none.sizeLine, undefined);
+  }
+});
+
+test("after a failed question, the next one still carries the chat's size", async () => {
+  const sent: string[] = [];
+  const session = fakeSession({});
+  session.ask = (question, listener) => {
+    sent.push(question);
+    if (question.startsWith("Two")) return Promise.reject(new Error("Overloaded"));
+    return withSize("Fine.", 85_000)(listener ?? {});
+  };
+  const { run } = chat(session, ["One", "Two", "Three"], { sizeLine: startSizeLines(haikuLine) });
+  await run();
+  assert.deepEqual(sent.map((question) => question.includes("[Chat size: about 85,000")), [false, true, true]);
 });

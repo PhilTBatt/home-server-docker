@@ -336,3 +336,22 @@ test("compare counts the new chats started from each setting's chats, and the me
   assert.deepEqual(rowOf(report, "Size when a new chat was started, median"), ["65,000", "-"]);
   assert.deepEqual(rowOf(compareReport({ lines, skipped: 0 }), "New chats started"), ["0", "0"]);
 });
+
+test("the length-hints setting is compared side by side, named only when both are in the log, and older lines count as the note", () => {
+  const { lengthHints: _hints, ...older } = line();
+  const both = [older as LogLine, line({ lengthHints: "jarvis" }), line({ engine: "sdk", thinking: null, lengthHints: "jarvis" })];
+  assert.deepEqual(rowOf(compareReport({ lines: both, skipped: 0 }), ""), ["Agent SDK, Jarvis says", "API, keep, length note", "API, keep, Jarvis says"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ lengthHints: "jarvis" })], skipped: 0 }), ""), ["API, keep"]);
+  const all = [line({ chats: "resume", lengthHints: "jarvis" }), line({ chats: "fresh" })];
+  assert.deepEqual(rowOf(compareReport({ lines: all, skipped: 0 }), ""), ["API, keep, fresh, length note", "API, keep, resumed, Jarvis says"]);
+  assert.equal(isLogLine({ ...line(), lengthHints: "both" }), false);
+  assert.equal(isLogLine(older), true);
+});
+
+test("length-hint groups come note first then Jarvis, whatever order the log is in, and older lines join the note group without adding a label", () => {
+  const { lengthHints: _hints, ...older } = line();
+  const reversed = [line({ lengthHints: "jarvis" }), line({ lengthHints: "note" }), older as LogLine];
+  assert.deepEqual(rowOf(compareReport({ lines: reversed, skipped: 0 }), ""), ["API, keep, length note", "API, keep, Jarvis says"]);
+  assert.deepEqual(rowOf(compareReport({ lines: reversed, skipped: 0 }), "Answers"), ["2", "1"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine, line({ lengthHints: "note" })], skipped: 0 }), ""), ["API, keep"]);
+});
