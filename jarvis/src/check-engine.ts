@@ -90,7 +90,7 @@ try {
           const setup = mode === "new" ? await setUpNewChat("resume", "sdk", places) : await setUpChats(mode, "sdk", places);
           const session = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: savedSdkApi.url }, savedChats: setup.savedChats });
           sessions.push(session);
-          return session;
+          return Object.assign(session, { knownSize: setup.knownSize, rememberSize: setup.rememberSize });
         },
       },
       {
@@ -104,7 +104,7 @@ try {
             (request) => askDirect({ ...request, url: `${savedPlainApi.url}/v1/messages` }),
           );
           sessions.push(session);
-          return session;
+          return Object.assign(session, { knownSize: setup.knownSize });
         },
       },
     ],

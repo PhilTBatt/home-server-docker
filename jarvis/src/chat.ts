@@ -61,11 +61,14 @@ export type ChatDeps = {
   failureHint?: string;
   lengthNote?: (tokens: number | null) => string | null;
   sizeLine?: (tokens: number | null) => string | null;
+  lengthCap?: number;
+  knownSize?: number;
+  rememberSize?: (tokens: number) => Promise<void>;
   recordNewChat?: (lastRequestTokens: number | null) => Promise<void>;
   newChat?: () => Promise<NewChat>;
 };
 
-export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat"]-?: ChatDeps[Key] } & { notes: string[] };
+export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize"]-?: ChatDeps[Key] } & { notes: string[] };
 
 export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
@@ -78,47 +81,74 @@ export type PromptLine = {
   on(event: "close", listener: () => void): unknown;
 };
 
-export type LengthLine = { longPromptOver: number; times: number; startOver: string };
+export type LengthLine = { warnAt: number; cap: number | null; longPromptOver: number | null; times: number | null; startOver: string };
 
-export function lengthLineFor(prices: Prices | undefined, startOver: string): LengthLine | null {
-  if (prices === undefined) return null;
-  return { longPromptOver: prices.longPromptOver, times: Math.round(prices.longInput / prices.input), startOver };
+export function lengthLineFor(prices: Prices | undefined, warnAt: number, cap: number | null, startOver: string): LengthLine {
+  if (prices === undefined) return { warnAt, cap, longPromptOver: null, times: null, startOver };
+  return { warnAt, cap, longPromptOver: prices.longPromptOver, times: Math.round(prices.longInput / prices.input), startOver };
+}
+
+function aboutTokens(tokens: number): string {
+  return (tokens < 10_000 ? tokens : Math.ceil(tokens / 1000) * 1000).toLocaleString("en-GB");
+}
+
+function pastLongLine(line: LengthLine, tokens: number): boolean {
+  return line.longPromptOver !== null && tokens > line.longPromptOver;
+}
+
+function longLineAhead(line: LengthLine): boolean {
+  return line.longPromptOver !== null && (line.cap === null || line.cap > line.longPromptOver);
+}
+
+function capAhead(line: LengthLine, tokens: number): string {
+  return line.cap === null || tokens > line.cap ? "" : `. Past ${line.cap.toLocaleString("en-GB")}, your JARVIS_LENGTH_CAP, it stops taking questions`;
 }
 
 export function startLengthNotes(line: LengthLine): (tokens: number | null) => string | null {
-  const headsUp = Math.round(line.longPromptOver * 0.8);
   let warned = false;
-  const about = (tokens: number, round: (n: number) => number) => (round(tokens / 1000) * 1000).toLocaleString("en-GB");
   return (tokens) => {
     if (tokens === null) return null;
-    if (tokens < headsUp) {
+    if (tokens < line.warnAt) {
       warned = false;
       return null;
     }
-    if (tokens > line.longPromptOver) {
+    if (pastLongLine(line, tokens)) {
       warned = true;
-      return `This chat is about ${about(tokens, Math.ceil)} tokens, so each question now costs ${line.times} times as much. A new chat would be cheaper: ${line.startOver}`;
+      return `This chat is about ${aboutTokens(tokens)} tokens, so each question now costs ${line.times} times as much${capAhead(line, tokens)}. A new chat would be cheaper: ${line.startOver}`;
     }
     if (warned) return null;
     warned = true;
-    return `This chat is now about ${about(tokens, Math.round)} tokens. Past ${line.longPromptOver.toLocaleString("en-GB")}, each question costs ${line.times} times as much, so start a new one when you're done with this topic: ${line.startOver}`;
+    const reached = `This chat has reached ${line.warnAt.toLocaleString("en-GB")} tokens (about ${aboutTokens(tokens)} now)`;
+    const cost = longLineAhead(line) ? `. Past ${line.longPromptOver?.toLocaleString("en-GB")}, each question costs ${line.times} times as much` : "";
+    return `${reached}${cost}${capAhead(line, tokens)}, so start a new one when you're done with this topic: ${line.startOver}`;
   };
 }
 
 export function startSizeLines(line: LengthLine): (tokens: number | null) => string | null {
-  const headsUp = Math.round(line.longPromptOver * 0.8);
-  const about = (tokens: number, round: (n: number) => number) => (round(tokens / 1000) * 1000).toLocaleString("en-GB");
   return (tokens) => {
-    if (tokens === null || tokens < headsUp) return null;
-    if (tokens > line.longPromptOver) return `[Chat size: about ${about(tokens, Math.ceil)} tokens, so each question now costs ${line.times} times as much.]`;
-    return `[Chat size: about ${about(tokens, Math.round)} tokens. Past ${line.longPromptOver.toLocaleString("en-GB")}, each question costs ${line.times} times as much.]`;
+    if (tokens === null || tokens < line.warnAt) return null;
+    const cap = line.cap === null || tokens > line.cap ? "" : ` Past ${line.cap.toLocaleString("en-GB")}, no more questions can be sent in this chat.`;
+    if (pastLongLine(line, tokens)) return `[Chat size: about ${aboutTokens(tokens)} tokens, so each question now costs ${line.times} times as much.${cap}]`;
+    const cost = longLineAhead(line) ? ` Past ${line.longPromptOver?.toLocaleString("en-GB")}, each question costs ${line.times} times as much.` : "";
+    return `[Chat size: about ${aboutTokens(tokens)} tokens.${cost}${cap}]`;
   };
+}
+
+export function capNote(cap: number): string {
+  return `This chat has passed the ${cap.toLocaleString("en-GB")}-token cap set by JARVIS_LENGTH_CAP, so that wasn't sent. Type new to start a new chat, then ask again`;
+}
+
+export function capReachedNote(cap: number): string {
+  return `This chat has passed the ${cap.toLocaleString("en-GB")}-token cap set by JARVIS_LENGTH_CAP, so no more questions will be sent in it. Type new to start a new chat`;
+}
+
+function overCap(deps: ChatDeps, tokens: number | null): deps is ChatDeps & { lengthCap: number } {
+  return deps.lengthCap !== undefined && tokens !== null && tokens > deps.lengthCap;
 }
 
 export type LengthHinting = { newLengthNote: () => ((tokens: number | null) => string | null) | undefined; sizeLine: ((tokens: number | null) => string | null) | undefined };
 
-export function lengthHintsFor(mode: LengthHints, line: LengthLine | null): LengthHinting {
-  if (line === null) return { newLengthNote: () => undefined, sizeLine: undefined };
+export function lengthHintsFor(mode: LengthHints, line: LengthLine): LengthHinting {
   if (mode === "jarvis") return { newLengthNote: () => undefined, sizeLine: startSizeLines(line) };
   return { newLengthNote: () => startLengthNotes(line), sizeLine: undefined };
 }
@@ -179,8 +209,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -249,9 +279,14 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
   const refused = answer.stats?.refusedTools ?? [];
   if (refused.length > 0) show(`${newLine()}  (${printable(refusedNote(refused))})\n`);
   show(`${newLine()}  ${timingLine(answer)}\n`);
-  const length = answer.text.trim() === "" ? null : (deps.lengthNote?.(answer.stats?.lastRequestTokens ?? null) ?? null);
+  const size = answer.text.trim() === "" ? null : (answer.stats?.lastRequestTokens ?? null);
+  const length = size === null || overCap(deps, size) ? null : (deps.lengthNote?.(size) ?? null);
   if (length !== null) show(`  (${length})\n`);
-  if (answer.text.trim() !== "") state.lastRequestTokens = answer.stats?.lastRequestTokens ?? null;
+  if (overCap(deps, size)) show(`  (${capReachedNote(deps.lengthCap)})\n`);
+  if (size !== null) {
+    state.lastRequestTokens = size;
+    await deps.rememberSize?.(size);
+  }
   await deps.record?.({ answer });
   return "answered";
 }
@@ -265,7 +300,7 @@ async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps>
   deps.session.close();
   deps.write(`${costLine(deps.session.costUsd())}\n`);
   const next = await deps.newChat();
-  state.lastRequestTokens = null;
+  state.lastRequestTokens = next.knownSize ?? null;
   const { notes, ...chat } = next;
   for (const note of notes) deps.write(`${note}\n`);
   return { ...deps, ...chat };
@@ -273,8 +308,9 @@ async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps>
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null };
   current.write(`${greeting}\n`);
+  if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
     current.prompt();
     for await (const line of current.lines) {
@@ -287,6 +323,8 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         current.write(`  (${commandNote})\n`);
       } else if (rating !== undefined) {
         current.write(`  (${await rateLast(current, rating)})\n`);
+      } else if (message !== "" && overCap(current, state.lastRequestTokens)) {
+        current.write(`  (${capNote(current.lengthCap)})\n`);
       } else if (message !== "") {
         const outcome = await reply(current, message, state);
         if (current.session.stoppedReason() !== null) {

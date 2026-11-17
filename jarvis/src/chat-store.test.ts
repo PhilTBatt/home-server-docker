@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -37,7 +37,7 @@ test("a saved chat comes back exactly as it was saved, thinking and signatures i
   await inFolder(async (dir) => {
     const file = join(dir, "chats", "plain-api.json");
     assert.equal(await startChatSaver(file)(turns), null);
-    assert.deepEqual(await loadChat(file), { turns, problem: null, canSave: true });
+    assert.deepEqual(await loadChat(file), { turns, size: null, problem: null, canSave: true });
     assert.equal(JSON.parse(await readFile(file, "utf8")).v, savedChatVersion);
     assert.deepEqual(await readdir(join(dir, "chats")), ["plain-api.json"]);
     assert.equal((await stat(file)).mode & 0o777, 0o600);
@@ -47,7 +47,7 @@ test("a saved chat comes back exactly as it was saved, thinking and signatures i
 
 test("with nothing saved, a chat starts empty and nothing is wrong", async () => {
   await inFolder(async (dir) => {
-    assert.deepEqual(await loadChat(join(dir, "nothing.json")), { turns: [], problem: null, canSave: true });
+    assert.deepEqual(await loadChat(join(dir, "nothing.json")), { turns: [], size: null, problem: null, canSave: true });
   });
 });
 
@@ -60,7 +60,7 @@ test("a saved chat that isn't one Jarvis can read is moved aside, and a new save
       const loaded = await loadChat(file);
       const [aside] = await readdir(dir);
       assert.match(aside, /^plain-api\.json\.unreadable-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z$/, text);
-      assert.deepEqual(loaded, { turns: [], problem: `The saved chat isn't one Jarvis can read, so it was moved aside as ${aside}`, canSave: true }, text);
+      assert.deepEqual(loaded, { turns: [], size: null, problem: `The saved chat isn't one Jarvis can read, so it was moved aside as ${aside}`, canSave: true }, text);
       assert.equal(await readFile(join(dir, aside), "utf8"), text);
     });
   }
@@ -83,7 +83,7 @@ test("a saved chat that can't be opened is left alone, and this chat isn't saved
   await inFolder(async (dir) => {
     const file = join(dir, "plain-api.json");
     await mkdir(file);
-    assert.deepEqual(await loadChat(file), { turns: [], problem: "The saved chat couldn't be read (EISDIR), so this chat won't be saved, to leave that one alone", canSave: false });
+    assert.deepEqual(await loadChat(file), { turns: [], size: null, problem: "The saved chat couldn't be read (EISDIR), so this chat won't be saved, to leave that one alone", canSave: false });
     assert.deepEqual(await readdir(dir), ["plain-api.json"]);
   });
 });
@@ -92,7 +92,7 @@ test("a saved chat Jarvis can't read or move aside is left alone, and this chat 
   await inFolder(async (dir) => {
     const file = join(dir, `${"c".repeat(230)}.json`);
     await writeFile(file, "not json");
-    assert.deepEqual(await loadChat(file), { turns: [], problem: "The saved chat isn't one Jarvis can read and couldn't be moved aside, so this chat won't be saved, to leave that one alone", canSave: false });
+    assert.deepEqual(await loadChat(file), { turns: [], size: null, problem: "The saved chat isn't one Jarvis can read and couldn't be moved aside, so this chat won't be saved, to leave that one alone", canSave: false });
     assert.equal(await readFile(file, "utf8"), "not json");
   });
 });
@@ -230,7 +230,8 @@ test("a resumed plain API chat whose saved chat was moved aside starts a new sav
 test("a resumed Agent SDK chat uses Jarvis's own folder, made private, and only hints at starting over once something is saved", async () => {
   await inFolder(async (dir) => {
     const places = { apiChatFile: join(dir, "chats", "plain-api.json"), sdkChatsFolder: join(dir, "chats", "agent-sdk") };
-    assert.deepEqual(await setUpChats("resume", "sdk", places), { chats: "resume", history: [], earlierQuestions: 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: null });
+    const started = await setUpChats("resume", "sdk", places);
+    assert.deepEqual({ ...started, rememberSize: typeof started.rememberSize }, { chats: "resume", history: [], earlierQuestions: 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: null, rememberSize: "function" });
     assert.equal((await stat(join(dir, "chats"))).mode & 0o777, 0o700);
     assert.equal((await stat(places.sdkChatsFolder)).mode & 0o777, 0o700);
     await mkdir(join(places.sdkChatsFolder, "projects", "-brain"), { recursive: true });
@@ -291,7 +292,7 @@ test("new moves the Agent SDK's saved transcripts aside, so the SDK has nothing 
     await sdkTranscript(places, "b.jsonl");
     const setup = await setUpNewChat("resume", "sdk", places);
     const [old] = await readdir(join(dir, "chats", "old"));
-    assert.deepEqual(setup, { chats: "resume", history: [], earlierQuestions: 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: null, movedTo: `old/${old}` });
+    assert.deepEqual({ ...setup, rememberSize: typeof setup.rememberSize }, { chats: "resume", history: [], earlierQuestions: 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: null, movedTo: `old/${old}`, rememberSize: "function" });
     assert.equal(await savedSdkChats(places.sdkChatsFolder), 0);
     assert.match(old, /^agent-sdk-\d{4}-/);
     assert.deepEqual((await readdir(join(dir, "chats", "old", old, "-brain"))).sort(), ["a.jsonl", "b.jsonl"]);
@@ -415,5 +416,102 @@ test("if the plain engine's saved chat can't be moved aside, the new chat isn't 
       await chmod(join(dir, "chats"), 0o700);
     }
     assert.deepEqual((await loadChat(places.apiChatFile)).turns, turns);
+  });
+});
+
+test("the plain engine keeps the chat's size in the chat file, so a resumed chat, or one moved back by hand, starts with its own size", async () => {
+  await inFolder(async (dir) => {
+    const places = placesIn(dir);
+    const first = await setUpChats("resume", "api", places);
+    assert.equal(first.knownSize, undefined);
+    await first.save?.(turns, 5_000);
+    assert.equal(JSON.parse(await readFile(places.apiChatFile, "utf8")).size, 5_000);
+    assert.equal((await setUpChats("resume", "api", places)).knownSize, 5_000);
+    assert.equal((await setUpChats("fresh", "api", places)).knownSize, undefined);
+    const next = await setUpNewChat("resume", "api", places);
+    assert.equal(next.knownSize, undefined);
+    await next.save?.(turns, 160_000);
+    assert.equal((await setUpChats("resume", "api", places)).knownSize, 160_000);
+    await rename(places.apiChatFile, join(dir, "chats", "b.json"));
+    await rename(join(dir, "chats", next.movedTo ?? ""), places.apiChatFile);
+    assert.equal((await setUpChats("resume", "api", places)).knownSize, 5_000);
+  });
+});
+
+test("a plain chat saved without a size, or with a damaged one, still loads, with no size known", async () => {
+  await inFolder(async (dir) => {
+    const places = placesIn(dir);
+    await startChatSaver(places.apiChatFile)(turns);
+    assert.equal(JSON.parse(await readFile(places.apiChatFile, "utf8")).size, undefined);
+    assert.equal((await setUpChats("resume", "api", places)).knownSize, undefined);
+    for (const size of ["5000", -1, 1.5, null]) {
+      await writeFile(places.apiChatFile, JSON.stringify({ v: savedChatVersion, turns, size }));
+      const loaded = await loadChat(places.apiChatFile);
+      assert.deepEqual(loaded, { turns, size: null, problem: null, canSave: true }, String(size));
+    }
+  });
+});
+
+async function touch(file: string, secondsAgo: number) {
+  const when = new Date(Date.now() - secondsAgo * 1000);
+  await utimes(file, when, when);
+}
+
+test("the Agent SDK's size is kept with the name of its newest transcript, privately, and only used while that transcript is still the newest", async () => {
+  await inFolder(async (dir) => {
+    const places = placesIn(dir);
+    const sizeFile = join(dir, "chats", "agent-sdk-size.json");
+    const first = await setUpChats("resume", "sdk", places);
+    assert.equal(first.knownSize, undefined);
+    await first.rememberSize?.(5_000);
+    await assert.rejects(readFile(sizeFile, "utf8"));
+    await sdkTranscript(places, "z.jsonl");
+    await touch(join(places.sdkChatsFolder, "projects", "-brain", "z.jsonl"), 60);
+    await first.rememberSize?.(152_000);
+    assert.deepEqual(JSON.parse(await readFile(sizeFile, "utf8")), { transcript: join("-brain", "z.jsonl"), tokens: 152_000 });
+    assert.equal((await stat(sizeFile)).mode & 0o777, 0o600);
+    assert.equal((await setUpChats("resume", "sdk", places)).knownSize, 152_000);
+    assert.equal((await setUpChats("fresh", "sdk", places)).knownSize, undefined);
+    await sdkTranscript(places, "a.jsonl");
+    assert.equal((await setUpChats("resume", "sdk", places)).knownSize, undefined);
+    await (await setUpChats("resume", "sdk", places)).rememberSize?.(7_000);
+    assert.deepEqual(JSON.parse(await readFile(sizeFile, "utf8")), { transcript: join("-brain", "a.jsonl"), tokens: 7_000 });
+    assert.equal((await setUpChats("resume", "sdk", places)).knownSize, 7_000);
+    const brainFolder = join(places.sdkChatsFolder, "projects", "-brain");
+    await sdkTranscript(places, "y.jsonl");
+    await touch(join(brainFolder, "y.jsonl"), 300);
+    await rename(join(brainFolder, "y.jsonl"), join(brainFolder, "x.jsonl"));
+    assert.equal((await setUpChats("resume", "sdk", places)).knownSize, 7_000);
+    await touch(join(brainFolder, "a.jsonl"), 600);
+    assert.equal((await setUpChats("resume", "sdk", places)).knownSize, undefined);
+  });
+});
+
+test("after new, or a chat moved back by hand, the Agent SDK's old size isn't used, and with no transcripts at all there's no size", async () => {
+  await inFolder(async (dir) => {
+    const places = placesIn(dir);
+    await sdkTranscript(places, "a.jsonl");
+    await (await setUpChats("resume", "sdk", places)).rememberSize?.(5_000);
+    const next = await setUpNewChat("resume", "sdk", places);
+    assert.equal(next.knownSize, undefined);
+    await sdkTranscript(places, "b.jsonl");
+    await next.rememberSize?.(160_000);
+    assert.equal((await setUpChats("resume", "sdk", places)).knownSize, 160_000);
+    await rm(join(places.sdkChatsFolder, "projects"), { recursive: true });
+    assert.equal((await setUpChats("resume", "sdk", places)).knownSize, undefined);
+    await rename(join(dir, "chats", next.movedTo ?? ""), join(places.sdkChatsFolder, "projects"));
+    assert.equal((await setUpChats("resume", "sdk", places)).knownSize, undefined);
+  });
+});
+
+test("a damaged Agent SDK size file is ignored rather than stopping Jarvis", async () => {
+  await inFolder(async (dir) => {
+    const places = placesIn(dir);
+    await sdkTranscript(places, "a.jsonl");
+    const transcript = join("-brain", "a.jsonl");
+    for (const damaged of ["not json", "[1]", "null", JSON.stringify({ transcript, tokens: "9000" }), JSON.stringify({ transcript, tokens: -1 }), JSON.stringify({ transcript: 1, tokens: 9000 })]) {
+      await writeFile(join(dir, "chats", "agent-sdk-size.json"), damaged);
+      assert.equal((await setUpChats("resume", "sdk", places)).knownSize, undefined, damaged);
+    }
   });
 });

@@ -27,7 +27,7 @@ try {
   if (!existsSync(`${brainDir}/index.md`)) throw new Error(`No brain at ${brainDir}. Mount ~/hub-memory there, read-only.`);
   const now = () => performance.now();
   const warn = (message: string) => process.stdout.write(`  (${printable(message)})\n`);
-  const hints = lengthHintsFor(config.lengthHints, lengthLineFor(pricesPerMTok[chatModel], newChatAdvice));
+  const hints = lengthHintsFor(config.lengthHints, lengthLineFor(pricesPerMTok[chatModel], config.lengthWarn, config.lengthCap, newChatAdvice));
   const open = (setup: ChatSetup) => {
     const chat =
       config.engine === "api"
@@ -67,6 +67,8 @@ try {
       recordNewChat: log?.newChat,
       failureHint: setup.failureHint ?? undefined,
       lengthNote: hints.newLengthNote(),
+      knownSize: setup.knownSize,
+      rememberSize: setup.rememberSize,
     };
   };
   const chats = await setUpChats(config.chats, config.engine);
@@ -83,6 +85,7 @@ try {
     prompt,
     questionTimeoutMs,
     sizeLine: hints.sizeLine,
+    lengthCap: config.lengthCap ?? undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));

@@ -18,8 +18,16 @@ export type Config = {
   thinkingHistory: ThinkingHistory;
   chats: ChatMode;
   lengthHints: LengthHints;
+  lengthWarn: number;
+  lengthCap: number | null;
   log: boolean;
 };
+
+export const defaultLengthWarn = 80_000;
+
+function tokenCount(value: string): number | null {
+  return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
+}
 
 function isEngine(value: string): value is Engine {
   return (engines as readonly string[]).includes(value);
@@ -48,8 +56,16 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (!isChatMode(chats)) throw new Error(`JARVIS_CHATS must be fresh or resume, not "${chats}"`);
   const lengthHints = env.JARVIS_LENGTH_HINTS?.trim() || "note";
   if (!isLengthHints(lengthHints)) throw new Error(`JARVIS_LENGTH_HINTS must be note or jarvis, not "${lengthHints}"`);
+  const warnText = env.JARVIS_LENGTH_WARN?.trim() || String(defaultLengthWarn);
+  const lengthWarn = tokenCount(warnText);
+  if (lengthWarn === null) throw new Error(`JARVIS_LENGTH_WARN must be a whole number of tokens above 0, like 80000, not "${warnText}"`);
+  const capText = env.JARVIS_LENGTH_CAP?.trim() || "off";
+  const lengthCap = capText === "off" ? null : tokenCount(capText);
+  if (capText !== "off" && lengthCap === null) throw new Error(`JARVIS_LENGTH_CAP must be a whole number of tokens above 0, like 150000, or off, not "${capText}"`);
+  const warnSource = env.JARVIS_LENGTH_WARN?.trim() ? "" : ", the default";
+  if (lengthCap !== null && lengthCap <= lengthWarn) throw new Error(`JARVIS_LENGTH_CAP (${lengthCap}) must be above JARVIS_LENGTH_WARN (${lengthWarn}${warnSource})`);
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, log: log === "on" };
 }

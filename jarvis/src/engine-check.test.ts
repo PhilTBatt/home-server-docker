@@ -533,11 +533,16 @@ test("the report ticks passes, gives the reason for failures, and ends with a co
   assert.deepEqual(formatCheck([{ name: "one", ok: true, detail: "" }]), ["✓ one", "All 1 checks passed."]);
 });
 
-type SavedFake = { freshSaves?: boolean; resumeLoads?: boolean; freshLoads?: boolean; resumeSaves?: boolean; freshOverwrites?: boolean; resumeSavesOnce?: boolean; savesOnlyLatest?: boolean; losesAnswers?: boolean; freshDeletes?: boolean; resumeAddsFile?: boolean; newKeepsOld?: boolean; newSavesNothing?: boolean; answer?: string };
+type SavedFake = { freshSaves?: boolean; resumeLoads?: boolean; freshLoads?: boolean; resumeSaves?: boolean; freshOverwrites?: boolean; resumeSavesOnce?: boolean; savesOnlyLatest?: boolean; losesAnswers?: boolean; freshDeletes?: boolean; resumeAddsFile?: boolean; newKeepsOld?: boolean; newSavesNothing?: boolean; answer?: string; forgetsSize?: boolean; newKeepsSize?: boolean; noSize?: boolean };
+
+function sizeStats(tokens: number | null) {
+  return { rounds: 1, toolUses: 0, inputTokens: tokens ?? 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 1, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: tokens, lastRequestTokens: tokens, refusedTools: [], spokeFirst: null, retried: null };
+}
 
 function savedChatsEngine(engine: Engine, fake: SavedFake = {}): SavedChatsUnderTest {
   const requests: SeenRequest[] = [];
   let store: string[] | null = null;
+  let storedSize: number | null = null;
   let extraFiles = 0;
   return {
     engine,
@@ -552,34 +557,41 @@ function savedChatsEngine(engine: Engine, fake: SavedFake = {}): SavedChatsUnder
           ? fake.resumeSaves !== false && !(fake.resumeSavesOnce === true && store !== null) && !(mode === "new" && fake.newSavesNothing === true)
           : fake.freshSaves === true || (fake.freshOverwrites === true && store !== null);
       const history = loads ? [...(store ?? [])] : [];
+      const offered = (loads && store !== null) || (mode === "new" && fake.newKeepsSize === true);
+      const knownSize = offered && fake.forgetsSize !== true ? (storedSize ?? undefined) : undefined;
       const session: AgentSession = {
         async ask(question) {
           requests.push({ ...goodRequestFor(engine), lastUserText: question, body: JSON.stringify([...history, question]) });
           const text = fake.answer ?? plainAnswer;
+          const size = fake.noSize === true ? null : (history.length + 1) * 10;
           history.push(question, text);
-          if (saves) store = fake.savesOnlyLatest === true ? [question, text] : fake.losesAnswers === true ? history.filter((item) => item !== text) : [...history];
+          if (saves) {
+            store = fake.savesOnlyLatest === true ? [question, text] : fake.losesAnswers === true ? history.filter((item) => item !== text) : [...history];
+            if (engine === "api") storedSize = size;
+          }
           if (chats === "fresh" && fake.freshDeletes === true) store = null;
           if (chats === "resume" && fake.resumeAddsFile === true && store !== null && history.length > 2) extraFiles++;
-          return { text, firstWordsMs: 1, totalMs: 2 };
+          return { text, firstWordsMs: 1, totalMs: 2, stats: sizeStats(size) };
         },
         readyMs: () => null,
         costUsd: () => null,
         stoppedReason: () => null,
         close: () => {},
       };
-      return session;
+      const rememberSize = engine === "sdk" && saves ? async (tokens: number) => void (storedSize = tokens) : undefined;
+      return { ...session, ...(knownSize === undefined ? {} : { knownSize }), ...(rememberSize === undefined ? {} : { rememberSize }) };
     },
   };
 }
 
 const savedNamesBeforeNew = ["both engines: a fresh chat saves nothing", "both engines: with nothing saved yet, a resumed chat starts one and saves it", "both engines: a resumed chat picks up where the last one stopped", "both engines: a fresh chat leaves a saved one alone"];
-const savedNames = [...savedNamesBeforeNew, "both engines: new starts a chat without the old one, and that's the one picked up next"];
+const savedNames = [...savedNamesBeforeNew, "both engines: new starts a chat without the old one, and that's the one picked up next", "both engines: a resumed chat starts with the size its last answer reached, and new starts with none"];
 
 function savedDeps(sdk: SavedFake = {}, api: SavedFake = {}) {
   return { engines: [savedChatsEngine("sdk", sdk), savedChatsEngine("api", api)], marker: "saved-999", timeoutMs: 1000, settleMs: 0 };
 }
 
-test("two engines that save and pick up chats properly pass all four saved-chat checks", async () => {
+test("two engines that save and pick up chats properly pass all six saved-chat checks", async () => {
   const results = await runSavedChatsCheck(savedDeps());
   assert.deepEqual(results.map((result) => result.name), savedNames);
   assert.deepEqual(failed(results), []);
@@ -587,18 +599,21 @@ test("two engines that save and pick up chats properly pass all four saved-chat 
 
 test("each way of getting saved chats wrong fails its own check, naming the engine", async () => {
   const cases: [SavedFake, string[]][] = [
-    [{ freshSaves: true }, savedNamesBeforeNew],
-    [{ resumeSaves: false }, [savedNames[1], savedNames[2], savedNames[4]]],
-    [{ resumeLoads: false }, [savedNames[2], savedNames[4]]],
+    [{ freshSaves: true }, [...savedNamesBeforeNew, savedNames[5]]],
+    [{ resumeSaves: false }, [savedNames[1], savedNames[2], savedNames[4], savedNames[5]]],
+    [{ resumeLoads: false }, [savedNames[2], savedNames[4], savedNames[5]]],
     [{ savesOnlyLatest: true }, [savedNames[2]]],
     [{ losesAnswers: true }, [savedNames[2]]],
-    [{ freshDeletes: true }, [savedNames[2], savedNames[3]]],
+    [{ freshDeletes: true }, [savedNames[2], savedNames[3], savedNames[5]]],
     [{ freshLoads: true }, [savedNames[3]]],
-    [{ freshOverwrites: true }, [savedNames[2], savedNames[3]]],
-    [{ resumeSavesOnce: true }, [savedNames[2]]],
-    [{ newKeepsOld: true }, [savedNames[4]]],
-    [{ newSavesNothing: true }, [savedNames[4]]],
-    [{ answer: "Something else" }, savedNames],
+    [{ freshOverwrites: true }, [savedNames[2], savedNames[3], savedNames[5]]],
+    [{ resumeSavesOnce: true }, [savedNames[2], savedNames[5]]],
+    [{ newKeepsOld: true }, [savedNames[4], savedNames[5]]],
+    [{ newSavesNothing: true }, [savedNames[4], savedNames[5]]],
+    [{ forgetsSize: true }, [savedNames[5]]],
+    [{ newKeepsSize: true }, [savedNames[5]]],
+    [{ noSize: true }, [savedNames[5]]],
+    [{ answer: "Something else" }, savedNames.slice(0, 5)],
   ];
   for (const [fake, names] of cases) {
     const results = await runSavedChatsCheck(savedDeps({}, fake));
@@ -615,7 +630,7 @@ test("a saved-chat question that never answers fails within the time limit", asy
     return { ...session, ask: () => new Promise<Answer>(() => {}) };
   };
   const results = await runSavedChatsCheck({ engines: [engine], marker: "saved-999", timeoutMs: 20, settleMs: 0 });
-  assert.equal(results.length, 5);
+  assert.equal(results.length, 6);
   assert.ok(results.every((result) => !result.ok && result.name.startsWith("plain API call: ")));
   assert.match(results[0].detail, /answered "failed: No answer within 0\.02 seconds"/);
 });

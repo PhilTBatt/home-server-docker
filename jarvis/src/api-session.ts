@@ -19,7 +19,7 @@ export type ApiSettings = {
   thinkingHistory?: ThinkingHistory;
   retryMs?: number;
   history?: Turn[];
-  save?: (history: Turn[]) => Promise<string | null>;
+  save?: (history: Turn[], size: number | null) => Promise<string | null>;
 };
 
 export type SendRequest = (request: DirectRequest) => Promise<DirectAnswer>;
@@ -185,7 +185,7 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
         if (calls.length === 0) {
           if (hasVisibleContent(answer.content)) {
             history.push(...(thinkingHistory === "keep" ? turns : withoutThinking(turns)));
-            const problem = (await settings.save?.(history)) ?? null;
+            const problem = (await settings.save?.(history, stats.lastRequestTokens)) ?? null;
             if (problem !== null) listener.note?.(problem);
           }
           return { text: answer.text, firstWordsMs, totalMs: settings.now() - started, stats };

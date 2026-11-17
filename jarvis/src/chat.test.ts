@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { pricesPerMTok } from "./prices.js";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatsLine, chatSystem, commandNote, costLine, lengthLineFor, listenNow, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
+import { apiChatSystem, chatModel, chatsLine, chatSystem, commandNote, costLine, lengthLineFor, listenNow, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -662,8 +662,8 @@ test("only a lone + or - is a rating; anything longer is a question", async () =
 });
 
 test("Jarvis's settings are printed in one line, as they're written in jarvis/.env", () => {
-  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LOG=on");
-  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LOG=off");
+  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_LOG=on");
+  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_LOG=off");
 });
 
 test("the chats line says whether this chat is saved, and what it picks up", () => {
@@ -713,35 +713,34 @@ test("in a chat that carries on a saved one, a failed question says how to start
   assert.ok(plain.output().includes("Jarvis couldn't answer: Overloaded\nYou: "), plain.output());
 });
 
-const haikuLine = { longPromptOver: 100_000, times: 5, startOver: "type exit and start Jarvis again" };
+const haikuLine = { warnAt: 80_000, cap: null, longPromptOver: 100_000, times: 5, startOver: "type exit and start Jarvis again" };
 
-test("the length line comes from the model's prices: where the long-prompt rate starts, and how many times dearer it is", () => {
-  assert.deepEqual(lengthLineFor(pricesPerMTok[chatModel], "type exit"), { longPromptOver: 100_000, times: 5, startOver: "type exit" });
-  assert.equal(lengthLineFor({ ...pricesPerMTok[chatModel], longPromptOver: 200_000, longInput: 0.2 }, "type exit")?.times, 2);
-  assert.equal(lengthLineFor({ ...pricesPerMTok[chatModel], longPromptOver: 200_000, longInput: 0.2 }, "type exit")?.longPromptOver, 200_000);
-  assert.equal(lengthLineFor(undefined, "type exit"), null);
+test("the length line takes the warning level from the setting, and the long-prompt line and how many times dearer from the model's prices", () => {
+  assert.deepEqual(lengthLineFor(pricesPerMTok[chatModel], 80_000, null, "type exit"), { warnAt: 80_000, cap: null, longPromptOver: 100_000, times: 5, startOver: "type exit" });
+  assert.deepEqual(lengthLineFor({ ...pricesPerMTok[chatModel], longPromptOver: 200_000, longInput: 0.2 }, 150_000, 300_000, "type exit"), { warnAt: 150_000, cap: 300_000, longPromptOver: 200_000, times: 2, startOver: "type exit" });
+  assert.deepEqual(lengthLineFor(undefined, 60_000, null, "type exit"), { warnAt: 60_000, cap: null, longPromptOver: null, times: null, startOver: "type exit" });
 });
 
 test("a chat gets one heads-up when it reaches 80% of the long-prompt line, then a note on every answer past the line", () => {
   const note = startLengthNotes(haikuLine);
   assert.equal(note(null), null);
   assert.equal(note(79_999), null);
-  assert.equal(note(81_600), "This chat is now about 82,000 tokens. Past 100,000, each question costs 5 times as much, so start a new one when you're done with this topic: type exit and start Jarvis again");
+  assert.equal(note(81_600), "This chat has reached 80,000 tokens (about 82,000 now). Past 100,000, each question costs 5 times as much, so start a new one when you're done with this topic: type exit and start Jarvis again");
   assert.equal(note(95_000), null);
   assert.equal(note(100_000), null);
   assert.equal(note(100_001), "This chat is about 101,000 tokens, so each question now costs 5 times as much. A new chat would be cheaper: type exit and start Jarvis again");
   assert.equal(note(104_400), "This chat is about 105,000 tokens, so each question now costs 5 times as much. A new chat would be cheaper: type exit and start Jarvis again");
   assert.equal(note(null), null);
-  assert.match(startLengthNotes(haikuLine)(80_000) ?? "", /^This chat is now about 80,000 tokens\./);
+  assert.match(startLengthNotes(haikuLine)(80_000) ?? "", /^This chat has reached 80,000 tokens \(about 80,000 now\)\./);
 });
 
 test("a chat that gets short again, as after /clear, gets a heads-up again when it next grows long", () => {
   const note = startLengthNotes(haikuLine);
-  assert.match(note(85_000) ?? "", /^This chat is now about 85,000/);
+  assert.match(note(85_000) ?? "", /^This chat has reached 80,000 tokens \(about 85,000 now\)/);
   assert.equal(note(null), null);
   assert.equal(note(90_000), null);
   assert.equal(note(5_000), null);
-  assert.match(note(88_000) ?? "", /^This chat is now about 88,000/);
+  assert.match(note(88_000) ?? "", /^This chat has reached 80,000 tokens \(about 88,000 now\)/);
 });
 
 test("a chat that jumps straight past the line gets the past-the-line note, and no heads-up after it", () => {
@@ -754,7 +753,7 @@ test("the length note uses the answer's last request, which is what the chat now
   const session = fakeSession({ Hello: async () => ({ ...answer("Hi Phil.", 100, 400), stats: { ...answer("Hi Phil.", 100, 400).stats!, largestRequestTokens: 101_000, lastRequestTokens: 85_000 } }) });
   const { run, output } = chat(session, ["Hello"], { lengthNote: startLengthNotes(haikuLine) });
   await run();
-  assert.match(output(), /\(first words [^\n]*\n  \(This chat is now about 85,000 tokens\. Past 100,000, each question costs 5 times as much, so start a new one when you're done with this topic: type exit and start Jarvis again\)\nYou: /);
+  assert.match(output(), /\(first words [^\n]*\n  \(This chat has reached 80,000 tokens \(about 85,000 now\)\. Past 100,000, each question costs 5 times as much, so start a new one when you're done with this topic: type exit and start Jarvis again\)\nYou: /);
 });
 
 test("an empty answer, which isn't kept in the chat, gets no length note", async () => {
@@ -765,7 +764,7 @@ test("an empty answer, which isn't kept in the chat, gets no length note", async
 });
 
 function newChatOf(chat: Partial<NewChat> & { session: AgentSession }): NewChat {
-  return { record: undefined, rate: undefined, failureHint: undefined, lengthNote: undefined, recordNewChat: undefined, notes: [], ...chat };
+  return { record: undefined, rate: undefined, failureHint: undefined, lengthNote: undefined, recordNewChat: undefined, knownSize: undefined, rememberSize: undefined, notes: [], ...chat };
 }
 
 function withSize(text: string, lastRequestTokens: number | null): Script {
@@ -908,17 +907,12 @@ test("the setting decides who says it: the note gets a fresh length note for eac
   assert.equal(note.sizeLine, undefined);
   const first = note.newLengthNote();
   const second = note.newLengthNote();
-  assert.match(first?.(85_000) ?? "", /^This chat is now about 85,000/);
+  assert.match(first?.(85_000) ?? "", /^This chat has reached 80,000 tokens \(about 85,000 now\)/);
   assert.equal(first?.(86_000), null);
-  assert.match(second?.(86_000) ?? "", /^This chat is now about 86,000/);
+  assert.match(second?.(86_000) ?? "", /^This chat has reached 80,000 tokens \(about 86,000 now\)/);
   const jarvis = lengthHintsFor("jarvis", haikuLine);
   assert.equal(jarvis.newLengthNote(), undefined);
   assert.equal(jarvis.sizeLine?.(85_000), "[Chat size: about 85,000 tokens. Past 100,000, each question costs 5 times as much.]");
-  for (const mode of ["note", "jarvis"] as const) {
-    const none = lengthHintsFor(mode, null);
-    assert.equal(none.newLengthNote(), undefined);
-    assert.equal(none.sizeLine, undefined);
-  }
 });
 
 test("after a failed question, the next one still carries the chat's size", async () => {
@@ -932,4 +926,156 @@ test("after a failed question, the next one still carries the chat's size", asyn
   const { run } = chat(session, ["One", "Two", "Three"], { sizeLine: startSizeLines(haikuLine) });
   await run();
   assert.deepEqual(sent.map((question) => question.includes("[Chat size: about 85,000")), [false, true, true]);
+});
+
+test("a warning level from the setting moves the heads-up and the size line, and the note says which line was reached", () => {
+  const line = { ...haikuLine, warnAt: 60_000 };
+  const note = startLengthNotes(line);
+  assert.equal(note(59_999), null);
+  assert.equal(note(61_400), "This chat has reached 60,000 tokens (about 62,000 now). Past 100,000, each question costs 5 times as much, so start a new one when you're done with this topic: type exit and start Jarvis again");
+  assert.equal(startSizeLines(line)(61_400), "[Chat size: about 62,000 tokens. Past 100,000, each question costs 5 times as much.]");
+  assert.equal(startSizeLines(line)(59_999), null);
+});
+
+test("for a model with no long-prompt price, the warning still comes, without a cost it can't know", () => {
+  const line = { warnAt: 50_000, cap: null, longPromptOver: null, times: null, startOver: "type new" };
+  const note = startLengthNotes(line);
+  assert.equal(note(52_000), "This chat has reached 50,000 tokens (about 52,000 now), so start a new one when you're done with this topic: type new");
+  assert.equal(note(500_000), null);
+  assert.equal(startSizeLines(line)(52_000), "[Chat size: about 52,000 tokens.]");
+  assert.equal(startSizeLines(line)(500_000), "[Chat size: about 500,000 tokens.]");
+});
+
+test("a warning set above the long-prompt line stays quiet until it's reached", () => {
+  const note = startLengthNotes({ ...haikuLine, warnAt: 120_000 });
+  assert.equal(note(110_000), null);
+  assert.match(note(121_000) ?? "", /^This chat is about 121,000 tokens, so each question now costs 5 times as much/);
+});
+
+test("past the cap, a question isn't sent, and Jarvis says why and what to do; new lifts it", async () => {
+  const old = fakeSession({ One: withSize("First.", 150_001), Two: withSize("Never.", 10) });
+  const fresh = fakeSession({ Three: withSize("Third.", 10) });
+  const { run, output } = chat(old, ["One", "Two", "new", "Three"], { lengthCap: 150_000, newChat: async () => newChatOf({ session: fresh }) });
+  await run();
+  assert.deepEqual(old.asked, ["One"]);
+  assert.deepEqual(fresh.asked, ["Three"]);
+  assert.ok(output().includes(`You:   (${capNote(150_000)})\nYou: `), output());
+  assert.equal(capNote(150_000), "This chat has passed the 150,000-token cap set by JARVIS_LENGTH_CAP, so that wasn't sent. Type new to start a new chat, then ask again");
+});
+
+test("at the cap itself, or with no cap, questions are still sent", async () => {
+  const atCap = fakeSession({ One: withSize("First.", 150_000), Two: withSize("Second.", 10) });
+  const atCapChat = chat(atCap, ["One", "Two"], { lengthCap: 150_000 });
+  await atCapChat.run();
+  assert.deepEqual(atCap.asked, ["One", "Two"]);
+  assert.ok(!atCapChat.output().includes("cap set by"), atCapChat.output());
+  const noCap = fakeSession({ One: withSize("First.", 900_000), Two: withSize("Second.", 10) });
+  await chat(noCap, ["One", "Two"]).run();
+  assert.deepEqual(noCap.asked, ["One", "Two"]);
+});
+
+test("the answer that passes the cap says so straight away, instead of the usual length note, is remembered, and ratings still work after it", async () => {
+  const old = fakeSession({ One: withSize("First.", 200_000) });
+  const rated: string[] = [];
+  const remembered: number[] = [];
+  const { run, output } = chat(old, ["One", "+", "", "exit"], {
+    lengthCap: 150_000,
+    rememberSize: async (tokens) => void remembered.push(tokens),
+    lengthNote: startLengthNotes({ ...haikuLine, cap: 150_000 }),
+    rate: async (rating) => {
+      rated.push(rating);
+      return "saved";
+    },
+  });
+  await run();
+  assert.deepEqual(rated, ["good"]);
+  assert.deepEqual(remembered, [200_000]);
+  assert.ok(output().includes(`(first words 0.10 s, full answer 0.40 s)\n  (${capReachedNote(150_000)})\n`), output());
+  assert.equal(output().split("cap set by").length - 1, 1, output());
+  assert.ok(!output().includes("tokens, so each question now costs"), output());
+  assert.equal(capReachedNote(150_000), "This chat has passed the 150,000-token cap set by JARVIS_LENGTH_CAP, so no more questions will be sent in it. Type new to start a new chat");
+});
+
+test("small sizes are given exactly, not rounded to thousands", () => {
+  const note = startLengthNotes({ warnAt: 500, cap: null, longPromptOver: null, times: null, startOver: "type new" });
+  assert.equal(note(640), "This chat has reached 500 tokens (about 640 now), so start a new one when you're done with this topic: type new");
+  assert.equal(startSizeLines({ warnAt: 500, cap: null, longPromptOver: null, times: null, startOver: "type new" })(9_999), "[Chat size: about 9,999 tokens.]");
+});
+
+test("the warning and the size line say where the cap is, and leave out the long-prompt price when the cap stops the chat first", () => {
+  const capped = { ...haikuLine, cap: 90_000 };
+  assert.equal(startLengthNotes(capped)(85_000), "This chat has reached 80,000 tokens (about 85,000 now). Past 90,000, your JARVIS_LENGTH_CAP, it stops taking questions, so start a new one when you're done with this topic: type exit and start Jarvis again");
+  assert.equal(startSizeLines(capped)(85_000), "[Chat size: about 85,000 tokens. Past 90,000, no more questions can be sent in this chat.]");
+  const late = { ...haikuLine, cap: 150_000 };
+  assert.equal(startLengthNotes(late)(85_000), "This chat has reached 80,000 tokens (about 85,000 now). Past 100,000, each question costs 5 times as much. Past 150,000, your JARVIS_LENGTH_CAP, it stops taking questions, so start a new one when you're done with this topic: type exit and start Jarvis again");
+  assert.equal(startSizeLines(late)(85_000), "[Chat size: about 85,000 tokens. Past 100,000, each question costs 5 times as much. Past 150,000, no more questions can be sent in this chat.]");
+});
+
+test("the size shown never rounds below the line it passed", () => {
+  const line = { ...haikuLine, warnAt: 80_300 };
+  assert.equal(startLengthNotes(line)(80_400), "This chat has reached 80,300 tokens (about 81,000 now). Past 100,000, each question costs 5 times as much, so start a new one when you're done with this topic: type exit and start Jarvis again");
+  assert.equal(startSizeLines({ ...haikuLine, warnAt: 10_000 })(10_400), "[Chat size: about 11,000 tokens. Past 100,000, each question costs 5 times as much.]");
+});
+
+test("a chat that starts with a known size, as a resumed one does, is capped and sized from its first question, and remembers each new size", async () => {
+  const capped = fakeSession({ One: withSize("Never.", 10) });
+  const out = chat(capped, ["One"], { lengthCap: 150_000, knownSize: 160_000 });
+  await out.run();
+  assert.deepEqual(capped.asked, []);
+  assert.ok(out.output().includes(capNote(150_000)), out.output());
+  const sent: string[] = [];
+  const remembered: number[] = [];
+  const sized = fakeSession({});
+  sized.ask = (question, listener) => {
+    sent.push(question);
+    return withSize("Hi.", question.startsWith("Two") ? null : 91_000)(listener ?? {});
+  };
+  await chat(sized, ["One", "Two", "Three"], { sizeLine: startSizeLines(haikuLine), knownSize: 85_000, rememberSize: async (tokens) => void remembered.push(tokens) }).run();
+  assert.deepEqual(sent, ["One\n\n[Chat size: about 85,000 tokens. Past 100,000, each question costs 5 times as much.]", "Two\n\n[Chat size: about 91,000 tokens. Past 100,000, each question costs 5 times as much.]", "Three\n\n[Chat size: about 91,000 tokens. Past 100,000, each question costs 5 times as much.]"]);
+  assert.deepEqual(remembered, [91_000, 91_000]);
+});
+
+test("new starts from the new chat's own known size", async () => {
+  const sent: string[] = [];
+  const fresh = fakeSession({});
+  fresh.ask = (question, listener) => {
+    sent.push(question);
+    return withSize("Hi.", 10)(listener ?? {});
+  };
+  await chat(fakeSession({}), ["new", "Two"], { sizeLine: startSizeLines(haikuLine), knownSize: 99_000, newChat: async () => newChatOf({ session: fresh, knownSize: 82_000 }) }).run();
+  assert.deepEqual(sent, ["Two\n\n[Chat size: about 82,000 tokens. Past 100,000, each question costs 5 times as much.]"]);
+});
+
+test("an empty Enter past the cap says nothing", async () => {
+  const session = fakeSession({ One: withSize("First.", 200_000) });
+  const { run, output } = chat(session, ["One", "", "   "], { lengthCap: 150_000 });
+  await run();
+  assert.equal(output().split(capNote(150_000)).length - 1, 0, output());
+});
+
+test("an answer that jumps past both the warning and the cap gets only the cap note", async () => {
+  const session = fakeSession({ One: withSize("First.", 95_000) });
+  const { run, output } = chat(session, ["One"], { lengthCap: 90_000, lengthNote: startLengthNotes({ ...haikuLine, cap: 90_000 }) });
+  await run();
+  assert.ok(output().includes(`full answer 0.40 s)\n  (${capReachedNote(90_000)})\n`), output());
+  assert.ok(!output().includes("This chat has passed 80,000"), output());
+});
+
+test("past the long-prompt line, the note and the size line still say where the cap is, until it's passed", () => {
+  const line = { ...haikuLine, warnAt: 120_000, cap: 150_000 };
+  assert.equal(startLengthNotes(line)(121_000), "This chat is about 121,000 tokens, so each question now costs 5 times as much. Past 150,000, your JARVIS_LENGTH_CAP, it stops taking questions. A new chat would be cheaper: type exit and start Jarvis again");
+  assert.equal(startSizeLines(line)(121_000), "[Chat size: about 121,000 tokens, so each question now costs 5 times as much. Past 150,000, no more questions can be sent in this chat.]");
+  assert.equal(startLengthNotes({ ...haikuLine, cap: 150_000 })(150_000), "This chat is about 150,000 tokens, so each question now costs 5 times as much. Past 150,000, your JARVIS_LENGTH_CAP, it stops taking questions. A new chat would be cheaper: type exit and start Jarvis again");
+  assert.equal(startLengthNotes({ ...haikuLine, cap: 150_000 })(150_001), "This chat is about 151,000 tokens, so each question now costs 5 times as much. A new chat would be cheaper: type exit and start Jarvis again");
+  assert.equal(startSizeLines({ ...haikuLine, cap: 150_000 })(150_001), "[Chat size: about 151,000 tokens, so each question now costs 5 times as much.]");
+});
+
+test("a chat that starts already past the cap, as a resumed one can, says so before the first question", async () => {
+  const session = fakeSession({ One: withSize("Never.", 10) });
+  const { run, output } = chat(session, ["One"], { lengthCap: 150_000, knownSize: 160_000 });
+  await run();
+  assert.ok(output().startsWith(`${greeting}\n  (${capReachedNote(150_000)})\nYou: `), output());
+  const under = chat(fakeSession({}), [], { lengthCap: 150_000, knownSize: 150_000 });
+  await under.run();
+  assert.ok(!under.output().includes("cap set by"), under.output());
 });

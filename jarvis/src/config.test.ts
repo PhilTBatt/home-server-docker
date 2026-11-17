@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -109,4 +109,27 @@ test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length no
   assert.equal(readConfig({ ...base, JARVIS_LENGTH_HINTS: "note" }).lengthHints, "note");
   assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_HINTS: "Jarvis" }), { message: 'JARVIS_LENGTH_HINTS must be note or jarvis, not "Jarvis"' });
   assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_HINTS: "both" }), { message: 'JARVIS_LENGTH_HINTS must be note or jarvis, not "both"' });
+});
+
+test("JARVIS_LENGTH_WARN sets where the chat-length warning starts: 80,000 tokens unless told otherwise", () => {
+  assert.equal(readConfig(base).lengthWarn, 80000);
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_WARN: "" }).lengthWarn, 80000);
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_WARN: " 60000 " }).lengthWarn, 60000);
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_WARN: "080000" }).lengthWarn, 80000);
+  for (const bad of ["0", "000", "-5", "80,000", "80k", "8e4", "80000.5", "off", "99999999999999999999"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_WARN: bad }), { message: `JARVIS_LENGTH_WARN must be a whole number of tokens above 0, like 80000, not "${bad}"` }, bad);
+  }
+});
+
+test("JARVIS_LENGTH_CAP is off unless set, and must be above the warning", () => {
+  assert.equal(readConfig(base).lengthCap, null);
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_CAP: "off" }).lengthCap, null);
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_CAP: "150000" }).lengthCap, 150000);
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_CAP: "80001" }).lengthCap, 80001);
+  for (const bad of ["Off", "0", "150k", "none"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_CAP: bad }), { message: `JARVIS_LENGTH_CAP must be a whole number of tokens above 0, like 150000, or off, not "${bad}"` }, bad);
+  }
+  assert.equal(readConfig({ ...base, JARVIS_LENGTH_CAP: " 150000 " }).lengthCap, 150000);
+  assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_CAP: "80000" }), { message: "JARVIS_LENGTH_CAP (80000) must be above JARVIS_LENGTH_WARN (80000, the default)" });
+  assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_WARN: "120000", JARVIS_LENGTH_CAP: "100000" }), { message: "JARVIS_LENGTH_CAP (100000) must be above JARVIS_LENGTH_WARN (120000)" });
 });

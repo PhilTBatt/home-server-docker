@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ChatMode, Engine } from "./config.js";
@@ -11,8 +11,8 @@ export const apiChatFile = join(chatsFolder, "plain-api.json");
 export const sdkChatsFolder = join(chatsFolder, "agent-sdk");
 export const savedChatVersion = 1;
 
-export type LoadedChat = { turns: Turn[]; problem: string | null; canSave: boolean };
-export type SaveChat = (turns: Turn[]) => Promise<string | null>;
+export type LoadedChat = { turns: Turn[]; size: number | null; problem: string | null; canSave: boolean };
+export type SaveChat = (turns: Turn[], size?: number | null) => Promise<string | null>;
 
 export type ChatSetup = {
   chats: ChatMode;
@@ -23,6 +23,8 @@ export type ChatSetup = {
   problem: string | null;
   failureHint: string | null;
   movedTo?: string;
+  knownSize?: number;
+  rememberSize?: (tokens: number) => Promise<void>;
 };
 
 export type Retired = { problem: string | null; movedTo: string | null };
@@ -70,13 +72,13 @@ export async function loadChat(file: string): Promise<LoadedChat> {
     text = await readFile(file, "utf8");
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return { turns: [], problem: null, canSave: true };
-    return { turns: [], problem: `The saved chat couldn't be read (${code ?? "unknown error"}), so this chat won't be saved, to leave that one alone`, canSave: false };
+    if (code === "ENOENT") return { turns: [], size: null, problem: null, canSave: true };
+    return { turns: [], size: null, problem: `The saved chat couldn't be read (${code ?? "unknown error"}), so this chat won't be saved, to leave that one alone`, canSave: false };
   }
   try {
     const saved: unknown = JSON.parse(text);
-    const { v, turns } = (saved ?? {}) as { v?: unknown; turns?: unknown };
-    if (v === savedChatVersion && isSavedTurns(turns)) return { turns, problem: null, canSave: true };
+    const { v, turns, size } = (saved ?? {}) as { v?: unknown; turns?: unknown; size?: unknown };
+    if (v === savedChatVersion && isSavedTurns(turns)) return { turns, size: Number.isSafeInteger(size) && (size as number) >= 0 ? (size as number) : null, problem: null, canSave: true };
   } catch {
     return setAside(file);
   }
@@ -87,20 +89,20 @@ async function setAside(file: string): Promise<LoadedChat> {
   const aside = `${file}.unreadable-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   try {
     await rename(file, aside);
-    return { turns: [], problem: `The saved chat isn't one Jarvis can read, so it was moved aside as ${basename(aside)}`, canSave: true };
+    return { turns: [], size: null, problem: `The saved chat isn't one Jarvis can read, so it was moved aside as ${basename(aside)}`, canSave: true };
   } catch {
-    return { turns: [], problem: "The saved chat isn't one Jarvis can read and couldn't be moved aside, so this chat won't be saved, to leave that one alone", canSave: false };
+    return { turns: [], size: null, problem: "The saved chat isn't one Jarvis can read and couldn't be moved aside, so this chat won't be saved, to leave that one alone", canSave: false };
   }
 }
 
 export function startChatSaver(file: string): SaveChat {
   let broken = false;
-  return async (turns) => {
+  return async (turns, size = null) => {
     if (broken) return null;
     const saving = `${file}.${randomUUID()}.saving`;
     try {
       await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-      await writeFile(saving, `${JSON.stringify({ v: savedChatVersion, turns })}\n`, { mode: 0o600 });
+      await writeFile(saving, `${JSON.stringify({ v: savedChatVersion, turns, ...(size === null ? {} : { size }) })}\n`, { mode: 0o600 });
       await rename(saving, file);
       return null;
     } catch (error) {
@@ -114,6 +116,47 @@ export function startChatSaver(file: string): SaveChat {
 export async function savedSdkChats(folder: string): Promise<number> {
   const entries = await readdir(join(folder, "projects"), { recursive: true }).catch(() => []);
   return entries.filter((entry) => entry.endsWith(".jsonl")).length;
+}
+
+function sizeFile(places: ChatPlaces): string {
+  return `${places.sdkChatsFolder}-size.json`;
+}
+
+async function newestTranscript(folder: string): Promise<string | null> {
+  const projects = join(folder, "projects");
+  const entries = await readdir(projects, { recursive: true }).catch(() => []);
+  let newest: { name: string; changed: number } | null = null;
+  for (const name of entries.filter((entry) => entry.endsWith(".jsonl"))) {
+    const changed = await stat(join(projects, name)).then((info) => info.mtimeMs, () => null);
+    if (changed !== null && (newest === null || changed > newest.changed)) newest = { name, changed };
+  }
+  return newest?.name ?? null;
+}
+
+async function sdkKnownSize(places: ChatPlaces): Promise<number | null> {
+  try {
+    const saved: unknown = JSON.parse(await readFile(sizeFile(places), "utf8"));
+    const { transcript, tokens } = (saved ?? {}) as { transcript?: unknown; tokens?: unknown };
+    if (typeof transcript !== "string" || !Number.isSafeInteger(tokens) || (tokens as number) < 0) return null;
+    return transcript === (await newestTranscript(places.sdkChatsFolder)) ? (tokens as number) : null;
+  } catch {
+    return null;
+  }
+}
+
+function startSdkSizeSaver(places: ChatPlaces): (tokens: number) => Promise<void> {
+  return async (tokens) => {
+    const file = sizeFile(places);
+    const saving = `${file}.${randomUUID()}.saving`;
+    try {
+      const transcript = await newestTranscript(places.sdkChatsFolder);
+      if (transcript === null) return;
+      await writeFile(saving, `${JSON.stringify({ transcript, tokens })}\n`, { mode: 0o600 });
+      await rename(saving, file);
+    } catch {
+      await rm(saving, { force: true }).catch(() => {});
+    }
+  };
 }
 
 export const oldChatsKept = 10;
@@ -188,7 +231,17 @@ export async function setUpChats(chats: ChatMode, engine: Engine, places: ChatPl
       return { chats: "fresh", history: [], earlierQuestions: 0, problem: `The saved chats folder can't be written to (${code}), so this chat won't be saved`, failureHint: null };
     }
     const saved = await savedSdkChats(places.sdkChatsFolder);
-    return { chats, history: [], earlierQuestions: saved > 0 ? null : 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: saved > 0 ? startOverHint : null };
+    const knownSize = await sdkKnownSize(places);
+    return {
+      chats,
+      history: [],
+      earlierQuestions: saved > 0 ? null : 0,
+      savedChats: places.sdkChatsFolder,
+      problem: null,
+      failureHint: saved > 0 ? startOverHint : null,
+      rememberSize: startSdkSizeSaver(places),
+      ...(knownSize === null ? {} : { knownSize }),
+    };
   }
   const loaded = await loadChat(places.apiChatFile);
   if (!loaded.canSave) return { chats: "fresh", history: [], earlierQuestions: 0, problem: loaded.problem, failureHint: null };
@@ -199,5 +252,6 @@ export async function setUpChats(chats: ChatMode, engine: Engine, places: ChatPl
     save: startChatSaver(places.apiChatFile),
     problem: loaded.problem,
     failureHint: loaded.turns.length > 0 ? startOverHint : null,
+    ...(loaded.size === null ? {} : { knownSize: loaded.size }),
   };
 }

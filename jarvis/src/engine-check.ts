@@ -281,9 +281,11 @@ export async function runEngineCheck(deps: EngineCheckDeps): Promise<CheckResult
   return results;
 }
 
+export type StartedChat = AgentSession & { knownSize?: number; rememberSize?: (tokens: number) => Promise<void> };
+
 export type SavedChatsUnderTest = {
   engine: Engine;
-  start: (chats: ChatMode | "new") => Promise<AgentSession>;
+  start: (chats: ChatMode | "new") => Promise<StartedChat>;
   requests: SeenRequest[];
   saved: () => Promise<number>;
 };
@@ -303,18 +305,22 @@ export const afterNewQuestion = "And now?";
 
 export async function runSavedChatsCheck(deps: SavedChatsDeps): Promise<CheckResult[]> {
   const scope = deps.engines.length === 1 ? checkNames[deps.engines[0].engine] : "both engines";
-  const failures: Record<string, string[]> = { fresh: [], first: [], picked: [], ignored: [], renewed: [] };
+  const failures: Record<string, string[]> = { fresh: [], first: [], picked: [], ignored: [], renewed: [], sized: [] };
   const settle = () => new Promise((resolve) => setTimeout(resolve, deps.settleMs));
   for (const engine of deps.engines) {
     const name = checkNames[engine.engine];
     const chat = async (chats: ChatMode | "new", question: string, settleAfter = true) => {
       const session = await engine.start(chats);
       const from = engine.requests.length;
+      const sent = () => engine.requests.slice(from).filter((request) => request.path === "/v1/messages");
+      const knownSize = session.knownSize ?? null;
       try {
         const answer = await withTimeout(session.ask(question, {}), deps.timeoutMs, () => session.close());
-        return { answer: answer.text, sent: engine.requests.slice(from).filter((request) => request.path === "/v1/messages") };
+        const size = answer.stats?.lastRequestTokens ?? null;
+        if (size !== null) await session.rememberSize?.(size);
+        return { answer: answer.text, sent: sent(), knownSize, size };
       } catch (error) {
-        return { answer: `failed: ${reason(error)}`, sent: engine.requests.slice(from).filter((request) => request.path === "/v1/messages") };
+        return { answer: `failed: ${reason(error)}`, sent: sent(), knownSize, size: null };
       } finally {
         session.close();
         if (settleAfter) await settle();
@@ -343,6 +349,10 @@ export async function runSavedChatsCheck(deps: SavedChatsDeps): Promise<CheckRes
     if (renewed.answer !== plainAnswer || after.answer !== plainAnswer || renewed.sent.length === 0 || old.renewed !== 0 || old.after !== 0 || old.kept !== 1) {
       failures.renewed.push(`${name}: answered "${renewed.answer}" then "${after.answer}"; the new chat's first request carried the old chat ${old.renewed} times, the next resumed chat carried the old chat ${old.after} times and the new chat's question ${old.kept} times`);
     }
+    const started = [first, picked, last, renewed, after].map((run) => String(run.knownSize));
+    if (first.size === null || first.knownSize !== null || picked.knownSize !== first.size || last.knownSize !== picked.size || renewed.knownSize !== null || after.knownSize !== renewed.size) {
+      failures.sized.push(`${name}: answers reached ${[first.size, picked.size, renewed.size].map(String).join(", ")} tokens; the chats started with ${started.join(", ")}`);
+    }
     if (ignored.answer !== plainAnswer || ignored.sent.length === 0 || ignored.sent.some((request) => request.body.includes(deps.marker)) || afterIgnored !== beforeIgnored || carried.fresh !== 0) {
       failures.ignored.push(`${name}: answered "${ignored.answer}", ${ignored.sent.some((request) => request.body.includes(deps.marker)) ? "carried the saved chat" : "didn't carry the saved chat"}, ${afterIgnored} saved after it; the next resumed chat carried the fresh chat's question ${carried.fresh} times`);
     }
@@ -354,6 +364,7 @@ export async function runSavedChatsCheck(deps: SavedChatsDeps): Promise<CheckRes
     result("picked", "a resumed chat picks up where the last one stopped"),
     result("ignored", "a fresh chat leaves a saved one alone"),
     result("renewed", "new starts a chat without the old one, and that's the one picked up next"),
+    result("sized", "a resumed chat starts with the size its last answer reached, and new starts with none"),
   ];
 }
 

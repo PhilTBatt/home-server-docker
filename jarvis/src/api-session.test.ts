@@ -890,21 +890,21 @@ test("with thinking dropped, a saved chat's thinking is dropped before it's sent
   assert.deepEqual(requests[0].history, [saved[0], { role: "assistant", content: [{ type: "text", text: "Remembered." }] }]);
 });
 
-test("the whole chat is saved after each answer, before the answer returns, but not after a failed question or an empty answer", async () => {
-  const saves: number[] = [];
-  const { send } = recorder([async () => reply("One."), rejected("The API replied 529: overloaded"), async () => reply(" "), async () => reply("Two.")]);
-  const save = async (history: Turn[]) => {
+test("the whole chat is saved after each answer, with the answer's last request size, before the answer returns, but not after a failed question or an empty answer", async () => {
+  const saves: [number, number | null][] = [];
+  const { send } = recorder([async () => reply("One.", 300), rejected("The API replied 529: overloaded"), async () => reply(" "), async () => reply("Two.", 700)]);
+  const save = async (history: Turn[], size: number | null) => {
     await new Promise((resolve) => setTimeout(resolve, 10));
-    saves.push(history.length);
+    saves.push([history.length, size]);
     return null;
   };
   const session = startApiSession({ ...settings, save }, send);
   await session.ask("First?");
-  assert.deepEqual(saves, [2]);
+  assert.deepEqual(saves, [[2, 300]]);
   await assert.rejects(session.ask("Second?"));
   await session.ask("Third?");
   await session.ask("Fourth?");
-  assert.deepEqual(saves, [2, 4]);
+  assert.deepEqual(saves, [[2, 300], [4, 700]]);
 });
 
 test("a problem saving the chat is shown as a note on the answer, and the answer still comes back", async () => {
@@ -929,12 +929,18 @@ test("after a thinking restart, the saved chat has no earlier thinking either, a
   assert.equal(thinkingBlocksIn(saved.at(-1) ?? []), 0);
 });
 
-test("an answer also reports its last request, which can be smaller than its largest after a thinking restart", async () => {
+test("an answer also reports its last request, which can be smaller than its largest after a thinking restart, and that's the size saved with the chat", async () => {
   const { tools } = fakeTools();
   const first = { ...toolReply([readIndex]), inputTokens: 50, cacheWriteTokens: 0, cacheReadTokens: 9000 };
   const second = { ...reply("Done."), inputTokens: 30, cacheWriteTokens: 0, cacheReadTokens: 6000 };
   const { send } = recorder([async () => first, async () => second]);
-  const stats = (await startApiSession({ ...settings, tools }, send).ask("Read it")).stats;
+  const sizes: (number | null)[] = [];
+  const save = async (_history: Turn[], size: number | null) => {
+    sizes.push(size);
+    return null;
+  };
+  const stats = (await startApiSession({ ...settings, tools, save }, send).ask("Read it")).stats;
   assert.equal(stats?.largestRequestTokens, 9050);
   assert.equal(stats?.lastRequestTokens, 6030);
+  assert.deepEqual(sizes, [6030]);
 });
