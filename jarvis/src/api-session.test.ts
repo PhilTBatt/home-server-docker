@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { closedMessage, type AgentSession } from "./agent.js";
-import { answerCost, echoed, hasVisibleContent, maxToolSteps, spokeBeforeTools, pricesPerMTok, startApiSession, thinkingBlocksIn, withoutThinking, type ApiSettings, type SendRequest } from "./api-session.js";
+import { answerCost, echoed, hasVisibleContent, maxToolSteps, networkRetryMs, spokeBeforeTools, pricesPerMTok, startApiSession, thinkingBlocksIn, withoutThinking, type ApiSettings, type SendRequest } from "./api-session.js";
 import type { BrainTools, ToolOutcome } from "./brain-tools.js";
 import type { DirectAnswer, DirectRequest } from "./direct.js";
 
@@ -801,4 +801,103 @@ test("an answer says whether Jarvis spoke before his first tool, judged by that 
   assert.equal((await startApiSession({ ...settings, tools }, second.send).ask("Read it")).stats?.spokeFirst, true);
   const none = recorder([async () => reply("Hi.")]);
   assert.equal((await startApiSession(settings, none.send).ask("Hello")).stats?.spokeFirst, null);
+});
+
+const offline = rejected("Couldn't reach the API");
+const sent = (request: DirectRequest) => JSON.stringify({ model: request.model, system: request.system, question: request.question, history: request.history, tools: request.tools, cache: request.cache });
+const quick = { ...settings, retryMs: 0 };
+
+test("a network error gets one retry after a short pause, with the same request, and the answer says so", async () => {
+  assert.equal(networkRetryMs, 1000);
+  const { send, requests } = recorder([offline, async () => reply("Hi.")]);
+  let retries = 0;
+  const answer = await startApiSession(quick, send).ask("Hello?", { retry: () => retries++ });
+  assert.equal(answer.text, "Hi.");
+  assert.equal(retries, 1);
+  assert.equal(answer.stats?.retried, true);
+  assert.equal(requests.length, 2);
+  assert.equal(sent(requests[1]), sent(requests[0]));
+});
+
+test("a second network error in the same question isn't retried again", async () => {
+  const { send, requests } = recorder([offline, offline, async () => reply("Never.")]);
+  await assert.rejects(startApiSession(quick, send).ask("Hello?"), { message: "Couldn't reach the API" });
+  assert.equal(requests.length, 2);
+});
+
+test("other errors aren't retried as network errors", async () => {
+  for (const message of ["The API didn't answer in time", "The API replied 529: overloaded", "The API stopped with an error: overloaded_error", "The API sent no answer", "The connection dropped mid-answer", "The answer was cut off", "The API sent something unreadable"]) {
+    const { send, requests } = recorder([rejected(message), async () => reply("Never.")]);
+    let retries = 0;
+    await assert.rejects(startApiSession(quick, send).ask("Hello?", { retry: () => retries++ }), { message });
+    assert.equal(requests.length, 1, message);
+    assert.equal(retries, 0, message);
+  }
+});
+
+test("a network error part-way through using tools retries only that round, without running the tool again", async () => {
+  const { tools, runs } = fakeTools();
+  const { send, requests } = recorder([async () => toolReply([readIndex], "Let me check."), offline, async () => reply("It covers your life.")]);
+  const answer = await startApiSession({ ...quick, tools }, send).ask("What's in my notes?");
+  assert.equal(answer.text, "It covers your life.");
+  assert.equal(runs.length, 1);
+  assert.equal(requests.length, 3);
+  assert.equal(sent(requests[2]), sent(requests[1]));
+  assert.equal(answer.stats?.retried, true);
+  assert.equal(answer.stats?.toolUses, 1);
+});
+
+test("a question with no network error isn't marked as retried, and the next question can retry again", async () => {
+  const { send } = recorder([async () => reply("One."), offline, async () => reply("Two.")]);
+  const session = startApiSession(quick, send);
+  assert.equal((await session.ask("First?")).stats?.retried, false);
+  assert.equal((await session.ask("Second?")).stats?.retried, true);
+});
+
+test("Ctrl+C during the pause stops straight away, without trying again", async () => {
+  const { send, requests } = recorder([offline, async () => reply("Never.")]);
+  const session = startApiSession({ ...settings, retryMs: 60_000 }, send);
+  const started = Date.now();
+  const asked = session.ask("Hello?", { retry: () => setTimeout(() => session.close(), 5) });
+  await assert.rejects(asked, { message: closedMessage });
+  assert.ok(Date.now() - started < 5000);
+  assert.equal(requests.length, 1);
+});
+
+test("a retry and a recovery can both happen in one question, each once", async () => {
+  const { send, requests } = recorder([async () => thoughtful("One."), offline, rejected(), async () => reply("Two.")]);
+  const session = startApiSession(quick, send);
+  await session.ask("First?");
+  const answer = await session.ask("Second?");
+  assert.equal(answer.text, "Two.");
+  assert.equal(answer.stats?.retried, true);
+  assert.equal(answer.stats?.recovered, true);
+  assert.equal(requests.length, 4);
+});
+
+test("a recovery that then hits a network error still gets its one retry", async () => {
+  const { send, requests } = recorder([async () => thoughtful("One."), rejected(), offline, async () => reply("Two.")]);
+  const session = startApiSession(quick, send);
+  await session.ask("First?");
+  let retries = 0;
+  const answer = await session.ask("Second?", { retry: () => retries++ });
+  assert.equal(answer.text, "Two.");
+  assert.deepEqual([answer.stats?.recovered, answer.stats?.retried, retries], [true, true, 1]);
+  assert.equal(requests.length, 4);
+});
+
+test("Ctrl+C part-way through a request isn't mistaken for a network error, so nothing is retried", async () => {
+  let session: ReturnType<typeof startApiSession> | null = null;
+  const { send, requests } = recorder([
+    async () => {
+      session?.close();
+      throw new Error("Couldn't reach the API");
+    },
+    async () => reply("Never."),
+  ]);
+  session = startApiSession(quick, send);
+  let retries = 0;
+  await assert.rejects(session.ask("Hello?", { retry: () => retries++ }), { message: closedMessage });
+  assert.equal(retries, 0);
+  assert.equal(requests.length, 1);
 });

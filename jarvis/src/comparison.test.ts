@@ -219,6 +219,15 @@ test("refused tools, speaking before the first tool, and the largest request get
   assert.deepEqual(rowOf(report, "Largest request, median"), ["8,000", "3,000"]);
 });
 
+test("retries after a network error are counted for the plain API call, and not shown for the Agent SDK, which retries by itself", () => {
+  const lines = [line({ engine: "sdk", thinking: null, retried: null }), line({ retried: true }), line({ retried: false }), line({ retried: true }), line({ ok: false, retried: true })];
+  const report = compareReport({ lines, skipped: 0 });
+  assert.deepEqual(rowOf(report, "Retried after a network error"), ["-", "2"]);
+  assert.equal(isLogLine({ ...line(), retried: "yes" }), false);
+  const { retried: _retried, ...older } = line();
+  assert.equal(isLogLine(older), true);
+});
+
 test("lines from before the new numbers were logged still count, and the report says what they leave out", () => {
   const { largestRequestTokens: _largest, refusedTools: _refused, spokeFirst: _spoke, ...older } = line({ engine: "sdk", thinking: null });
   assert.equal(isLogLine(older), true);

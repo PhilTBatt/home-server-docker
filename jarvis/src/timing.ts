@@ -11,6 +11,7 @@ export type AnswerStats = {
   largestRequestTokens: number | null;
   refusedTools: string[];
   spokeFirst: boolean | null;
+  retried: boolean | null;
 };
 
 export type Answer = {

@@ -4,7 +4,7 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatSystem, costLine, refusedNote, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
+import { apiChatSystem, chatModel, chatSystem, costLine, refusedNote, retryNote, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -503,7 +503,7 @@ test("each answer is handed to the log after its timing line is shown", async ()
 });
 
 function withStats(base: Answer, refusedTools: string[]): Answer {
-  const stats: AnswerStats = { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, refusedTools, spokeFirst: null };
+  const stats: AnswerStats = { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, refusedTools, spokeFirst: null, retried: false };
   return { ...base, stats };
 }
 
@@ -522,6 +522,21 @@ test("a refused tool shows a note after the answer, once per tool, on either eng
   assert.equal(log.outcomes.length, 1);
   assert.ok("answer" in log.outcomes[0]);
   assert.equal(refusedNote(["read_file"]), "refused: read_file");
+});
+
+test("a retry after a network error shows a note on its own line, then the answer carries on", async () => {
+  assert.equal(retryNote, "couldn't reach the API, so trying once more");
+  const session = fakeSession({
+    Hello: async (listener) => {
+      listener.text?.("Let me");
+      listener.retry?.();
+      listener.text?.("Hi Phil.");
+      return answer("Hi Phil.", 500, 1200);
+    },
+  });
+  const { run, output } = chat(session, ["Hello"]);
+  await run();
+  assert.ok(output().includes("Jarvis: Let me\n  (couldn't reach the API, so trying once more)\nHi Phil.\n  (first words 0.50 s, full answer 1.20 s)\n"), output());
 });
 
 test("an answer with nothing refused shows no refusal note", async () => {

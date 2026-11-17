@@ -31,6 +31,7 @@ export function answerCost(prices: Prices, used: TokenUse): number {
 }
 
 export const maxToolSteps = 10;
+export const networkRetryMs = 1000;
 
 export type ApiSettings = {
   apiKey: string;
@@ -41,6 +42,7 @@ export type ApiSettings = {
   now: () => number;
   tools?: BrainTools;
   thinkingHistory?: ThinkingHistory;
+  retryMs?: number;
 };
 
 export type SendRequest = (request: DirectRequest) => Promise<DirectAnswer>;
@@ -82,6 +84,28 @@ export function withoutThinking(turns: Turn[]): Turn[] {
   return turns.map((turn) => (turn.role === "assistant" && typeof turn.content !== "string" ? { role: "assistant", content: turn.content.filter((block) => !isThinking(block) && !isBlankText(block)) } : turn));
 }
 
+function unreachable(error: unknown): boolean {
+  return error instanceof Error && error.message === "Couldn't reach the API";
+}
+
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const stop = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", stop);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", stop, { once: true });
+  });
+}
+
 function rejectedByApi(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith("The API replied 400:");
 }
@@ -116,6 +140,7 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
       largestRequestTokens: 0,
       refusedTools: [],
       spokeFirst: null,
+      retried: false,
     };
     const sendRound = async () => {
       const answer = await send({
@@ -136,10 +161,17 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
       stats.rounds++;
       return answer;
     };
-    const sendRoundOrRecover = async () => {
+    const sendRoundOrRecover = async (): Promise<DirectAnswer> => {
       try {
         return await sendRound();
       } catch (error) {
+        if (!closed && !stats.retried && unreachable(error)) {
+          stats.retried = true;
+          listener.retry?.();
+          await pause(settings.retryMs ?? networkRetryMs, stopping.signal);
+          if (closed) throw new Error(closedMessage);
+          return await sendRoundOrRecover();
+        }
         if (closed || stats.recovered || !rejectedByApi(error) || thinkingBlocksIn([...history, ...turns]) === 0) throw error;
         stats.recovered = true;
         history.splice(0, history.length, ...withoutThinking(history));
@@ -148,7 +180,7 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
           next = question;
           listener.restart?.();
         }
-        return await sendRound();
+        return await sendRoundOrRecover();
       }
     };
     try {

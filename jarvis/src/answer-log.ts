@@ -55,6 +55,7 @@ export type LogLine = {
   largestRequestTokens?: number | null;
   refusedTools?: number | null;
   spokeFirst?: boolean | null;
+  retried?: boolean | null;
 };
 
 export type AnswerLogDeps = {
@@ -118,6 +119,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     largestRequestTokens: stats?.largestRequestTokens ?? null,
     refusedTools: stats === null ? null : stats.refusedTools.length,
     spokeFirst: stats?.spokeFirst ?? null,
+    retried: stats?.retried ?? null,
   };
 }
 

@@ -37,7 +37,8 @@ export function isLogLine(value: unknown): value is LogLine {
     numberFields.every((field) => isNumberOrNull(line[field])) &&
     laterNumberFields.every((field) => line[field] === undefined || isNumberOrNull(line[field])) &&
     (line.recovered === null || typeof line.recovered === "boolean") &&
-    (line.spokeFirst === undefined || line.spokeFirst === null || typeof line.spokeFirst === "boolean")
+    (line.spokeFirst === undefined || line.spokeFirst === null || typeof line.spokeFirst === "boolean") &&
+    (line.retried === undefined || line.retried === null || typeof line.retried === "boolean")
   );
 }
 
@@ -170,6 +171,7 @@ function summaryRows(groups: Group[], ratings: Map<string, Rating>): string[][] 
     row("Answers", (_group, lines) => String(lines.length)),
     row("Failed", (group) => String(group.lines.filter((line) => !line.ok).length)),
     row("Recovered", (group, lines) => (group.engine === "api" ? String(lines.filter((line) => line.recovered === true).length) : "-")),
+    row("Retried after a network error", (group, lines) => (group.engine === "api" ? String(lines.filter((line) => line.retried === true).length) : "-")),
     row("Rated good", (_group, lines) => String(lines.filter((line) => ratings.get(questionKey(line)) === "good").length)),
     row("Rated bad", (_group, lines) => String(lines.filter((line) => ratings.get(questionKey(line)) === "bad").length)),
     row("First words, median", (_group, lines) => shown(median(numbers(lines, (line) => line.firstWordsMs)), seconds)),

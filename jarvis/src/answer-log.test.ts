@@ -11,7 +11,7 @@ const answered: Answer = {
   text: "Your notes cover the hub and your family.",
   firstWordsMs: 640,
   totalMs: 2100,
-  stats: { rounds: 2, toolUses: 1, inputTokens: 5200, cacheWriteTokens: 1200, cacheReadTokens: 3000, outputTokens: 90, costUsd: 0.000565, earlierThinkingBlocks: 3, recovered: true, largestRequestTokens: 2900, refusedTools: ["read_file"], spokeFirst: true },
+  stats: { rounds: 2, toolUses: 1, inputTokens: 5200, cacheWriteTokens: 1200, cacheReadTokens: 3000, outputTokens: 90, costUsd: 0.000565, earlierThinkingBlocks: 3, recovered: true, largestRequestTokens: 2900, refusedTools: ["read_file"], spokeFirst: true, retried: true },
 };
 
 function fakeLog(context: LogContext = apiKeep, failAppends = 0) {
@@ -61,6 +61,7 @@ test("an answer becomes one line of numbers, with none of its words", () => {
     largestRequestTokens: 2900,
     refusedTools: 1,
     spokeFirst: true,
+    retried: true,
   });
   assert.doesNotMatch(JSON.stringify(logLine(apiKeep, "chat-1", 3, at, { answer: answered })), /notes|family|read_file/);
 });
@@ -76,6 +77,7 @@ test("a failure is logged as a kind of failure, never its message", () => {
   assert.equal(line.largestRequestTokens, null);
   assert.equal(line.refusedTools, null);
   assert.equal(line.spokeFirst, null);
+  assert.equal(line.retried, null);
   assert.doesNotMatch(JSON.stringify(line), /spare key|blue pot/);
 });
 
@@ -88,6 +90,11 @@ test("whether Jarvis spoke before his first tool is logged as the engine reporte
 
 test("an unknown largest request is logged as unknown, not zero", () => {
   assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, largestRequestTokens: null } } }).largestRequestTokens, null);
+});
+
+test("a retry is logged as yes or no for the plain API call, and unknown for the Agent SDK", () => {
+  assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: false } } }).retried, false);
+  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
 });
 
 test("refused tools are counted, not named, and an answer with none counts zero", () => {

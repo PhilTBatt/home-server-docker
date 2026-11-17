@@ -398,12 +398,13 @@ test("a refused tool comes back with the answer, named, so the question still co
   assert.deepEqual(stats?.refusedTools, ["Read"]);
 });
 
-test("an answer with nothing refused reports an empty list", async () => {
+test("an answer with nothing refused reports an empty list, and leaves retries to the engine, so unknown", async () => {
   const { agent, session } = setup();
   const answer = session.ask("Hello?");
   await tick();
   await agent.emit(success("Hi."));
   assert.deepEqual((await answer).stats?.refusedTools, []);
+  assert.equal((await answer).stats?.retried, null);
 });
 
 test("an error after refused tools is reported as the error, not as a refusal", async () => {

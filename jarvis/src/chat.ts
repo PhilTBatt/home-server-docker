@@ -42,6 +42,7 @@ export const rateNotes: Record<RateResult, string> = {
 export const greeting = "Jarvis is listening. Type a message and press Enter, or type exit to stop.";
 export const stoppedMessage = "Jarvis has stopped. Start him again to carry on.";
 export const restartNote = "that went wrong, so starting again without the earlier thinking";
+export const retryNote = "couldn't reach the API, so trying once more";
 
 export type ChatDeps = {
   lines: AsyncIterable<string>;
@@ -143,6 +144,7 @@ async function reply(deps: ChatDeps, message: string): Promise<"answered" | "sto
         },
         tool: (name, input) => show(`${newLine()}  (${printable(toolNote(name, input))})\n`),
         restart: () => show(`${newLine()}  (${restartNote})\n`),
+        retry: () => show(`${newLine()}  (${retryNote})\n`),
       }),
       deps.questionTimeoutMs,
       () => deps.session.close(),

@@ -92,7 +92,7 @@ const systems: Record<Engine, string> = { sdk: chatSystem, api: apiChatSystem };
 const offered: Record<Engine, string[]> = { sdk: ["Read", "Grep", "Glob", "DeferredToolPlaceholder"], api: ["read_file", "list_folder", "search_files", "find_files"] };
 
 function statsWith(refusedTools: string[], spokeFirst: boolean | null = true): AnswerStats {
-  return { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, refusedTools, spokeFirst };
+  return { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, refusedTools, spokeFirst, retried: false };
 }
 
 type Fake = {

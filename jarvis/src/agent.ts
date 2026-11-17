@@ -20,6 +20,7 @@ export type AnswerListener = {
   text?: (delta: string) => void;
   tool?: (name: string, input: unknown) => void;
   restart?: () => void;
+  retry?: () => void;
 };
 
 export type AgentSession = {
@@ -196,6 +197,7 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
           largestRequestTokens: answered.largestRequestTokens,
           refusedTools: denials(message),
           spokeFirst: answered.spokeFirst,
+          retried: null,
         },
       });
     } else {
