@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
+import { pricesPerMTok } from "./prices.js";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatsLine, chatSystem, costLine, listenNow, refusedNote, retryNote, settingsLine, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
+import { apiChatSystem, chatModel, chatsLine, chatSystem, costLine, lengthLineFor, listenNow, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, type ChatDeps, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -503,7 +504,7 @@ test("each answer is handed to the log after its timing line is shown", async ()
 });
 
 function withStats(base: Answer, refusedTools: string[]): Answer {
-  const stats: AnswerStats = { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, refusedTools, spokeFirst: null, retried: false };
+  const stats: AnswerStats = { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, lastRequestTokens: 60, refusedTools, spokeFirst: null, retried: false };
   return { ...base, stats };
 }
 
@@ -710,4 +711,55 @@ test("in a chat that carries on a saved one, a failed question says how to start
   const plain = chat(fakeSession({ Hello: async () => Promise.reject(new Error("Overloaded")) }), ["Hello"]);
   await plain.run();
   assert.ok(plain.output().includes("Jarvis couldn't answer: Overloaded\nYou: "), plain.output());
+});
+
+const haikuLine = { longPromptOver: 100_000, times: 5, startOver: "type exit and start Jarvis again" };
+
+test("the length line comes from the model's prices: where the long-prompt rate starts, and how many times dearer it is", () => {
+  assert.deepEqual(lengthLineFor(pricesPerMTok[chatModel], "type exit"), { longPromptOver: 100_000, times: 5, startOver: "type exit" });
+  assert.equal(lengthLineFor({ ...pricesPerMTok[chatModel], longPromptOver: 200_000, longInput: 0.2 }, "type exit")?.times, 2);
+  assert.equal(lengthLineFor({ ...pricesPerMTok[chatModel], longPromptOver: 200_000, longInput: 0.2 }, "type exit")?.longPromptOver, 200_000);
+  assert.equal(lengthLineFor(undefined, "type exit"), null);
+});
+
+test("a chat gets one heads-up when it reaches 80% of the long-prompt line, then a note on every answer past the line", () => {
+  const note = startLengthNotes(haikuLine);
+  assert.equal(note(null), null);
+  assert.equal(note(79_999), null);
+  assert.equal(note(81_600), "This chat is now about 82,000 tokens. Past 100,000, each question costs 5 times as much, so start a new one when you're done with this topic: type exit and start Jarvis again");
+  assert.equal(note(95_000), null);
+  assert.equal(note(100_000), null);
+  assert.equal(note(100_001), "This chat is about 101,000 tokens, so each question now costs 5 times as much. A new chat would be cheaper: type exit and start Jarvis again");
+  assert.equal(note(104_400), "This chat is about 105,000 tokens, so each question now costs 5 times as much. A new chat would be cheaper: type exit and start Jarvis again");
+  assert.equal(note(null), null);
+  assert.match(startLengthNotes(haikuLine)(80_000) ?? "", /^This chat is now about 80,000 tokens\./);
+});
+
+test("a chat that gets short again, as after /clear, gets a heads-up again when it next grows long", () => {
+  const note = startLengthNotes(haikuLine);
+  assert.match(note(85_000) ?? "", /^This chat is now about 85,000/);
+  assert.equal(note(null), null);
+  assert.equal(note(90_000), null);
+  assert.equal(note(5_000), null);
+  assert.match(note(88_000) ?? "", /^This chat is now about 88,000/);
+});
+
+test("a chat that jumps straight past the line gets the past-the-line note, and no heads-up after it", () => {
+  const note = startLengthNotes(haikuLine);
+  assert.match(note(130_000) ?? "", /^This chat is about 130,000 tokens, so each question now costs 5 times as much/);
+  assert.equal(note(90_000), null);
+});
+
+test("the length note uses the answer's last request, which is what the chat now sends, and comes after the timing line", async () => {
+  const session = fakeSession({ Hello: async () => ({ ...answer("Hi Phil.", 100, 400), stats: { ...answer("Hi Phil.", 100, 400).stats!, largestRequestTokens: 101_000, lastRequestTokens: 85_000 } }) });
+  const { run, output } = chat(session, ["Hello"], { lengthNote: startLengthNotes(haikuLine) });
+  await run();
+  assert.match(output(), /\(first words [^\n]*\n  \(This chat is now about 85,000 tokens\. Past 100,000, each question costs 5 times as much, so start a new one when you're done with this topic: type exit and start Jarvis again\)\nYou: /);
+});
+
+test("an empty answer, which isn't kept in the chat, gets no length note", async () => {
+  const session = fakeSession({ Hello: async () => ({ ...answer(" ", 100, 400), stats: { ...answer(" ", 100, 400).stats!, lastRequestTokens: 92_000 } }) });
+  const { run, output } = chat(session, ["Hello"], { lengthNote: startLengthNotes(haikuLine) });
+  await run();
+  assert.doesNotMatch(output(), /This chat/);
 });

@@ -34,7 +34,7 @@ function fakeSession(options: SessionOptions = {}): FakeSession {
       }
       if (question === outsideQuestion) {
         const outside = options.outside ?? "refused";
-        if (outside === "refused") return { ...answer("I can't read that.", 300, 600), stats: { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, refusedTools: ["Read"], spokeFirst: false, retried: null } };
+        if (outside === "refused") return { ...answer("I can't read that.", 300, 600), stats: { rounds: 2, toolUses: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10, costUsd: null, earlierThinkingBlocks: null, recovered: false, largestRequestTokens: 60, lastRequestTokens: 60, refusedTools: ["Read"], spokeFirst: false, retried: null } };
         if (outside === "broken") throw new Error("The agent stopped");
         return answer("It's called home-hub-jarvis.", 333, 999);
       }

@@ -9,6 +9,7 @@ export type AnswerStats = {
   earlierThinkingBlocks: number | null;
   recovered: boolean;
   largestRequestTokens: number | null;
+  lastRequestTokens: number | null;
   refusedTools: string[];
   spokeFirst: boolean | null;
   retried: boolean | null;

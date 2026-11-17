@@ -115,6 +115,7 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
       earlierThinkingBlocks: thinkingBlocksIn(history),
       recovered: false,
       largestRequestTokens: 0,
+      lastRequestTokens: null,
       refusedTools: [],
       spokeFirst: null,
       retried: false,
@@ -168,6 +169,7 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
         const requestTokens = answer.inputTokens + answer.cacheWriteTokens + answer.cacheReadTokens;
         stats.inputTokens += requestTokens;
         stats.largestRequestTokens = Math.max(stats.largestRequestTokens ?? 0, requestTokens);
+        stats.lastRequestTokens = requestTokens;
         stats.cacheWriteTokens += answer.cacheWriteTokens;
         stats.cacheReadTokens += answer.cacheReadTokens;
         stats.outputTokens += answer.outputTokens;

@@ -806,3 +806,17 @@ test("an error whose running total comes back as nothing, as after an engine cra
   assert.ok(Math.abs(((await third).stats?.costUsd ?? 0) - 0.001) < 1e-12);
   assert.ok(Math.abs((session.costUsd() ?? 0) - 0.005) < 1e-12);
 });
+
+test("an answer also reports its last request of Jarvis's own, and leaves it unknown when that request reported no tokens", async () => {
+  const start = (parent: string | null, input: number) => ({ type: "stream_event", parent_tool_use_id: parent, event: { type: "message_start", message: { id: "msg", usage: usage(input, 1) } } });
+  const sized = setup();
+  const answer = sized.session.ask("What's in my notes?");
+  await tick();
+  await sized.agent.emit(start(null, 9000), start(null, 6000), start("toolu_9", 50_000), success("Done."));
+  assert.equal((await answer).stats?.lastRequestTokens, 6000);
+  const unsized = setup();
+  const other = unsized.session.ask("Hello?");
+  await tick();
+  await unsized.agent.emit(start(null, 9000), roundStart(), success("Hi."));
+  assert.equal((await other).stats?.lastRequestTokens, null);
+});

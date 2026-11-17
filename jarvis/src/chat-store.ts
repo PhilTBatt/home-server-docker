@@ -22,6 +22,7 @@ export type ChatSetup = {
   savedChats?: string;
   problem: string | null;
   failureHint: string | null;
+  startOver: string;
 };
 
 export type ChatPlaces = { apiChatFile: string; sdkChatsFolder: string };
@@ -113,25 +114,31 @@ export async function savedSdkChats(folder: string): Promise<number> {
   return entries.filter((entry) => entry.endsWith(".jsonl")).length;
 }
 
+const freshStart = "type exit and start Jarvis again";
+
+function savedStart(place: string): string {
+  return `type exit, then delete jarvis/data/chats/${basename(place)} before starting Jarvis again`;
+}
+
 function startOverHint(place: string): string {
   return `This chat carries on a saved one. If every question fails, the saved chat may be why: delete jarvis/data/chats/${basename(place)} to start a new one`;
 }
 
 export async function setUpChats(chats: ChatMode, engine: Engine, places: ChatPlaces = { apiChatFile, sdkChatsFolder }): Promise<ChatSetup> {
-  if (chats === "fresh") return { chats, history: [], earlierQuestions: 0, problem: null, failureHint: null };
+  if (chats === "fresh") return { chats, history: [], earlierQuestions: 0, problem: null, failureHint: null, startOver: freshStart };
   if (engine === "sdk") {
     try {
       await mkdir(places.sdkChatsFolder, { recursive: true, mode: 0o700 });
       await access(places.sdkChatsFolder, constants.W_OK);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code ?? "unknown error";
-      return { chats: "fresh", history: [], earlierQuestions: 0, problem: `The saved chats folder can't be written to (${code}), so this chat won't be saved`, failureHint: null };
+      return { chats: "fresh", history: [], earlierQuestions: 0, problem: `The saved chats folder can't be written to (${code}), so this chat won't be saved`, failureHint: null, startOver: freshStart };
     }
     const saved = await savedSdkChats(places.sdkChatsFolder);
-    return { chats, history: [], earlierQuestions: saved > 0 ? null : 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: saved > 0 ? startOverHint(places.sdkChatsFolder) : null };
+    return { chats, history: [], earlierQuestions: saved > 0 ? null : 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: saved > 0 ? startOverHint(places.sdkChatsFolder) : null, startOver: savedStart(places.sdkChatsFolder) };
   }
   const loaded = await loadChat(places.apiChatFile);
-  if (!loaded.canSave) return { chats: "fresh", history: [], earlierQuestions: 0, problem: loaded.problem, failureHint: null };
+  if (!loaded.canSave) return { chats: "fresh", history: [], earlierQuestions: 0, problem: loaded.problem, failureHint: null, startOver: freshStart };
   return {
     chats,
     history: loaded.turns,
@@ -139,5 +146,6 @@ export async function setUpChats(chats: ChatMode, engine: Engine, places: ChatPl
     save: startChatSaver(places.apiChatFile),
     problem: loaded.problem,
     failureHint: loaded.turns.length > 0 ? startOverHint(places.apiChatFile) : null,
+    startOver: savedStart(places.apiChatFile),
   };
 }

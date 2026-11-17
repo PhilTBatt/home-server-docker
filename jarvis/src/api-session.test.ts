@@ -928,3 +928,13 @@ test("after a thinking restart, the saved chat has no earlier thinking either, a
   assert.deepEqual(saved.at(-1), [...(requests.at(-1)?.history ?? []), { role: "user", content: "Second?" }, { role: "assistant", content: [{ type: "text", text: "Two." }] }]);
   assert.equal(thinkingBlocksIn(saved.at(-1) ?? []), 0);
 });
+
+test("an answer also reports its last request, which can be smaller than its largest after a thinking restart", async () => {
+  const { tools } = fakeTools();
+  const first = { ...toolReply([readIndex]), inputTokens: 50, cacheWriteTokens: 0, cacheReadTokens: 9000 };
+  const second = { ...reply("Done."), inputTokens: 30, cacheWriteTokens: 0, cacheReadTokens: 6000 };
+  const { send } = recorder([async () => first, async () => second]);
+  const stats = (await startApiSession({ ...settings, tools }, send).ask("Read it")).stats;
+  assert.equal(stats?.largestRequestTokens, 9050);
+  assert.equal(stats?.lastRequestTokens, 6030);
+});

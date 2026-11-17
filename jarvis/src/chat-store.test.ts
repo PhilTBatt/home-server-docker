@@ -186,7 +186,7 @@ test("a fresh chat loads and saves nothing, on either engine", async () => {
     const places = { apiChatFile: join(dir, "plain-api.json"), sdkChatsFolder: join(dir, "agent-sdk") };
     await startChatSaver(places.apiChatFile)(turns);
     for (const engine of ["api", "sdk"] as const) {
-      assert.deepEqual(await setUpChats("fresh", engine, places), { chats: "fresh", history: [], earlierQuestions: 0, problem: null, failureHint: null });
+      assert.deepEqual(await setUpChats("fresh", engine, places), { chats: "fresh", history: [], earlierQuestions: 0, problem: null, failureHint: null, startOver: "type exit and start Jarvis again" });
     }
     assert.deepEqual(await readdir(dir), ["plain-api.json"]);
   });
@@ -196,7 +196,7 @@ test("a resumed plain API chat carries on the saved one, saves as it goes, and s
   await inFolder(async (dir) => {
     const places = { apiChatFile: join(dir, "plain-api.json"), sdkChatsFolder: join(dir, "agent-sdk") };
     const first = await setUpChats("resume", "api", places);
-    assert.deepEqual({ ...first, save: typeof first.save }, { chats: "resume", history: [], earlierQuestions: 0, save: "function", problem: null, failureHint: null });
+    assert.deepEqual({ ...first, save: typeof first.save }, { chats: "resume", history: [], earlierQuestions: 0, save: "function", problem: null, failureHint: null, startOver: "type exit, then delete jarvis/data/chats/plain-api.json before starting Jarvis again" });
     await first.save?.(turns);
     const picked = await setUpChats("resume", "api", places);
     assert.deepEqual(picked.history, turns);
@@ -211,7 +211,7 @@ test("a resumed plain API chat whose saved chat can't be read runs as a fresh ch
     const places = { apiChatFile: join(dir, "plain-api.json"), sdkChatsFolder: join(dir, "agent-sdk") };
     await mkdir(places.apiChatFile);
     const setup = await setUpChats("resume", "api", places);
-    assert.deepEqual(setup, { chats: "fresh", history: [], earlierQuestions: 0, problem: "The saved chat couldn't be read (EISDIR), so this chat won't be saved, to leave that one alone", failureHint: null });
+    assert.deepEqual(setup, { chats: "fresh", history: [], earlierQuestions: 0, problem: "The saved chat couldn't be read (EISDIR), so this chat won't be saved, to leave that one alone", failureHint: null, startOver: "type exit and start Jarvis again" });
   });
 });
 
@@ -230,7 +230,7 @@ test("a resumed plain API chat whose saved chat was moved aside starts a new sav
 test("a resumed Agent SDK chat uses Jarvis's own folder, made private, and only hints at starting over once something is saved", async () => {
   await inFolder(async (dir) => {
     const places = { apiChatFile: join(dir, "chats", "plain-api.json"), sdkChatsFolder: join(dir, "chats", "agent-sdk") };
-    assert.deepEqual(await setUpChats("resume", "sdk", places), { chats: "resume", history: [], earlierQuestions: 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: null });
+    assert.deepEqual(await setUpChats("resume", "sdk", places), { chats: "resume", history: [], earlierQuestions: 0, savedChats: places.sdkChatsFolder, problem: null, failureHint: null, startOver: "type exit, then delete jarvis/data/chats/agent-sdk before starting Jarvis again" });
     assert.equal((await stat(join(dir, "chats"))).mode & 0o777, 0o700);
     assert.equal((await stat(places.sdkChatsFolder)).mode & 0o777, 0o700);
     await mkdir(join(places.sdkChatsFolder, "projects", "-brain"), { recursive: true });
@@ -245,7 +245,7 @@ test("a resumed Agent SDK chat whose folder can't be made runs as a fresh chat, 
   await inFolder(async (dir) => {
     await writeFile(join(dir, "chats"), "a file where the folder should be");
     const places = { apiChatFile: join(dir, "chats", "plain-api.json"), sdkChatsFolder: join(dir, "chats", "agent-sdk") };
-    assert.deepEqual(await setUpChats("resume", "sdk", places), { chats: "fresh", history: [], earlierQuestions: 0, problem: "The saved chats folder can't be written to (ENOTDIR), so this chat won't be saved", failureHint: null });
+    assert.deepEqual(await setUpChats("resume", "sdk", places), { chats: "fresh", history: [], earlierQuestions: 0, problem: "The saved chats folder can't be written to (ENOTDIR), so this chat won't be saved", failureHint: null, startOver: "type exit and start Jarvis again" });
   });
 });
 
@@ -255,7 +255,7 @@ test("a resumed Agent SDK chat whose folder Jarvis can't write to runs as a fres
     await mkdir(places.sdkChatsFolder, { recursive: true });
     await chmod(places.sdkChatsFolder, 0o500);
     try {
-      assert.deepEqual(await setUpChats("resume", "sdk", places), { chats: "fresh", history: [], earlierQuestions: 0, problem: "The saved chats folder can't be written to (EACCES), so this chat won't be saved", failureHint: null });
+      assert.deepEqual(await setUpChats("resume", "sdk", places), { chats: "fresh", history: [], earlierQuestions: 0, problem: "The saved chats folder can't be written to (EACCES), so this chat won't be saved", failureHint: null, startOver: "type exit and start Jarvis again" });
     } finally {
       await chmod(places.sdkChatsFolder, 0o700);
     }

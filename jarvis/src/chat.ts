@@ -1,6 +1,7 @@
 import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { brainDir, type ChatMode, type Config, type Engine, type ThinkingHistory } from "./config.js";
+import type { Prices } from "./prices.js";
 import { withTimeout } from "./run.js";
 import { seconds, type Answer } from "./timing.js";
 
@@ -53,12 +54,40 @@ export type ChatDeps = {
   record?: (outcome: Outcome) => Promise<void>;
   rate?: (rating: Rating) => Promise<RateResult>;
   failureHint?: string;
+  lengthNote?: (tokens: number | null) => string | null;
 };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
   on(event: "close", listener: () => void): unknown;
 };
+
+export type LengthLine = { longPromptOver: number; times: number; startOver: string };
+
+export function lengthLineFor(prices: Prices | undefined, startOver: string): LengthLine | null {
+  if (prices === undefined) return null;
+  return { longPromptOver: prices.longPromptOver, times: Math.round(prices.longInput / prices.input), startOver };
+}
+
+export function startLengthNotes(line: LengthLine): (tokens: number | null) => string | null {
+  const headsUp = Math.round(line.longPromptOver * 0.8);
+  let warned = false;
+  const about = (tokens: number, round: (n: number) => number) => (round(tokens / 1000) * 1000).toLocaleString("en-GB");
+  return (tokens) => {
+    if (tokens === null) return null;
+    if (tokens < headsUp) {
+      warned = false;
+      return null;
+    }
+    if (tokens > line.longPromptOver) {
+      warned = true;
+      return `This chat is about ${about(tokens, Math.ceil)} tokens, so each question now costs ${line.times} times as much. A new chat would be cheaper: ${line.startOver}`;
+    }
+    if (warned) return null;
+    warned = true;
+    return `This chat is now about ${about(tokens, Math.round)} tokens. Past ${line.longPromptOver.toLocaleString("en-GB")}, each question costs ${line.times} times as much, so start a new one when you're done with this topic: ${line.startOver}`;
+  };
+}
 
 export function listenNow(lines: AsyncIterable<string>): AsyncIterable<string> {
   const heard = lines[Symbol.asyncIterator]();
@@ -182,6 +211,8 @@ async function reply(deps: ChatDeps, message: string): Promise<"answered" | "sto
   const refused = answer.stats?.refusedTools ?? [];
   if (refused.length > 0) show(`${newLine()}  (${printable(refusedNote(refused))})\n`);
   show(`${newLine()}  ${timingLine(answer)}\n`);
+  const length = answer.text.trim() === "" ? null : (deps.lengthNote?.(answer.stats?.lastRequestTokens ?? null) ?? null);
+  if (length !== null) show(`  (${length})\n`);
   await deps.record?.({ answer });
   return "answered";
 }

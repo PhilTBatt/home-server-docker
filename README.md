@@ -48,6 +48,7 @@ Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he sta
 - `JARVIS_CHATS`: `fresh` (default) saves nothing; `resume` saves the chat in `jarvis/data/chats/` and picks it up next time.
   - Saved chats hold everything said, brain text included. Only their owner can read them, and backups copy them.
   - Every question sends the whole saved chat. On Haiku 5.5, a request over 100,000 tokens costs five times as much. Jarvis doesn't trim saved chats yet. The Agent SDK only summarises a chat when it nears its context limit (about 990,000 tokens in a test), so it pays the higher rate long before that.
+  - When a chat reaches 80,000 tokens, Jarvis says once that it's getting long (once per start of Jarvis). Past 100,000, where Haiku 5.5's long-prompt price starts, he says so after every answer, with how to start a new one. It goes by each answer's last request, and works in fresh chats too.
   - To start a new saved chat, delete `plain-api.json` or the `agent-sdk` folder there. A leftover `*.saving` file is a save that was cut off, and is safe to delete.
   - Run one Jarvis at a time on a saved chat: with two, one of them's questions won't be carried on.
   - The engines save differently: the Agent SDK also keeps questions that failed or were stopped, and the plain API engine keeps only answered ones. On the plain API engine, thinking is left out of the saved chat for good with `JARVIS_THINKING_HISTORY=drop`, or after a thinking restart.

@@ -49,6 +49,7 @@ type Pending = {
   rounds: number;
   toolUses: number;
   largestRequestTokens: number | null;
+  lastRequestTokens: number | null;
   requests: TokenUse[] | null;
   spoke: boolean;
   spokeFirst: boolean | null;
@@ -192,6 +193,7 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
     if (round !== null) {
       pending.rounds++;
       if (round.tokens !== null) pending.largestRequestTokens = Math.max(pending.largestRequestTokens ?? 0, round.tokens);
+      pending.lastRequestTokens = round.tokens;
       pending.requests = round.used === null || pending.requests === null ? null : [...pending.requests, round.used];
     }
     const ended = roundEnd(message);
@@ -233,6 +235,7 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
           earlierThinkingBlocks: null,
           recovered: false,
           largestRequestTokens: answered.largestRequestTokens,
+          lastRequestTokens: answered.lastRequestTokens,
           refusedTools: denials(message),
           spokeFirst: answered.spokeFirst,
           retried: null,
@@ -259,7 +262,7 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
       if (stopped !== null) return Promise.reject(stopped);
       if (pending !== null) return Promise.reject(new Error("One question at a time"));
       return new Promise<Answer>((resolve, reject) => {
-        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener, rounds: 0, toolUses: 0, largestRequestTokens: null, requests: [], spoke: false, spokeFirst: null };
+        pending = { started: settings.now(), firstWordsMs: null, resolve, reject, listener, rounds: 0, toolUses: 0, largestRequestTokens: null, lastRequestTokens: null, requests: [], spoke: false, spokeFirst: null };
         input.push(question);
       });
     },

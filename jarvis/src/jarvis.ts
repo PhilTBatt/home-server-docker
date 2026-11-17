@@ -9,8 +9,9 @@ import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
 import { setUpChats } from "./chat-store.js";
-import { apiChatSystem, apiMaxTokens, chatModel, chatsLine, chatSystem, engineLine, listenNow, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine } from "./chat.js";
+import { apiChatSystem, apiMaxTokens, chatModel, chatsLine, chatSystem, engineLine, lengthLineFor, listenNow, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, startLengthNotes } from "./chat.js";
 import { brainDir, readConfig } from "./config.js";
+import { pricesPerMTok } from "./prices.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
 const typed = listenNow(lines);
@@ -28,6 +29,8 @@ try {
   const warn = (message: string) => process.stdout.write(`  (${printable(message)})\n`);
   const chats = await setUpChats(config.chats, config.engine);
   if (chats.problem !== null) warn(chats.problem);
+  const lengthLine = lengthLineFor(pricesPerMTok[chatModel], chats.startOver);
+  const lengthNotes = lengthLine === null ? null : startLengthNotes(lengthLine);
   session =
     config.engine === "api"
       ? startApiSession({
@@ -71,6 +74,7 @@ try {
     record: log?.record,
     rate: log?.rate,
     failureHint: chats.failureHint ?? undefined,
+    lengthNote: lengthNotes ?? undefined,
   });
 } catch (error) {
   console.error(`Jarvis couldn't start: ${error instanceof Error ? error.message : String(error)}`);

@@ -11,7 +11,7 @@ const answered: Answer = {
   text: "Your notes cover the hub and your family.",
   firstWordsMs: 640,
   totalMs: 2100,
-  stats: { rounds: 2, toolUses: 1, inputTokens: 5200, cacheWriteTokens: 1200, cacheReadTokens: 3000, outputTokens: 90, costUsd: 0.000565, earlierThinkingBlocks: 3, recovered: true, largestRequestTokens: 2900, refusedTools: ["read_file"], spokeFirst: true, retried: true },
+  stats: { rounds: 2, toolUses: 1, inputTokens: 5200, cacheWriteTokens: 1200, cacheReadTokens: 3000, outputTokens: 90, costUsd: 0.000565, earlierThinkingBlocks: 3, recovered: true, largestRequestTokens: 2900, lastRequestTokens: 2900, refusedTools: ["read_file"], spokeFirst: true, retried: true },
 };
 
 function fakeLog(context: LogContext = apiKeep, failAppends = 0) {
