@@ -206,3 +206,21 @@ services:
     build: ./mcp
     profiles:
       - tools
+
+  jarvis:
+    image: node:26-alpine
+    profiles:
+      - jarvis
+    user: node
+    working_dir: /app
+    command: npm run chat
+    env_file:
+      - ./jarvis/.env
+    volumes:
+      - ./jarvis:/app
+      - type: bind
+        source: ../hub-memory
+        target: /brain
+        read_only: true
+        bind:
+          create_host_path: false

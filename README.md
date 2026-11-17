@@ -70,10 +70,11 @@ Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he sta
 - `CLAUDE.md`, `.mcp.json` and `.claude/settings.json`: how Claude Code works in this repo.
 
 ## Running it
-Secrets live in `.env` files that git ignores (`api/.env`, `homepage/.env` and `beszel/.env`), so they're never in this repo. The API also expects the brain's inbox at `../hub-memory/inbox`, and won't start without it. The backup's settings and password live in `/etc/home-hub/`, outside this folder and readable only by root.
+Secrets live in `.env` files that git ignores (`api/.env`, `homepage/.env`, `beszel/.env` and `jarvis/.env`), so they're never in this repo. The API also expects the brain's inbox at `../hub-memory/inbox`, and won't start without it. The backup's settings and password live in `/etc/home-hub/`, outside this folder and readable only by root.
 - Start everything: `docker compose up -d`
 - Rebuild the API after a change: `docker compose up --build --wait api`
 - Pull from GitHub and rebuild only what changed: `bash host/hub-update.sh`, or `bash host/hub-update.sh --dry-run` to see what it would do
+- Talk to Jarvis: `docker compose run --rm jarvis`. He's in the `jarvis` profile, so `docker compose up` never starts him. Type `exit` or press Ctrl+C to stop, and `--rm` removes the container. He needs `jarvis/.env` and the brain at `../hub-memory` (mounted read-only), and won't start without them.
 
 ## Tests
 Node isn't installed on the server, so npm runs in a throwaway container. From this folder:
