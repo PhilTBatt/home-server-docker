@@ -12,6 +12,9 @@ export type ChatMode = (typeof chatModes)[number];
 export const lengthHintModes = ["note", "jarvis"] as const;
 export type LengthHints = (typeof lengthHintModes)[number];
 
+export const hubToolsModes = ["off", "on"] as const;
+export type HubToolsMode = (typeof hubToolsModes)[number];
+
 export type Config = {
   apiKey: string;
   engine: Engine;
@@ -20,6 +23,7 @@ export type Config = {
   lengthHints: LengthHints;
   lengthWarn: number;
   lengthCap: number | null;
+  hubToken: string | null;
   log: boolean;
 };
 
@@ -64,8 +68,12 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (capText !== "off" && lengthCap === null) throw new Error(`JARVIS_LENGTH_CAP must be a whole number of tokens above 0, like 150000, or off, not "${capText}"`);
   const warnSource = env.JARVIS_LENGTH_WARN?.trim() ? "" : ", the default";
   if (lengthCap !== null && lengthCap <= lengthWarn) throw new Error(`JARVIS_LENGTH_CAP (${lengthCap}) must be above JARVIS_LENGTH_WARN (${lengthWarn}${warnSource})`);
+  const hubTools = env.JARVIS_HUB_TOOLS?.trim() || "off";
+  if (hubTools !== "on" && hubTools !== "off") throw new Error(`JARVIS_HUB_TOOLS must be on or off, not "${hubTools}"`);
+  const token = env.API_TOKEN?.trim() ?? "";
+  if (hubTools === "on" && token === "") throw new Error("JARVIS_HUB_TOOLS is on, but there's no API_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in");
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, log: log === "on" };
 }

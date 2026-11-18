@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -132,4 +132,22 @@ test("JARVIS_LENGTH_CAP is off unless set, and must be above the warning", () =>
   assert.equal(readConfig({ ...base, JARVIS_LENGTH_CAP: " 150000 " }).lengthCap, 150000);
   assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_CAP: "80000" }), { message: "JARVIS_LENGTH_CAP (80000) must be above JARVIS_LENGTH_WARN (80000, the default)" });
   assert.throws(() => readConfig({ ...base, JARVIS_LENGTH_WARN: "120000", JARVIS_LENGTH_CAP: "100000" }), { message: "JARVIS_LENGTH_CAP (100000) must be above JARVIS_LENGTH_WARN (120000)" });
+});
+
+test("JARVIS_HUB_TOOLS is off unless set, and then the API token passed in is kept for the hub's MCP server; with it off, the token is ignored", () => {
+  assert.equal(readConfig(base).hubToken, null);
+  assert.equal(readConfig({ ...base, API_TOKEN: "hub-token" }).hubToken, null);
+  assert.equal(readConfig({ ...base, JARVIS_HUB_TOOLS: "off", API_TOKEN: "hub-token" }).hubToken, null);
+  assert.equal(readConfig({ ...base, JARVIS_HUB_TOOLS: "", API_TOKEN: "hub-token" }).hubToken, null);
+  assert.equal(readConfig({ ...base, JARVIS_HUB_TOOLS: "on", API_TOKEN: "hub-token" }).hubToken, "hub-token");
+  assert.equal(readConfig({ ...base, JARVIS_HUB_TOOLS: " on ", API_TOKEN: " hub-token " }).hubToken, "hub-token");
+});
+
+test("JARVIS_HUB_TOOLS must be on or off, and on needs the API token, which host/jarvis.sh passes in", () => {
+  for (const bad of ["On", "yes", "true", "1"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_HUB_TOOLS: bad, API_TOKEN: "hub-token" }), { message: `JARVIS_HUB_TOOLS must be on or off, not "${bad}"` }, bad);
+  }
+  for (const token of [undefined, "", "   "]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_HUB_TOOLS: "on", API_TOKEN: token }), { message: "JARVIS_HUB_TOOLS is on, but there's no API_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in" }, String(token));
+  }
 });

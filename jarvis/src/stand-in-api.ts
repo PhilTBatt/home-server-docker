@@ -46,6 +46,7 @@ export const searchIgnoredWord = "SEARCH_IGNORED";
 export const findIgnoredWord = "FIND_IGNORED";
 export const searchCaseWord = "SEARCH_CASE";
 export const searchLongWord = "SEARCH_LONG";
+export const hubStatusWord = "HUB_STATUS";
 export const insideText = "stand-in brain";
 export const outsideText = "outside the brain";
 export const hiddenText = "hidden note";
@@ -139,6 +140,7 @@ function calls(script: StandInScript): [string, Record<Engine, ToolCall>][] {
     [findIgnoredWord, find("**/*ignored*", "ignored", brain)],
     [searchCaseWord, search(caseText.toUpperCase(), brain)],
     [searchLongWord, search(longText, brain)],
+    [hubStatusWord, { sdk: { name: "mcp__hub__get_status", input: {} }, api: { name: "get_status", input: {} } }],
   ];
 }
 

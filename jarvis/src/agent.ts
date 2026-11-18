@@ -1,4 +1,5 @@
 import type { Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { hubProblemNote, hubServerName, hubToolPrefix, readOnlyEnv, withHubToken, type HubServer } from "./hub-tools.js";
 import { answerCost, pricesPerMTok, type Prices, type TokenUse } from "./prices.js";
 import type { Answer } from "./timing.js";
 
@@ -14,6 +15,7 @@ export type AgentSettings = {
   now: () => number;
   env?: Record<string, string | undefined>;
   savedChats?: string;
+  hub?: HubServer;
 };
 
 export const privacyEnv = { DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" };
@@ -69,7 +71,13 @@ export function agentOptions(settings: AgentSettings): Options {
     strictMcpConfig: true,
     title: "Jarvis",
     includePartialMessages: true,
-    env: { ...(settings.env ?? process.env), ...privacyEnv, ...(settings.savedChats === undefined ? {} : { CLAUDE_CONFIG_DIR: settings.savedChats }) },
+    env: withHubToken({ ...(settings.env ?? process.env), ...privacyEnv, ...(settings.savedChats === undefined ? {} : { CLAUDE_CONFIG_DIR: settings.savedChats }) }, settings.hub),
+    ...(settings.hub === undefined
+      ? {}
+      : {
+          mcpServers: { [hubServerName]: { type: "stdio", command: settings.hub.command, args: settings.hub.args, env: { ...readOnlyEnv }, alwaysLoad: true } },
+          allowedTools: [`${hubToolPrefix}*`],
+        }),
   };
 }
 
@@ -172,6 +180,8 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
   let cost: number | null = null;
   let stopped: Error | null = null;
   let closed = false;
+  let hubChecked = settings.hub === undefined;
+  let hubNote: string | null = null;
 
   function stop(error: Error) {
     if (stopped === null) stopped = error;
@@ -181,8 +191,20 @@ export function startAgentSession(start: StartAgent, settings: AgentSettings): A
   }
 
   function handle(message: SDKMessage) {
-    if (message.type === "system" && message.subtype === "init" && ready === null) ready = settings.now() - began;
+    if (message.type === "system" && message.subtype === "init") {
+      if (ready === null) ready = settings.now() - began;
+      const status = (message.mcp_servers ?? []).find((server) => server.name === hubServerName)?.status ?? "missing";
+      if (!hubChecked && status !== "pending") {
+        hubChecked = true;
+        if (status !== "connected") hubNote = hubProblemNote(status);
+        else if (!(message.tools ?? []).some((tool) => tool.startsWith(hubToolPrefix))) hubNote = hubProblemNote("no tools listed");
+      }
+    }
     if (pending === null) return;
+    if (hubNote !== null) {
+      pending.listener.note?.(hubNote);
+      hubNote = null;
+    }
     const text = textDelta(message);
     if (text !== null) {
       if (pending.firstWordsMs === null) pending.firstWordsMs = settings.now() - pending.started;

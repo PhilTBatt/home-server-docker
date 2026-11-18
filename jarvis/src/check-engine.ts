@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -9,13 +9,36 @@ import { createBrainTools } from "./brain-tools.js";
 import { savedSdkChats, setUpChats, setUpNewChat } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs } from "./chat.js";
 import { askDirect } from "./direct.js";
-import { apiUnderTest, formatCheck, runEngineCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
+import { apiUnderTest, formatCheck, runEngineCheck, runHubCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
+import { hubProblemNote, hubToolPrefix, type HubServer } from "./hub-tools.js";
+import { withTimeout } from "./run.js";
 import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi, type StandInApi } from "./stand-in-api.js";
+import { standInHubFile, type HubCall } from "./stand-in-hub.js";
 
 const folders: string[] = [];
 const apis: StandInApi[] = [];
 const sessions: AgentSession[] = [];
 let engineEnv: Record<string, string | undefined> | undefined;
+
+async function commandLines(): Promise<string[]> {
+  const ids = (await readdir("/proc")).filter((name) => /^\d+$/.test(name));
+  const lines = await Promise.all(ids.map((id) => readFile(`/proc/${id}/cmdline`, "utf8").catch(() => "")));
+  return lines.map((line) => line.replaceAll("\0", " ").trim()).filter((line) => line !== "");
+}
+
+async function runningIn(places: string[]): Promise<boolean> {
+  const ids = (await readdir("/proc").catch(() => [])).filter((name) => /^\d+$/.test(name) && Number(name) !== process.pid);
+  const workingFolders = await Promise.all(ids.map((id) => readlink(`/proc/${id}/cwd`).catch(() => "")));
+  return workingFolders.some((folder) => places.some((place) => folder === place || folder.startsWith(`${place}/`)));
+}
+
+async function hubCalls(file: string): Promise<HubCall[]> {
+  const text = await readFile(file, "utf8").catch(() => "");
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as HubCall);
+}
 
 async function countFiles(folder: string, ending: string): Promise<number> {
   const entries = await readdir(folder, { recursive: true }).catch(() => []);
@@ -112,7 +135,37 @@ try {
     timeoutMs: 60_000,
     settleMs: 1000,
   });
-  const results = [...shared, ...saved];
+  const hubToken = `hub-token-${randomUUID()}`;
+  const hubSdkApi = await startStandInApi(script, "sdk");
+  apis.push(hubSdkApi);
+  const hubSdkLog = join(home, "hub-sdk.jsonl");
+  const sdkWithHub = (hub: HubServer) =>
+    startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: hubSdkApi.url, API_TOKEN: hubToken }, hub });
+  const hubSdk = sdkWithHub({ command: process.execPath, args: [standInHubFile, hubSdkLog], token: hubToken });
+  sessions.push(hubSdk);
+  const hub = await runHubCheck({
+    engines: [
+      {
+        engine: "sdk",
+        session: hubSdk,
+        requests: hubSdkApi.requests,
+        toolName: (name) => `${hubToolPrefix}${name}`,
+        calls: () => hubCalls(hubSdkLog),
+        broken: async () => {
+          const notes: string[] = [];
+          const session = sdkWithHub({ command: process.execPath, args: [join(home, "missing-server.js")], token: hubToken });
+          sessions.push(session);
+          await withTimeout(session.ask("Hello", { note: (note) => notes.push(note) }), 60_000, () => session.close()).catch(() => {});
+          return notes[0] ?? null;
+        },
+      },
+    ],
+    token: hubToken,
+    brokenNote: () => hubProblemNote("failed"),
+    commandLines,
+    timeoutMs: 60_000,
+  });
+  const results = [...shared, ...saved, ...hub];
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;
 } catch (error) {
@@ -120,6 +173,10 @@ try {
   process.exitCode = 1;
 } finally {
   for (const session of sessions) session.close();
+  const places = await Promise.all(folders.map((folder) => realpath(folder).catch(() => folder)));
+  const until = Date.now() + 10_000;
+  while (Date.now() < until && (await runningIn(places))) await new Promise((resolve) => setTimeout(resolve, 100));
   for (const api of apis) await api.close();
-  for (const folder of folders) await rm(folder, { recursive: true, force: true });
+  for (const folder of folders) await rm(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+  for (const folder of folders) if (await access(folder).then(() => true, () => false)) console.error(`Couldn't remove ${folder}`);
 }

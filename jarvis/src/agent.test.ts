@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { agentOptions, closedMessage, createInputQueue, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
+import { hubProblemNote } from "./hub-tools.js";
 
 function tick() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -819,4 +820,84 @@ test("an answer also reports its last request of Jarvis's own, and leaves it unk
   await tick();
   await unsized.agent.emit(start(null, 9000), roundStart(), success("Hi."));
   assert.equal((await other).stats?.lastRequestTokens, null);
+});
+
+const hub = { command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], token: "hub-token" };
+
+test("with the hub's tools, the engine starts the hub's MCP server read-only, loads its tools up front, and may use only that server's tools; the built-in tools don't change", () => {
+  const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub });
+  assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "off" }, alwaysLoad: true } });
+  assert.deepEqual(options.allowedTools, ["mcp__hub__*"]);
+  assert.deepEqual(options.tools, ["Read", "Grep", "Glob"]);
+  assert.equal(options.strictMcpConfig, true);
+  assert.equal(options.permissionMode, "dontAsk");
+});
+
+test("the token reaches the hub's MCP server only through the engine's environment, never in the server's settings, which the engine puts on a command line", () => {
+  const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin", API_TOKEN: "old-token" }, hub });
+  assert.deepEqual(options.env, { PATH: "/usr/bin", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1", API_TOKEN: "hub-token" });
+  assert.ok(!JSON.stringify({ ...options, env: undefined }).includes("-token"));
+});
+
+test("without the hub's tools, the engine's environment has no API token, even one Jarvis was started with", () => {
+  const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin", API_TOKEN: "hub-token" } });
+  assert.deepEqual(options.env, { PATH: "/usr/bin", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" });
+  assert.ok(!JSON.stringify(options).includes("hub-token"));
+});
+
+test("without the hub's tools, no MCP server is started and nothing extra is allowed", () => {
+  const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: {} });
+  assert.equal("mcpServers" in options, false);
+  assert.equal("allowedTools" in options, false);
+});
+
+const hubListed = ["Read", "mcp__hub__get_status", "mcp__hub__get_alerts"];
+
+function initWith(servers: { name: string; status: string }[], tools: string[] = hubListed): SDKMessage {
+  return { ...init, tools, mcp_servers: servers } as unknown as SDKMessage;
+}
+
+test("if the hub's MCP server didn't start, or started with no tools, the answer it was found during says so, once; still starting waits for the next word", async () => {
+  const hubIs = (status: string, tools?: string[]) => initWith([{ name: "other", status: "failed" }, { name: "hub", status }], tools);
+  const cases: [string, SDKMessage[], SDKMessage[], string[], string[]][] = [
+    ["failed", [hubIs("failed")], [hubIs("failed")], [hubProblemNote("failed")], []],
+    ["needs-auth", [hubIs("needs-auth")], [hubIs("failed")], [hubProblemNote("needs-auth")], []],
+    ["connected", [hubIs("connected")], [hubIs("failed")], [], []],
+    ["connected, no hub tools", [hubIs("connected", ["Read", "mcp__other__thing"])], [hubIs("connected")], [hubProblemNote("no tools listed")], []],
+    ["not listed", [initWith([{ name: "other", status: "connected" }])], [hubIs("failed")], [hubProblemNote("missing")], []],
+    ["pending, then connected", [hubIs("pending", ["Read"])], [hubIs("connected")], [], []],
+    ["pending, then failed", [hubIs("pending", ["Read"])], [hubIs("failed")], [], [hubProblemNote("failed")]],
+    ["pending, then failed in one answer", [hubIs("pending", ["Read"]), hubIs("failed")], [hubIs("failed")], [hubProblemNote("failed")], []],
+  ];
+  for (const [name, first, second, expectedFirst, expectedSecond] of cases) {
+    const { agent, session } = setup({ hub });
+    const notes: string[][] = [[], []];
+    for (const [index, inits] of [first, second].entries()) {
+      const answer = session.ask("Hello", { note: (note) => notes[index].push(note) });
+      await tick();
+      await agent.emit(...inits, success("Hi."));
+      await answer;
+    }
+    assert.deepEqual(notes, [expectedFirst, expectedSecond], name);
+  }
+  const without: string[] = [];
+  const plain = setup();
+  const plainAnswer = plain.session.ask("Hello", { note: (note) => without.push(note) });
+  await tick();
+  await plain.agent.emit(initWith([{ name: "hub", status: "failed" }], ["Read"]), success("Hi."));
+  await plainAnswer;
+  assert.deepEqual(without, []);
+  assert.equal(hubProblemNote("failed"), "The hub's tools didn't load (failed), so in this chat Jarvis can only read the brain");
+});
+
+test("a hub problem found before any question is said with the next answer", async () => {
+  const notes: string[] = [];
+  const { agent, session } = setup({ hub });
+  await agent.emit(initWith([{ name: "hub", status: "failed" }]));
+  assert.equal(notes.length, 0);
+  const answer = session.ask("Hello", { note: (note) => notes.push(note) });
+  await tick();
+  await agent.emit(success("Hi."));
+  await answer;
+  assert.deepEqual(notes, [hubProblemNote("failed")]);
 });

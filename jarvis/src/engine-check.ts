@@ -8,6 +8,7 @@ import {
   findIgnoredWord,
   findInsideWord,
   findOutsideWord,
+  hubStatusWord,
   ignoredName,
   longName,
   longText,
@@ -25,6 +26,7 @@ import {
   type SeenRequest,
   type SeenToolResult,
 } from "./stand-in-api.js";
+import { hubActionToolNames, hubAnswer, hubReadToolNames, type HubCall } from "./stand-in-hub.js";
 
 export type CheckResult = { name: string; ok: boolean; detail: string };
 
@@ -140,7 +142,7 @@ export function problems(expect: Expect, probe: Probe, refused: boolean): string
   return found;
 }
 
-function scope(engines: EngineUnderTest[]): string {
+function scope(engines: { engine: Engine }[]): string {
   return engines.length === 1 ? checkNames[engines[0].engine] : "both engines";
 }
 
@@ -365,6 +367,85 @@ export async function runSavedChatsCheck(deps: SavedChatsDeps): Promise<CheckRes
     result("ignored", "a fresh chat leaves a saved one alone"),
     result("renewed", "new starts a chat without the old one, and that's the one picked up next"),
     result("sized", "a resumed chat starts with the size its last answer reached, and new starts with none"),
+  ];
+}
+
+export type HubEngineUnderTest = {
+  engine: Engine;
+  session: AgentSession;
+  requests: SeenRequest[];
+  toolName: (name: string) => string;
+  calls: () => Promise<HubCall[]>;
+  broken: () => Promise<string | null>;
+};
+
+export type HubCheckDeps = {
+  engines: HubEngineUnderTest[];
+  token: string;
+  brokenNote: (engine: Engine) => string;
+  commandLines: () => Promise<string[]>;
+  timeoutMs: number;
+};
+
+function around(line: string, token: string): string {
+  const masked = line.replaceAll(token, "<token>");
+  const at = masked.indexOf("<token>");
+  const end = at + "<token>".length + 20;
+  return `${at > 60 ? "…" : ""}${masked.slice(Math.max(0, at - 60), end)}${end < masked.length ? "…" : ""}`;
+}
+
+export async function runHubCheck(deps: HubCheckDeps): Promise<CheckResult[]> {
+  const failures: Record<string, string[]> = { offered: [], answered: [], started: [], token: [], broken: [] };
+  const look = () => deps.commandLines().then((lines) => ({ lines }), (error: unknown) => ({ lines: [], error: reason(error) }));
+  const looks: Promise<{ lines: string[]; error?: string }>[] = [];
+  for (const engine of deps.engines) {
+    const name = checkNames[engine.engine];
+    const used: string[] = [];
+    const notes: string[] = [];
+    const from = engine.requests.length;
+    let answer = "";
+    const lookDuring = (tool: string) => {
+      used.push(tool);
+      looks.push(look());
+    };
+    try {
+      answer = (await withTimeout(engine.session.ask(`Please ${hubStatusWord}`, { tool: lookDuring, note: (note) => notes.push(note) }), deps.timeoutMs, () => engine.session.close())).text;
+    } catch (error) {
+      answer = `failed: ${reason(error)}`;
+    }
+    const sent = engine.requests.slice(from).filter((request) => request.path === "/v1/messages");
+    const offered = new Set(sent.flatMap((request) => request.tools));
+    const missing = hubReadToolNames.map(engine.toolName).filter((tool) => !offered.has(tool));
+    const actions = [...offered].filter((tool) => hubActionToolNames.some((action) => tool === action || tool.endsWith(`__${action}`)));
+    if (sent.length === 0 || missing.length > 0 || actions.length > 0) failures.offered.push(`${name}: ${sent.length === 0 ? "no requests; " : ""}missing ${missing.join(", ") || "none"}; actions offered: ${actions.join(", ") || "none"}`);
+    const results = sent.flatMap((request) => request.toolResults);
+    const status = engine.toolName("get_status");
+    if (notes.length > 0 || !used.includes(status) || !results.some((result) => !result.isError && result.text.includes(hubAnswer) && result.text.includes("get_status"))) {
+      failures.answered.push(`${name}: answered "${answer.slice(0, 80)}"; tool notes: ${used.join(", ") || "none"}; results: ${results.map((result) => result.text.slice(0, 60)).join(" / ") || "none"}; other notes: ${notes.join(" / ") || "none"}`);
+    }
+    const calls = await engine.calls().catch(() => []);
+    if (calls.length === 0 || calls.some((call) => call.token !== deps.token || call.actions !== "off")) {
+      failures.started.push(`${name}: ${calls.length} calls; ${calls.filter((call) => call.token !== deps.token).length} without the token; ${calls.filter((call) => call.actions !== "off").length} not read-only`);
+    }
+    const leaked = engine.requests.filter((request) => request.body.includes(deps.token)).length;
+    if (leaked > 0) failures.token.push(`${name}: ${leaked} requests carried it`);
+    const note = await engine.broken().catch((error) => reason(error));
+    if (note !== deps.brokenNote(engine.engine)) failures.broken.push(`${name}: ${note === null ? "nothing was said" : `said "${note}"`}`);
+  }
+  looks.push(look());
+  const seen = await Promise.all(looks);
+  const unread = seen.find((result) => result.error !== undefined)?.error;
+  const shown = new Set(seen.flatMap((result) => result.lines).filter((line) => line.includes(deps.token)).map((line) => around(line, deps.token)));
+  if (unread !== undefined) failures.token.push(`command lines couldn't be read: ${unread}`);
+  if (shown.size > 0) failures.token.push(`command lines: ${[...shown].join(" / ")}`);
+  const area = scope(deps.engines);
+  const result = (key: string, title: string): CheckResult => ({ name: `${area}: ${title}`, ok: deps.engines.length > 0 && failures[key].length === 0, detail: failures[key].join(" | ") });
+  return [
+    result("offered", "the hub's seven read tools are offered, and its actions aren't"),
+    result("answered", "a hub tool's answer reaches the API"),
+    result("started", "the hub's MCP server gets the token, in read-only mode"),
+    result("token", "the token never reaches the API or a command line"),
+    result("broken", "a hub server that won't start is reported"),
   ];
 }
 

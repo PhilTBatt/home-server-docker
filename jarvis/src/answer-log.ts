@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { ChatMode, Engine, LengthHints, ThinkingHistory } from "./config.js";
+import type { ChatMode, Engine, HubToolsMode, LengthHints, ThinkingHistory } from "./config.js";
 import type { Answer } from "./timing.js";
 
 export const answerLogFile = fileURLToPath(new URL("../data/answers.jsonl", import.meta.url));
@@ -41,6 +41,7 @@ export type LogContext = {
   model: string;
   chats: ChatMode;
   lengthHints: LengthHints;
+  hubTools: HubToolsMode;
 };
 
 export type LogLine = {
@@ -53,6 +54,7 @@ export type LogLine = {
   model: string;
   chats?: ChatMode;
   lengthHints?: LengthHints;
+  hubTools?: HubToolsMode;
   ok: boolean;
   error: string | null;
   firstWordsMs: number | null;
@@ -119,6 +121,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     model: context.model,
     chats: context.chats,
     lengthHints: context.lengthHints,
+    hubTools: context.hubTools,
     ok: answer !== null,
     error: "error" in outcome ? errorKind(outcome.error) : null,
     firstWordsMs: wholeMs(answer?.firstWordsMs ?? null),

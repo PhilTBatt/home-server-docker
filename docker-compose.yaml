@@ -218,6 +218,7 @@ services:
       - ./jarvis/.env
     volumes:
       - ./jarvis:/app
+      - ./mcp:/mcp:ro
       - type: bind
         source: ../hub-memory
         target: /brain

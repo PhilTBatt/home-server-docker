@@ -48,6 +48,9 @@ Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he sta
 - `JARVIS_LENGTH_HINTS`: `note` (default) prints the chat-length note below; `jarvis` gives Jarvis the chat's size with each question once it's long, and leaves the suggestion to him. The log records which, so `npm run compare` can show how big chats got before you typed `new`. The size lines stay in a saved chat, so type `new` before switching this setting on a saved chat, or its answers mix the two.
 - `JARVIS_LENGTH_WARN`: the chat size, in tokens, where the length warning starts. Default `80000`, 80% of Haiku 5.5's long-prompt line. Set it lower to hear sooner, or to suit another model.
 - `JARVIS_LENGTH_CAP`: `off` (default), or a number of tokens above the warning. Once a chat's last request passes it, Jarvis says so, won't send more questions in that chat, and says to type `new`. A guard against long chats quietly costing more. A saved chat's size is kept with it, so the cap still holds after a restart: in the chat file on the plain API engine, and on the Agent SDK in `jarvis/data/chats/agent-sdk-size.json`, which only counts while the transcript it names is still the newest.
+- `JARVIS_HUB_TOOLS`: `off` (default) or `on`. On gives Jarvis the hub's read-only tools (status, alerts, switches, downloads, library, Wi-Fi reconnects and backup), through the MCP server in `mcp/`, which he starts inside his own container in read-only mode, as one more Node process (about 60 MB) while he runs. For now only the Agent SDK engine uses them. The log records whether he was given them, so `npm run compare` keeps answers with and without the tools apart; a chat whose MCP server didn't start still counts as with. If the MCP server doesn't start or list its tools, his first answer says so, and he carries on with the brain only; the note doesn't say why, and running `npm test` for `mcp/` is the first thing to try. On needs two things, and he won't start without either:
+  - Start Jarvis with `bash host/jarvis.sh`, which passes in `API_TOKEN` from `api/.env` and nothing else.
+  - The MCP server built in `mcp/`, which Jarvis runs from `mcp/dist`: `npm ci`, then `npm test`, as under Tests below. After `mcp/` changes, run `npm test` for it again, or Jarvis keeps using the old build.
 - `JARVIS_CHATS`: `fresh` (default) saves nothing; `resume` saves the chat in `jarvis/data/chats/` and picks it up next time.
   - Saved chats hold everything said, brain text included. Only their owner can read them, and backups copy them.
   - Every question sends the whole saved chat. On Haiku 5.5, a request over 100,000 tokens costs five times as much. Jarvis doesn't trim saved chats yet. The Agent SDK only summarises a chat when it nears its context limit (about 990,000 tokens in a test), so it pays the higher rate long before that.
@@ -62,7 +65,7 @@ Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he sta
 - `hub/`: the phone page.
 - `mcp/`: the MCP server for Claude Code. Same setup as `api/`.
 - `jarvis/`: Jarvis, a text chat (voice later) that reads the brain, with two engines to compare: the Agent SDK and a plain API call. Its settings live in `jarvis/.env` (below), and `jarvis/data/` (git-ignored) holds the answer log and any saved chats.
-- `host/`: files that run outside Docker (the Wi-Fi watchdog, and the backup script with its service and timer), plus helper scripts: `hub-update.sh` pulls and rebuilds only what changed, `hub-mcp.sh` starts the MCP server, and `hub-get.sh` and `hub-post.sh` try an API route.
+- `host/`: files that run outside Docker (the Wi-Fi watchdog, and the backup script with its service and timer), plus helper scripts: `hub-update.sh` pulls and rebuilds only what changed, `hub-mcp.sh` starts the MCP server, `jarvis.sh` starts Jarvis with the API token for the hub's tools, and `hub-get.sh` and `hub-post.sh` try an API route.
 - `caddy/`: the Caddyfile.
 - `homepage/config/`: Homepage's settings. Logins and keys come from `homepage/.env`.
 - `docs/`: `restore.md` (getting files back from a backup), `going-private.md` (what to do if this repo goes private) and `decisions/` (why things are the way they are, one record per decision).
@@ -74,7 +77,7 @@ Secrets live in `.env` files that git ignores (`api/.env`, `homepage/.env`, `bes
 - Start everything: `docker compose up -d`
 - Rebuild the API after a change: `docker compose up --build --wait api`
 - Pull from GitHub and rebuild only what changed: `bash host/hub-update.sh`, or `bash host/hub-update.sh --dry-run` to see what it would do
-- Talk to Jarvis: `docker compose run --rm jarvis`. He's in the `jarvis` profile, so `docker compose up` never starts him. Type `exit` or press Ctrl+C to stop, and `--rm` removes the container. He needs `jarvis/.env` and the brain at `../hub-memory` (mounted read-only), and won't start without them.
+- Talk to Jarvis: `docker compose run --rm jarvis`. He's in the `jarvis` profile, so `docker compose up` never starts him. Type `exit` or press Ctrl+C to stop, and `--rm` removes the container. He needs `jarvis/.env` and the brain at `../hub-memory` (mounted read-only), and won't start without them. With `JARVIS_HUB_TOOLS=on`, start him with `bash host/jarvis.sh` instead.
 
 ## Tests
 Node isn't installed on the server, so npm runs in a throwaway container. From this folder:

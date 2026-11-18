@@ -348,6 +348,19 @@ test("the length-hints setting is compared side by side, named only when both ar
   assert.equal(isLogLine(older), true);
 });
 
+test("hub tools on and off are compared side by side, off first, named only when both are in the log, and older lines count as off", () => {
+  const { hubTools: _hub, ...older } = line();
+  const mixed = [line({ hubTools: "on" }), older as LogLine, line({ engine: "sdk", thinking: null, hubTools: "on" })];
+  assert.deepEqual(rowOf(compareReport({ lines: mixed, skipped: 0 }), ""), ["Agent SDK, hub tools", "API, keep, no hub tools", "API, keep, hub tools"]);
+  assert.deepEqual(rowOf(compareReport({ lines: mixed, skipped: 0 }), "Answers"), ["1", "1", "1"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ hubTools: "on" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine, line({ hubTools: "off" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ lengthHints: "jarvis", hubTools: "on" }), line({})], skipped: 0 }), ""), ["API, keep, length note, no hub tools", "API, keep, Jarvis says, hub tools"]);
+  assert.equal(isLogLine({ ...line(), hubTools: "yes" }), false);
+  assert.equal(isLogLine({ ...line(), hubTools: "on" }), true);
+  assert.equal(isLogLine(older), true);
+});
+
 test("length-hint groups come note first then Jarvis, whatever order the log is in, and older lines join the note group without adding a label", () => {
   const { lengthHints: _hints, ...older } = line();
   const reversed = [line({ lengthHints: "jarvis" }), line({ lengthHints: "note" }), older as LogLine];

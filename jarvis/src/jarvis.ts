@@ -11,6 +11,7 @@ import { createBrainTools } from "./brain-tools.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, chatModel, chatsLine, chatSystem, engineLine, lengthHintsFor, lengthLineFor, listenNow, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine } from "./chat.js";
 import { brainDir, readConfig } from "./config.js";
+import { checkHubServer, hubServerFile, hubServerFor, plainEngineHubNote } from "./hub-tools.js";
 import { pricesPerMTok } from "./prices.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
@@ -28,6 +29,8 @@ try {
   const now = () => performance.now();
   const warn = (message: string) => process.stdout.write(`  (${printable(message)})\n`);
   const hints = lengthHintsFor(config.lengthHints, lengthLineFor(pricesPerMTok[chatModel], config.lengthWarn, config.lengthCap, newChatAdvice));
+  if (config.hubToken !== null) checkHubServer(hubServerFile);
+  const hub = config.hubToken === null ? undefined : hubServerFor(config.hubToken);
   const open = (setup: ChatSetup) => {
     const chat =
       config.engine === "api"
@@ -43,11 +46,11 @@ try {
             history: setup.history,
             save: setup.save,
           })
-        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brainDir, now, savedChats: setup.savedChats });
+        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brainDir, now, savedChats: setup.savedChats, hub });
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: hub !== undefined && config.engine === "sdk" ? "on" : "off" },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -76,6 +79,7 @@ try {
   const first = open(chats);
   process.stdout.write(`${engineLine(config.engine, config.thinkingHistory)}\n`);
   process.stdout.write(`${settingsLine(config)}\n`);
+  if (hub !== undefined && config.engine === "api") warn(plainEngineHubNote);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
   await runChat({

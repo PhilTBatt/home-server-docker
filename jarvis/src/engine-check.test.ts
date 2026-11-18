@@ -12,6 +12,7 @@ import {
   formatCheck,
   problems,
   runEngineCheck,
+  runHubCheck,
   runSavedChatsCheck,
   sdkRefused,
   sdkUnderTest,
@@ -19,6 +20,7 @@ import {
   type CheckResult,
   type EngineCheckDeps,
   type EngineUnderTest,
+  type HubEngineUnderTest,
   type Markers,
   type SavedChatsUnderTest,
 } from "./engine-check.js";
@@ -41,6 +43,7 @@ import {
   type SeenRequest,
   type SeenToolResult,
 } from "./stand-in-api.js";
+import { hubActionToolNames, hubAnswer, hubReadToolNames } from "./stand-in-hub.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 const markers: Markers = { inside: "inside-123", outside: "outside-456", git: "git-321", settings: "settings-789", hidden: "hidden-111", ignored: "ignored-222", mixedCase: "mixed-333" };
@@ -642,4 +645,129 @@ test("with no engines given, the saved-chat checks fail rather than pass by defa
 
 test("an engine that keeps each resumed chat in a new file still passes, as long as each picks up the last", async () => {
   assert.deepEqual(failed(await runSavedChatsCheck(savedDeps({ resumeAddsFile: true }, { resumeAddsFile: true }))), []);
+});
+
+type HubFake = { offersAction?: boolean; missesRead?: boolean; noAnswer?: boolean; noNote?: boolean; problemNote?: boolean; wrongToken?: boolean; actionsOn?: boolean; noCalls?: boolean; leaks?: boolean; silentWhenBroken?: boolean; wrongNote?: boolean; throws?: boolean };
+
+let toolUnderWay = false;
+
+const hubToken = "hub-token-999";
+const brokenNote = (engine: Engine) => `broken ${engine}`;
+
+function hubEngine(engine: Engine, fake: HubFake = {}): HubEngineUnderTest {
+  const toolName = (name: string) => (engine === "sdk" ? `mcp__hub__${name}` : name);
+  const requests: SeenRequest[] = [];
+  const reads = hubReadToolNames.filter((name) => !(fake.missesRead === true && name === "get_backup")).map(toolName);
+  const tools = [...reads, ...(fake.offersAction === true ? [toolName(hubActionToolNames[0])] : [])];
+  const session: AgentSession = {
+    async ask(question, listener) {
+      if (fake.throws === true) throw new Error("engine fell over");
+      requests.push({ ...goodRequestFor(engine), tools, lastUserText: question, body: fake.leaks === true ? hubToken : "{}" });
+      if (fake.problemNote === true) listener?.note?.("The hub's tools didn't load (no tools listed), so in this chat Jarvis can only read the brain");
+      toolUnderWay = true;
+      if (fake.noNote !== true) listener?.tool?.(toolName("get_status"), {});
+      await Promise.resolve();
+      toolUnderWay = false;
+      const text = fake.noAnswer === true ? "nothing" : JSON.stringify({ tool: "get_status", answer: hubAnswer });
+      requests.push({ ...goodRequestFor(engine), tools, lastUserText: `[tool result] ${text}`, toolResults: [{ text, isError: false }] });
+      return { text: "Done.", firstWordsMs: 1, totalMs: 2 };
+    },
+    readyMs: () => null,
+    costUsd: () => null,
+    stoppedReason: () => null,
+    close: () => {},
+  };
+  return {
+    engine,
+    session,
+    requests,
+    toolName,
+    calls: async () => (fake.noCalls === true ? [] : [{ tool: "get_status", token: fake.wrongToken === true ? "other" : hubToken, actions: fake.actionsOn === true ? "on" : "off", anthropicKey: false }]),
+    broken: async () => (fake.silentWhenBroken === true ? null : fake.wrongNote === true ? "something else" : brokenNote(engine)),
+  };
+}
+
+const hubNames = [
+  "the hub's seven read tools are offered, and its actions aren't",
+  "a hub tool's answer reaches the API",
+  "the hub's MCP server gets the token, in read-only mode",
+  "the token never reaches the API or a command line",
+  "a hub server that won't start is reported",
+];
+
+const harmlessLines = async () => ["/usr/local/bin/node /mcp/dist/server.js", "claude --mcp-config {\"MCP_ACTIONS\":\"off\"}"];
+
+function hubDeps(sdk: HubFake = {}, api: HubFake = {}, commandLines: () => Promise<string[]> = harmlessLines) {
+  return { engines: [hubEngine("sdk", sdk), hubEngine("api", api)], token: hubToken, brokenNote, commandLines, timeoutMs: 1000 };
+}
+
+test("engines that use the hub's tools properly pass all five hub checks, named for the engines checked", async () => {
+  const both = await runHubCheck(hubDeps());
+  assert.deepEqual(both.map((result) => result.name), hubNames.map((name) => `both engines: ${name}`));
+  assert.deepEqual(failed(both), []);
+  const one = await runHubCheck({ ...hubDeps(), engines: [hubEngine("sdk")] });
+  assert.deepEqual(one.map((result) => result.name), hubNames.map((name) => `Agent SDK: ${name}`));
+  assert.deepEqual(failed(one), []);
+});
+
+test("each way of getting the hub's tools wrong fails its own check, naming the engine", async () => {
+  const cases: [HubFake, number[]][] = [
+    [{ offersAction: true }, [0]],
+    [{ missesRead: true }, [0]],
+    [{ noAnswer: true }, [1]],
+    [{ noNote: true }, [1]],
+    [{ problemNote: true }, [1]],
+    [{ wrongToken: true }, [2]],
+    [{ actionsOn: true }, [2]],
+    [{ noCalls: true }, [2]],
+    [{ leaks: true }, [3]],
+    [{ silentWhenBroken: true }, [4]],
+    [{ wrongNote: true }, [4]],
+  ];
+  for (const [fake, broken] of cases) {
+    for (const engine of ["sdk", "api"] as const) {
+      const results = await runHubCheck(engine === "sdk" ? hubDeps(fake) : hubDeps({}, fake));
+      assert.deepEqual(failed(results), broken.map((index) => `both engines: ${hubNames[index]}`), `${engine} ${JSON.stringify(fake)}`);
+      for (const index of broken) assert.match(named(results, `both engines: ${hubNames[index]}`).detail, new RegExp(`^${engine === "sdk" ? "Agent SDK" : "plain API call"}: `));
+    }
+  }
+});
+
+test("a token on any command line fails the token check, shown once, around where it sits and without the token itself; so does not being able to look", async () => {
+  const shown = await runHubCheck(hubDeps({}, {}, async () => ["/usr/bin/sleep 5", `claude --mcp-config {"API_TOKEN":"${hubToken}"}`]));
+  assert.deepEqual(failed(shown), [`both engines: ${hubNames[3]}`]);
+  assert.equal(named(shown, `both engines: ${hubNames[3]}`).detail, `command lines: claude --mcp-config {"API_TOKEN":"<token>"}`);
+  const long = await runHubCheck(hubDeps({}, {}, async () => [`${"a".repeat(100)} --token ${hubToken} ${"b".repeat(100)}`]));
+  assert.equal(named(long, `both engines: ${hubNames[3]}`).detail, `command lines: …${"a".repeat(51)} --token <token> ${"b".repeat(19)}…`);
+  const twice = await runHubCheck(hubDeps({}, {}, async () => [`${"a".repeat(80)} --token=${hubToken},${hubToken} ${"b".repeat(80)}`]));
+  const detail = named(twice, `both engines: ${hubNames[3]}`).detail;
+  assert.ok(!detail.includes("hub-token"), detail);
+  assert.equal(detail, `command lines: …${"a".repeat(51)} --token=<token>,<token> ${"b".repeat(11)}…`);
+  const unread = await runHubCheck(
+    hubDeps({}, {}, async () => {
+      throw new Error("no /proc");
+    }),
+  );
+  assert.deepEqual(failed(unread), [`both engines: ${hubNames[3]}`]);
+  assert.equal(named(unread, `both engines: ${hubNames[3]}`).detail, "command lines couldn't be read: no /proc");
+});
+
+test("command lines are looked at while each tool call is under way, not only at the end, so one that's only there during a call is caught", async () => {
+  let looked = 0;
+  const results = await runHubCheck(
+    hubDeps({}, {}, async () => {
+      looked++;
+      return toolUnderWay ? [`node server.js ${hubToken}`] : ["node server.js"];
+    }),
+  );
+  assert.equal(looked, 3);
+  assert.deepEqual(failed(results), [`both engines: ${hubNames[3]}`]);
+  assert.equal(named(results, `both engines: ${hubNames[3]}`).detail, "command lines: node server.js <token>");
+});
+
+test("an engine that fails the hub question fails rather than passing by default, and so does checking no engines", async () => {
+  const results = await runHubCheck(hubDeps({ throws: true }));
+  assert.deepEqual(failed(results), hubNames.slice(0, 2).map((name) => `both engines: ${name}`));
+  assert.match(named(results, `both engines: ${hubNames[1]}`).detail, /answered "failed: engine fell over"/);
+  assert.ok((await runHubCheck({ ...hubDeps(), engines: [] })).every((result) => !result.ok));
 });
