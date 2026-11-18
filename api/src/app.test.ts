@@ -100,6 +100,7 @@ for (const [label, value] of badHeaders) {
 const protectedRoutes = [
   ["GET", "/health"],
   ["GET", "/media/downloads"],
+  ["GET", `/media/downloads/${hash}`],
   ["POST", `/media/downloads/${hash}/stop`],
   ["POST", `/media/downloads/${hash}/start`],
   ["GET", "/media/library"],

@@ -23,16 +23,39 @@ type TorrentAction = {
   action: "stop" | "start";
 };
 
+const hashProperty = { type: "string", pattern: "^[0-9a-f]{40}$" };
+
+const torrentSchema = {
+  params: {
+    type: "object",
+    required: ["hash"],
+    properties: {
+      hash: hashProperty,
+    },
+  },
+};
+
 const torrentActionSchema = {
   params: {
     type: "object",
     required: ["hash", "action"],
     properties: {
-      hash: { type: "string", pattern: "^[0-9a-f]{40}$" },
+      hash: hashProperty,
       action: { type: "string", enum: ["stop", "start"] },
     },
   },
 };
+
+function toDownload(t: QbitTorrent) {
+  return {
+    name: t.name,
+    percent: Math.round(t.progress * 100),
+    speedKBps: Math.round(t.dlspeed / 1024),
+    etaSeconds: t.eta === qbitNoEta ? null : t.eta,
+    state: t.state,
+    hash: t.hash
+  };
+}
 
 export const media: FastifyPluginAsync<Pick<Config, "qbitApiKey" | "jellyfinApiKey">> = async (app, options) => {
   const qbitAuth = `Bearer ${options.qbitApiKey}`;
@@ -46,15 +69,27 @@ export const media: FastifyPluginAsync<Pick<Config, "qbitApiKey" | "jellyfinApiK
       throw new Error(`qBittorrent replied ${response.status}`);
     }
     const torrents = (await response.json()) as QbitTorrent[];
-    return torrents.map((t) => ({
-      name: t.name,
-      percent: Math.round(t.progress * 100),
-      speedKBps: Math.round(t.dlspeed / 1024),
-      etaSeconds: t.eta === qbitNoEta ? null : t.eta,
-      state: t.state,
-      hash: t.hash
-    }));
+    return torrents.map(toDownload);
   });
+
+  app.get<{ Params: Pick<TorrentAction, "hash"> }>(
+    "/downloads/:hash",
+    { schema: torrentSchema },
+    async (request, reply) => {
+      const { hash } = request.params;
+      const response = await fetch(
+        `http://qbittorrent:8081/api/v2/torrents/info?hashes=${hash}`,
+        { headers: { Authorization: qbitAuth } },
+      );
+      if (!response.ok) {
+        throw new Error(`qBittorrent replied ${response.status}`);
+      }
+      const torrents = (await response.json()) as QbitTorrent[];
+      const torrent = torrents.find((t) => t.hash === hash);
+      if (torrent === undefined) return reply.code(404).send({ error: "No torrent with that hash" });
+      return toDownload(torrent);
+    },
+  );
 
   app.post<{ Params: TorrentAction }>(
     "/downloads/:hash/:action",

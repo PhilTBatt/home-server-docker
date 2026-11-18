@@ -30,6 +30,35 @@ test("downloads turns qBittorrent's reply into the tidy shape", async () => {
   ]);
 });
 
+test("one download is looked up by its hash, whatever its state, in the same tidy shape", async () => {
+  const fetchMock = mock.method(globalThis, "fetch", async () =>
+    Response.json([{ name: "Stopped one", progress: 0.5, dlspeed: 0, eta: 8640000, state: "stoppedDL", hash }]),
+  );
+  const response = await buildApp().inject({ method: "GET", url: `/media/downloads/${hash}` });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { name: "Stopped one", percent: 50, speedKBps: 0, etaSeconds: null, state: "stoppedDL", hash });
+  assert.equal(fetchMock.mock.callCount(), 1);
+  const [url, options] = fetchMock.mock.calls[0].arguments;
+  assert.equal(url, `http://qbittorrent:8081/api/v2/torrents/info?hashes=${hash}`);
+  assert.equal(new Headers(options?.headers).get("Authorization"), "Bearer test-qbit-key");
+});
+
+test("a hash qBittorrent doesn't have is a 404, even if it replies with other torrents", async () => {
+  const other = "fedcba9876543210fedcba9876543210fedcba98";
+  mock.method(globalThis, "fetch", async () => Response.json([{ name: "Someone else", progress: 1, dlspeed: 0, eta: 0, state: "uploading", hash: other }]));
+  const response = await buildApp().inject({ method: "GET", url: `/media/downloads/${hash}` });
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(response.json(), { error: "No torrent with that hash" });
+  mock.method(globalThis, "fetch", async () => Response.json([]));
+  assert.equal((await buildApp().inject({ method: "GET", url: `/media/downloads/${hash}` })).statusCode, 404);
+});
+
+test("an error from qBittorrent on looking up one download becomes a 500", async () => {
+  mock.method(globalThis, "fetch", async () => Response.json([], { status: 403 }));
+  const response = await buildApp().inject({ method: "GET", url: `/media/downloads/${hash}` });
+  assert.equal(response.statusCode, 500);
+});
+
 test("stop sends the hash to qBittorrent's stop endpoint", async () => {
   const fetchMock = mock.method(globalThis, "fetch", async () => new Response(null, { status: 200 }));
   const response = await buildApp().inject({ method: "POST", url: `/media/downloads/${hash}/stop` });
@@ -98,9 +127,18 @@ for (const [label, badHash] of badHashes) {
     const fetchMock = mock.method(globalThis, "fetch", async () => new Response(null, { status: 200 }));
     const response = await buildApp().inject({ method: "POST", url: `/media/downloads/${badHash}/stop` });
     assert.equal(response.statusCode, 400);
+    const lookup = await buildApp().inject({ method: "GET", url: `/media/downloads/${badHash}` });
+    assert.equal(lookup.statusCode, 400);
     assert.equal(fetchMock.mock.callCount(), 0);
   });
 }
+
+test("looking up the hash 'all' is refused before anything reaches qBittorrent", async () => {
+  const fetchMock = mock.method(globalThis, "fetch", async () => Response.json([]));
+  const response = await buildApp().inject({ method: "GET", url: "/media/downloads/all" });
+  assert.equal(response.statusCode, 400);
+  assert.equal(fetchMock.mock.callCount(), 0);
+});
 
 test("an error from qBittorrent on stop becomes a 500", async () => {
   mock.method(globalThis, "fetch", async () => new Response(null, { status: 403 }));
