@@ -76,6 +76,7 @@ export type ChatDeps = {
   recordNewChat?: (lastRequestTokens: number | null) => Promise<void>;
   newChat?: () => Promise<NewChat>;
   confirm?: (prompt: string, signal: AbortSignal) => Promise<string | null>;
+  describe?: (tool: string, input: unknown, signal: AbortSignal) => Promise<string>;
 };
 
 export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize"]-?: ChatDeps[Key] } & { notes: string[] };
@@ -305,7 +306,9 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
       if (deps.confirm === undefined || asking.signal.aborted) return false;
       timer.pause();
       show(newLine());
-      const typed = await deps.confirm(questionPrompt(actionQuestion(tool, input)), asking.signal).catch(() => null);
+      const question = deps.describe === undefined ? actionQuestion(tool, input) : await deps.describe(tool, input, asking.signal).catch(() => actionQuestion(tool, input));
+      if (asking.signal.aborted) return false;
+      const typed = await deps.confirm(questionPrompt(question), asking.signal).catch(() => null);
       if (asking.signal.aborted) return false;
       const yes = typed !== null && typed.trim().toLowerCase() === "yes";
       show(`  (${yes ? confirmNotes.yes : typed === null ? confirmNotes.none : confirmNotes.no})\n`);

@@ -1,7 +1,7 @@
 # 0011. Jarvis's own code asks yes or no before each hub action
 
 - Date: 2026-11-18
-- Status: accepted
+- Status: accepted, with the download question improved by 0012
 
 ## Context
 Records 0008 and 0009 gave Jarvis the hub's read tools only. The MCP server also offers three actions: scanning the library, and stopping or starting a download. They're the first things Jarvis could change on the server, so a decision was needed on how I say yes or no to each one, and what stops him going ahead without asking.

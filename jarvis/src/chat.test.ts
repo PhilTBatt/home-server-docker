@@ -1249,6 +1249,79 @@ test("if the answer ends while Phil is still being asked, the question is called
   assert.ok(!output().includes("going ahead") && !output().includes("not done"), output());
 });
 
+test("with a way to describe actions, the question uses it, gets the call-off signal, and falls back to plain words if it fails", async () => {
+  const described: [string, unknown, AbortSignal][] = [];
+  const prompts: string[] = [];
+  const session = fakeSession({
+    "Stop it": async (listener) => {
+      await listener.confirm?.("stop_download", { hash: "aaaaaaaaaaaa" });
+      return answer("Done.", 100, 300);
+    },
+  });
+  const { run, output } = chat(session, ["Stop it", "Stop it"], {
+    describe: async (tool, input, signal) => {
+      described.push([tool, input, signal]);
+      if (described.length === 2) throw new Error("no hub");
+      return 'Jarvis wants to stop "Film" (62% done, hash starts aaaaaaaa). Type yes to let him, or anything else to stop it';
+    },
+    confirm: async (prompt) => {
+      prompts.push(prompt);
+      return "no";
+    },
+  });
+  await run();
+  assert.deepEqual(prompts, [
+    '  (Jarvis wants to stop "Film" (62% done, hash starts aaaaaaaa). Type yes to let him, or anything else to stop it)\n  Your answer: ',
+    "  (Jarvis wants to stop the download whose hash starts aaaaaaaa. Type yes to let him, or anything else to stop it)\n  Your answer: ",
+  ]);
+  assert.deepEqual(described.map(([tool, input]) => [tool, input]), [["stop_download", { hash: "aaaaaaaaaaaa" }], ["stop_download", { hash: "aaaaaaaaaaaa" }]]);
+  assert.ok(described.every(([, , signal]) => signal instanceof AbortSignal && signal.aborted));
+  assert.ok(output().includes("  (not done)"), output());
+});
+
+test("the time spent looking up a download doesn't count towards the question's limit", async () => {
+  const session = fakeSession({
+    "Stop it": async (listener) => {
+      const yes = await listener.confirm?.("stop_download", { hash: "aaaaaaaaaaaa" });
+      return answer(`Done ${yes}.`, 100, 300);
+    },
+  });
+  const { run, output } = chat(session, ["Stop it"], {
+    questionTimeoutMs: 50,
+    describe: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return "Jarvis wants to stop it. Type yes to let him, or anything else to stop it";
+    },
+    confirm: async () => "yes",
+  });
+  await run();
+  assert.ok(output().includes("  (going ahead)\nDone true."), output());
+  assert.ok(!output().includes("No answer within"), output());
+});
+
+test("if the answer fails while the download is being looked up, nothing is asked", async () => {
+  let asked = 0;
+  const session = fakeSession({
+    "Stop it": async (listener) => {
+      void listener.confirm?.("stop_download", { hash: "aaaaaaaaaaaa" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      throw new Error("the engine stopped");
+    },
+  });
+  const { run, output } = chat(session, ["Stop it"], {
+    describe: (_tool, _input, signal) => new Promise((resolve) => signal.addEventListener("abort", () => resolve("Jarvis wants to stop something"))),
+    confirm: async () => {
+      asked++;
+      return "yes";
+    },
+  });
+  await run();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(asked, 0);
+  assert.ok(output().includes("Jarvis couldn't answer: the engine stopped"), output());
+  assert.ok(!output().includes("going ahead") && !output().includes("not done"), output());
+});
+
 test("the question is drawn as part of the answer prompt, with control characters taken out", () => {
   assert.equal(questionPrompt("Jarvis wants to scan the library"), "  (Jarvis wants to scan the library)\n  Your answer: ");
   assert.equal(questionPrompt("a\u001b[2Jb"), "  (a[2Jb)\n  Your answer: ");

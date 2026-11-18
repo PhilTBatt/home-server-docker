@@ -12,7 +12,7 @@ import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, lengthHintsFor, lengthLineFor, listenNow, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine } from "./chat.js";
 import { brainDir, readConfig } from "./config.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
-import { checkHubServer, hubServerFile, hubServerFor } from "./hub-tools.js";
+import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
 import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes, withNotes } from "./session-notes.js";
 
@@ -99,6 +99,7 @@ try {
     sizeLine: hints.sizeLine,
     lengthCap: config.lengthCap ?? undefined,
     confirm: (query, signal) => askOnce(lines, query, confirmMs, signal),
+    describe: hub === undefined ? undefined : describeWithHub(hub.token),
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));
