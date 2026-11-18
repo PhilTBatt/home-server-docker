@@ -31,11 +31,17 @@ if ! git merge-base --is-ancestor "$before" "$after"; then
 fi
 
 changed=$(git diff --name-only "$before" "$after")
+
+npm_in() {
+  echo "docker run --rm -u node -v $PWD/$1:/app -w /app node:26-alpine npm $2"
+}
+
 steps=()
 if grep -q '^docker-compose\.yaml$' <<< "$changed"; then steps+=("docker compose up -d"); fi
 if grep -q '^api/' <<< "$changed"; then steps+=("docker compose up --build --wait api"); fi
-if grep -q '^mcp/' <<< "$changed"; then steps+=("docker compose build mcp"); fi
 if grep -q '^caddy/Caddyfile$' <<< "$changed"; then steps+=("docker compose restart caddy"); fi
+if grep -q '^mcp/' <<< "$changed"; then steps+=("$(npm_in mcp ci)" "$(npm_in mcp test)" "docker compose build mcp"); fi
+if grep -q '^jarvis/package-lock\.json$' <<< "$changed"; then steps+=("$(npm_in jarvis ci)" "$(npm_in jarvis "run engine-check")"); fi
 installs=$(grep '^host/' <<< "$changed" | grep -v '^host/hub-')
 
 destination() {
