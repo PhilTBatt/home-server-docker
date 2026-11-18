@@ -194,6 +194,9 @@ services:
         target: /memory/inbox
         bind:
           create_host_path: false
+    networks:
+      - default
+      - jarvis
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null --header \"Authorization: Bearer $$API_TOKEN\" http://127.0.0.1:3000/health"]
       interval: 1m
@@ -225,3 +228,8 @@ services:
         read_only: true
         bind:
           create_host_path: false
+    networks:
+      - jarvis
+
+networks:
+  jarvis:
