@@ -56,6 +56,8 @@ fresh_repos() {
   echo one > "$work/laptop/jarvis/package-lock.json"
   echo one > "$work/laptop/jarvis/package.json"
   echo one > "$work/laptop/docker-compose.yaml"
+  echo one > "$work/laptop/docker-compose.sound.yaml"
+  echo one > "$work/laptop/jarvis/Dockerfile"
   mkdir -p "$work/laptop/caddy"
   echo one > "$work/laptop/caddy/Caddyfile"
   git -C "$work/laptop" add -A
@@ -97,6 +99,16 @@ fresh_repos
 change jarvis/package.json
 update > /dev/null
 check "a change to Jarvis's package.json alone runs nothing, since only the lock file says what npm ci installs" "" "$(cat "$work/docker.log")"
+
+fresh_repos
+change jarvis/Dockerfile
+update > /dev/null
+check "a change to Jarvis's sound image runs nothing, since host/jarvis.sh builds it each time it's needed" "" "$(cat "$work/docker.log")"
+
+fresh_repos
+change docker-compose.sound.yaml
+update > /dev/null
+check "a change to the sound file runs nothing, since only host/jarvis.sh uses it" "" "$(cat "$work/docker.log")"
 
 fresh_repos
 change jarvis/package-lock.json

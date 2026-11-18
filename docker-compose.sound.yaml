@@ -1,0 +1,9 @@
+services:
+  jarvis:
+    image: home-hub-jarvis
+    pull_policy: never
+    devices:
+      - /dev/snd/controlC${SOUND_CARD_NUMBER:?start it with bash host/jarvis.sh sound-test}:/dev/snd/controlC${SOUND_CARD_NUMBER:?}:rw
+      - /dev/snd/pcmC${SOUND_CARD_NUMBER:?}D0p:/dev/snd/pcmC${SOUND_CARD_NUMBER:?}D0p:rw
+    group_add:
+      - "${AUDIO_GROUP_ID:?start it with bash host/jarvis.sh sound-test}"
