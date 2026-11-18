@@ -10,6 +10,7 @@ import { savedSdkChats, setUpChats, setUpNewChat } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs } from "./chat.js";
 import { askDirect } from "./direct.js";
 import { apiUnderTest, formatCheck, runEngineCheck, runHubCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
+import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { hubProblemNote, hubToolPrefix, type HubServer } from "./hub-tools.js";
 import { withTimeout } from "./run.js";
 import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi, type StandInApi } from "./stand-in-api.js";
@@ -18,6 +19,7 @@ import { standInHubFile, type HubCall } from "./stand-in-hub.js";
 const folders: string[] = [];
 const apis: StandInApi[] = [];
 const sessions: AgentSession[] = [];
+const hubs: HubTools[] = [];
 let engineEnv: Record<string, string | undefined> | undefined;
 
 async function commandLines(): Promise<string[]> {
@@ -143,6 +145,16 @@ try {
     startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: hubSdkApi.url, API_TOKEN: hubToken }, hub });
   const hubSdk = sdkWithHub({ command: process.execPath, args: [standInHubFile, hubSdkLog], token: hubToken });
   sessions.push(hubSdk);
+  const hubPlainApi = await startStandInApi(script, "api");
+  apis.push(hubPlainApi);
+  const hubPlainLog = join(home, "hub-api.jsonl");
+  const plainHubTools = await startHubTools({ command: process.execPath, args: [standInHubFile, hubPlainLog], token: hubToken }, () => {});
+  if (plainHubTools !== undefined) hubs.push(plainHubTools);
+  const hubPlain = startApiSession(
+    { apiKey: "sk-ant-test-key", model: chatModel, system: apiChatSystem, maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: withHubTools(createBrainTools(brain), plainHubTools), thinkingHistory: "keep" },
+    (request) => askDirect({ ...request, url: `${hubPlainApi.url}/v1/messages` }),
+  );
+  sessions.push(hubPlain);
   const hub = await runHubCheck({
     engines: [
       {
@@ -156,6 +168,19 @@ try {
           const session = sdkWithHub({ command: process.execPath, args: [join(home, "missing-server.js")], token: hubToken });
           sessions.push(session);
           await withTimeout(session.ask("Hello", { note: (note) => notes.push(note) }), 60_000, () => session.close()).catch(() => {});
+          return notes[0] ?? null;
+        },
+      },
+      {
+        engine: "api",
+        session: hubPlain,
+        requests: hubPlainApi.requests,
+        toolName: (name) => name,
+        calls: () => hubCalls(hubPlainLog),
+        broken: async () => {
+          const notes: string[] = [];
+          const tools = await startHubTools({ command: process.execPath, args: [join(home, "missing-server.js")], token: hubToken }, (note) => notes.push(note));
+          await tools?.close();
           return notes[0] ?? null;
         },
       },
@@ -173,6 +198,7 @@ try {
   process.exitCode = 1;
 } finally {
   for (const session of sessions) session.close();
+  for (const hub of hubs) await hub.close().catch(() => {});
   const places = await Promise.all(folders.map((folder) => realpath(folder).catch(() => folder)));
   const until = Date.now() + 10_000;
   while (Date.now() < until && (await runningIn(places))) await new Promise((resolve) => setTimeout(resolve, 100));

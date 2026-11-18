@@ -12,6 +12,10 @@ export function hubServerFor(token: string, file = hubServerFile): HubServer {
 
 export const readOnlyEnv = { MCP_ACTIONS: "off" };
 
+export function hubServerEnv(server: HubServer): Record<string, string> {
+  return { API_TOKEN: server.token, ...readOnlyEnv };
+}
+
 export function withHubToken(env: Record<string, string | undefined>, hub: HubServer | undefined): Record<string, string | undefined> {
   const { API_TOKEN: _, ...rest } = env;
   return hub === undefined ? rest : { ...rest, API_TOKEN: hub.token };
@@ -24,8 +28,6 @@ export function hubNotBuilt(file: string): string {
 export function checkHubServer(file: string, exists: (path: string) => boolean = existsSync): void {
   if (!exists(file)) throw new Error(hubNotBuilt(file));
 }
-
-export const plainEngineHubNote = "The plain API call engine doesn't have the hub's tools yet, so in this chat Jarvis can only read the brain";
 
 export function hubProblemNote(status: string): string {
   return `The hub's tools didn't load (${status}), so in this chat Jarvis can only read the brain`;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkHubServer, hubNotBuilt, hubServerFile, hubServerFor, hubToolPrefix, plainEngineHubNote, readOnlyEnv, withHubToken } from "./hub-tools.js";
+import { checkHubServer, hubNotBuilt, hubServerEnv, hubServerFile, hubServerFor, hubToolPrefix, readOnlyEnv, withHubToken } from "./hub-tools.js";
 
 test("the hub's MCP server is the built one mounted from mcp/, run with this Node, and its tools are named mcp__hub__ on the Agent SDK", () => {
   assert.equal(hubServerFile, "/mcp/dist/server.js");
@@ -11,6 +11,10 @@ test("the hub's MCP server is the built one mounted from mcp/, run with this Nod
 
 test("the MCP server is told only to leave its actions out", () => {
   assert.deepEqual(readOnlyEnv, { MCP_ACTIONS: "off" });
+});
+
+test("an MCP server started by Jarvis himself gets the token and read-only mode", () => {
+  assert.deepEqual(hubServerEnv(hubServerFor("hub-token")), { API_TOKEN: "hub-token", MCP_ACTIONS: "off" });
 });
 
 test("an environment gets the hub's token only with the hub's tools, and never a token it already had", () => {
@@ -24,5 +28,4 @@ test("an unbuilt MCP server stops Jarvis with how to build it; a built one passe
   assert.throws(() => checkHubServer("/mcp/dist/server.js", () => false), { message: hubNotBuilt("/mcp/dist/server.js") });
   assert.doesNotThrow(() => checkHubServer("/mcp/dist/server.js", (path) => path === "/mcp/dist/server.js"));
   assert.equal(hubNotBuilt("/mcp/dist/server.js"), "JARVIS_HUB_TOOLS is on, but the MCP server isn't built: there's no /mcp/dist/server.js. Build it with npm ci and npm test in mcp/, as the README says");
-  assert.equal(plainEngineHubNote, "The plain API call engine doesn't have the hub's tools yet, so in this chat Jarvis can only read the brain");
 });
