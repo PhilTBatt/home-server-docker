@@ -9,7 +9,7 @@ import { createBrainTools } from "./brain-tools.js";
 import { savedSdkChats, setUpChats, setUpNewChat } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs } from "./chat.js";
 import { askDirect } from "./direct.js";
-import { apiUnderTest, formatCheck, runEngineCheck, runHubCheck, runNotesCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
+import { apiUnderTest, formatCheck, runActionsCheck, runEngineCheck, runHubCheck, runNotesCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { hubProblemNote, hubToolPrefix, type HubServer } from "./hub-tools.js";
 import { withTimeout } from "./run.js";
@@ -191,6 +191,33 @@ try {
     commandLines,
     timeoutMs: 60_000,
   });
+  const actionsSdkApi = await startStandInApi(script, "sdk");
+  const actionsPlainApi = await startStandInApi(script, "api");
+  apis.push(actionsSdkApi, actionsPlainApi);
+  const actionsSdkLog = join(home, "actions-sdk.jsonl");
+  const actionsPlainLog = join(home, "actions-api.jsonl");
+  const actionsSdk = startAgentSession((prompt, options) => query({ prompt, options }), {
+    model: chatModel,
+    system: chatSystem,
+    cwd: brain,
+    now,
+    env: { ...process.env, ANTHROPIC_BASE_URL: actionsSdkApi.url },
+    hub: { command: process.execPath, args: [standInHubFile, actionsSdkLog], token: hubToken, actions: true },
+  });
+  const plainActionTools = await startHubTools({ command: process.execPath, args: [standInHubFile, actionsPlainLog], token: hubToken, actions: true }, () => {});
+  if (plainActionTools !== undefined) hubs.push(plainActionTools);
+  const actionsPlain = startApiSession(
+    { apiKey: "sk-ant-test-key", model: chatModel, system: apiChatSystem, maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: withHubTools(createBrainTools(brain), plainActionTools), thinkingHistory: "keep" },
+    (request) => askDirect({ ...request, url: `${actionsPlainApi.url}/v1/messages` }),
+  );
+  sessions.push(actionsSdk, actionsPlain);
+  const actions = await runActionsCheck({
+    engines: [
+      { engine: "sdk", session: actionsSdk, requests: actionsSdkApi.requests, toolName: (name) => `${hubToolPrefix}${name}`, calls: () => hubCalls(actionsSdkLog) },
+      { engine: "api", session: actionsPlain, requests: actionsPlainApi.requests, toolName: (name) => name, calls: () => hubCalls(actionsPlainLog) },
+    ],
+    timeoutMs: 60_000,
+  });
   const notesHome = await mkdtemp(join(tmpdir(), "jarvis-check-notes-"));
   folders.push(notesHome);
   await mkdir(join(notesHome, "docker"));
@@ -215,7 +242,7 @@ try {
     commandLines,
     timeoutMs: 60_000,
   });
-  const results = [...shared, ...saved, ...hub, ...notes];
+  const results = [...shared, ...saved, ...hub, ...actions, ...notes];
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;
 } catch (error) {

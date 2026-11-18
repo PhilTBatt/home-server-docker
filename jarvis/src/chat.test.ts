@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { pricesPerMTok } from "./prices.js";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, chatModel, chatsLine, chatSystem, commandNote, costLine, lengthLineFor, listenNow, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
+import { apiChatSystem, askOnce, questionPrompt, chatModel, chatsLine, chatSystem, confirmMs, commandNote, costLine, lengthLineFor, listenNow, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -662,8 +662,8 @@ test("only a lone + or - is a rating; anything longer is a question", async () =
 });
 
 test("Jarvis's settings are printed in one line, as they're written in jarvis/.env", () => {
-  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", sessionNotes: true, log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_SESSION_NOTES=on, JARVIS_LOG=on");
-  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, sessionNotes: false, log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_SESSION_NOTES=off, JARVIS_LOG=off");
+  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_LOG=on");
+  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_LOG=off");
 });
 
 test("the chats line says whether this chat is saved, and what it picks up", () => {
@@ -1086,8 +1086,267 @@ test("a hub tool's note leaves out the Agent SDK's mcp__hub__ prefix", () => {
   assert.equal(toolNote("SomethingElse", {}), "using SomethingElse");
 });
 
-test("both engines are told the hub's tools only read, and what they're for", () => {
+test("both engines are told what the hub's tools are for, that the get_ ones only read, and that their code asks Phil before any action", () => {
   for (const system of [chatSystem, apiChatSystem]) {
-    assert.ok(system.includes("If you have the hub's tools, named get_status, get_alerts and so on, use them for questions about the home server itself: its status, alerts, downloads, library, Wi-Fi and backups. They only read, like everything else."));
+    assert.ok(system.includes("If you have the hub's tools, named get_status, get_alerts and so on, use them for questions about the home server itself: its status, alerts, downloads, library, Wi-Fi and backups. The get_ ones only read."));
+    assert.ok(system.includes("You can only read, apart from the hub's actions if you have them: scan_library, stop_download and start_download. Your own code asks Phil yes or no before each one runs, so don't ask him first yourself, and tell him plainly if one wasn't done. If he asks you to change anything else, tell him you can't yet."));
+    assert.ok(!system.includes("You can only read. If he asks"));
   }
+});
+
+const scanAsk: Script = async (listener) => {
+  listener.text?.("Scanning.");
+  const yes = await listener.confirm?.("scan_library", {});
+  listener.text?.(yes === true ? " Done." : " Left it.");
+  return answer(yes === true ? "Scanning. Done." : "Scanning. Left it.", 100, 300);
+};
+
+test("an action is put to Phil after the words so far, and only exactly yes, in any case and with spaces, lets it go ahead", async () => {
+  for (const [typed, yes, note] of [
+    ["yes", true, "going ahead"],
+    ["  YES ", true, "going ahead"],
+    ["y", false, "not done"],
+    ["yes please", false, "not done"],
+    ["", false, "not done"],
+  ] as const) {
+    const prompts: string[] = [];
+    const { run, output } = chat(fakeSession({ "Scan it": scanAsk }), ["Scan it"], {
+      confirm: async (prompt) => {
+        prompts.push(prompt);
+        return typed;
+      },
+    });
+    await run();
+    assert.deepEqual(prompts, ["  (Jarvis wants to scan the library. Type yes to let him, or anything else to stop it)\n  Your answer: "], typed);
+    assert.ok(!output().includes("wants to"), output());
+    assert.ok(output().includes(`Jarvis: Scanning.\n  (${note})\n ${yes ? "Done." : "Left it."}`), `${typed}: ${output()}`);
+  }
+});
+
+test("no answer in time, or a closed chat, counts as no; with nothing to ask with, it's no without a word", async () => {
+  const { run, output } = chat(fakeSession({ "Scan it": scanAsk }), ["Scan it"], { confirm: async () => null });
+  await run();
+  assert.ok(output().includes("Jarvis: Scanning.\n  (no answer, so not done)\n Left it."), output());
+  const failing = chat(fakeSession({ "Scan it": scanAsk }), ["Scan it"], { confirm: async () => Promise.reject(new Error("closed")) });
+  await failing.run();
+  assert.ok(failing.output().includes("Jarvis: Scanning.\n  (no answer, so not done)\n"), failing.output());
+  const unasked = chat(fakeSession({ "Scan it": scanAsk }), ["Scan it"]);
+  await unasked.run();
+  assert.ok(unasked.output().includes("Jarvis: Scanning. Left it."), unasked.output());
+  assert.ok(!unasked.output().includes("wants to"));
+});
+
+test("waiting for Phil doesn't count towards the question's time limit", async () => {
+  const slowYes = chat(fakeSession({ "Scan it": scanAsk }), ["Scan it"], {
+    questionTimeoutMs: 50,
+    confirm: () => new Promise((resolve) => setTimeout(() => resolve("yes"), 120)),
+  });
+  await slowYes.run();
+  assert.ok(slowYes.output().includes("(going ahead)\n Done.\n  (first words"), slowYes.output());
+  const slowAnswer = fakeSession({
+    "Scan it": async (listener) => {
+      await listener.confirm?.("scan_library", {});
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return answer("Done.", 100, 300);
+    },
+  });
+  const timed = chat(slowAnswer, ["Scan it"], { questionTimeoutMs: 50, confirm: async () => "yes" });
+  await timed.run();
+  assert.ok(timed.output().includes("Jarvis couldn't answer: No answer within 0.05 seconds"), timed.output());
+});
+
+test("two actions asked at once are put to Phil one after the other, never both at the same time", async () => {
+  const session = fakeSession({
+    "Do both": async (listener) => {
+      const [first, second] = await Promise.all([listener.confirm?.("stop_download", { hash: "aaaaaaaaaaaa" }), listener.confirm?.("start_download", { hash: "bbbbbbbbbbbb" })]);
+      return answer(`${first} ${second}`, 100, 300);
+    },
+  });
+  let open = 0;
+  let most = 0;
+  const answers = ["yes", "no"];
+  const prompts: string[] = [];
+  const { run, output } = chat(session, ["Do both"], {
+    confirm: async (prompt) => {
+      prompts.push(prompt);
+      open++;
+      most = Math.max(most, open);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      open--;
+      return answers.shift() ?? null;
+    },
+  });
+  await run();
+  assert.equal(most, 1);
+  assert.deepEqual(prompts, [
+    "  (Jarvis wants to stop the download whose hash starts aaaaaaaa. Type yes to let him, or anything else to stop it)\n  Your answer: ",
+    "  (Jarvis wants to start the download whose hash starts bbbbbbbb again. Type yes to let him, or anything else to stop it)\n  Your answer: ",
+  ]);
+  assert.ok(output().includes("Jarvis: \n  (going ahead)\n  (not done)\ntrue false"), output());
+});
+
+test("an action isn't announced as being used, since the question comes next; reading still is", async () => {
+  const session = fakeSession({
+    "Scan it": async (listener) => {
+      listener.tool?.("mcp__hub__get_status", {});
+      listener.tool?.("mcp__hub__scan_library", {});
+      listener.tool?.("start_download", { hash: "aaaaaaaaaaaa" });
+      await listener.confirm?.("scan_library", {});
+      return answer("Done.", 100, 300);
+    },
+  });
+  const { run, output } = chat(session, ["Scan it"], { confirm: async () => "yes" });
+  await run();
+  assert.ok(output().includes("Jarvis: \n  (using get_status)\n  (going ahead)\nDone."), output());
+  assert.ok(!output().includes("using scan_library") && !output().includes("using start_download"), output());
+});
+
+test("if the answer fails while Phil is being asked, the question is called off, the failure shown, and nothing else asked or noted", async () => {
+  const signals: AbortSignal[] = [];
+  const session = fakeSession({
+    "Scan it": async (listener) => {
+      void listener.confirm?.("scan_library", {});
+      void listener.confirm?.("stop_download", { hash: "aaaaaaaaaaaa" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      throw new Error("the engine stopped");
+    },
+  });
+  const { run, output } = chat(session, ["Scan it"], {
+    confirm: (_prompt, signal) => {
+      signals.push(signal);
+      return new Promise((resolve) => signal.addEventListener("abort", () => resolve(null)));
+    },
+  });
+  await run();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].aborted, true);
+  assert.ok(output().includes("Jarvis: \nJarvis couldn't answer: the engine stopped\n"), output());
+  assert.ok(!output().includes("not done"), output());
+  assert.ok(!output().includes("stop the download"), output());
+});
+
+test("if the answer ends while Phil is still being asked, the question is called off and nothing is noted", async () => {
+  const signals: AbortSignal[] = [];
+  const session = fakeSession({
+    "Scan it": async (listener) => {
+      void listener.confirm?.("scan_library", {});
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return answer("Done.", 100, 300);
+    },
+  });
+  const { run, output } = chat(session, ["Scan it"], {
+    confirm: (_prompt, signal) => {
+      signals.push(signal);
+      return new Promise((resolve) => signal.addEventListener("abort", () => resolve("yes")));
+    },
+  });
+  await run();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].aborted, true);
+  assert.ok(output().includes("Done.\n  (first words"), output());
+  assert.ok(!output().includes("going ahead") && !output().includes("not done"), output());
+});
+
+test("the question is drawn as part of the answer prompt, with control characters taken out", () => {
+  assert.equal(questionPrompt("Jarvis wants to scan the library"), "  (Jarvis wants to scan the library)\n  Your answer: ");
+  assert.equal(questionPrompt("a\u001b[2Jb"), "  (a[2Jb)\n  Your answer: ");
+});
+
+test("a refused tool's note leaves out the Agent SDK's mcp__hub__ prefix", () => {
+  assert.equal(refusedNote(["mcp__hub__scan_library", "Read", "scan_library"]), "refused: scan_library, Read");
+});
+
+test("asking Phil takes only a line typed after the question, and gives up after the time limit or when the chat closes", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.resume();
+  const lines = createInterface({ input, output });
+  const typed: string[] = [];
+  const heard = (async () => {
+    for await (const line of lines) typed.push(line);
+  })();
+  input.write("yes typed early\n");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const listening = lines.listenerCount("close");
+  const answered = askOnce(lines, "  Your answer: ", 1000);
+  input.write("yes\n");
+  assert.equal(await answered, "yes");
+  assert.equal(lines.listenerCount("close"), listening);
+  const waited = Date.now();
+  assert.equal(await askOnce(lines, "  Your answer: ", 20), null);
+  assert.ok(Date.now() - waited < 1000, "gave up after the time limit, not later");
+  input.write("after the wait\n");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(typed, ["yes typed early", "after the wait"]);
+  const closing = askOnce(lines, "  Your answer: ", 30_000);
+  const closed = Date.now();
+  lines.close();
+  assert.equal(await closing, null);
+  assert.ok(Date.now() - closed < 1000, "gave up when the chat closed, not at the time limit");
+  await heard;
+  assert.equal(confirmMs, 60_000);
+});
+
+function terminalLines() {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.resume();
+  return { input, lines: createInterface({ input, output, terminal: true }) };
+}
+
+test("in a terminal, text half typed before the question is cleared, so only what's typed after it counts", async () => {
+  const { input, lines } = terminalLines();
+  const typed: string[] = [];
+  lines.on("line", (line) => typed.push(line));
+  input.write("ye\u001b[D");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const answered = askOnce(lines, "  Your answer: ", 1000);
+  input.write("s\r");
+  assert.equal(await answered, "s");
+  input.write("yes\r");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const again = askOnce(lines, "  Your answer: ", 1000);
+  input.write("yes\r");
+  assert.equal(await again, "yes");
+  assert.deepEqual(typed, ["yes"]);
+  lines.close();
+});
+
+test("in a narrow terminal, a long half-typed line can't wipe the question, because readline draws it as part of the prompt", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let shown = "";
+  output.on("data", (chunk) => (shown += chunk.toString()));
+  Object.assign(output, { columns: 80 });
+  const lines = createInterface({ input, output, terminal: true });
+  input.write("x".repeat(160));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  shown = "";
+  const question = "Jarvis wants to stop the download whose hash starts aaaaaaaa. Type yes to let him, or anything else to stop it";
+  const answered = askOnce(lines, questionPrompt(question), 1000);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const lastClear = shown.lastIndexOf("\u001b[0J");
+  assert.ok(lastClear >= 0, JSON.stringify(shown));
+  assert.ok(shown.slice(lastClear).includes(`(${question})`), JSON.stringify(shown));
+  input.write("no\r");
+  assert.equal(await answered, "no");
+  lines.close();
+});
+
+test("asking on a closed chat, or after being called off, gives no answer at once rather than at the time limit", async () => {
+  const { lines } = terminalLines();
+  lines.close();
+  const started = Date.now();
+  assert.equal(await askOnce(lines, "  Your answer: ", 30_000), null);
+  const open = terminalLines();
+  const calledOff = new AbortController();
+  const asking = askOnce(open.lines, "  Your answer: ", 30_000, calledOff.signal);
+  calledOff.abort();
+  assert.equal(await asking, null);
+  open.input.write("yes\r");
+  assert.equal(await askOnce(open.lines, "  Your answer: ", 30_000, calledOff.signal), null);
+  assert.ok(Date.now() - started < 1000, "no waiting for the time limit");
+  open.lines.close();
 });

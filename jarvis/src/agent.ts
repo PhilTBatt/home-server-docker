@@ -1,11 +1,13 @@
-import type { Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { hubProblemNote, hubServerName, hubToolPrefix, readOnlyEnv, withHubToken, type HubServer } from "./hub-tools.js";
+import type { HookCallback, Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { actionsEnv, hubProblemNote, hubReadTools, hubServerName, hubToolPrefix, isHubAction, notDoneNote, withHubToken, type HubServer } from "./hub-tools.js";
 import { answerCost, pricesPerMTok, type Prices, type TokenUse } from "./prices.js";
 import type { Answer } from "./timing.js";
 
 export const closedMessage = "The agent was closed";
 
 export type AgentStream = AsyncIterable<SDKMessage> & { close(): void };
+export type Confirm = (tool: string, input: unknown) => Promise<boolean>;
+export const actionHookSeconds = 300;
 export type StartAgent = (prompt: AsyncIterable<SDKUserMessage>, options: Options) => AgentStream;
 
 export type AgentSettings = {
@@ -26,6 +28,7 @@ export type AnswerListener = {
   restart?: () => void;
   retry?: () => void;
   note?: (text: string) => void;
+  confirm?: Confirm;
 };
 
 export type AgentSession = {
@@ -57,7 +60,17 @@ type Pending = {
   spokeFirst: boolean | null;
 };
 
-export function agentOptions(settings: AgentSettings): Options {
+export function actionHook(confirm: Confirm): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== "PreToolUse" || !input.tool_name.startsWith(hubToolPrefix)) return {};
+    const tool = input.tool_name.slice(hubToolPrefix.length);
+    if (!isHubAction(tool)) return {};
+    const yes = await confirm(tool, input.tool_input).catch(() => false);
+    return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: yes ? "allow" : "deny", permissionDecisionReason: yes ? "Phil said yes" : notDoneNote } };
+  };
+}
+
+export function agentOptions(settings: AgentSettings, confirm: Confirm = async () => false): Options {
   return {
     model: settings.model,
     cwd: settings.cwd,
@@ -75,8 +88,9 @@ export function agentOptions(settings: AgentSettings): Options {
     ...(settings.hub === undefined
       ? {}
       : {
-          mcpServers: { [hubServerName]: { type: "stdio", command: settings.hub.command, args: settings.hub.args, env: { ...readOnlyEnv }, alwaysLoad: true } },
-          allowedTools: [`${hubToolPrefix}*`],
+          mcpServers: { [hubServerName]: { type: "stdio", command: settings.hub.command, args: settings.hub.args, env: actionsEnv(settings.hub), alwaysLoad: true } },
+          allowedTools: hubReadTools.map((tool) => `${hubToolPrefix}${tool}`),
+          ...(settings.hub.actions === true ? { hooks: { PreToolUse: [{ hooks: [actionHook(confirm)], timeout: actionHookSeconds, onFailure: "block" as const }] } } : {}),
         }),
   };
 }
@@ -172,7 +186,10 @@ function resultError(message: SDKResultMessage): string {
 export function startAgentSession(start: StartAgent, settings: AgentSettings): AgentSession {
   const began = settings.now();
   const input = createInputQueue();
-  const stream = start(input.messages, agentOptions(settings));
+  const stream = start(
+    input.messages,
+    agentOptions(settings, async (tool, toolInput) => (pending === null ? false : ((await pending.listener.confirm?.(tool, toolInput)) ?? false))),
+  );
   let pending: Pending | null = null;
   let ready: number | null = null;
   const prices = pricesPerMTok[settings.model];

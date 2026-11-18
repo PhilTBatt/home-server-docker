@@ -2,13 +2,16 @@ import type { AgentSession } from "./agent.js";
 import { gitRefusal, outsideRefusal } from "./brain-tools.js";
 import { apiChatSystem, chatSystem } from "./chat.js";
 import type { ChatMode, Engine } from "./config.js";
+import { notDoneNote } from "./hub-tools.js";
 import { withTimeout } from "./run.js";
 import {
   echoFor,
   findIgnoredWord,
   findInsideWord,
   findOutsideWord,
+  hubScanWord,
   hubStatusWord,
+  hubStopWord,
   ignoredName,
   longName,
   longText,
@@ -23,6 +26,7 @@ import {
   searchInsideWord,
   searchLongWord,
   searchOutsideWord,
+  standInHash,
   type SeenRequest,
   type SeenToolResult,
 } from "./stand-in-api.js";
@@ -446,6 +450,64 @@ export async function runHubCheck(deps: HubCheckDeps): Promise<CheckResult[]> {
     result("started", "the hub's MCP server gets the token, in read-only mode"),
     result("token", "the token never reaches the API or a command line"),
     result("broken", "a hub server that won't start is reported"),
+  ];
+}
+
+export type ActionsEngineUnderTest = {
+  engine: Engine;
+  session: AgentSession;
+  requests: SeenRequest[];
+  toolName: (name: string) => string;
+  calls: () => Promise<HubCall[]>;
+};
+
+type Asked = { tool: string; input: unknown };
+
+export async function runActionsCheck(deps: { engines: ActionsEngineUnderTest[]; timeoutMs: number }): Promise<CheckResult[]> {
+  const failures: Record<string, string[]> = { offered: [], refused: [], allowed: [] };
+  for (const engine of deps.engines) {
+    const name = checkNames[engine.engine];
+    const from = engine.requests.length;
+    const question = async (word: string, yes: boolean) => {
+      const asked: Asked[] = [];
+      const before = (await engine.calls().catch(() => [])).length;
+      const start = engine.requests.length;
+      let answer = "";
+      try {
+        const confirm = async (tool: string, input: unknown) => {
+          asked.push({ tool, input });
+          return yes;
+        };
+        answer = (await withTimeout(engine.session.ask(`Please ${word}`, { confirm }), deps.timeoutMs, () => engine.session.close())).text;
+      } catch (error) {
+        answer = `failed: ${reason(error)}`;
+      }
+      const ran = (await engine.calls().catch(() => [])).slice(before);
+      const results = engine.requests.slice(start).flatMap((request) => request.toolResults);
+      return { asked, ran, results, answer };
+    };
+    const read = await question(hubStatusWord, true);
+    const no = await question(hubScanWord, false);
+    const yes = await question(hubStopWord, true);
+    const offered = new Set(engine.requests.slice(from).flatMap((request) => request.tools));
+    const missing = [...hubReadToolNames, ...hubActionToolNames].map(engine.toolName).filter((tool) => !offered.has(tool));
+    if (missing.length > 0) failures.offered.push(`${name}: missing ${missing.join(", ")}`);
+    const told = no.results.some((result) => result.text.includes(notDoneNote));
+    if (no.asked.length !== 1 || no.asked[0].tool !== "scan_library" || no.ran.length > 0 || !told) {
+      failures.refused.push(`${name}: asked ${no.asked.map((ask) => ask.tool).join(", ") || "nothing"}; ran ${no.ran.map((call) => call.tool).join(", ") || "nothing"}; the model was ${told ? "" : "not "}told; answered "${no.answer.slice(0, 60)}"`);
+    }
+    const stopped = yes.ran.filter((call) => call.tool === "stop_download" && JSON.stringify(call.input) === JSON.stringify({ hash: standInHash }));
+    const askedRight = yes.asked.length === 1 && yes.asked[0].tool === "stop_download" && JSON.stringify(yes.asked[0].input) === JSON.stringify({ hash: standInHash });
+    if (read.asked.length > 0 || read.ran.length !== 1 || !askedRight || stopped.length !== 1 || !yes.results.some((result) => result.text.includes(hubAnswer))) {
+      failures.allowed.push(`${name}: reading asked ${read.asked.length} times and ran ${read.ran.length} tools; the action asked ${yes.asked.map((ask) => `${ask.tool} ${JSON.stringify(ask.input)}`).join(", ") || "nothing"} and ran ${yes.ran.map((call) => `${call.tool} ${JSON.stringify(call.input)}`).join(", ") || "nothing"}; answered "${yes.answer.slice(0, 60)}"`);
+    }
+  }
+  const area = scope(deps.engines);
+  const result = (key: string, title: string): CheckResult => ({ name: `${area}: ${title}`, ok: deps.engines.length > 0 && failures[key].length === 0, detail: failures[key].join(" | ") });
+  return [
+    result("offered", "with the hub's actions on, the three actions are offered with the read tools"),
+    result("refused", "an action asks first, and after a no it isn't done and the model is told"),
+    result("allowed", "after a yes, the action runs with what the model gave it, and reading never asks"),
   ];
 }
 

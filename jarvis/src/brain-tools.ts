@@ -15,6 +15,7 @@ export type ToolOutcome = { content: string; isError: boolean; refused?: true };
 export type BrainTools = {
   definitions: ToolDefinition[];
   run(name: string, input: unknown): Promise<ToolOutcome>;
+  needsYes?(name: string): boolean;
 };
 
 export const brainToolDefinitions: ToolDefinition[] = [

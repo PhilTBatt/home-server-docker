@@ -4,6 +4,7 @@ import { closedMessage, type AgentSession } from "./agent.js";
 import { echoed, hasVisibleContent, maxToolSteps, networkRetryMs, spokeBeforeTools, startApiSession, thinkingBlocksIn, withoutThinking, type ApiSettings, type SendRequest } from "./api-session.js";
 import type { BrainTools, ToolOutcome } from "./brain-tools.js";
 import type { DirectAnswer, DirectRequest, Turn } from "./direct.js";
+import { notDoneNote } from "./hub-tools.js";
 
 const settings: ApiSettings = { apiKey: "sk-ant-test-key", model: "claude-haiku-5-5", system: "Be brief.", maxTokens: 4000, timeoutMs: 120_000, now: () => 0 };
 
@@ -311,6 +312,56 @@ test("refusals are counted by tool, but other tool errors, like a missing file, 
   assert.deepEqual(answer.stats?.refusedTools, ["read_file"]);
   const plain = recorder([async () => reply("Hi.")]);
   assert.deepEqual((await startApiSession(settings, plain.send).ask("Hello")).stats?.refusedTools, []);
+});
+
+function askingTools() {
+  const { tools, runs } = fakeTools();
+  const asking: BrainTools = { ...tools, definitions: [...tools.definitions, { name: "scan_library", description: "Scan.", input_schema: { type: "object" } }], needsYes: (name) => name === "scan_library" };
+  return { tools: asking, runs };
+}
+
+const scan = { id: "toolu_5", name: "scan_library", input: { quick: true } };
+
+test("a tool that needs a yes is put to Phil first with what the model gave it, and runs only after a yes; other tools never ask", async () => {
+  for (const yes of [true, false]) {
+    const { tools, runs } = askingTools();
+    const asked: { tool: string; input: unknown }[] = [];
+    const { send, requests } = recorder([async () => toolReply([readIndex, scan]), async () => reply("Done.")]);
+    const answer = await startApiSession({ ...settings, tools }, send).ask("Scan the library", {
+      confirm: async (tool, input) => {
+        asked.push({ tool, input });
+        return yes;
+      },
+    });
+    assert.deepEqual(asked, [{ tool: "scan_library", input: { quick: true } }], String(yes));
+    assert.deepEqual(runs.map((run) => run.name), yes ? ["read_file", "scan_library"] : ["read_file"], String(yes));
+    const results = requests[1].question as { tool_use_id: string; content: string; is_error?: boolean }[];
+    assert.deepEqual(results[1], yes ? { type: "tool_result", tool_use_id: "toolu_5", content: 'contents of {"quick":true}' } : { type: "tool_result", tool_use_id: "toolu_5", content: notDoneNote, is_error: true }, String(yes));
+    assert.deepEqual(answer.stats?.refusedTools, yes ? [] : ["scan_library"], String(yes));
+  }
+});
+
+test("with no one to ask, or if asking fails, a tool that needs a yes isn't run", async () => {
+  for (const listener of [{}, { confirm: async () => Promise.reject(new Error("terminal gone")) }]) {
+    const { tools, runs } = askingTools();
+    const { send, requests } = recorder([async () => toolReply([scan]), async () => reply("I couldn't.")]);
+    await startApiSession({ ...settings, tools }, send).ask("Scan the library", listener);
+    assert.deepEqual(runs, []);
+    assert.deepEqual(requests[1].question, [{ type: "tool_result", tool_use_id: "toolu_5", content: notDoneNote, is_error: true }]);
+  }
+});
+
+test("closing Jarvis while he waits for a yes stops the question, and nothing is run", async () => {
+  const { tools, runs } = askingTools();
+  const { send } = recorder([async () => toolReply([scan])]);
+  const session = startApiSession({ ...settings, tools }, send);
+  let answerYes: (yes: boolean) => void = () => {};
+  const answer = session.ask("Scan the library", { confirm: () => new Promise((resolve) => (answerYes = resolve)) });
+  await new Promise((resolve) => setImmediate(resolve));
+  session.close();
+  answerYes(true);
+  await assert.rejects(answer, { message: closedMessage });
+  assert.deepEqual(runs, []);
 });
 
 test("an answer reports its largest single request, counting cached input too", async () => {

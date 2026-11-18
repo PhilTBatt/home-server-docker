@@ -4,6 +4,7 @@ import { closedMessage, type AgentSession } from "./agent.js";
 import { gitRefusal, outsideRefusal } from "./brain-tools.js";
 import { apiChatSystem, chatSystem } from "./chat.js";
 import type { ChatMode, Engine } from "./config.js";
+import { notDoneNote } from "./hub-tools.js";
 import {
   apiRefused,
   apiUnderTest,
@@ -13,6 +14,7 @@ import {
   formatCheck,
   problems,
   runEngineCheck,
+  runActionsCheck,
   runHubCheck,
   runNotesCheck,
   runSavedChatsCheck,
@@ -31,6 +33,9 @@ import {
   findInsideWord,
   findOutsideWord,
   echoFor,
+  hubScanWord,
+  hubStatusWord,
+  hubStopWord,
   plainAnswer,
   readGitWord,
   readInsideWord,
@@ -45,7 +50,7 @@ import {
   type SeenRequest,
   type SeenToolResult,
 } from "./stand-in-api.js";
-import { hubActionToolNames, hubAnswer, hubReadToolNames } from "./stand-in-hub.js";
+import { hubActionToolNames, hubAnswer, hubReadToolNames, type HubCall } from "./stand-in-hub.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 const markers: Markers = { inside: "inside-123", outside: "outside-456", git: "git-321", settings: "settings-789", hidden: "hidden-111", ignored: "ignored-222", mixedCase: "mixed-333" };
@@ -684,7 +689,7 @@ function hubEngine(engine: Engine, fake: HubFake = {}): HubEngineUnderTest {
     session,
     requests,
     toolName,
-    calls: async () => (fake.noCalls === true ? [] : [{ tool: "get_status", token: fake.wrongToken === true ? "other" : hubToken, actions: fake.actionsOn === true ? "on" : "off", anthropicKey: false }]),
+    calls: async () => (fake.noCalls === true ? [] : [{ tool: "get_status", input: {}, token: fake.wrongToken === true ? "other" : hubToken, actions: fake.actionsOn === true ? "on" : "off", anthropicKey: false }]),
     broken: async () => (fake.silentWhenBroken === true ? null : fake.wrongNote === true ? "something else" : brokenNote(engine)),
   };
 }
@@ -837,4 +842,70 @@ test("the notes on a command line fail the notes check, and so does not being ab
     timeoutMs: 1000,
   });
   assert.deepEqual(unread, { name: `both engines: ${notesName}`, ok: false, detail: "command lines couldn't be read: no /proc" });
+});
+
+type ActionsFake = { noAsk?: boolean; runsAfterNo?: boolean; notTold?: boolean; wrongInput?: boolean; asksOnRead?: boolean; missingAction?: boolean; throws?: boolean };
+
+const hash = "0123456789abcdef0123456789abcdef01234567";
+
+function actionsEngine(engine: Engine, fake: ActionsFake = {}) {
+  const toolName = (name: string) => (engine === "sdk" ? `mcp__hub__${name}` : name);
+  const requests: SeenRequest[] = [];
+  const calls: HubCall[] = [];
+  const offered = [...hubReadToolNames, ...hubActionToolNames].filter((name) => !(fake.missingAction === true && name === "scan_library")).map(toolName);
+  const call = (tool: string, input: unknown) => calls.push({ tool, input, token: "t", actions: "on", anthropicKey: false });
+  const session: AgentSession = {
+    async ask(question, listener) {
+      if (fake.throws === true) throw new Error("engine fell over");
+      requests.push({ ...goodRequestFor(engine), tools: offered, lastUserText: question });
+      const run = async (tool: string, input: unknown, asks: boolean) => {
+        const yes = asks && fake.noAsk !== true ? ((await listener?.confirm?.(tool, input)) ?? false) : true;
+        if (yes || fake.runsAfterNo === true) call(tool, fake.wrongInput === true && tool === "stop_download" ? { hash: "f".repeat(40) } : input);
+        const text = yes || fake.notTold === true ? JSON.stringify({ tool, answer: hubAnswer }) : `hook error: ${notDoneNote}`;
+        requests.push({ ...goodRequestFor(engine), tools: offered, lastUserText: `[tool result] ${text}`, toolResults: [{ text, isError: !yes }] });
+      };
+      if (question.endsWith(hubStatusWord)) await run("get_status", {}, fake.asksOnRead === true);
+      if (question.endsWith(hubScanWord)) await run("scan_library", {}, true);
+      if (question.endsWith(hubStopWord)) await run("stop_download", { hash }, true);
+      return { text: "Done.", firstWordsMs: 1, totalMs: 2 };
+    },
+    readyMs: () => null,
+    costUsd: () => null,
+    stoppedReason: () => null,
+    close: () => {},
+  };
+  return { engine, session, requests, toolName, calls: async () => calls.slice() };
+}
+
+const actionNames = [
+  "with the hub's actions on, the three actions are offered with the read tools",
+  "an action asks first, and after a no it isn't done and the model is told",
+  "after a yes, the action runs with what the model gave it, and reading never asks",
+];
+
+test("engines that ask before each action, and do only what Phil says yes to, pass all three action checks", async () => {
+  const results = await runActionsCheck({ engines: [actionsEngine("sdk"), actionsEngine("api")], timeoutMs: 1000 });
+  assert.deepEqual(results.map((result) => result.name), actionNames.map((name) => `both engines: ${name}`));
+  assert.deepEqual(failed(results), []);
+});
+
+test("each way of getting the actions wrong fails its own check, naming the engine", async () => {
+  const cases: [ActionsFake, number[]][] = [
+    [{ missingAction: true }, [0]],
+    [{ noAsk: true }, [1, 2]],
+    [{ runsAfterNo: true }, [1]],
+    [{ notTold: true }, [1]],
+    [{ wrongInput: true }, [2]],
+    [{ asksOnRead: true }, [2]],
+    [{ throws: true }, [0, 1, 2]],
+  ];
+  for (const [fake, broken] of cases) {
+    for (const engine of ["sdk", "api"] as const) {
+      const engines = engine === "sdk" ? [actionsEngine("sdk", fake), actionsEngine("api")] : [actionsEngine("sdk"), actionsEngine("api", fake)];
+      const results = await runActionsCheck({ engines, timeoutMs: 1000 });
+      assert.deepEqual(failed(results), broken.map((index) => `both engines: ${actionNames[index]}`), `${engine} ${JSON.stringify(fake)}`);
+      for (const index of broken) assert.match(named(results, `both engines: ${actionNames[index]}`).detail, new RegExp(`^${checkNames[engine]}: `));
+    }
+  }
+  assert.ok((await runActionsCheck({ engines: [], timeoutMs: 1000 })).every((result) => !result.ok));
 });

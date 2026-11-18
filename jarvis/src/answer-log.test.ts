@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { answerLogFile, errorKind, logLine, logVersion, startAnswerLog, type LogContext, type Outcome } from "./answer-log.js";
 import type { Answer } from "./timing.js";
 
-const apiKeep: LogContext = { engine: "api", thinking: "keep", model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", sessionNotes: "off" };
+const apiKeep: LogContext = { engine: "api", thinking: "keep", model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off" };
 const at = new Date("2026-11-16T18:30:00.000Z");
 
 const answered: Answer = {
@@ -48,6 +48,7 @@ test("an answer becomes one line of numbers, with none of its words", () => {
     chats: "fresh",
     lengthHints: "note",
     hubTools: "off",
+    hubActions: "off",
     sessionNotes: "off",
     ok: true,
     error: null,
@@ -98,7 +99,7 @@ test("an unknown largest request is logged as unknown, not zero", () => {
 
 test("a retry is logged as yes or no for the plain API call, and unknown for the Agent SDK", () => {
   assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: false } } }).retried, false);
-  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", sessionNotes: "off" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
+  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
 });
 
 test("refused tools are counted, not named, and an answer with none counts zero", () => {
@@ -128,8 +129,8 @@ test("times are logged to the whole millisecond, and costs without floating-poin
 });
 
 test("the thinking setting is only logged for the plain API engine, which is the only one it changes", () => {
-  assert.equal(logLine({ engine: "sdk", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", sessionNotes: "off" }, "c", 1, at, { answer: answered }).thinking, null);
-  assert.equal(logLine({ engine: "api", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", sessionNotes: "off" }, "c", 1, at, { answer: answered }).thinking, "drop");
+  assert.equal(logLine({ engine: "sdk", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off" }, "c", 1, at, { answer: answered }).thinking, null);
+  assert.equal(logLine({ engine: "api", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off" }, "c", 1, at, { answer: answered }).thinking, "drop");
 });
 
 test("each line says whether the chat was fresh or resumed", () => {
@@ -314,6 +315,11 @@ test("a broken log doesn't try to log a new chat", async () => {
   await log.record({ answer: answered });
   await log.newChat(2900);
   assert.equal(log.attempts(), 1);
+});
+
+test("each line says whether the hub's actions were offered", () => {
+  assert.equal(logLine({ ...apiKeep, hubTools: "on", hubActions: "on" }, "chat-1", 1, at, { answer: answered }).hubActions, "on");
+  assert.equal(logLine(apiKeep, "chat-1", 1, at, { error: "Overloaded" }).hubActions, "off");
 });
 
 test("each line says whether the sessions' notes were loaded", () => {

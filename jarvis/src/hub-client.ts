@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { BrainTools } from "./brain-tools.js";
 import type { ToolDefinition } from "./direct.js";
-import { hubProblemNote, hubServerEnv, type HubServer } from "./hub-tools.js";
+import { allowedHubTools, hubProblemNote, hubServerEnv, isHubAction, type HubServer } from "./hub-tools.js";
 import { withTimeout } from "./run.js";
 
 export const hubStartMs = 10_000;
@@ -50,7 +50,8 @@ export async function startHubTools(server: HubServer, warn: (note: string) => v
       void connecting.then((late) => late.close()).catch(() => {});
     });
     const open = connection;
-    const { tools } = await withTimeout(open.listTools(), timeoutMs);
+    const allowed = allowedHubTools(server);
+    const tools = (await withTimeout(open.listTools(), timeoutMs)).tools.filter((tool) => allowed.includes(tool.name));
     if (tools.length === 0) {
       problem = "no tools listed";
       throw new Error(problem);
@@ -67,6 +68,7 @@ export async function startHubTools(server: HubServer, warn: (note: string) => v
           return { content: `The hub's tool didn't work: ${reason(error)}`, isError: true };
         }
       },
+      needsYes: (name) => isHubAction(name),
       close: () => open.close(),
     };
   } catch {
@@ -84,5 +86,6 @@ export function withHubTools(brain: BrainTools, hub: HubTools | undefined): Brai
   return {
     definitions: [...brain.definitions, ...hubDefinitions],
     run: (name, input) => (hubNames.has(name) ? hub.run(name, input) : brain.run(name, input)),
+    needsYes: (name) => hubNames.has(name) && hub.needsYes?.(name) === true,
   };
 }

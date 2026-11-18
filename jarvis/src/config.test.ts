@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, sessionNotes: false, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, sessionNotes: false, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -160,5 +160,21 @@ test("JARVIS_SESSION_NOTES is off unless set, and must be on or off", () => {
   assert.equal(readConfig({ ...base, JARVIS_SESSION_NOTES: " on " }).sessionNotes, true);
   for (const bad of ["On", "yes", "true", "1"]) {
     assert.throws(() => readConfig({ ...base, JARVIS_SESSION_NOTES: bad }), { message: `JARVIS_SESSION_NOTES must be on or off, not "${bad}"` }, bad);
+  }
+});
+
+test("JARVIS_HUB_ACTIONS is off unless set, must be on or off, and needs the hub's tools on", () => {
+  const withTools = { ...base, JARVIS_HUB_TOOLS: "on", API_TOKEN: "hub-token" };
+  assert.equal(readConfig(withTools).hubActions, false);
+  assert.equal(readConfig({ ...withTools, JARVIS_HUB_ACTIONS: "" }).hubActions, false);
+  assert.equal(readConfig({ ...withTools, JARVIS_HUB_ACTIONS: "off" }).hubActions, false);
+  assert.equal(readConfig({ ...withTools, JARVIS_HUB_ACTIONS: "on" }).hubActions, true);
+  assert.equal(readConfig({ ...withTools, JARVIS_HUB_ACTIONS: " on " }).hubActions, true);
+  assert.equal(readConfig({ ...base, JARVIS_HUB_ACTIONS: "off" }).hubActions, false);
+  for (const bad of ["On", "yes", "true", "1"]) {
+    assert.throws(() => readConfig({ ...withTools, JARVIS_HUB_ACTIONS: bad }), { message: `JARVIS_HUB_ACTIONS must be on or off, not "${bad}"` }, bad);
+  }
+  for (const tools of [{}, { JARVIS_HUB_TOOLS: "off", API_TOKEN: "hub-token" }]) {
+    assert.throws(() => readConfig({ ...base, ...tools, JARVIS_HUB_ACTIONS: "on" }), { message: "JARVIS_HUB_ACTIONS is on, but JARVIS_HUB_TOOLS is off. The actions come with the hub's tools, so turn both on" });
   }
 });

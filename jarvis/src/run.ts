@@ -63,6 +63,47 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () =>
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+export type PausableTimeout<T> = { promise: Promise<T>; pause(): void; resume(): void };
+
+export type Clock = { now: () => number; set: (run: () => void, ms: number) => unknown; clear: (timer: unknown) => void };
+
+export const realClock: Clock = { now: () => performance.now(), set: (run, ms) => setTimeout(run, ms), clear: (timer) => clearTimeout(timer as NodeJS.Timeout) };
+
+export function withPausableTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void = () => {}, clock: Clock = realClock): PausableTimeout<T> {
+  let timer: unknown;
+  let left = ms;
+  let since = clock.now();
+  let settled = false;
+  let fail: (error: Error) => void = () => {};
+  const timeout = new Promise<never>((_resolve, reject) => {
+    fail = reject;
+  });
+  const start = () => {
+    since = clock.now();
+    timer = clock.set(() => {
+      fail(new Error(`No answer within ${ms / 1000} seconds`));
+      onTimeout();
+    }, left);
+  };
+  start();
+  return {
+    promise: Promise.race([promise, timeout]).finally(() => {
+      settled = true;
+      clock.clear(timer);
+    }),
+    pause() {
+      if (settled || timer === undefined) return;
+      clock.clear(timer);
+      timer = undefined;
+      left = Math.max(0, left - (clock.now() - since));
+    },
+    resume() {
+      if (settled || timer !== undefined) return;
+      start();
+    },
+  };
+}
+
 async function checkConfinement(ask: (question: string) => Promise<Answer>): Promise<string> {
   try {
     const answer = await ask(outsideQuestion);

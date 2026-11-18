@@ -18,7 +18,10 @@ test("the stand-in hub answers a call and records what it was started with; unkn
   const calls: HubCall[] = [];
   const env = { API_TOKEN: "hub-token", MCP_ACTIONS: "off", ANTHROPIC_API_KEY: "key" };
   assert.deepEqual(hubReply({ id: 2, method: "tools/call", params: { name: "get_status", arguments: {} } }, env, (call) => calls.push(call)), { jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: JSON.stringify({ tool: "get_status", answer: hubAnswer }) }] } });
-  assert.deepEqual(calls.slice(), [{ tool: "get_status", token: "hub-token", actions: "off", anthropicKey: true }]);
+  assert.deepEqual(calls.slice(), [{ tool: "get_status", input: {}, token: "hub-token", actions: "off", anthropicKey: true }]);
+  const onCalls: HubCall[] = [];
+  hubReply({ id: 6, method: "tools/call", params: { name: "stop_download", arguments: { hash: "abc" } } }, { ...env, MCP_ACTIONS: "on" }, (call) => onCalls.push(call));
+  assert.deepEqual(onCalls, [{ tool: "stop_download", input: { hash: "abc" }, token: "hub-token", actions: "on", anthropicKey: true }]);
   assert.equal((hubReply({ id: 3, method: "tools/call", params: { name: "scan_library" } }, env, (call: HubCall) => calls.push(call))?.result as { isError: boolean }).isError, true);
   assert.equal(calls.length, 1);
   assert.deepEqual(hubReply({ id: 4, method: "resources/list" }, env, () => {}), { jsonrpc: "2.0", id: 4, error: { code: -32601, message: "Method not found" } });
@@ -38,7 +41,7 @@ test("run as a program, the stand-in hub speaks JSON lines on stdin and stdout, 
     assert.equal((await next()).id, 1);
     child.stdin.end();
     await new Promise((resolve) => child.once("exit", resolve));
-    assert.deepEqual(JSON.parse(await readFile(log, "utf8")), { tool: "get_backup", token: "hub-token", actions: "off", anthropicKey: false });
+    assert.deepEqual(JSON.parse(await readFile(log, "utf8")), { tool: "get_backup", input: null, token: "hub-token", actions: "off", anthropicKey: false });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

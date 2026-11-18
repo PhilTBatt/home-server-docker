@@ -6,7 +6,7 @@ import { test } from "node:test";
 import type { BrainTools } from "./brain-tools.js";
 import { connectOverStdio, hubStartMs, startHubTools, withHubTools, type HubConnection } from "./hub-client.js";
 import { hubProblemNote } from "./hub-tools.js";
-import { hubReadToolNames, standInHubFile, type HubCall } from "./stand-in-hub.js";
+import { hubActionToolNames, hubReadToolNames, standInHubFile, type HubCall } from "./stand-in-hub.js";
 
 const server = { command: "node", args: ["/mcp/dist/server.js"], token: "hub-token" };
 
@@ -144,7 +144,7 @@ test("over a real pipe, the MCP server gets the token and read-only mode but not
     assert.match((await hub?.run("get_alerts", {}))?.content ?? "", /"tool":"get_alerts"/);
     await hub?.close();
     const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as HubCall);
-    assert.deepEqual(calls, [{ tool: "get_alerts", token: "hub-token", actions: "off", anthropicKey: false }]);
+    assert.deepEqual(calls, [{ tool: "get_alerts", input: {}, token: "hub-token", actions: "off", anthropicKey: false }]);
   } finally {
     if (before === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = before;
@@ -174,6 +174,52 @@ test("over a real pipe, an MCP server that never answers is stopped once the tim
     };
     for (let waited = 0; alive() && waited < 5000; waited += 50) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(alive(), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("only the hub tools Jarvis knows are taken: the read tools, plus the actions when they're on; only the actions need a yes", async () => {
+  const listed = ["get_status", "scan_library", "reboot_server", "stop_download"].map((name) => ({ name, inputSchema: { type: "object" } }));
+  const lister = fakeConnection({ listTools: async () => ({ tools: listed }) });
+  const readOnly = await startHubTools(server, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(readOnly?.definitions.map((tool) => tool.name), ["get_status"]);
+  assert.equal(readOnly?.needsYes?.("get_status"), false);
+  const withActions = await startHubTools({ ...server, actions: true }, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(withActions?.definitions.map((tool) => tool.name), ["get_status", "scan_library", "stop_download"]);
+  assert.deepEqual(["get_status", "scan_library", "stop_download", "reboot_server"].map((name) => withActions?.needsYes?.(name)), [false, true, true, false]);
+  const notes: string[] = [];
+  const unknownOnly = fakeConnection({ listTools: async () => ({ tools: [{ name: "reboot_server", inputSchema: {} }] }) });
+  assert.equal(await startHubTools(server, (note) => notes.push(note), async () => unknownOnly.connection), undefined);
+  assert.deepEqual(notes, [hubProblemNote("no tools listed")]);
+});
+
+test("combined with the brain tools, only the hub's own actions need a yes, and a brain tool never does", () => {
+  const brain: BrainTools = { definitions: [{ name: "read_file", description: "Read.", input_schema: { type: "object" } }], run: async () => ({ content: "", isError: false }) };
+  const hub = {
+    definitions: [
+      { name: "get_status", description: "", input_schema: { type: "object" } },
+      { name: "scan_library", description: "", input_schema: { type: "object" } },
+    ],
+    run: async () => ({ content: "", isError: false }),
+    needsYes: (name: string) => name === "scan_library" || name === "read_file",
+    close: async () => {},
+  };
+  const both = withHubTools(brain, hub);
+  assert.deepEqual(["read_file", "get_status", "scan_library", "anything"].map((name) => both.needsYes?.(name)), [false, false, true, false]);
+  const noAsking = withHubTools(brain, { ...hub, needsYes: undefined });
+  assert.equal(noAsking.needsYes?.("scan_library"), false);
+});
+
+test("over a real pipe with the actions on, the MCP server is started with them and lists all ten", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "jarvis-hub-actions-"));
+  try {
+    const log = join(dir, "calls.jsonl");
+    const hub = await startHubTools({ command: process.execPath, args: [standInHubFile, log], token: "hub-token", actions: true }, () => assert.fail("no note expected"), connectOverStdio, 10_000);
+    assert.deepEqual(hub?.definitions.map((tool) => tool.name), [...hubReadToolNames, ...hubActionToolNames]);
+    await hub?.run("stop_download", { hash: "abc" });
+    await hub?.close();
+    assert.deepEqual(JSON.parse(await readFile(log, "utf8")), { tool: "stop_download", input: { hash: "abc" }, token: "hub-token", actions: "on", anthropicKey: false });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

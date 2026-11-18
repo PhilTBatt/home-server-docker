@@ -1,7 +1,8 @@
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
-import type { BrainTools } from "./brain-tools.js";
+import type { BrainTools, ToolOutcome } from "./brain-tools.js";
 import { askDirect, type AssistantBlock, type DirectAnswer, type DirectRequest, type ToolResultBlock, type ToolUseBlock, type Turn } from "./direct.js";
 import type { ThinkingHistory } from "./config.js";
+import { notDoneNote } from "./hub-tools.js";
 import { answerCost, pricesPerMTok } from "./prices.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
@@ -196,7 +197,9 @@ export function startApiSession(settings: ApiSettings, send: SendRequest = askDi
           if (closed) throw new Error(closedMessage);
           stats.toolUses++;
           listener.tool?.(call.name, call.input);
-          const outcome = await settings.tools.run(call.name, call.input);
+          const yes = settings.tools.needsYes?.(call.name) === true ? ((await listener.confirm?.(call.name, call.input).catch(() => false)) ?? false) : true;
+          if (closed) throw new Error(closedMessage);
+          const outcome: ToolOutcome = yes ? await settings.tools.run(call.name, call.input) : { content: notDoneNote, isError: true, refused: true };
           if (outcome.refused) stats.refusedTools.push(call.name);
           results.push(outcome.isError ? { type: "tool_result", tool_use_id: call.id, content: outcome.content, is_error: true } : { type: "tool_result", tool_use_id: call.id, content: outcome.content });
         }

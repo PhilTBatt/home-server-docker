@@ -48,6 +48,9 @@ export const findIgnoredWord = "FIND_IGNORED";
 export const searchCaseWord = "SEARCH_CASE";
 export const searchLongWord = "SEARCH_LONG";
 export const hubStatusWord = "HUB_STATUS";
+export const hubScanWord = "HUB_SCAN";
+export const hubStopWord = "HUB_STOP";
+export const standInHash = "0123456789abcdef0123456789abcdef01234567";
 export const insideText = "stand-in brain";
 export const outsideText = "outside the brain";
 export const hiddenText = "hidden note";
@@ -142,6 +145,8 @@ function calls(script: StandInScript): [string, Record<Engine, ToolCall>][] {
     [searchCaseWord, search(caseText.toUpperCase(), brain)],
     [searchLongWord, search(longText, brain)],
     [hubStatusWord, { sdk: { name: "mcp__hub__get_status", input: {} }, api: { name: "get_status", input: {} } }],
+    [hubScanWord, { sdk: { name: "mcp__hub__scan_library", input: {} }, api: { name: "scan_library", input: {} } }],
+    [hubStopWord, { sdk: { name: "mcp__hub__stop_download", input: { hash: standInHash } }, api: { name: "stop_download", input: { hash: standInHash } } }],
   ];
 }
 

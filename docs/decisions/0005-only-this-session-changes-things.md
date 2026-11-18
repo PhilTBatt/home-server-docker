@@ -1,7 +1,7 @@
 # 0005. Only this repo's Claude Code session can change things
 
 - Date: 2026-11-14
-- Status: accepted
+- Status: accepted, widened by 0011 (Jarvis can also use the actions, after a typed yes)
 
 ## Context
 Two Claude Code sessions use the MCP tools: the one in this repo, which edits the code, and one in a separate private notes repo that's used from a phone. Three tools change things: `scan_library`, `stop_download` and `start_download`. The notes session holds personal information, and some tool answers, such as torrent names, are text from the internet that could carry instructions aimed at Claude. A decision was needed on what the notes session may do.

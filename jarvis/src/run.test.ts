@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { startAgentSession, type AgentSession, type StartAgent } from "./agent.js";
-import { brainQuestion, coldQuestion, formatReport, model, outsideQuestion, rounds, runSpeedTest, system, warmQuestions, withTimeout, type Results, type SpeedTestDeps } from "./run.js";
+import { brainQuestion, coldQuestion, formatReport, model, outsideQuestion, rounds, runSpeedTest, system, warmQuestions, withPausableTimeout, withTimeout, type Results, type SpeedTestDeps } from "./run.js";
 import type { Answer } from "./timing.js";
 
 function answer(text: string, firstWordsMs: number | null, totalMs: number): Answer {
@@ -367,4 +367,98 @@ test("the report says when memory and cost are unknown", () => {
   const report = formatReport(sampleResults({ memoryMb: null, costUsd: null }));
   assert.ok(report.includes("  memory while running (highest reading): unknown"));
   assert.ok(report.includes("  cost of the Agent SDK's runs: unknown"));
+});
+
+test("a pausable time limit passes on an answer in time, and gives up when the time runs out", async () => {
+  assert.equal(await withPausableTimeout(Promise.resolve("on time"), 1000).promise, "on time");
+  let gaveUp = 0;
+  await assert.rejects(withPausableTimeout(new Promise(() => {}), 20, () => gaveUp++).promise, { message: "No answer within 0.02 seconds" });
+  assert.equal(gaveUp, 1);
+});
+
+function fakeClock() {
+  let time = 0;
+  let nextId = 1;
+  const timers = new Map<number, { at: number; run: () => void }>();
+  return {
+    now: () => time,
+    set: (run: () => void, ms: number) => {
+      timers.set(nextId, { at: time + ms, run });
+      return nextId++;
+    },
+    clear: (timer: unknown) => {
+      timers.delete(timer as number);
+    },
+    advance(ms: number) {
+      time += ms;
+      for (const [id, timer] of [...timers]) {
+        if (timer.at > time) continue;
+        timers.delete(id);
+        timer.run();
+      }
+    },
+    left: () => [...timers.values()].map((timer) => timer.at - time),
+  };
+}
+
+test("time spent paused doesn't count, and the rest of the time carries on after resuming, however many times it's paused", async () => {
+  const clock = fakeClock();
+  let gaveUp = 0;
+  const timer = withPausableTimeout(new Promise(() => {}), 100, () => gaveUp++, clock);
+  const failed = timer.promise.catch((error: Error) => error.message);
+  assert.deepEqual(clock.left(), [100]);
+  clock.advance(30);
+  timer.pause();
+  timer.pause();
+  assert.deepEqual(clock.left(), []);
+  clock.advance(1000);
+  timer.resume();
+  timer.resume();
+  assert.deepEqual(clock.left(), [70]);
+  clock.advance(20);
+  timer.pause();
+  clock.advance(1000);
+  timer.resume();
+  assert.deepEqual(clock.left(), [50]);
+  clock.advance(49);
+  assert.equal(gaveUp, 0);
+  clock.advance(1);
+  assert.equal(gaveUp, 1);
+  assert.equal(await failed, "No answer within 0.1 seconds");
+});
+
+test("an answer that comes after a pause and resume is passed on, and its timer stopped", async () => {
+  const clock = fakeClock();
+  let gaveUp = 0;
+  let finish: (value: string) => void = () => {};
+  const timer = withPausableTimeout(new Promise<string>((resolve) => (finish = resolve)), 100, () => gaveUp++, clock);
+  clock.advance(60);
+  timer.pause();
+  clock.advance(500);
+  timer.resume();
+  finish("in time");
+  assert.equal(await timer.promise, "in time");
+  assert.deepEqual(clock.left(), []);
+  clock.advance(1000);
+  assert.equal(gaveUp, 0);
+});
+
+test("resuming after the answer has come does nothing, even if it came while paused", async () => {
+  const clock = fakeClock();
+  let gaveUp = 0;
+  const timer = withPausableTimeout(Promise.resolve("done"), 20, () => gaveUp++, clock);
+  assert.equal(await timer.promise, "done");
+  timer.pause();
+  timer.resume();
+  assert.deepEqual(clock.left(), []);
+  clock.advance(40);
+  let finish: (value: string) => void = () => {};
+  const paused = withPausableTimeout(new Promise<string>((resolve) => (finish = resolve)), 20, () => gaveUp++, clock);
+  paused.pause();
+  finish("while paused");
+  assert.equal(await paused.promise, "while paused");
+  paused.resume();
+  assert.deepEqual(clock.left(), []);
+  clock.advance(40);
+  assert.equal(gaveUp, 0);
 });

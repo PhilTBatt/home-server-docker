@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { agentOptions, closedMessage, createInputQueue, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
-import { hubProblemNote } from "./hub-tools.js";
+import { actionHook, actionHookSeconds, agentOptions, closedMessage, createInputQueue, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
+import { hubProblemNote, notDoneNote } from "./hub-tools.js";
 
 function tick() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -824,10 +824,11 @@ test("an answer also reports its last request of Jarvis's own, and leaves it unk
 
 const hub = { command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], token: "hub-token" };
 
-test("with the hub's tools, the engine starts the hub's MCP server read-only, loads its tools up front, and may use only that server's tools; the built-in tools don't change", () => {
+test("with the hub's tools, the engine starts the hub's MCP server read-only, loads its tools up front, and may use only its seven read tools, by name, with nothing asked; the built-in tools don't change", () => {
   const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub });
   assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "off" }, alwaysLoad: true } });
-  assert.deepEqual(options.allowedTools, ["mcp__hub__*"]);
+  assert.deepEqual(options.allowedTools, ["mcp__hub__get_status", "mcp__hub__get_alerts", "mcp__hub__get_features", "mcp__hub__get_downloads", "mcp__hub__get_library", "mcp__hub__get_wifi_reconnects", "mcp__hub__get_backup"]);
+  assert.equal("hooks" in options, false);
   assert.deepEqual(options.tools, ["Read", "Grep", "Glob"]);
   assert.equal(options.strictMcpConfig, true);
   assert.equal(options.permissionMode, "dontAsk");
@@ -900,4 +901,67 @@ test("a hub problem found before any question is said with the next answer", asy
   await agent.emit(success("Hi."));
   await answer;
   assert.deepEqual(notes, [hubProblemNote("failed")]);
+});
+
+const actionsHub = { ...hub, actions: true };
+
+function preToolUse(tool: string, toolInput: unknown = {}) {
+  return { hook_event_name: "PreToolUse", tool_name: tool, tool_input: toolInput, tool_use_id: "toolu_1", session_id: "s", transcript_path: "/t", cwd: "/brain" } as unknown as Parameters<ReturnType<typeof actionHook>>[0];
+}
+
+const hookOptions = { signal: new AbortController().signal };
+
+test("with the hub's actions on, the MCP server gets them, only the read tools are allowed by name, and a hook that blocks if it fails asks before each tool", () => {
+  const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: {}, hub: actionsHub });
+  assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "on" }, alwaysLoad: true } });
+  assert.ok(options.allowedTools?.every((tool) => tool.startsWith("mcp__hub__get_")));
+  assert.equal(options.allowedTools?.length, 7);
+  const matchers = options.hooks?.PreToolUse ?? [];
+  assert.equal(matchers.length, 1);
+  assert.deepEqual({ ...matchers[0], hooks: matchers[0].hooks.length }, { hooks: 1, timeout: actionHookSeconds, onFailure: "block" });
+  assert.equal(actionHookSeconds, 300);
+  assert.equal(options.permissionMode, "dontAsk");
+});
+
+test("the hook asks only about the hub's actions, by their short name and with what the model gave them, and allows or refuses by the answer", async () => {
+  for (const yes of [true, false]) {
+    const asked: { tool: string; input: unknown }[] = [];
+    const hook = actionHook(async (tool, input) => {
+      asked.push({ tool, input });
+      return yes;
+    });
+    assert.deepEqual(await hook(preToolUse("mcp__hub__stop_download", { hash: "abc" }), "toolu_1", hookOptions), {
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: yes ? "allow" : "deny", permissionDecisionReason: yes ? "Phil said yes" : notDoneNote },
+    });
+    for (const tool of ["mcp__hub__get_status", "Read", "mcp__other__scan_library", "scan_library", "mcp__hub__reboot"]) assert.deepEqual(await hook(preToolUse(tool), "toolu_2", hookOptions), {}, tool);
+    assert.deepEqual(await hook({ ...preToolUse("mcp__hub__scan_library"), hook_event_name: "PostToolUse" } as unknown as Parameters<typeof hook>[0], "toolu_3", hookOptions), {});
+    assert.deepEqual(asked, [{ tool: "stop_download", input: { hash: "abc" } }]);
+  }
+  const failing = actionHook(async () => Promise.reject(new Error("terminal gone")));
+  assert.equal(((await failing(preToolUse("mcp__hub__scan_library"), "toolu_4", hookOptions)) as { hookSpecificOutput: { permissionDecision: string } }).hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("the session's hook asks whoever is waiting on the current question, and refuses when no question is waiting or it can't ask", async () => {
+  const { agent, session } = setup({ hub: actionsHub });
+  const hook = agent.options()?.hooks?.PreToolUse?.[0].hooks[0];
+  assert.ok(hook !== undefined);
+  const decision = async () => ((await hook(preToolUse("mcp__hub__scan_library"), "toolu_1", hookOptions)) as { hookSpecificOutput: { permissionDecision: string } }).hookSpecificOutput.permissionDecision;
+  assert.equal(await decision(), "deny");
+  const asked: string[] = [];
+  const answer = session.ask("Scan it", {
+    confirm: async (tool) => {
+      asked.push(tool);
+      return true;
+    },
+  });
+  await tick();
+  assert.equal(await decision(), "allow");
+  await agent.emit(success("Done."));
+  await answer;
+  const quiet = session.ask("Again");
+  await tick();
+  assert.equal(await decision(), "deny");
+  await agent.emit(success("Done."));
+  await quiet;
+  assert.deepEqual(asked, ["scan_library"]);
 });
