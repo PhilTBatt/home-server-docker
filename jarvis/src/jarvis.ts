@@ -14,6 +14,7 @@ import { brainDir, readConfig } from "./config.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, hubServerFile, hubServerFor } from "./hub-tools.js";
 import { pricesPerMTok } from "./prices.js";
+import { notesFound, notesLine, readSessionNotes, withNotes } from "./session-notes.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
 const typed = listenNow(lines);
@@ -36,13 +37,14 @@ try {
   const hub = config.hubToken === null ? undefined : hubServerFor(config.hubToken);
   const hubNotes: string[] = [];
   hubTools = hub !== undefined && config.engine === "api" ? await startHubTools(hub, (note) => hubNotes.push(note)) : undefined;
+  const notes = config.sessionNotes ? await readSessionNotes() : null;
   const open = (setup: ChatSetup) => {
     const chat =
       config.engine === "api"
         ? startApiSession({
             apiKey: config.apiKey,
             model: chatModel,
-            system: apiChatSystem,
+            system: withNotes(apiChatSystem, notes ?? []),
             maxTokens: apiMaxTokens,
             timeoutMs: questionTimeoutMs,
             now,
@@ -51,11 +53,11 @@ try {
             history: setup.history,
             save: setup.save,
           })
-        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brainDir, now, savedChats: setup.savedChats, hub });
+        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: withNotes(chatSystem, notes ?? []), cwd: brainDir, now, savedChats: setup.savedChats, hub });
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off" },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off" },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -85,6 +87,7 @@ try {
   process.stdout.write(`${engineLine(config.engine, config.thinkingHistory)}\n`);
   process.stdout.write(`${settingsLine(config)}\n`);
   for (const note of hubNotes) warn(note);
+  if (notes !== null) process.stdout.write(`${notesLine(notes)}\n`);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
   await runChat({

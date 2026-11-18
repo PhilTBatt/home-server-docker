@@ -1,5 +1,5 @@
 import { logVersion, type LogLine, type NewChatLine, type Rating, type RatingLine } from "./answer-log.js";
-import { chatModes, engines, hubToolsModes, lengthHintModes, thinkingHistories, type ChatMode, type Engine, type HubToolsMode, type LengthHints, type ThinkingHistory } from "./config.js";
+import { chatModes, engines, hubToolsModes, lengthHintModes, sessionNotesModes, thinkingHistories, type ChatMode, type Engine, type HubToolsMode, type LengthHints, type SessionNotesMode, type ThinkingHistory } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
 export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; skipped: number };
@@ -12,6 +12,7 @@ export type Group = {
   chats: ChatMode;
   lengthHints: LengthHints;
   hubTools: HubToolsMode;
+  sessionNotes: SessionNotesMode;
   lines: LogLine[];
 };
 
@@ -38,6 +39,7 @@ export function isLogLine(value: unknown): value is LogLine {
     (line.chats === undefined || (chatModes as readonly unknown[]).includes(line.chats)) &&
     (line.lengthHints === undefined || (lengthHintModes as readonly unknown[]).includes(line.lengthHints)) &&
     (line.hubTools === undefined || (hubToolsModes as readonly unknown[]).includes(line.hubTools)) &&
+    (line.sessionNotes === undefined || (sessionNotesModes as readonly unknown[]).includes(line.sessionNotes)) &&
     typeof line.ok === "boolean" &&
     (line.error === null || typeof line.error === "string") &&
     numberFields.every((field) => isNumberOrNull(line[field])) &&
@@ -103,19 +105,20 @@ function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
   return thinking === null ? "API" : `API, ${thinking}`;
 }
 
-function order(group: Group): [number, number, string, number, number, number] {
-  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools)];
+function order(group: Group): [number, number, string, number, number, number, number] {
+  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), sessionNotesModes.indexOf(group.sessionNotes)];
 }
 
 function compareGroups(a: Group, b: Group): number {
-  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA] = order(a);
-  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB] = order(b);
-  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB;
+  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, notesA] = order(a);
+  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, notesB] = order(b);
+  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || notesA - notesB;
 }
 
 const chatNames: Record<ChatMode, string> = { fresh: "fresh", resume: "resumed" };
 const hintNames: Record<LengthHints, string> = { note: "length note", jarvis: "Jarvis says" };
 const hubNames: Record<HubToolsMode, string> = { off: "no hub tools", on: "hub tools" };
+const notesNames: Record<SessionNotesMode, string> = { off: "no session notes", on: "session notes" };
 
 export function groupLines(lines: LogLine[]): Group[] {
   const groups = new Map<string, Group>();
@@ -124,8 +127,9 @@ export function groupLines(lines: LogLine[]): Group[] {
     const chats = line.chats ?? "fresh";
     const lengthHints = line.lengthHints ?? "note";
     const hubTools = line.hubTools ?? "off";
-    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools]);
-    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, lines: [] };
+    const sessionNotes = line.sessionNotes ?? "off";
+    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, sessionNotes]);
+    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, sessionNotes, lines: [] };
     group.lines.push(line);
     groups.set(key, group);
   }
@@ -133,12 +137,14 @@ export function groupLines(lines: LogLine[]): Group[] {
   const chatSettings = new Set(lines.map((line) => line.chats ?? "fresh"));
   const hintSettings = new Set(lines.map((line) => line.lengthHints ?? "note"));
   const hubSettings = new Set(lines.map((line) => line.hubTools ?? "off"));
+  const notesSettings = new Set(lines.map((line) => line.sessionNotes ?? "off"));
   const label = (group: Group) => {
     const parts = [
       settingName(group.engine, group.thinking),
       ...(chatSettings.size > 1 ? [chatNames[group.chats]] : []),
       ...(hintSettings.size > 1 ? [hintNames[group.lengthHints]] : []),
       ...(hubSettings.size > 1 ? [hubNames[group.hubTools]] : []),
+      ...(notesSettings.size > 1 ? [notesNames[group.sessionNotes]] : []),
     ];
     const name = parts.join(", ");
     return models.size > 1 ? `${name} (${group.model})` : name;

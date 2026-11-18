@@ -15,6 +15,9 @@ export type LengthHints = (typeof lengthHintModes)[number];
 export const hubToolsModes = ["off", "on"] as const;
 export type HubToolsMode = (typeof hubToolsModes)[number];
 
+export const sessionNotesModes = ["off", "on"] as const;
+export type SessionNotesMode = (typeof sessionNotesModes)[number];
+
 export type Config = {
   apiKey: string;
   engine: Engine;
@@ -24,6 +27,7 @@ export type Config = {
   lengthWarn: number;
   lengthCap: number | null;
   hubToken: string | null;
+  sessionNotes: boolean;
   log: boolean;
 };
 
@@ -72,8 +76,10 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (hubTools !== "on" && hubTools !== "off") throw new Error(`JARVIS_HUB_TOOLS must be on or off, not "${hubTools}"`);
   const token = env.API_TOKEN?.trim() ?? "";
   if (hubTools === "on" && token === "") throw new Error("JARVIS_HUB_TOOLS is on, but there's no API_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in");
+  const sessionNotes = env.JARVIS_SESSION_NOTES?.trim() || "off";
+  if (sessionNotes !== "on" && sessionNotes !== "off") throw new Error(`JARVIS_SESSION_NOTES must be on or off, not "${sessionNotes}"`);
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, sessionNotes: sessionNotes === "on", log: log === "on" };
 }

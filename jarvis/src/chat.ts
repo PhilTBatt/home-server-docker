@@ -211,8 +211,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "sessionNotes" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {

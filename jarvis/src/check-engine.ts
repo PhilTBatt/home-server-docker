@@ -9,10 +9,11 @@ import { createBrainTools } from "./brain-tools.js";
 import { savedSdkChats, setUpChats, setUpNewChat } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs } from "./chat.js";
 import { askDirect } from "./direct.js";
-import { apiUnderTest, formatCheck, runEngineCheck, runHubCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
+import { apiUnderTest, formatCheck, runEngineCheck, runHubCheck, runNotesCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { hubProblemNote, hubToolPrefix, type HubServer } from "./hub-tools.js";
 import { withTimeout } from "./run.js";
+import { readSessionNotes, withNotes } from "./session-notes.js";
 import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi, type StandInApi } from "./stand-in-api.js";
 import { standInHubFile, type HubCall } from "./stand-in-hub.js";
 
@@ -190,7 +191,31 @@ try {
     commandLines,
     timeoutMs: 60_000,
   });
-  const results = [...shared, ...saved, ...hub];
+  const notesHome = await mkdtemp(join(tmpdir(), "jarvis-check-notes-"));
+  folders.push(notesHome);
+  await mkdir(join(notesHome, "docker"));
+  const notesText = `- Building the hub's tools (\"both engines\"), marker ${randomUUID()}\n- It's going well`;
+  await writeFile(join(notesHome, "docker", "MEMORY.md"), `${notesText}\n`);
+  const sessionNotes = await readSessionNotes(notesHome);
+  const notesSdkApi = await startStandInApi(script, "sdk");
+  const notesPlainApi = await startStandInApi(script, "api");
+  apis.push(notesSdkApi, notesPlainApi);
+  const notesSdk = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: withNotes(chatSystem, sessionNotes), cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: notesSdkApi.url } });
+  const notesPlain = startApiSession(
+    { apiKey: "sk-ant-test-key", model: chatModel, system: withNotes(apiChatSystem, sessionNotes), maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: createBrainTools(brain), thinkingHistory: "keep" },
+    (request) => askDirect({ ...request, url: `${notesPlainApi.url}/v1/messages` }),
+  );
+  sessions.push(notesSdk, notesPlain);
+  const notes = await runNotesCheck({
+    engines: [
+      { engine: "sdk", session: notesSdk, requests: notesSdkApi.requests },
+      { engine: "api", session: notesPlain, requests: notesPlainApi.requests },
+    ],
+    notes: notesText,
+    commandLines,
+    timeoutMs: 60_000,
+  });
+  const results = [...shared, ...saved, ...hub, ...notes];
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;
 } catch (error) {

@@ -348,6 +348,19 @@ test("the length-hints setting is compared side by side, named only when both ar
   assert.equal(isLogLine(older), true);
 });
 
+test("session notes on and off are compared side by side, off first, named only when both are in the log, and older lines count as off", () => {
+  const { sessionNotes: _notes, ...older } = line();
+  const mixed = [line({ sessionNotes: "on" }), older as LogLine, line({ engine: "sdk", thinking: null, sessionNotes: "on" })];
+  assert.deepEqual(rowOf(compareReport({ lines: mixed, skipped: 0 }), ""), ["Agent SDK, session notes", "API, keep, no session notes", "API, keep, session notes"]);
+  assert.deepEqual(rowOf(compareReport({ lines: mixed, skipped: 0 }), "Answers"), ["1", "1", "1"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ sessionNotes: "on" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine, line({ sessionNotes: "off" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ hubTools: "on", sessionNotes: "on" }), line({})], skipped: 0 }), ""), ["API, keep, no hub tools, no session notes", "API, keep, hub tools, session notes"]);
+  assert.equal(isLogLine({ ...line(), sessionNotes: "yes" }), false);
+  assert.equal(isLogLine({ ...line(), sessionNotes: "on" }), true);
+  assert.equal(isLogLine(older), true);
+});
+
 test("hub tools on and off are compared side by side, off first, named only when both are in the log, and older lines count as off", () => {
   const { hubTools: _hub, ...older } = line();
   const mixed = [line({ hubTools: "on" }), older as LogLine, line({ engine: "sdk", thinking: null, hubTools: "on" })];

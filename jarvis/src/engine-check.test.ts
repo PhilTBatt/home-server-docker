@@ -7,12 +7,14 @@ import type { ChatMode, Engine } from "./config.js";
 import {
   apiRefused,
   apiUnderTest,
+  checkNames,
   judgeRule,
   expectedRequests,
   formatCheck,
   problems,
   runEngineCheck,
   runHubCheck,
+  runNotesCheck,
   runSavedChatsCheck,
   sdkRefused,
   sdkUnderTest,
@@ -112,7 +114,7 @@ function fakeEngine(engine: Engine, fake: Fake = {}) {
   let closes = 0;
   const record = (lastUserText: string, extra: Partial<SeenRequest> = {}) => {
     if (fake.silent) return;
-    const seen: SeenRequest = { path: "/v1/messages", streamed: true, model: "claude-haiku-5-5", system: systems[engine], tools: offered[engine], lastUserText, toolResults: [], asked: null, body: JSON.stringify({ last: lastUserText }), ...extra };
+    const seen: SeenRequest = { path: "/v1/messages", streamed: true, model: "claude-haiku-5-5", system: systems[engine], systemText: systems[engine], tools: offered[engine], lastUserText, toolResults: [], asked: null, body: JSON.stringify({ last: lastUserText }), ...extra };
     requests.push(fake.shape?.(seen) ?? seen);
   };
   const session: AgentSession = {
@@ -142,7 +144,7 @@ function fakeEngine(engine: Engine, fake: Fake = {}) {
 }
 
 function goodRequestFor(engine: Engine): SeenRequest {
-  return { path: "/v1/messages", streamed: true, model: "claude-haiku-5-5", system: systems[engine], tools: offered[engine], lastUserText: "Hello", toolResults: [], asked: null, body: "{}" };
+  return { path: "/v1/messages", streamed: true, model: "claude-haiku-5-5", system: systems[engine], systemText: systems[engine], tools: offered[engine], lastUserText: "Hello", toolResults: [], asked: null, body: "{}" };
 }
 
 function deps(overrides: Partial<EngineCheckDeps> = {}, sdk: Fake = {}, api: Fake = {}): EngineCheckDeps {
@@ -381,7 +383,7 @@ test("an extra request, a missing one, or one without Jarvis's own prompt fails 
 
 test("requests to other paths don't count as requests to Claude", async () => {
   const sdk = fakeEngine("sdk");
-  const other: SeenRequest = { path: "/api/hello", streamed: false, model: null, system: '""', tools: [], lastUserText: "", toolResults: [], asked: null, body: "" };
+  const other: SeenRequest = { path: "/api/hello", streamed: false, model: null, system: '""', systemText: "", tools: [], lastUserText: "", toolResults: [], asked: null, body: "" };
   sdk.requests.unshift(other);
   const results = await runEngineCheck({ ...deps(), engines: [sdk.underTest, fakeEngine("api").underTest] });
   assert.deepEqual(failed(results), []);
@@ -770,4 +772,69 @@ test("an engine that fails the hub question fails rather than passing by default
   assert.deepEqual(failed(results), hubNames.slice(0, 2).map((name) => `both engines: ${name}`));
   assert.match(named(results, `both engines: ${hubNames[1]}`).detail, /answered "failed: engine fell over"/);
   assert.ok((await runHubCheck({ ...hubDeps(), engines: [] })).every((result) => !result.ok));
+});
+
+const notesText = '- Building the hub\'s tools ("both engines")';
+
+type NotesFake = { leaveOut?: boolean; inMessage?: boolean; silent?: boolean; throws?: boolean; secondWithout?: boolean };
+
+function notesEngine(engine: Engine, fake: NotesFake = {}) {
+  const requests: SeenRequest[] = [];
+  const session: AgentSession = {
+    async ask(question) {
+      if (fake.throws === true) throw new Error("engine fell over");
+      if (fake.silent !== true) {
+        const systemText = fake.leaveOut === true ? systems[engine] : `${systems[engine]}\n\n${notesText}`;
+        requests.push({ ...goodRequestFor(engine), systemText, lastUserText: fake.inMessage === true ? `${question} ${notesText}` : question });
+        if (fake.secondWithout === true) requests.push({ ...goodRequestFor(engine), lastUserText: question });
+      }
+      return { text: "Hi.", firstWordsMs: 1, totalMs: 2 };
+    },
+    readyMs: () => null,
+    costUsd: () => null,
+    stoppedReason: () => null,
+    close: () => {},
+  };
+  return { engine, session, requests };
+}
+
+const notesName = "session notes reach the model in his instructions, quotes and all, and no command line";
+const quietLines = async () => ["node dist/jarvis.js"];
+
+test("engines that put the sessions' notes in his instructions pass the notes check, named for the engines checked", async () => {
+  assert.deepEqual(await runNotesCheck({ engines: [notesEngine("sdk"), notesEngine("api")], notes: notesText, commandLines: quietLines, timeoutMs: 1000 }), [{ name: `both engines: ${notesName}`, ok: true, detail: "" }]);
+  assert.deepEqual(await runNotesCheck({ engines: [notesEngine("api")], notes: notesText, commandLines: quietLines, timeoutMs: 1000 }), [{ name: `plain API call: ${notesName}`, ok: true, detail: "" }]);
+});
+
+test("notes missing from his instructions, from any request, or sent as a message fail the notes check, naming the engine; so do no requests, a failed question, or no engines", async () => {
+  const cases: [NotesFake, string][] = [
+    [{ leaveOut: true }, "0 of 1 requests had the notes in his instructions"],
+    [{ secondWithout: true }, "1 of 2 requests had the notes in his instructions"],
+    [{ inMessage: true }, "1 of 1 requests had the notes in his instructions, and 1 in a message"],
+    [{ silent: true }, "0 of 0 requests had the notes in his instructions"],
+    [{ throws: true }, "failed: engine fell over; 0 of 0 requests had the notes in his instructions"],
+  ];
+  for (const [fake, detail] of cases) {
+    for (const engine of ["sdk", "api"] as const) {
+      const engines = engine === "sdk" ? [notesEngine("sdk", fake), notesEngine("api")] : [notesEngine("sdk"), notesEngine("api", fake)];
+      const [result] = await runNotesCheck({ engines, notes: notesText, commandLines: quietLines, timeoutMs: 1000 });
+      assert.deepEqual(result, { name: `both engines: ${notesName}`, ok: false, detail: `${checkNames[engine]}: ${detail}` }, `${engine} ${JSON.stringify(fake)}`);
+    }
+  }
+  assert.equal((await runNotesCheck({ engines: [], notes: notesText, commandLines: quietLines, timeoutMs: 1000 }))[0].ok, false);
+});
+
+test("the notes on a command line fail the notes check, and so does not being able to look", async () => {
+  const engines = () => [notesEngine("sdk"), notesEngine("api")];
+  const [shown] = await runNotesCheck({ engines: engines(), notes: notesText, commandLines: async () => ["node dist/jarvis.js", `claude --system-prompt ${notesText}`], timeoutMs: 1000 });
+  assert.deepEqual(shown, { name: `both engines: ${notesName}`, ok: false, detail: "1 command lines had the notes" });
+  const [unread] = await runNotesCheck({
+    engines: engines(),
+    notes: notesText,
+    commandLines: async () => {
+      throw new Error("no /proc");
+    },
+    timeoutMs: 1000,
+  });
+  assert.deepEqual(unread, { name: `both engines: ${notesName}`, ok: false, detail: "command lines couldn't be read: no /proc" });
 });

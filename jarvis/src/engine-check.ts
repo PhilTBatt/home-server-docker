@@ -449,6 +449,45 @@ export async function runHubCheck(deps: HubCheckDeps): Promise<CheckResult[]> {
   ];
 }
 
+export type NotesEngineUnderTest = {
+  engine: Engine;
+  session: AgentSession;
+  requests: SeenRequest[];
+};
+
+export type NotesCheckDeps = {
+  engines: NotesEngineUnderTest[];
+  notes: string;
+  commandLines: () => Promise<string[]>;
+  timeoutMs: number;
+};
+
+export async function runNotesCheck(deps: NotesCheckDeps): Promise<CheckResult[]> {
+  const failures: string[] = [];
+  for (const engine of deps.engines) {
+    const from = engine.requests.length;
+    let problem = "";
+    try {
+      await withTimeout(engine.session.ask("Hello"), deps.timeoutMs, () => engine.session.close());
+    } catch (error) {
+      problem = `failed: ${reason(error)}; `;
+    }
+    const sent = engine.requests.slice(from).filter((request) => request.path === "/v1/messages");
+    const carried = sent.filter((request) => request.systemText.includes(deps.notes)).length;
+    const elsewhere = sent.filter((request) => request.lastUserText.includes(deps.notes)).length;
+    if (problem !== "" || sent.length === 0 || carried < sent.length || elsewhere > 0) {
+      failures.push(`${checkNames[engine.engine]}: ${problem}${carried} of ${sent.length} requests had the notes in his instructions${elsewhere > 0 ? `, and ${elsewhere} in a message` : ""}`);
+    }
+  }
+  try {
+    const shown = (await deps.commandLines()).filter((line) => line.includes(deps.notes)).length;
+    if (shown > 0) failures.push(`${shown} command lines had the notes`);
+  } catch (error) {
+    failures.push(`command lines couldn't be read: ${reason(error)}`);
+  }
+  return [{ name: `${scope(deps.engines)}: session notes reach the model in his instructions, quotes and all, and no command line`, ok: deps.engines.length > 0 && failures.length === 0, detail: failures.join(" | ") }];
+}
+
 export function formatCheck(results: CheckResult[]): string[] {
   const lines = results.map((result) => (result.ok ? `✓ ${result.name}` : `✗ ${result.name}: ${result.detail}`));
   const failed = results.filter((result) => !result.ok).length;

@@ -10,6 +10,7 @@ export type SeenRequest = {
   streamed: boolean;
   model: string | null;
   system: string;
+  systemText: string;
   tools: string[];
   lastUserText: string;
   toolResults: SeenToolResult[];
@@ -193,6 +194,7 @@ export async function startStandInApi(script: StandInScript, engine: Engine = "s
       streamed: body.stream === true,
       model: typeof body.model === "string" ? body.model : null,
       system: typeof body.system === "string" ? body.system : JSON.stringify(body.system ?? ""),
+      systemText: textOf(body.system),
       tools: Array.isArray(body.tools) ? body.tools.map((tool: { name?: unknown }) => String(tool.name)) : [],
       lastUserText: last === undefined ? "" : textOf(last.content),
       toolResults: toolResultsOf(last),

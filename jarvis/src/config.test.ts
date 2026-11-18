@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, sessionNotes: false, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, sessionNotes: false, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -149,5 +149,16 @@ test("JARVIS_HUB_TOOLS must be on or off, and on needs the API token, which host
   }
   for (const token of [undefined, "", "   "]) {
     assert.throws(() => readConfig({ ...base, JARVIS_HUB_TOOLS: "on", API_TOKEN: token }), { message: "JARVIS_HUB_TOOLS is on, but there's no API_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in" }, String(token));
+  }
+});
+
+test("JARVIS_SESSION_NOTES is off unless set, and must be on or off", () => {
+  assert.equal(readConfig(base).sessionNotes, false);
+  assert.equal(readConfig({ ...base, JARVIS_SESSION_NOTES: "" }).sessionNotes, false);
+  assert.equal(readConfig({ ...base, JARVIS_SESSION_NOTES: "off" }).sessionNotes, false);
+  assert.equal(readConfig({ ...base, JARVIS_SESSION_NOTES: "on" }).sessionNotes, true);
+  assert.equal(readConfig({ ...base, JARVIS_SESSION_NOTES: " on " }).sessionNotes, true);
+  for (const bad of ["On", "yes", "true", "1"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_SESSION_NOTES: bad }), { message: `JARVIS_SESSION_NOTES must be on or off, not "${bad}"` }, bad);
   }
 });

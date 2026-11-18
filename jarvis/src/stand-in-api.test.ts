@@ -135,9 +135,9 @@ test("the stand-in streams answers, answers plain requests, refuses other paths,
     const other = await fetch(`${api.url}/api/hello`);
     assert.equal(other.status, 404);
     assert.deepEqual(api.requests, [
-      { path: "/v1/messages", streamed: true, model: "claude-haiku-5-5", system: '[{"type":"text","text":"You are Jarvis."}]', tools: ["Read"], lastUserText: "[tool result] file text", toolResults: [{ text: "file text", isError: false }], asked: null, body: api.requests[0].body },
-      { path: "/v1/messages", streamed: false, model: "m", system: "S", tools: [], lastUserText: "Hi", toolResults: [], asked: null, body: '{"model":"m","system":"S","messages":[{"role":"user","content":"Hi"}]}' },
-      { path: "/api/hello", streamed: false, model: null, system: '""', tools: [], lastUserText: "", toolResults: [], asked: null, body: "" },
+      { path: "/v1/messages", streamed: true, model: "claude-haiku-5-5", system: '[{"type":"text","text":"You are Jarvis."}]', systemText: "You are Jarvis.", tools: ["Read"], lastUserText: "[tool result] file text", toolResults: [{ text: "file text", isError: false }], asked: null, body: api.requests[0].body },
+      { path: "/v1/messages", streamed: false, model: "m", system: "S", systemText: "S", tools: [], lastUserText: "Hi", toolResults: [], asked: null, body: '{"model":"m","system":"S","messages":[{"role":"user","content":"Hi"}]}' },
+      { path: "/api/hello", streamed: false, model: null, system: '""', systemText: "", tools: [], lastUserText: "", toolResults: [], asked: null, body: "" },
     ]);
     assert.match(api.requests[0].body, /"Earlier"/);
   } finally {
