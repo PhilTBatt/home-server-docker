@@ -8,7 +8,8 @@
     "speed-test": "tsc && node dist/speed-test.js",
     "chat": "tsc && node dist/jarvis.js",
     "compare": "tsc && node dist/compare.js",
-    "engine-check": "tsc && node dist/check-engine.js"
+    "engine-check": "tsc && node dist/check-engine.js",
+    "sound-test": "tsc && node dist/test-sound.js"
   },
   "keywords": [],
   "author": "",

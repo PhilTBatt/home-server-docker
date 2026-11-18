@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainDir, chatModes, engines, readConfig, thinkingHistories } from "./config.js";
+import { brainDir, chatModes, defaultVolume, engines, readConfig, readVolume, thinkingHistories } from "./config.js";
 
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
@@ -177,4 +177,30 @@ test("JARVIS_HUB_ACTIONS is off unless set, must be on or off, and needs the hub
   for (const tools of [{}, { JARVIS_HUB_TOOLS: "off", API_TOKEN: "hub-token" }]) {
     assert.throws(() => readConfig({ ...base, ...tools, JARVIS_HUB_ACTIONS: "on" }), { message: "JARVIS_HUB_ACTIONS is on, but JARVIS_HUB_TOOLS is off. The actions come with the hub's tools, so turn both on" });
   }
+});
+
+test("JARVIS_VOLUME is 80 unless set, ignoring spaces", () => {
+  assert.equal(defaultVolume, 80);
+  assert.equal(readVolume({}), 80);
+  assert.equal(readVolume({ JARVIS_VOLUME: "" }), 80);
+  assert.equal(readVolume({ JARVIS_VOLUME: "  " }), 80);
+  assert.equal(readVolume({ JARVIS_VOLUME: " 35 " }), 35);
+});
+
+test("JARVIS_VOLUME takes any whole number from 0 to 100", () => {
+  assert.equal(readVolume({ JARVIS_VOLUME: "0" }), 0);
+  assert.equal(readVolume({ JARVIS_VOLUME: "1" }), 1);
+  assert.equal(readVolume({ JARVIS_VOLUME: "100" }), 100);
+  assert.equal(readVolume({ JARVIS_VOLUME: "080" }), 80);
+});
+
+test("anything else in JARVIS_VOLUME is refused and named", () => {
+  for (const value of ["101", "-1", "50.5", "80%", "loud", "1000", "0x50", "1e2"]) {
+    assert.throws(() => readVolume({ JARVIS_VOLUME: value }), { message: `JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "${value}"` });
+  }
+});
+
+test("JARVIS_VOLUME doesn't need the API key, and the chat's settings don't read it yet", () => {
+  assert.equal(readVolume({ JARVIS_VOLUME: "60" }), 60);
+  assert.equal("volume" in readConfig({ ...base, JARVIS_VOLUME: "loud" }), false);
 });

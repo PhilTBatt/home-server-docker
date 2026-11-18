@@ -37,6 +37,14 @@ export type Config = {
 
 export const defaultLengthWarn = 80_000;
 
+export const defaultVolume = 80;
+
+export function readVolume(env: Record<string, string | undefined>): number {
+  const text = env.JARVIS_VOLUME?.trim() || String(defaultVolume);
+  if (!/^\d{1,3}$/.test(text) || Number(text) > 100) throw new Error(`JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "${text}"`);
+  return Number(text);
+}
+
 function tokenCount(value: string): number | null {
   return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
 }
