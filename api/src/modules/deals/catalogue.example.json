@@ -1115,6 +1115,67 @@
       "guidePrice": 70,
       "guideDate": "2026-11-19",
       "everyMinutes": 240
+    },
+    {
+      "id": "hukd-nvme",
+      "name": "HotUKDeals: NVMe",
+      "group": "storage",
+      "switch": "off",
+      "source": "hotukdeals",
+      "query": "nvme",
+      "maxPrice": 300,
+      "everyMinutes": 15
+    },
+    {
+      "id": "hukd-ssd",
+      "name": "HotUKDeals: SSD",
+      "group": "storage",
+      "switch": "off",
+      "source": "hotukdeals",
+      "query": "ssd",
+      "maxPrice": 300,
+      "everyMinutes": 15
+    },
+    {
+      "id": "hukd-hard-drive",
+      "name": "HotUKDeals: hard drive",
+      "group": "storage",
+      "switch": "off",
+      "source": "hotukdeals",
+      "query": "hard drive",
+      "maxPrice": 400,
+      "everyMinutes": 15
+    },
+    {
+      "id": "hukd-ddr4",
+      "name": "HotUKDeals: DDR4",
+      "group": "ram",
+      "switch": "off",
+      "source": "hotukdeals",
+      "query": "ddr4",
+      "maxPrice": 300,
+      "avoid": ["laptop ram", "server ram"],
+      "everyMinutes": 15
+    },
+    {
+      "id": "hukd-mini-pc",
+      "name": "HotUKDeals: mini PC",
+      "group": "whole pc",
+      "switch": "off",
+      "source": "hotukdeals",
+      "query": "mini pc",
+      "maxPrice": 400,
+      "everyMinutes": 15
+    },
+    {
+      "id": "hukd-graphics-card",
+      "name": "HotUKDeals: graphics card",
+      "group": "graphics",
+      "switch": "off",
+      "source": "hotukdeals",
+      "query": "graphics card",
+      "maxPrice": 600,
+      "everyMinutes": 15
     }
   ]
 }

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { Config } from "../../config.js";
 import { sendToNtfy } from "../notify/notifier.js";
 import { createEbaySource } from "./ebay.js";
+import { createFeedSource } from "./feed.js";
 import { loadSearches } from "./searches.js";
 import type { Source } from "./source.js";
 import { createStore } from "./store.js";
@@ -16,6 +17,7 @@ export function dealWatcherFor(config: Pick<Config, "deals" | "ntfyTopic">, dir 
       clientSecret: config.deals.ebayClientSecret,
       environment: config.deals.ebayEnvironment,
     }),
+    hotukdeals: createFeedSource(),
   };
   return createDealWatcher({
     loadSearches: () => loadSearches(join(dir, "searches.json"), Object.keys(sources)),

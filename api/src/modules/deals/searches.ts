@@ -101,6 +101,7 @@ export const maxSearches = 150;
 const maxMoreFiles = 5;
 const moreFilePattern = /^[a-z0-9][a-z0-9-]{0,40}\.json$/;
 const notSearchFiles = ["searches.json", "state.json"];
+const ebayOnly = ["conditions", "buying", "endingWithinHours", "ukOnly", "categoryId", "sellerMinPercent", "sellerMinFeedback", "details", "detailsMode", "hideDetails", "collectionMiles", "freePostage", "autoCorrect", "sellerType", "postageShown", "returnsOnly", "endingSoonMinutes"];
 const maxProblemsShown = 5;
 export const maxHiddenDetails = 3;
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
@@ -230,6 +231,7 @@ function readSearch(raw: unknown, sources: string[], problems: string[], postcod
 
   const source = has("source") ? raw.source : "ebay";
   if (typeof source !== "string" || !sources.includes(source)) problems.push(`source must be one of: ${sources.join(", ")}`);
+  else if (source !== "ebay") problems.push(...ebayOnly.filter(has).map((key) => `${key} only works with eBay searches`));
 
   const query = typeof raw.query === "string" && !controlCharacters.test(raw.query) ? raw.query.trim() : "";
   if (query === "" || query.length > 100) problems.push("query must be 1 to 100 characters");

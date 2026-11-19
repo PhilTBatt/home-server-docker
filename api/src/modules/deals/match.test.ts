@@ -437,3 +437,8 @@ test("a listing that eBay says has a hidden item detail is hidden for its detail
   assert.equal(whyNot(search({ maxPrice: 50 }), listing({ hiddenDetail: "Form Factor" }), now), "price");
   assert.equal(whyNot(search(), listing(), now), null);
 });
+
+test("a deal from a feed gets a check-at-the-shop caution instead of the collection one", () => {
+  const feed = readSearches(JSON.stringify({ searches: [{ id: "nvme", name: "NVMe", switch: "on", source: "hotukdeals", query: "nvme" }] }), ["ebay", "hotukdeals"]).searches[0];
+  assert.deepEqual(cautions(feed, listing({ postage: null })), ["it's a deal someone posted, so check the price, postage and stock at the shop"]);
+});

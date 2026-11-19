@@ -88,6 +88,7 @@ export type CategoryDetails = {
 };
 
 export type Source = {
+  noCalls?: boolean;
   search(search: Search, maxPages: number): Promise<SearchResult>;
   full?(ref: string): Promise<{ full: FullListing; calls: number }>;
   detailNames?(query: string, categoryId: string | null): Promise<{ names: DetailNames; calls: number }>;

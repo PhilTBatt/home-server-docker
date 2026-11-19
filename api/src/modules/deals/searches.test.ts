@@ -523,14 +523,17 @@ test("the catalogue in the repo loads beside the example list, every search off 
   const folder = new URL("../../../src/modules/deals/", import.meta.url);
   const example = JSON.parse(await readFile(new URL("searches.example.json", folder), "utf8")) as Record<string, unknown>;
   const catalogue = await readFile(new URL("catalogue.example.json", folder), "utf8");
-  const list = readSearches(JSON.stringify({ ...example, more: ["catalogue.json"] }), sources, { "catalogue.json": catalogue });
+  const list = readSearches(JSON.stringify({ ...example, more: ["catalogue.json"] }), ["ebay", "hotukdeals"], { "catalogue.json": catalogue });
   const added = list.searches.slice(3);
   assert.ok(added.length >= 60);
   assert.ok(added.every((search) => !search.on && search.group !== null), "every catalogue search is off and grouped");
-  assert.ok(added.every((search) => search.guidePrice !== null && search.guideDate === "2026-11-19"));
+  const fromEbay = added.filter((search) => search.source === "ebay");
+  assert.ok(fromEbay.every((search) => search.guidePrice !== null && search.guideDate === "2026-11-19"));
+  assert.ok(added.filter((search) => search.source === "hotukdeals").length >= 5);
   assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["ram 170083"]);
-  assert.ok(added.filter((search) => search.group === "ram").every((search) => search.categoryId === "170083" && search.hideDetails !== null && search.unit === "GB"));
-  const callsADay = added.reduce((sum, search) => sum + (24 * 60) / search.everyMinutes * (1 + Object.keys(search.hideDetails ?? {}).length), 0);
+  assert.ok(fromEbay.filter((search) => search.group === "ram").every((search) => search.categoryId === "170083" && search.hideDetails !== null && search.unit === "GB"));
+  const feedCalls = (24 * 60) / Math.min(...added.filter((search) => search.source === "hotukdeals").map((search) => search.everyMinutes));
+  const callsADay = fromEbay.reduce((sum, search) => sum + (24 * 60) / search.everyMinutes * (1 + Object.keys(search.hideDetails ?? {}).length), feedCalls);
   assert.ok(callsADay < 1000, String(callsADay));
 });
 
@@ -856,5 +859,20 @@ test("the extra files are read from the same folder as searches.json, and a miss
     await assert.rejects(loadSearches(join(dir, "searches.json"), sources), /catalogue.json couldn't be read from the deals folder/);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a search from a source other than eBay can't use eBay's own settings", () => {
+  const feed = (extra: Record<string, unknown>) => JSON.stringify({ searches: [{ id: "nvme", name: "NVMe", switch: "on", source: "hotukdeals", query: "nvme", ...extra }] });
+  const list = readSearches(feed({ maxPrice: 100, exclude: ["2230"], avoid: ["lots"], guidePrice: 70, unit: "TB", group: "storage" }), ["ebay", "hotukdeals"]);
+  assert.equal(list.searches[0].source, "hotukdeals");
+  for (const [key, value] of Object.entries({ conditions: ["used"], buying: ["auction"], ukOnly: false, categoryId: 1, sellerMinPercent: 90, sellerMinFeedback: 1, sellerType: "business", returnsOnly: true, freePostage: true, postageShown: true, autoCorrect: true })) {
+    let message = "";
+    try {
+      readSearches(feed({ [key]: value }), ["ebay", "hotukdeals"]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert.ok(message.includes(`${key} only works with eBay searches`), `${key}: ${message}`);
   }
 });

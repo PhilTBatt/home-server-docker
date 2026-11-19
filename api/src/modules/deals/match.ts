@@ -118,7 +118,8 @@ export function cautions(search: Search, listing: Listing): string[] {
   if (listing.sellerFeedback !== null && listing.sellerFeedback < 10) found.push("the seller has under 10 ratings");
   if (search.guidePrice !== null && !isAuctionOnly(listing) && totalPrice(listing) * 2 < search.guidePrice) found.push("it's under half your guide price");
   if (listing.variations) found.push("the listing has more than one option, so this may be its lowest price");
-  if (listing.postage === null) found.push("postage isn't shown, so it may be collection only");
+  if (listing.postage === null && search.source === "ebay") found.push("postage isn't shown, so it may be collection only");
+  if (search.source !== "ebay") found.push("it's a deal someone posted, so check the price, postage and stock at the shop");
   return found;
 }
 

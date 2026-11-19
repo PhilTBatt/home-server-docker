@@ -1900,6 +1900,37 @@ test("category lookups stop when the day's calls are used or eBay asked to wait"
   assert.deepEqual(await other.categoryDetails("ebay", "170083", at(1)), { status: "waiting" });
 });
 
+test("once the day's eBay calls are used, a source that uses none is still checked", async () => {
+  const checked: string[] = [];
+  const spender: Source = {
+    search: async (search) => {
+      checked.push(search.id);
+      return { listings: [], total: 0, complete: true, calls: 1, skipped: 0 };
+    },
+  };
+  const free: Source = { ...spender, noCalls: true, search: async (search, pages) => ({ ...(await spender.search(search, pages)), calls: 0 }) };
+  const list = readSearches(
+    JSON.stringify({
+      limits: { callsPerDay: 1 },
+      searches: [
+        { id: "first", name: "First", switch: "on", query: "a" },
+        { id: "second", name: "Second", switch: "on", query: "b" },
+        { id: "feed", name: "Feed", switch: "on", source: "free", query: "c" },
+      ],
+    }),
+    ["ebay", "free"],
+  );
+  const watcher = createDealWatcher({
+    loadSearches: async () => list,
+    sources: { ebay: spender, free },
+    store: { load: async () => ({ memory: emptyMemory(), note: null }), save: async () => undefined },
+    notify: async () => undefined,
+  });
+  await watcher.run(at(0));
+  assert.deepEqual(checked, ["first", "feed"]);
+  assert.equal(watcher.status().callsToday, 1);
+});
+
 test("a search that hides item details gets one more page for each, and what they hide is counted under details", async () => {
   const ram = { id: "ram", name: "RAM", switch: "on", query: "ddr4", categoryId: 170083, hideDetails: { "Form Factor": ["SO-DIMM"], "Features": ["Registered"] } };
   const { world, watcher } = richSetup([ram]);

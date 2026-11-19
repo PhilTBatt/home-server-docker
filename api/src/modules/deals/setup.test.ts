@@ -203,7 +203,7 @@ test("a search for a source this build doesn't have is refused when the list is 
   const watcher = dealWatcherFor(settings(), dir);
   await watcher.run(noon);
   assert.equal(calls.length, 0);
-  assert.equal(watcher.problems()[0].message, "The deal watcher's search list has a problem: search 1 (optiplex): source must be one of: ebay.");
+  assert.equal(watcher.problems()[0].message, "The deal watcher's search list has a problem: search 1 (optiplex): source must be one of: ebay, hotukdeals.");
 });
 
 test("with every search switched off, eBay is never contacted, not even for a token", async () => {

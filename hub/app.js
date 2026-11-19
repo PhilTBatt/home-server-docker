@@ -186,7 +186,7 @@ const dealsStatus = byId("deals-status");
 const dealsList = byId("deals-list");
 const dealsSearches = byId("deals-searches");
 const checkDealsButton = /** @type {HTMLButtonElement} */ (byId("check-deals"));
-const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/"];
+const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/", "https://www.hotukdeals.com/deals/"];
 /** @type {number | undefined} */ let refreshTimer;
 
 /**

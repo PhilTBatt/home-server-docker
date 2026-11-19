@@ -398,10 +398,10 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     for (const search of loaded.searches) {
       if (!search.on || state.snoozed.has(search.id) || !(force || isDue(search, time))) continue;
       if ((pausedUntil.get(search.source) ?? 0) > time) continue;
-      const callsLeft = loaded.limits.callsPerDay - state.counters.calls;
-      if (callsLeft <= 0) break;
-
       const source = options.sources[search.source];
+      const callsLeft = loaded.limits.callsPerDay - state.counters.calls;
+      if (callsLeft <= 0 && source?.noCalls !== true) continue;
+
       if (source === undefined) {
         fail(search, "request", "it names a source the watcher doesn't have", time);
         summary.failed += 1;
