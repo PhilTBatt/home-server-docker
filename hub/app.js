@@ -83,6 +83,47 @@
  */
 
 /**
+ * @typedef {object} DealListing
+ * @property {string} title
+ * @property {number} price
+ * @property {number | null} postage
+ * @property {number} total
+ * @property {string | null} condition
+ * @property {string[]} buying
+ * @property {string} url
+ * @property {string | null} endsAt
+ */
+
+/**
+ * @typedef {object} DealGroup
+ * @property {string} id
+ * @property {string} name
+ * @property {string} source
+ * @property {string} checkedAt
+ * @property {number} count
+ * @property {DealListing[]} listings
+ */
+
+/**
+ * @typedef {object} DealStatus
+ * @property {string | null} lastRun
+ * @property {number} callsToday
+ * @property {number} callsPerDay
+ * @property {number} alertsToday
+ * @property {number} alertsPerDay
+ * @property {string | null} note
+ * @property {Problem[]} problems
+ */
+
+/**
+ * @typedef {object} DealCheck
+ * @property {number} checked
+ * @property {number} alerts
+ * @property {number} failed
+ * @property {boolean} unsent
+ */
+
+/**
  * @typedef {object} ApiError
  * @property {string} [error]
  * @property {string} [message]
@@ -123,6 +164,11 @@ const noteTitle = /** @type {HTMLInputElement} */ (byId("note-title"));
 const noteText = /** @type {HTMLTextAreaElement} */ (byId("note-text"));
 const sendNoteButton = /** @type {HTMLButtonElement} */ (byId("send-note"));
 const noteStatus = byId("note-status");
+const dealsSection = byId("deals");
+const dealsStatus = byId("deals-status");
+const dealsList = byId("deals-list");
+const checkDealsButton = /** @type {HTMLButtonElement} */ (byId("check-deals"));
+const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/"];
 /** @type {number | undefined} */ let refreshTimer;
 
 /**
@@ -305,6 +351,7 @@ async function loadSwitches() {
     .map(([name]) => featureLabels[name] ?? name);
   switchesText.textContent = off.length === 0 ? "All on." : `Off: ${off.join(", ")}.`;
   showBrain(features);
+  showDeals(features);
 }
 
 /**
@@ -336,6 +383,126 @@ async function loadInbox() {
   const count = await response.json();
   inboxText.textContent = waitingText(count.waiting);
 }
+
+/**
+ * @param {Features} features
+ */
+function showDeals(features) {
+  dealsSection.hidden = !features.deals;
+  if (features.deals) loadDeals();
+}
+
+/**
+ * @param {number} pence
+ * @returns {string}
+ */
+function formatMoney(pence) {
+  return `\u00a3${(pence / 100).toFixed(2)}`;
+}
+
+/**
+ * @param {DealListing} listing
+ * @returns {string}
+ */
+function dealPrice(listing) {
+  if (listing.postage === null) return `${formatMoney(listing.price)}, postage not shown`;
+  if (listing.postage === 0) return `${formatMoney(listing.price)} with free postage`;
+  return `${formatMoney(listing.price)} + ${formatMoney(listing.postage)} postage = ${formatMoney(listing.total)}`;
+}
+
+/**
+ * @param {DealListing} listing
+ * @returns {HTMLLIElement}
+ */
+function dealItem(listing) {
+  const item = document.createElement("li");
+  if (listingLinkStarts.some((start) => listing.url.startsWith(start))) {
+    const link = document.createElement("a");
+    link.href = listing.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = listing.title;
+    item.append(link);
+  } else {
+    item.append(listing.title);
+  }
+  const auction = listing.buying.includes("AUCTION") && !listing.buying.includes("FIXED_PRICE");
+  const details = [dealPrice(listing)];
+  if (listing.condition !== null) details.push(listing.condition);
+  if (auction) details.push(listing.endsAt === null ? "auction" : `auction, ends ${new Date(listing.endsAt).toLocaleString()}`);
+  item.append(`: ${details.join(", ")}`);
+  return item;
+}
+
+/**
+ * @param {DealGroup} group
+ * @returns {HTMLElement[]}
+ */
+function dealGroup(group) {
+  const heading = document.createElement("h3");
+  const sourceName = group.source === "ebay" ? "eBay" : group.source;
+  heading.textContent = `${group.name}: ${group.count} on ${sourceName}, checked ${new Date(group.checkedAt).toLocaleTimeString()}`;
+  if (group.count === 0) return [heading];
+  const list = document.createElement("ul");
+  list.replaceChildren(...group.listings.map(dealItem));
+  if (group.count > group.listings.length) list.append(listItem(`And ${group.count - group.listings.length} more.`));
+  return [heading, list];
+}
+
+/**
+ * @param {DealStatus} status
+ * @returns {string}
+ */
+function dealSummary(status) {
+  const ran = status.lastRun === null ? "Not checked yet." : `Last checked ${new Date(status.lastRun).toLocaleString()}.`;
+  const used = `Today: ${status.callsToday} of ${status.callsPerDay} calls, ${status.alertsToday} of ${status.alertsPerDay} alerts.`;
+  const parts = [ran, used, ...status.problems.map((problem) => problem.message)];
+  if (status.note !== null) parts.push(status.note);
+  return parts.join(" ");
+}
+
+async function loadDeals() {
+  const [statusResponse, matchesResponse] = await Promise.all([fetch("/api/deals/status"), fetch("/api/deals/matches")]);
+  if (!statusResponse.ok || !matchesResponse.ok) {
+    const status = statusResponse.ok ? matchesResponse.status : statusResponse.status;
+    dealsStatus.textContent = `Couldn't load the deals: the API replied ${status}.`;
+    dealsList.replaceChildren();
+    return;
+  }
+  /** @type {DealStatus} */
+  const status = await statusResponse.json();
+  /** @type {DealGroup[]} */
+  const groups = await matchesResponse.json();
+  dealsStatus.textContent = dealSummary(status);
+  if (groups.length === 0) {
+    dealsList.replaceChildren("Nothing checked in the last six hours.");
+    return;
+  }
+  dealsList.replaceChildren(...groups.flatMap(dealGroup));
+}
+
+checkDealsButton.addEventListener("click", async () => {
+  checkDealsButton.disabled = true;
+  dealsStatus.textContent = "Checking...";
+  try {
+    const response = await fetch("/api/deals/check", { method: "POST" });
+    if (response.ok) {
+      /** @type {DealCheck} */
+      const result = await response.json();
+      await loadDeals();
+      const failed = result.failed === 0 ? "" : `, ${result.failed} failed`;
+      const unsent = result.unsent ? " Some alerts couldn't be sent and will be tried again." : "";
+      dealsStatus.textContent = `Checked ${result.checked} search${result.checked === 1 ? "" : "es"}${failed}, ${result.alerts} alert${result.alerts === 1 ? "" : "s"} sent.${unsent} ${dealsStatus.textContent}`;
+    } else {
+      /** @type {ApiError | null} */
+      const body = await response.json().catch(() => null);
+      dealsStatus.textContent = `Couldn't check: ${body?.error ?? `the API replied ${response.status}`}.`;
+    }
+  } catch {
+    dealsStatus.textContent = "Couldn't reach the API.";
+  }
+  checkDealsButton.disabled = false;
+});
 
 async function checkLogin() {
   const response = await fetch("/api/health");

@@ -24,7 +24,7 @@ I built it using my own ideas, with AI helping me plan and learn what I needed t
 ## Services
 | Address | Service | What it's for |
 |---|---|---|
-| `hub.home` | the phone page | alerts, downloads, library, Wi-Fi, brain, server, backups and switches |
+| `hub.home` | the phone page | alerts, downloads, library, Wi-Fi, brain, deals, server, backups and switches |
 | `api.home` | the API | everything the phone page and Claude Code use |
 | `home.home` | Homepage | a dashboard of everything |
 | `dns.home` | AdGuard Home | DNS and ad blocking |
