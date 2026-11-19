@@ -53,6 +53,8 @@ export type Search = {
   details: Record<string, string[]> | null;
   detailsMode: "prefer" | "only";
   hideDetails: Record<string, string[]> | null;
+  collection: { postcode: string; miles: number } | null;
+  freePostage: boolean;
   autoCorrect: boolean;
   sellerType: "business" | "private" | null;
   postageShown: boolean;
@@ -82,6 +84,7 @@ export type SearchList = {
   searches: Search[];
   limits: Limits;
   quiet: Quiet | null;
+  postcode: string | null;
 };
 
 export const defaultLimits: Limits = { callsPerDay: 1000, alertsPerDay: 60, alertsPerCheck: 5 };
@@ -94,6 +97,7 @@ const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
 const idPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const namePattern = /^[A-Za-z0-9][A-Za-z0-9 .,:+&()'/_-]*$/;
 const settingPattern = /^[A-Za-z0-9_-]{1,30}$/;
+const postcodePattern = /^([A-Z]{1,2}[0-9][A-Z0-9]?) ?([0-9][A-Z]{2})?$/;
 
 const searchSettings = [
   "id",
@@ -118,6 +122,8 @@ const searchSettings = [
   "details",
   "detailsMode",
   "hideDetails",
+  "collectionMiles",
+  "freePostage",
   "autoCorrect",
   "sellerType",
   "postageShown",
@@ -191,7 +197,7 @@ function words(value: unknown): string[] | null {
   return list;
 }
 
-function readSearch(raw: unknown, sources: string[], problems: string[]): Search | null {
+function readSearch(raw: unknown, sources: string[], problems: string[], postcode: string | null): Search | null {
   if (!isObject(raw)) {
     problems.push("it must be a group of settings in { }");
     return null;
@@ -319,7 +325,7 @@ function readSearch(raw: unknown, sources: string[], problems: string[]): Search
     else hideDetails = given;
   }
 
-  const flag = (key: "autoCorrect" | "postageShown" | "returnsOnly"): boolean => {
+  const flag = (key: "autoCorrect" | "postageShown" | "returnsOnly" | "freePostage"): boolean => {
     if (!has(key)) return false;
     if (typeof raw[key] !== "boolean") problems.push(`${key} must be true or false`);
     return raw[key] === true;
@@ -327,6 +333,17 @@ function readSearch(raw: unknown, sources: string[], problems: string[]): Search
   const autoCorrect = flag("autoCorrect");
   const postageShown = flag("postageShown");
   const returnsOnly = flag("returnsOnly");
+  const freePostage = flag("freePostage");
+
+  let collection: Search["collection"] = null;
+  if (has("collectionMiles")) {
+    const miles = wholeNumber(raw.collectionMiles, 1, 100);
+    if (miles === null) problems.push("collectionMiles must be a whole number of miles from 1 to 100");
+    else if (postcode === null) problems.push("collectionMiles needs your postcode at the top of searches.json, like \"postcode\": \"LS1 4AP\"");
+    else if (freePostage) problems.push("collectionMiles and freePostage can't both be used, as collection has no postage");
+    else if (postageShown) problems.push("collectionMiles and postageShown can't both be used, as collection-only listings show no postage");
+    else collection = { postcode, miles };
+  }
 
   const sellerType = has("sellerType") ? raw.sellerType : null;
   if (has("sellerType") && sellerType !== "business" && sellerType !== "private") problems.push("sellerType must be business or private");
@@ -398,6 +415,8 @@ function readSearch(raw: unknown, sources: string[], problems: string[]): Search
     details,
     detailsMode: detailsMode as "prefer" | "only",
     hideDetails,
+    collection,
+    freePostage,
     autoCorrect,
     sellerType: sellerType as "business" | "private" | null,
     postageShown,
@@ -428,6 +447,17 @@ function readQuiet(raw: unknown, problems: string[]): Quiet | null {
   if (allow !== "none" && allow !== "great") problems.push("quiet: allow must be none or great");
   if (problems.length > before || from === null || to === null) return null;
   return { from, to, allow: allow as "none" | "great" };
+}
+
+function readPostcode(raw: unknown, problems: string[]): string | null {
+  if (raw === undefined) return null;
+  const given = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  const match = postcodePattern.exec(given);
+  if (match === null) {
+    problems.push("postcode must be a UK postcode, or just its first half, like LS1 4AP or LS1");
+    return null;
+  }
+  return match[2] === undefined ? match[1] : `${match[1]} ${match[2]}`;
 }
 
 function readLimits(raw: unknown, problems: string[]): Limits {
@@ -465,9 +495,10 @@ export function readSearches(text: string, sources: string[]): SearchList {
   }
   if (!isObject(parsed)) fail(["it must start with { and hold a searches list"]);
 
-  const problems = unknownSettings(parsed, ["searches", "limits", "quiet"]);
+  const problems = unknownSettings(parsed, ["searches", "limits", "quiet", "postcode"]);
   const limits = readLimits(parsed.limits, problems);
   const quiet = readQuiet(parsed.quiet, problems);
+  const postcode = readPostcode(parsed.postcode, problems);
   const rawSearches = parsed.searches;
   if (!Array.isArray(rawSearches)) fail([...problems, "searches must be a list in [ ]"]);
   if (rawSearches.length > maxSearches) fail([...problems, `there can be ${maxSearches} searches at most`]);
@@ -476,7 +507,7 @@ export function readSearches(text: string, sources: string[]): SearchList {
   const seenIds = new Set<string>();
   rawSearches.forEach((raw, index) => {
     const own: string[] = [];
-    const search = readSearch(raw, sources, own);
+    const search = readSearch(raw, sources, own, postcode);
     const rawId = isObject(raw) && typeof raw.id === "string" && raw.id.length <= 40 && idPattern.test(raw.id) ? raw.id : null;
     const label = rawId === null ? `search ${index + 1}` : `search ${index + 1} (${rawId})`;
     if (rawId !== null && seenIds.has(rawId)) own.push("its id is used by an earlier search");
@@ -486,7 +517,7 @@ export function readSearches(text: string, sources: string[]): SearchList {
   });
 
   if (problems.length > 0) fail(problems);
-  return { searches, limits, quiet };
+  return { searches, limits, quiet, postcode };
 }
 
 export async function loadSearches(path: string, sources: string[]): Promise<SearchList> {
@@ -522,7 +553,7 @@ export function fingerprint(search: Search): string {
     [...search.avoid].sort(),
   ];
   if (JSON.stringify(later) !== "[null,false,null,false,false,[]]") criteria.push(later);
-  const newer = [search.hideDetails === null ? null : Object.entries(search.hideDetails).sort(([a], [b]) => a.localeCompare(b))];
-  if (JSON.stringify(newer) !== "[null]") criteria.push(newer);
+  const newer = [search.hideDetails === null ? null : Object.entries(search.hideDetails).sort(([a], [b]) => a.localeCompare(b)), search.collection, search.freePostage];
+  if (JSON.stringify(newer) !== "[null,null,false]") criteria.push(newer);
   return createHash("sha256").update(JSON.stringify(criteria)).digest("hex").slice(0, 16);
 }

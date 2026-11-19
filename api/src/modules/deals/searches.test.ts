@@ -67,6 +67,8 @@ test("the smallest search gets every default written out", () => {
     details: null,
     detailsMode: "prefer",
     hideDetails: null,
+    collection: null,
+    freePostage: false,
     autoCorrect: false,
     sellerType: null,
     postageShown: false,
@@ -102,6 +104,7 @@ test("a search with every setting is read as given, with prices in pence", () =>
     details: { "Form Factor": ["SFF", "Small Form Factor", "SFF"], "RAM Size": ["16 GB"] },
     detailsMode: "only",
     hideDetails: { "Features": ["Registered"] },
+    freePostage: true,
     autoCorrect: true,
     sellerType: "business",
     postageShown: true,
@@ -137,6 +140,8 @@ test("a search with every setting is read as given, with prices in pence", () =>
     details: { "Form Factor": ["SFF", "Small Form Factor"], "RAM Size": ["16 GB"] },
     detailsMode: "only",
     hideDetails: { "Features": ["Registered"] },
+    collection: null,
+    freePostage: true,
     autoCorrect: true,
     sellerType: "business",
     postageShown: true,
@@ -184,7 +189,7 @@ test("limits outside their ranges are refused by name", () => {
 });
 
 test("an empty list of searches is fine", () => {
-  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null });
+  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null, postcode: null });
 });
 
 test("searches keep the order they were written in", () => {
@@ -755,4 +760,30 @@ test("a search without hideDetails keeps the fingerprint it had before, and hide
   assert.notEqual(hidden, "2593a00cbd2617a1");
   assert.notEqual(fingerprint(one({ ...ram, hideDetails: { "Form Factor": ["SO-DIMM", "MicroDIMM"] } })), hidden);
   assert.equal(fingerprint(one({ ...ram, hideDetails: { "Form Factor": ["SO-DIMM"] }, name: "Other" })), hidden);
+});
+
+test("a postcode at the top lets a search ask for local collection within so many miles", () => {
+  const text = (postcode: unknown, extra: Record<string, unknown> = { collectionMiles: 20 }) =>
+    JSON.stringify({ postcode, searches: [{ id: "ups", name: "UPS", switch: "on", query: "apc back-ups", ...extra }] });
+  for (const [given, kept] of [["ls1 4ap", "LS1 4AP"], [" LS14AP ", "LS1 4AP"], ["LS1", "LS1"], ["ec1a 1bb", "EC1A 1BB"], ["M1", "M1"]]) {
+    const list = readSearches(text(given), sources);
+    assert.equal(list.postcode, kept, given);
+    assert.deepEqual(list.searches[0].collection, { postcode: kept, miles: 20 });
+  }
+  for (const odd of ["", "LS", "12345", "LS1 4AP X", "LS1-4AP", 7, null, "LS1 4A"]) assert.match(problemIn(text(odd)), /postcode must be a UK postcode/, String(odd));
+  assert.match(problemWith({ collectionMiles: 20 }), /collectionMiles needs your postcode at the top of searches.json/);
+  for (const odd of [0, 101, 2.5, "20", null]) assert.match(problemIn(text("LS1", { collectionMiles: odd })), /collectionMiles must be a whole number of miles from 1 to 100/, String(odd));
+  assert.match(problemIn(text("LS1", { collectionMiles: 20, freePostage: true })), /collectionMiles and freePostage can't both be used/);
+  assert.match(problemIn(text("LS1", { collectionMiles: 20, postageShown: true })), /collectionMiles and postageShown can't both be used/);
+  assert.equal(readSearches(text("LS1", {}), sources).searches[0].collection, null);
+});
+
+test("freePostage is true or false, and collection and free postage change the fingerprint", () => {
+  assert.equal(one({ freePostage: true }).freePostage, true);
+  assert.match(problemWith({ freePostage: "yes" }), /freePostage must be true or false/);
+  const base = fingerprint(one());
+  const local = (postcode: string, miles: number) => fingerprint(readSearches(JSON.stringify({ postcode, searches: [{ ...smallest, collectionMiles: miles }] }), sources).searches[0]);
+  const prints = [fingerprint(one({ freePostage: true })), local("LS1", 20), local("LS1", 30), local("LS2", 20)];
+  assert.equal(new Set([base, ...prints]).size, 5);
+  assert.equal(fingerprint(one({ freePostage: false })), base);
 });

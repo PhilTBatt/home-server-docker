@@ -55,6 +55,10 @@ export function searchUrl(host: string, search: Search, offset: number, withDeta
   filters.push(search.ukOnly ? "itemLocationCountry:GB" : "deliveryCountry:GB");
   if (search.sellerType !== null) filters.push(`sellerAccountTypes:{${search.sellerType === "business" ? "BUSINESS" : "INDIVIDUAL"}}`);
   if (search.returnsOnly) filters.push("returnsAccepted:true");
+  if (search.freePostage) filters.push("maxDeliveryCost:0");
+  if (search.collection !== null) {
+    filters.push("deliveryOptions:{SELLER_ARRANGED_LOCAL_PICKUP}", "pickupCountry:GB", `pickupPostalCode:${search.collection.postcode}`, `pickupRadius:${search.collection.miles}`, "pickupRadiusUnit:mi");
+  }
 
   const parts = [`q=${encodeURIComponent(search.query)}`, `filter=${encodeURIComponent(filters.join(","))}`];
   if (search.categoryId !== null) parts.push(`category_ids=${search.categoryId}`);

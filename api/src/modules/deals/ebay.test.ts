@@ -1542,3 +1542,12 @@ test("in only mode, the hiding question keeps the search's own item details, so 
   assert.deepEqual(searchCalls(calls).map(aspectOf), ["categoryId:170083,Type:{DDR4 SDRAM}", "categoryId:170083,Type:{DDR4 SDRAM},Form Factor:{SO-DIMM}"]);
   assert.deepEqual(found.listings.map((listing) => listing.hiddenDetail), [undefined, "Form Factor", undefined, undefined, undefined]);
 });
+
+test("a collection search sends eBay's local pickup filters with the postcode, and free postage sends the zero postage filter", () => {
+  const local = readSearches(JSON.stringify({ postcode: "LS1 4AP", searches: [{ id: "ups", name: "UPS", switch: "on", query: "apc back-ups", collectionMiles: 25 }] }), ["ebay"]).searches[0];
+  const filter = filterOf(searchUrl(apiHost, local, 0)) ?? "";
+  assert.ok(filter.endsWith(",deliveryOptions:{SELLER_ARRANGED_LOCAL_PICKUP},pickupCountry:GB,pickupPostalCode:LS1 4AP,pickupRadius:25,pickupRadiusUnit:mi"), filter);
+  assert.ok((filterOf(searchUrl(apiHost, search({ freePostage: true }), 0)) ?? "").endsWith(",maxDeliveryCost:0"));
+  const plain = filterOf(searchUrl(apiHost, search(), 0)) ?? "";
+  assert.ok(!plain.includes("pickup") && !plain.includes("maxDeliveryCost"));
+});
