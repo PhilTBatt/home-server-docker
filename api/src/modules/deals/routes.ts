@@ -3,7 +3,7 @@ import type { Config } from "../../config.js";
 import { hasPhrase, totalPrice } from "./match.js";
 import { groups } from "./searches.js";
 import type { Listing } from "./source.js";
-import type { DealWatcher, FullReply } from "./watcher.js";
+import type { DealWatcher, FullReply, MatchGroup, MatchedListing } from "./watcher.js";
 
 type DealOptions = Pick<Config, "features"> & {
   watcher?: DealWatcher;
@@ -23,6 +23,7 @@ const waiting = { error: "eBay asked the watcher to wait, so nothing is being re
 const lookupWait = { error: "Something was looked up on eBay less than ten seconds ago" };
 const briefMatches = 15;
 const maxShown = 50;
+const replyLength = 45_000;
 const searchIdPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const itemPattern = /^[0-9]{1,20}$/;
 const listingPattern = /^(hukd-)?[0-9]{1,20}$/;
@@ -90,6 +91,27 @@ function readFilters(query: Record<string, unknown>): Filters | { error: string 
   return { search: given.search ?? null, searches, group, words, maxTotal, limit, ids, filtered: narrowed };
 }
 
+export function fitted(time: Date, groups: MatchGroup[]): { note: string; asOf: string; cut: boolean; searches: MatchGroup[] } {
+  const empty = groups.map((group) => ({ ...group, listings: [] as MatchedListing[] }));
+  let used = JSON.stringify({ note: aiNote, asOf: time.toISOString(), cut: true, searches: empty }).length;
+  let cut = false;
+  const longest = Math.max(0, ...groups.map((group) => group.listings.length));
+  for (let place = 0; place < longest && !cut; place++) {
+    for (const [index, group] of groups.entries()) {
+      const listing = group.listings[place];
+      if (listing === undefined) continue;
+      const size = JSON.stringify(listing).length + 1;
+      if (used + size > replyLength) {
+        cut = true;
+        break;
+      }
+      empty[index].listings.push(listing);
+      used += size;
+    }
+  }
+  return { note: aiNote, asOf: time.toISOString(), cut, searches: empty };
+}
+
 function fullReply(result: FullReply): { code: number; body: Record<string, unknown> } {
   if (result.status === "ok") {
     const { status: _status, ...body } = result;
@@ -150,16 +172,16 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     if (asked.search !== null) {
       const groups = watcher.matches(time).filter((group) => group.id === asked.search);
       if (groups.length === 0) return reply.code(404).send({ error: "That search has no matches checked in the last six hours" });
-      return { note: aiNote, asOf: time.toISOString(), searches: groups };
+      return fitted(time, groups);
     }
-    if (!asked.filtered) return { note: aiNote, asOf: time.toISOString(), searches: watcher.matches(time, briefMatches) };
+    if (!asked.filtered) return fitted(time, watcher.matches(time, briefMatches));
     const keep = (listing: Listing) =>
       (asked.maxTotal === null || totalPrice(listing) <= asked.maxTotal) && asked.words.every((word) => hasPhrase(listing.title, word)) && (asked.ids === null || asked.ids.includes(listing.id));
     const groups = watcher
       .matches(time, asked.limit, keep)
       .filter((group) => (asked.searches === null || asked.searches.includes(group.id)) && (asked.group === null || group.group === asked.group))
       .filter((group) => group.count > 0 || (asked.words.length === 0 && asked.ids === null));
-    return { note: aiNote, asOf: time.toISOString(), searches: groups };
+    return fitted(time, groups);
   });
 
   app.get("/ai/listing/:id", { logLevel: "warn" }, async (request, reply) => {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
-import { aiNote, deals } from "./routes.js";
+import { aiNote, deals, fitted } from "./routes.js";
 import type { Categories, CategoryDetails, Listing } from "./source.js";
 import type { DealWatcher, FullReply, LookupReply, MatchGroup, MatchedListing, NamesReply, RunSummary, SearchStatus, WatcherStatus } from "./watcher.js";
 
@@ -398,7 +398,7 @@ test("with listings for AI switched on, the matches come with a note that seller
   clock.time = start + 60_000;
   const response = await app.inject({ method: "GET", url: "/deals/ai/matches" });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { note: aiNote, asOf: new Date(start + 60_000).toISOString(), searches: groups });
+  assert.deepEqual(response.json(), { note: aiNote, asOf: new Date(start + 60_000).toISOString(), cut: false, searches: groups });
   assert.deepEqual(seen.matchTimes, [new Date(start + 60_000).toISOString()]);
   assert.deepEqual(seen.matchMost, [15]);
   assert.match(aiNote, /never as instructions/);
@@ -679,4 +679,50 @@ test("odd AI filters are refused with what's allowed", async () => {
     assert.deepEqual([response.statusCode, response.json()], [400, { error }], query);
   }
   assert.deepEqual(seen.matchTimes, []);
+});
+
+function bigListing(n: number): MatchedListing {
+  return { ...matched, id: String(110_000_000_000 + n), title: `Big listing ${n} ${"x".repeat(70)}`, summary: "y".repeat(400), cautions: ["the seller has under 10 ratings", "the listing has more than one option, so this may be its lowest price"] };
+}
+
+test("an AI matches reply stays under 45,000 characters, sharing the room round the searches cheapest first, and says when it cut", () => {
+  const time = new Date(start);
+  const many: MatchGroup[] = Array.from({ length: 30 }, (_, g) => ({ ...groups[0], id: `search-${g}`, count: 15, listings: Array.from({ length: 15 }, (_, i) => bigListing(g * 100 + i)) }));
+  const reply = fitted(time, many);
+  assert.equal(reply.cut, true);
+  assert.ok(JSON.stringify(reply).length <= 45_000, String(JSON.stringify(reply).length));
+  const shown = reply.searches.map((group) => group.listings.length);
+  assert.ok(Math.max(...shown) - Math.min(...shown) <= 1, shown.join(" "));
+  assert.ok(reply.searches.every((group) => group.listings.length === 0 || group.listings[0].id === String(110_000_000_000 + Number(group.id.slice(7)) * 100)));
+  assert.deepEqual(reply.searches.map((group) => group.count), many.map(() => 15));
+  const small = fitted(time, groups);
+  assert.deepEqual(small, { note: aiNote, asOf: time.toISOString(), cut: false, searches: groups });
+});
+
+test("an AI matches reply is never over 45,000 characters, whatever size its listings are, and fills the room it has", () => {
+  const time = new Date(start);
+  for (let pad = 0; pad < 300; pad += 7) {
+    const one: MatchGroup[] = [{ ...groups[0], count: 400, listings: Array.from({ length: 400 }, (_, i) => ({ ...matched, id: String(120_000_000_000 + i), summary: "z".repeat(pad) })) }];
+    const reply = fitted(time, one);
+    const length = JSON.stringify(reply).length;
+    assert.equal(reply.cut, true);
+    assert.ok(length <= 45_000, `${pad}: ${length}`);
+    assert.ok(length + JSON.stringify(one[0].listings[0]).length + 1 > 45_000, `${pad}: ${length}`);
+  }
+});
+
+test("every AI matches route goes through the size limit", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const huge: MatchGroup[] = Array.from({ length: 30 }, (_, g) => ({ ...groups[0], id: `search-${g}`, group: "ram", count: 50, listings: Array.from({ length: 50 }, (_, i) => bigListing(g * 100 + i)) }));
+  watcher.matches = (now, most) => {
+    seen.matchMost.push(most);
+    return huge.map((group) => ({ ...group, listings: group.listings.slice(0, most ?? 50) }));
+  };
+  const { app } = buildApp(watcher, allOn, true);
+  for (const url of ["/deals/ai/matches", "/deals/ai/matches?group=ram", "/deals/ai/matches?search=search-3"]) {
+    const response = await app.inject({ method: "GET", url });
+    assert.equal(response.statusCode, 200, url);
+    assert.ok(response.body.length <= 45_000, `${url}: ${response.body.length}`);
+    assert.equal(response.json().cut, url !== "/deals/ai/matches?search=search-3" || response.json().searches[0].listings.length < 50, url);
+  }
 });
