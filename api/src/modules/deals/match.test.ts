@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { hasPhrase, isAuctionOnly, matches, plainWords, standing, totalPrice } from "./match.js";
+import { cautions, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot } from "./match.js";
 import { readSearches, type Search } from "./searches.js";
 import type { Listing } from "./source.js";
 
@@ -267,4 +267,156 @@ test("a trademark or other symbol stuck to a word can't hide it or glue letters 
   assert.equal(plainWords("i5+16GB = \u00a395 \u2605\u2605"), " i5 16gb 95 ");
   assert.equal(matches(search({ exclude: ["faulty"] }), listing({ title: "Dell OptiPlex 7070 Faulty\u2122" }), now), false);
   assert.equal(matches(search({ mustInclude: ["optiplex"] }), listing({ title: "Dell OptiPlex\u2122 7070" }), now), true);
+});
+
+test("a hidden listing says why, and the first rule it breaks is the one named", () => {
+  const cases: [Record<string, unknown>, Partial<Listing>, string | null][] = [
+    [{}, {}, null],
+    [{ maxPrice: 90 }, {}, "price"],
+    [{ minPrice: 100 }, {}, "price"],
+    [{ maxWithPostage: 100 }, {}, "price"],
+    [{ conditions: ["new"] }, {}, "condition"],
+    [{}, { country: "DE" }, "place"],
+    [{ buying: ["auction"] }, {}, "buying"],
+    [{ buying: ["auction"], endingWithinHours: 2 }, { buying: ["AUCTION"], endsAt: "2026-11-19T12:00:00.000Z" }, "ending"],
+    [{ sellerMinPercent: 99.5 }, {}, "seller"],
+    [{ sellerMinFeedback: 5000 }, {}, "seller"],
+    [{ sellerType: "business" }, { sellerType: "private" }, "seller"],
+    [{ postageShown: true }, { postage: null }, "postage"],
+    [{ mustInclude: ["i7"] }, {}, "words"],
+    [{ exclude: ["win 11"] }, {}, "words"],
+    [{ avoid: ["faulty"] }, { title: "Dell OptiPlex 7070 SFF spares or repair" }, "avoid"],
+    [{ maxPrice: 90, exclude: ["win 11"], avoid: ["faulty"] }, { title: "Dell OptiPlex 7070 faulty Win 11" }, "price"],
+    [{ exclude: ["faulty"], avoid: ["faulty"] }, { title: "Dell OptiPlex 7070 faulty" }, "words"],
+  ];
+  for (const [settings, changes, reason] of cases) {
+    assert.equal(whyNot(search(settings), listing(changes), now), reason, JSON.stringify(settings));
+    assert.equal(matches(search(settings), listing(changes), now), reason === null);
+  }
+  for (const [, , reason] of cases) assert.ok(reason === null || (hiddenReasons as readonly string[]).includes(reason));
+});
+
+test("a wanted seller type hides the other type but not a seller eBay didn't label", () => {
+  assert.equal(matches(search({ sellerType: "business" }), listing({ sellerType: "business" }), now), true);
+  assert.equal(matches(search({ sellerType: "business" }), listing({ sellerType: null }), now), true);
+  assert.equal(matches(search({ sellerType: "private" }), listing({ sellerType: "business" }), now), false);
+  assert.equal(matches(search(), listing({ sellerType: "private" }), now), true);
+});
+
+test("postageShown hides only listings with no postage price", () => {
+  assert.equal(matches(search({ postageShown: true }), listing({ postage: 0 }), now), true);
+  assert.equal(matches(search({ postageShown: true }), listing({ postage: 699 }), now), true);
+  assert.equal(matches(search({ postageShown: true }), listing({ postage: null }), now), false);
+  assert.equal(matches(search(), listing({ postage: null }), now), true);
+});
+
+test("each avoid list hides the listings it's named for and leaves a clean one alone", () => {
+  const clean = "Dell OptiPlex 7070 SFF i5-9500 16GB RAM 256GB SSD Win 11";
+  const caught: Record<string, string[]> = {
+    "faulty": ["OptiPlex 7070 SFF FAULTY", "OptiPlex 7070 for parts", "OptiPlex 7070 not working", "OptiPlex 7070 SFF untested", "OptiPlex 7070 BIOS locked", "OptiPlex 7070 needs repairs", "OptiPlex 7070 spares or repair"],
+    "incomplete": ["OptiPlex 7070 SFF no RAM", "OptiPlex 7070 SFF No HDD", "OptiPlex 7070 barebones", "OptiPlex 7070 SFF no hard drive", "OptiPlex 7070 no drives"],
+    "parts only": ["OptiPlex 7070 SFF motherboard", "OptiPlex 7070 SFF HDD caddy", "OptiPlex 7070 SFF PSU only", "OptiPlex 7070 front panel", "OptiPlex 7070 SFF power supply only"],
+    "lots": ["Job lot 5x OptiPlex 7070 SFF", "Bulk buy 10 OptiPlex 7070 SFF", "Joblot OptiPlex 7070"],
+    "laptop ram": ["Crucial 32GB (2x16GB) DDR4 SODIMM", "Kingston 2x16GB DDR4 laptop memory", "32GB DDR4 SO-DIMM kit", "16GB DDR4 RAM for laptops"],
+    "server ram": ["Samsung 32GB DDR4 ECC RDIMM", "2x16GB DDR4 registered server memory", "Hynix 32GB LRDIMM"],
+  };
+  for (const [name, titles] of Object.entries(caught)) {
+    for (const title of titles) assert.equal(whyNot(search({ avoid: [name] }), listing({ title }), now), "avoid", `${name}: ${title}`);
+    assert.equal(whyNot(search({ avoid: [name] }), listing({ title: clean }), now), null, name);
+  }
+  assert.equal(whyNot(search({ avoid: ["laptop ram", "server ram", "faulty"] }), listing({ title: "Corsair Vengeance LPX 32GB (2x16GB) DDR4 3200MHz desktop" }), now), null);
+  const wanted: [string, string][] = [
+    ["server ram", "Corsair Vengeance 32GB (2x16GB) DDR4 Non-ECC Unbuffered Desktop RAM"],
+    ["laptop ram", "Corsair Vengeance 32GB DDR4 desktop memory (not laptop)"],
+    ["incomplete", "Dell OptiPlex 7070 SFF i5 16GB 256GB SSD No OS"],
+    ["parts only", "Dell OptiPlex 7070 SFF i5 16GB 512GB SSD Win 11 + Power Supply"],
+    ["parts only", "Dell OptiPlex 7070 SFF i5 16GB with 250W PSU"],
+    ["lots", "Dell OptiPlex 7070 SFF bundle with keyboard and mouse"],
+    ["faulty", "Dell OptiPlex 7070 SFF, repaired & tested"],
+    ["faulty", "Dell OptiPlex 7070 SFF, box damaged, PC perfect"],
+  ];
+  for (const [name, title] of wanted) assert.equal(whyNot(search({ avoid: [name] }), listing({ title }), now), null, `${name}: ${title}`);
+  assert.equal(whyNot(search({ avoid: ["parts only"] }), listing({ title: "OptiPlex 7070 SFF psus" }), now), null);
+});
+
+test("the size is read from a title as gigabytes, taking a kit's total", () => {
+  const cases: [string, number | null][] = [
+    ["Corsair Vengeance 32GB (2x16GB) DDR4 3200MHz", 32],
+    ["Corsair Vengeance 2x16GB DDR4", 32],
+    ["Kingston Fury 2 x 16 GB DDR4", 32],
+    ["Crucial 16GB DDR4 3200MHz", 16],
+    ["G.Skill 4x8GB DDR4", 32],
+    ["Crucial 16GB x2 DDR4", 32],
+    ["Crucial 16GBx2 DDR4", 32],
+    ["Crucial 16GB x 2 DDR4", 32],
+    ["Samsung 870 EVO 1TB SSD", 1000],
+    ["Seagate 2 x 4TB NAS drives", 8000],
+    ["WD Blue 1.5TB", 1500],
+    ["Dell OptiPlex i5-9500 3.0GHz 16GB RAM 256GB SSD", 256],
+    ["8GB/16GB/32GB DDR4 options", 32],
+    ["PC4-25600 DDR4-3200 16 GB", 16],
+    ["RTX 3060 12GB", 12],
+    ["DDR4 3200MHz CL16 desktop memory", null],
+    ["16GBs of memory", null],
+    ["0GB placeholder", null],
+    ["Box of 99x9999TB", null],
+    ["", null],
+  ];
+  for (const [title, size] of cases) assert.equal(sizeInTitle(title), size, title);
+});
+
+test("a price per unit uses the total with postage, in the unit the search asks for", () => {
+  const kit = listing({ title: "Corsair 32GB (2x16GB) DDR4", price: 4500, postage: 499 });
+  assert.deepEqual(unitPrice(search({ unit: "GB" }), kit), { unit: "GB", amount: 32, pence: 156 });
+  assert.deepEqual(unitPrice(search({ unit: "TB" }), listing({ title: "Seagate 4TB", price: 6000, postage: 0 })), { unit: "TB", amount: 4, pence: 1500 });
+  assert.deepEqual(unitPrice(search({ unit: "TB" }), listing({ title: "Crucial 500GB SSD", price: 3000, postage: 0 })), { unit: "TB", amount: 0.5, pence: 6000 });
+  assert.equal(unitPrice(search(), kit), null);
+  assert.equal(unitPrice(search({ unit: "GB" }), { ...kit, variations: true }), null);
+  assert.equal(unitPrice(search({ unit: "GB" }), { ...kit, buying: ["AUCTION"] }), null);
+  assert.equal(unitPrice(search({ unit: "GB" }), listing({ title: "DDR4 desktop memory" })), null);
+});
+
+test("a listing is measured against the guide price by its total, as a whole percentage", () => {
+  const guide = search({ guidePrice: 110 });
+  assert.equal(underGuide(guide, listing({ price: 8500, postage: 0 })), 22);
+  assert.equal(underGuide(search({ guidePrice: 100 }), listing({ price: 8040, postage: 0 })), 19);
+  assert.equal(underGuide(search({ guidePrice: 100 }), listing({ price: 10040, postage: 0 })), -1);
+  assert.equal(underGuide(search({ guidePrice: 100 }), listing({ price: 9999, postage: 0 })), 0);
+  assert.equal(underGuide(guide, listing({ price: 10000, postage: 1000 })), 0);
+  assert.equal(underGuide(guide, listing({ price: 12000, postage: 100 })), -10);
+  assert.equal(underGuide(guide, listing({ price: 8500, postage: null })), 22);
+  assert.equal(underGuide(guide, listing({ price: 99, postage: 0, buying: ["AUCTION"] })), null);
+  assert.equal(guidePercent(guide, listing({ price: 99, postage: 0, buying: ["AUCTION"] })), 99);
+  assert.equal(underGuide(guide, listing({ price: 8500, postage: 0, buying: ["AUCTION", "FIXED_PRICE"] })), 22);
+  assert.equal(underGuide(search(), listing()), null);
+});
+
+test("a great deal is at least the chosen percentage under the guide price, and sets the alert's priority", () => {
+  const guide = search({ guidePrice: 100 });
+  assert.equal(isGreat(guide, listing({ price: 8000, postage: 0 })), true);
+  assert.equal(isGreat(guide, listing({ price: 8001, postage: 0 })), false);
+  assert.equal(isGreat(guide, listing({ price: 7500, postage: 500 })), true);
+  assert.equal(isGreat(search({ guidePrice: 100, greatPercent: 50 }), listing({ price: 5001, postage: 0 })), false);
+  assert.equal(isGreat(search(), listing({ price: 1, postage: 0 })), false);
+  assert.equal(priorityFor(guide, listing({ price: 8000, postage: 0 })), 4);
+  assert.equal(priorityFor(guide, listing({ price: 9000, postage: 0 })), 3);
+  assert.equal(priorityFor(guide, listing({ price: 10000, postage: 0 })), 3);
+  assert.equal(priorityFor(guide, listing({ price: 10001, postage: 0 })), 2);
+  assert.equal(priorityFor(search(), listing({ price: 1, postage: 0 })), 3);
+  const bid = listing({ price: 99, postage: 0, buying: ["AUCTION"] });
+  assert.deepEqual([isGreat(guide, bid), priorityFor(guide, bid), cautions(guide, bid)], [false, 3, []]);
+  assert.equal(priorityFor(guide, listing({ price: 15000, postage: 0, buying: ["AUCTION"] })), 3);
+  assert.equal(priorityFor(guide, listing({ price: 15000, postage: 0, buying: ["AUCTION", "FIXED_PRICE"] })), 2);
+});
+
+test("cautions name what's worth a second look, and an ordinary listing has none", () => {
+  assert.deepEqual(cautions(search(), listing()), []);
+  assert.deepEqual(cautions(search(), listing({ sellerFeedback: 9 })), ["the seller has under 10 ratings"]);
+  assert.deepEqual(cautions(search(), listing({ sellerFeedback: 10 })), []);
+  assert.deepEqual(cautions(search(), listing({ sellerFeedback: null })), []);
+  assert.deepEqual(cautions(search({ guidePrice: 250 }), listing({ price: 9500, postage: 699 })), ["it's under half your guide price"]);
+  assert.deepEqual(cautions(search({ guidePrice: 200 }), listing({ price: 9500, postage: 500 })), []);
+  assert.deepEqual(cautions(search(), listing({ variations: true })), ["the listing has more than one option, so this may be its lowest price"]);
+  assert.deepEqual(cautions(search(), listing({ postage: null })), ["postage isn't shown, so it may be collection only"]);
+  assert.equal(cautions(search({ guidePrice: 500 }), listing({ sellerFeedback: 0, variations: true, postage: null })).length, 4);
 });
