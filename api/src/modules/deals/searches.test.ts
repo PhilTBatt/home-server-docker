@@ -66,6 +66,7 @@ test("the smallest search gets every default written out", () => {
     dropPercent: null,
     details: null,
     detailsMode: "prefer",
+    hideDetails: null,
     autoCorrect: false,
     sellerType: null,
     postageShown: false,
@@ -100,6 +101,7 @@ test("a search with every setting is read as given, with prices in pence", () =>
     dropPercent: 10,
     details: { "Form Factor": ["SFF", "Small Form Factor", "SFF"], "RAM Size": ["16 GB"] },
     detailsMode: "only",
+    hideDetails: { "Features": ["Registered"] },
     autoCorrect: true,
     sellerType: "business",
     postageShown: true,
@@ -134,6 +136,7 @@ test("a search with every setting is read as given, with prices in pence", () =>
     dropPercent: 10,
     details: { "Form Factor": ["SFF", "Small Form Factor"], "RAM Size": ["16 GB"] },
     detailsMode: "only",
+    hideDetails: { "Features": ["Registered"] },
     autoCorrect: true,
     sellerType: "business",
     postageShown: true,
@@ -638,7 +641,7 @@ test("sellerType, unit and avoid only take the names the watcher knows", () => {
 test("every built-in avoid phrase is one the matcher can use", () => {
   for (const [name, phrases] of Object.entries(avoidLists)) {
     assert.ok(phrases.length > 0, name);
-    assert.deepEqual(one({ exclude: phrases }).exclude, phrases, name);
+    for (let at = 0; at < phrases.length; at += 50) assert.deepEqual(one({ exclude: phrases.slice(at, at + 50) }).exclude, phrases.slice(at, at + 50), name);
     assert.equal(new Set(phrases).size, phrases.length, name);
   }
 });
@@ -732,4 +735,24 @@ test("the fingerprint changes when a newer setting changes which listings match"
     fingerprint(one({ ...base, details: { "RAM Size": ["16 GB"], "Form Factor": ["SFF"] } })),
     fingerprint(one({ ...base, details: { "Form Factor": ["SFF"], "RAM Size": ["16 GB"] } })),
   );
+});
+test("hideDetails takes up to three of eBay's item detail names and needs a category", () => {
+  assert.deepEqual(one({ categoryId: 170083, hideDetails: { "Form Factor": ["SO-DIMM"] } }).hideDetails, { "Form Factor": ["SO-DIMM"] });
+  assert.equal(one().hideDetails, null);
+  assert.match(problemWith({ hideDetails: { "Form Factor": ["SO-DIMM"] } }), /hideDetails only works with a categoryId/);
+  assert.match(problemWith({ categoryId: 170083, details: { "Form Factor": ["DIMM"] }, detailsMode: "only", hideDetails: { "Form Factor": ["SO-DIMM"] } }), /a detail name can't be in both details and hideDetails/);
+  assert.deepEqual(one({ categoryId: 170083, details: { "Type": ["DDR4 SDRAM"] }, hideDetails: { "Form Factor": ["SO-DIMM"] } }).hideDetails, { "Form Factor": ["SO-DIMM"] });
+  const four = Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`Name ${i}`, ["x"]]));
+  for (const odd of [{}, [], "SO-DIMM", { "Form Factor": [] }, { "Form Factor": ["SO|DIMM"] }, { "Form:Factor": ["x"] }, four]) {
+    assert.match(problemWith({ categoryId: 170083, hideDetails: odd }), /hideDetails must be 1 to 3 of eBay's item detail names/, JSON.stringify(odd));
+  }
+});
+
+test("a search without hideDetails keeps the fingerprint it had before, and hideDetails changes it", () => {
+  const ram = { id: "ram", name: "RAM", query: "ddr4 2x16gb", categoryId: 170083, maxWithPostage: 120, avoid: ["laptop ram"], details: { "Type": ["DDR4 SDRAM"] } };
+  assert.equal(fingerprint(one(ram)), "2593a00cbd2617a1");
+  const hidden = fingerprint(one({ ...ram, hideDetails: { "Form Factor": ["SO-DIMM"] } }));
+  assert.notEqual(hidden, "2593a00cbd2617a1");
+  assert.notEqual(fingerprint(one({ ...ram, hideDetails: { "Form Factor": ["SO-DIMM", "MicroDIMM"] } })), hidden);
+  assert.equal(fingerprint(one({ ...ram, hideDetails: { "Form Factor": ["SO-DIMM"] }, name: "Other" })), hidden);
 });

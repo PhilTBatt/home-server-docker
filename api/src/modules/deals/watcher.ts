@@ -407,7 +407,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       }
       let found;
       try {
-        const pages = search.details !== null && search.detailsMode === "prefer" ? maxPages + 1 : maxPages;
+        const pages = maxPages * (1 + Object.keys(search.hideDetails ?? {}).length) + (search.details !== null && search.detailsMode === "prefer" ? 1 : 0);
         found = await source.search(search, Math.min(pages, callsLeft));
       } catch (error) {
         if (error instanceof SourceError) {

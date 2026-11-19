@@ -15,13 +15,15 @@ export const conditionIds: Record<string, string> = {
 
 export const buyingOptions = ["buy it now", "auction"] as const;
 
+const registeredSpeeds = ["2133p", "2400t", "2666v", "2933y", "3200aa"].flatMap((speed) => ["r", "ra0", "ra1", "ra2", "rb0", "rb1", "rb2", "rc0", "rc1"].map((end) => `${speed} ${end}`));
+
 export const avoidLists: Record<string, string[]> = {
   "faulty": ["faulty", "spares", "repair", "repairs", "for parts", "not working", "untested", "broken", "no power", "bios lock*", "bios password", "password locked"],
   "incomplete": ["no ram", "no memory", "no hdd", "no ssd", "no hard drive", "no storage", "no drive*", "no cpu", "no processor", "no psu", "barebone*", "bare bones"],
-  "parts only": ["motherboard", "mainboard", "caddy", "bezel", "heatsink", "fan only", "psu only", "power supply only", "front panel", "riser", "case only", "chassis only", "box only", "empty box"],
+  "parts only": ["motherboard", "mainboard", "mother board", "mobo", "system board", "board only", "caddy", "bezel", "heatsink", "fan only", "psu only", "power supply only", "front panel", "riser", "case only", "chassis only", "box only", "empty box"],
   "lots": ["job lot", "joblot", "bulk", "wholesale", "pallet"],
-  "laptop ram": ["sodimm", "so dimm", "laptop ram", "laptop memory", "notebook ram", "notebook memory", "for laptop*", "for notebook*"],
-  "server ram": ["rdimm", "lrdimm", "registered", "server ram", "server memory"],
+  "laptop ram": ["sodimm", "so dimm", "laptop ram", "laptop memory", "notebook ram", "notebook memory", "for laptop*", "for notebook*", "260 pin*", "260pin*", "262 pin*", "262pin*", "hyperx impact", "fury impact", "kingston impact", "m471*"],
+  "server ram": ["rdimm", "lrdimm", "registered", "server ram", "server memory", "reg ecc", "ecc reg", "1rx4", "2rx4", "4rx4", "8rx4", ...registeredSpeeds, "m393*", "m386*", "hpe"],
 };
 
 export const units = ["GB", "TB"] as const;
@@ -50,6 +52,7 @@ export type Search = {
   dropPercent: number | null;
   details: Record<string, string[]> | null;
   detailsMode: "prefer" | "only";
+  hideDetails: Record<string, string[]> | null;
   autoCorrect: boolean;
   sellerType: "business" | "private" | null;
   postageShown: boolean;
@@ -86,6 +89,7 @@ export const defaultLimits: Limits = { callsPerDay: 1000, alertsPerDay: 60, aler
 const maxFileLength = 256 * 1024;
 const maxSearches = 50;
 const maxProblemsShown = 5;
+export const maxHiddenDetails = 3;
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
 const idPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const namePattern = /^[A-Za-z0-9][A-Za-z0-9 .,:+&()'/_-]*$/;
@@ -113,6 +117,7 @@ const searchSettings = [
   "dropPercent",
   "details",
   "detailsMode",
+  "hideDetails",
   "autoCorrect",
   "sellerType",
   "postageShown",
@@ -305,6 +310,15 @@ function readSearch(raw: unknown, sources: string[], problems: string[]): Search
   if (detailsMode !== "prefer" && detailsMode !== "only") problems.push("detailsMode must be prefer or only");
   else if (has("detailsMode") && !has("details")) problems.push("detailsMode only works with details");
 
+  let hideDetails: Record<string, string[]> | null = null;
+  if (has("hideDetails")) {
+    const given = readDetails(raw.hideDetails);
+    if (given === null || Object.keys(given).length > maxHiddenDetails) problems.push(`hideDetails must be 1 to ${maxHiddenDetails} of eBay's item detail names, each with a list of 1 to 20 values, without { } | or \\`);
+    else if (categoryId === null) problems.push("hideDetails only works with a categoryId");
+    else if (details !== null && Object.keys(given).some((name) => Object.hasOwn(details as Record<string, string[]>, name))) problems.push("a detail name can't be in both details and hideDetails");
+    else hideDetails = given;
+  }
+
   const flag = (key: "autoCorrect" | "postageShown" | "returnsOnly"): boolean => {
     if (!has(key)) return false;
     if (typeof raw[key] !== "boolean") problems.push(`${key} must be true or false`);
@@ -383,6 +397,7 @@ function readSearch(raw: unknown, sources: string[], problems: string[]): Search
     dropPercent,
     details,
     detailsMode: detailsMode as "prefer" | "only",
+    hideDetails,
     autoCorrect,
     sellerType: sellerType as "business" | "private" | null,
     postageShown,
@@ -507,5 +522,7 @@ export function fingerprint(search: Search): string {
     [...search.avoid].sort(),
   ];
   if (JSON.stringify(later) !== "[null,false,null,false,false,[]]") criteria.push(later);
+  const newer = [search.hideDetails === null ? null : Object.entries(search.hideDetails).sort(([a], [b]) => a.localeCompare(b))];
+  if (JSON.stringify(newer) !== "[null]") criteria.push(newer);
   return createHash("sha256").update(JSON.stringify(criteria)).digest("hex").slice(0, 16);
 }

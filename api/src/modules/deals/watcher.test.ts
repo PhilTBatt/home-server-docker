@@ -1898,3 +1898,14 @@ test("category lookups stop when the day's calls are used or eBay asked to wait"
   assert.deepEqual(await other.categories("ebay", "ddr4", at(0)), { status: "failed", message: "eBay says too many requests" });
   assert.deepEqual(await other.categoryDetails("ebay", "170083", at(1)), { status: "waiting" });
 });
+
+test("a search that hides item details gets one more page for each, and what they hide is counted under details", async () => {
+  const ram = { id: "ram", name: "RAM", switch: "on", query: "ddr4", categoryId: 170083, hideDetails: { "Form Factor": ["SO-DIMM"], "Features": ["Registered"] } };
+  const { world, watcher } = richSetup([ram]);
+  world.found.set("ram", [listing(1, { id: "110000000001" }), listing(2, { id: "110000000002", hiddenDetail: "Form Factor" })]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.searchCalls, [{ id: "ram", maxPages: 9 }]);
+  const status = watcher.searches()[0];
+  assert.equal(status.matches, 1);
+  assert.equal(status.hidden?.details, 1);
+});

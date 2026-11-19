@@ -315,10 +315,10 @@ test("each avoid list hides the listings it's named for and leaves a clean one a
   const caught: Record<string, string[]> = {
     "faulty": ["OptiPlex 7070 SFF FAULTY", "OptiPlex 7070 for parts", "OptiPlex 7070 not working", "OptiPlex 7070 SFF untested", "OptiPlex 7070 BIOS locked", "OptiPlex 7070 needs repairs", "OptiPlex 7070 spares or repair"],
     "incomplete": ["OptiPlex 7070 SFF no RAM", "OptiPlex 7070 SFF No HDD", "OptiPlex 7070 barebones", "OptiPlex 7070 SFF no hard drive", "OptiPlex 7070 no drives"],
-    "parts only": ["OptiPlex 7070 SFF motherboard", "OptiPlex 7070 SFF HDD caddy", "OptiPlex 7070 SFF PSU only", "OptiPlex 7070 front panel", "OptiPlex 7070 SFF power supply only"],
+    "parts only": ["OptiPlex 7070 SFF motherboard", "OptiPlex 7070 SFF HDD caddy", "OptiPlex 7070 SFF PSU only", "OptiPlex 7070 front panel", "OptiPlex 7070 SFF power supply only", "HP 800 G4 SFF Mother Board", "HP EliteDesk 800 G4 system board L22111-001", "OptiPlex 7070 mobo", "OptiPlex 7070 SFF board only"],
     "lots": ["Job lot 5x OptiPlex 7070 SFF", "Bulk buy 10 OptiPlex 7070 SFF", "Joblot OptiPlex 7070"],
-    "laptop ram": ["Crucial 32GB (2x16GB) DDR4 SODIMM", "Kingston 2x16GB DDR4 laptop memory", "32GB DDR4 SO-DIMM kit", "16GB DDR4 RAM for laptops"],
-    "server ram": ["Samsung 32GB DDR4 ECC RDIMM", "2x16GB DDR4 registered server memory", "Hynix 32GB LRDIMM"],
+    "laptop ram": ["Crucial 32GB (2x16GB) DDR4 SODIMM", "Kingston 2x16GB DDR4 laptop memory", "32GB DDR4 SO-DIMM kit", "16GB DDR4 RAM for laptops", "32GB 2x16GB DDR4 3200 260-pin", "Cardiff 16GB DDR4 260pin", "Kingston HyperX Impact 2x16GB DDR4", "Kingston FURY Impact 32GB", "Samsung M471A2K43DB1-CWE 16GB", "DDR5 32GB 262 pins"],
+    "server ram": ["Samsung 32GB DDR4 ECC RDIMM", "2x16GB DDR4 registered server memory", "Hynix 32GB LRDIMM", "Samsung M393A2G40DB0-CPB 16GB", "HPE 752369-081 16GB", "16GB 2Rx4 PC4-2133P-R", "Micron 32GB PC4-2666V-R", "Hynix 16GB PC4-2400T-RA1", "Samsung 32GB PC4-2933Y-RB2", "SK hynix 32GB DDR4 3200AA-R", "16GB DDR4 ECC REG"],
   };
   for (const [name, titles] of Object.entries(caught)) {
     for (const title of titles) assert.equal(whyNot(search({ avoid: [name] }), listing({ title }), now), "avoid", `${name}: ${title}`);
@@ -328,6 +328,18 @@ test("each avoid list hides the listings it's named for and leaves a clean one a
   const wanted: [string, string][] = [
     ["server ram", "Corsair Vengeance 32GB (2x16GB) DDR4 Non-ECC Unbuffered Desktop RAM"],
     ["laptop ram", "Corsair Vengeance 32GB DDR4 desktop memory (not laptop)"],
+    ["laptop ram", "Kingston FURY Beast 32GB (2x16GB) DDR4 3200MHz 288-pin"],
+    ["laptop ram", "Samsung M378A2K43DB1-CTD 16GB DDR4 desktop"],
+    ["server ram", "Crucial 16GB DDR4 3200 1Rx8 CT16G4DFRA32A"],
+    ["server ram", "Hynix 8GB PC4-2400T-UA1 desktop"],
+    ["server ram", "Samsung 8GB DDR4 PC4-2400T RAM Desktop Memory"],
+    ["server ram", "16GB DDR4 PC4-2133P Ram for desktop"],
+    ["server ram", "Corsair 32GB 3200AA Retail box"],
+    ["server ram", "Kingston 2933Y Rev 1.0 16GB"],
+    ["server ram", "G.Skill 2666V RGB 2x8GB"],
+    ["server ram", "Kingston FURY Beast 2x16GB 2Rx8 DDR4 3200"],
+    ["server ram", "HP EliteDesk 800 G4 16GB DDR4 RAM upgrade"],
+    ["parts only", "HP EliteDesk 800 G4 SFF i5 16GB, board and case clean"],
     ["incomplete", "Dell OptiPlex 7070 SFF i5 16GB 256GB SSD No OS"],
     ["parts only", "Dell OptiPlex 7070 SFF i5 16GB 512GB SSD Win 11 + Power Supply"],
     ["parts only", "Dell OptiPlex 7070 SFF i5 16GB with 250W PSU"],
@@ -419,4 +431,9 @@ test("cautions name what's worth a second look, and an ordinary listing has none
   assert.deepEqual(cautions(search(), listing({ variations: true })), ["the listing has more than one option, so this may be its lowest price"]);
   assert.deepEqual(cautions(search(), listing({ postage: null })), ["postage isn't shown, so it may be collection only"]);
   assert.equal(cautions(search({ guidePrice: 500 }), listing({ sellerFeedback: 0, variations: true, postage: null })).length, 4);
+});
+test("a listing that eBay says has a hidden item detail is hidden for its details, after every other rule", () => {
+  assert.equal(whyNot(search(), listing({ hiddenDetail: "Form Factor" }), now), "details");
+  assert.equal(whyNot(search({ maxPrice: 50 }), listing({ hiddenDetail: "Form Factor" }), now), "price");
+  assert.equal(whyNot(search(), listing(), now), null);
 });

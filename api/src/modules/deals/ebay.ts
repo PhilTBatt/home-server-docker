@@ -44,7 +44,7 @@ function pounds(pence: number): string {
   return (pence / 100).toFixed(2);
 }
 
-export function searchUrl(host: string, search: Search, offset: number, withDetails = false): string {
+export function searchUrl(host: string, search: Search, offset: number, withDetails = false, aspects: Record<string, string[]> | null = withDetails ? search.details : null): string {
   const filters: string[] = [];
   const highest = [search.maxPrice, search.maxWithPostage].filter((limit) => limit !== null);
   const max = highest.length > 0 ? Math.min(...highest) : null;
@@ -58,8 +58,8 @@ export function searchUrl(host: string, search: Search, offset: number, withDeta
 
   const parts = [`q=${encodeURIComponent(search.query)}`, `filter=${encodeURIComponent(filters.join(","))}`];
   if (search.categoryId !== null) parts.push(`category_ids=${search.categoryId}`);
-  if (withDetails && search.details !== null && search.categoryId !== null) {
-    const wanted = Object.entries(search.details).map(([name, values]) => `${name}:{${values.join("|")}}`);
+  if (withDetails && aspects !== null && search.categoryId !== null) {
+    const wanted = Object.entries(aspects).map(([name, values]) => `${name}:{${values.join("|")}}`);
     parts.push(`aspect_filter=${encodeURIComponent(`categoryId:${search.categoryId},${wanted.join(",")}`)}`);
   }
   if (search.autoCorrect) parts.push("auto_correct=KEYWORD");
@@ -491,15 +491,17 @@ export function createEbaySource(options: EbayOptions): Source {
     return id;
   }
 
-  async function readPages(search: Search, pages: number, withDetails: boolean, countCall: () => void) {
+  async function readPages(search: Search, pages: number, withDetails: boolean, countCall: () => void, aspects: Record<string, string[]> | null = withDetails ? search.details : null) {
     const listings: Listing[] = [];
     const ids = new Set<string>();
     let total = 0;
     let fetched = 0;
     let skipped = 0;
     let complete = false;
+    let read = 0;
     for (let page = 0; page < pages && !complete; page++) {
-      const body = await getPage(searchUrl(apiHost, search, page * pageSize, withDetails), countCall);
+      read += 1;
+      const body = await getPage(searchUrl(apiHost, search, page * pageSize, withDetails, aspects), countCall);
       if (!isObject(body)) throw failure("reply");
       const summaries = body.itemSummaries ?? [];
       const count = countOf(body.total);
@@ -520,7 +522,7 @@ export function createEbaySource(options: EbayOptions): Source {
       }
       complete = summaries.length < pageSize || fetched >= total;
     }
-    return { listings, total, complete, skipped };
+    return { listings, total, complete, skipped, pages: read };
   }
 
   async function counted<Reply>(work: (countCall: () => void) => Promise<Reply>): Promise<{ reply: Reply; calls: number }> {
@@ -539,20 +541,31 @@ export function createEbaySource(options: EbayOptions): Source {
   return {
     async search(search: Search, maxPages: number): Promise<SearchResult> {
       const mode = search.details === null ? null : search.detailsMode;
-      const both = mode === "prefer" && maxPages >= 2;
+      const hides = Object.entries(search.hideDetails ?? {});
+      const both = mode === "prefer" && maxPages >= 2 + hides.length;
+      const mainPages = Math.max(1, Math.floor((maxPages - (both ? 1 : 0)) / (1 + hides.length)));
       const { reply, calls } = await counted(async (countCall) => {
-        const main = await readPages(search, both ? maxPages - 1 : maxPages, mode === "only", countCall);
+        const main = await readPages(search, mainPages, mode === "only", countCall);
         if (mode === "only") for (const listing of main.listings) listing.detailsMatch = true;
-        if (!both) return main;
-        const tagged = await readPages(search, 1, true, countCall);
-        const byId = new Map(main.listings.map((listing) => [listing.id, listing]));
-        if (tagged.complete) for (const listing of main.listings) listing.detailsMatch = false;
-        for (const listing of tagged.listings) {
-          const same = byId.get(listing.id);
-          if (same === undefined) main.listings.push({ ...listing, detailsMatch: true });
-          else same.detailsMatch = true;
+        let skipped = main.skipped;
+        if (both) {
+          const tagged = await readPages(search, 1, true, countCall);
+          const byId = new Map(main.listings.map((listing) => [listing.id, listing]));
+          if (tagged.complete) for (const listing of main.listings) listing.detailsMatch = false;
+          for (const listing of tagged.listings) {
+            const same = byId.get(listing.id);
+            if (same === undefined) main.listings.push({ ...listing, detailsMatch: true });
+            else same.detailsMatch = true;
+          }
+          skipped += tagged.skipped;
         }
-        return { ...main, skipped: main.skipped + tagged.skipped };
+        for (const [name, values] of hides) {
+          const unwanted = await readPages(search, main.pages, true, countCall, mode === "only" ? { ...search.details, [name]: values } : { [name]: values });
+          if (main.total > 0 && unwanted.total >= main.total) throw failure("request", ` (hiding by ${name} would hide every listing, so check the name and values)`);
+          const ids = new Set(unwanted.listings.map((listing) => listing.id));
+          for (const listing of main.listings) if (listing.hiddenDetail === undefined && ids.has(listing.id)) listing.hiddenDetail = name;
+        }
+        return { listings: main.listings, total: main.total, complete: main.complete, skipped };
       });
       return { ...reply, calls };
     },

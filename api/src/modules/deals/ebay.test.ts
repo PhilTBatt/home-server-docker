@@ -1472,3 +1472,73 @@ test("the category addresses are all on eBay's API host", () => {
   for (const url of [treeIdUrl(apiHost), categoriesUrl(apiHost, "3", "a b"), categoryDetailsUrl(apiHost, "3", "170083")]) assert.equal(isApiAddress(url, apiHost), true, url);
   assert.equal(categoryDetailsUrl(apiHost, "3", "170083"), `${taxonomy}/category_tree/3/get_item_aspects_for_category?category_id=170083`);
 });
+
+const hiding = { categoryId: 170083, hideDetails: { "Form Factor": ["SO-DIMM", "MicroDIMM"], "Features": ["Registered"] } };
+
+function aspectOf(call: Call): string | null {
+  return new URL(call.url).searchParams.get("aspect_filter");
+}
+
+test("each hidden item detail is one more question to eBay, and the listings it names are marked with that detail", async () => {
+  const calls = fakeEbay((call) => {
+    const aspect = aspectOf(call);
+    if (aspect === "categoryId:170083,Form Factor:{SO-DIMM|MicroDIMM}") return page([item(2), item(9)], 2);
+    if (aspect === "categoryId:170083,Features:{Registered}") return page([item(3), item(2)], 2);
+    return page(items(5), 5);
+  });
+  const found = await source().search(search(hiding), 4);
+  assert.equal(found.calls, 3);
+  assert.deepEqual(found.listings.map((listing) => listing.hiddenDetail), [undefined, "Form Factor", "Features", undefined, undefined]);
+  assert.deepEqual(found.listings.map((listing) => listing.detailsMatch), [null, null, null, null, null]);
+  const made = searchCalls(calls);
+  assert.deepEqual(made.map(aspectOf), [null, "categoryId:170083,Form Factor:{SO-DIMM|MicroDIMM}", "categoryId:170083,Features:{Registered}"]);
+  assert.ok(made.every((call) => new URL(call.url).searchParams.get("category_ids") === "170083" && filterOf(call.url) === filterOf(made[0].url)));
+});
+
+test("a hidden item detail that would hide every listing fails the search instead of hiding everything", async () => {
+  fakeEbay((call) => (aspectOf(call) === null ? page(items(5), 5) : page(items(5), 5)));
+  const all = await failure(source().search(search({ categoryId: 170083, hideDetails: { "Form Factr": ["SO-DIMM"] } }), 3));
+  assert.deepEqual([all.reason, all.message, all.calls], ["request", "eBay refused the search (hiding by Form Factr would hide every listing, so check the name and values)", 2]);
+  mock.restoreAll();
+  fakeEbay((call) => (aspectOf(call) === null ? page([], 0) : page([], 0)));
+  assert.deepEqual((await source().search(search({ categoryId: 170083, hideDetails: { "Form Factor": ["SO-DIMM"] } }), 3)).listings, []);
+  mock.restoreAll();
+  fakeEbay((call) => (aspectOf(call) === null ? page(items(2)) : Response.json({ total: 0, itemSummaries: [], warnings: [{ errorId: 12018 }] })));
+  const warned = await failure(source().search(search({ categoryId: 170083, hideDetails: { "Form Factor": ["SO-DIMM"] } }), 3));
+  assert.equal(warned.message, "eBay refused the search (eBay warning 12018 about the item details)");
+});
+
+test("each hidden item detail can read as many pages as the search did, and the budget is shared so the search keeps at least one", async () => {
+  const kinds = (made: Call[]) => searchCalls(made).map(aspectOf).map((aspect) => aspect?.split(",")[1] ?? "main");
+  const calls = fakeEbay((call) => (aspectOf(call) === null ? page(items(pageSize), 600) : page([], 0)));
+  await source().search(search({ ...hiding, details: { "Type": ["DDR4 SDRAM"] } }), 10);
+  assert.deepEqual(kinds(calls), ["main", "main", "main", "Type:{DDR4 SDRAM}", "Form Factor:{SO-DIMM|MicroDIMM}", "Features:{Registered}"]);
+  mock.restoreAll();
+  const full = fakeEbay((call) => (aspectOf(call) === null ? page(items(pageSize), 600) : page(items(pageSize, 1000), 450)));
+  await source().search(search(hiding), 9);
+  assert.deepEqual(kinds(full), ["main", "main", "main", "Form Factor:{SO-DIMM|MicroDIMM}", "Form Factor:{SO-DIMM|MicroDIMM}", "Form Factor:{SO-DIMM|MicroDIMM}", "Features:{Registered}", "Features:{Registered}", "Features:{Registered}"]);
+  mock.restoreAll();
+  const few = fakeEbay((call) => (aspectOf(call) === null ? page(items(pageSize), 600) : page([], 0)));
+  await source().search(search({ ...hiding, details: { "Type": ["DDR4 SDRAM"] } }), 2);
+  assert.deepEqual(kinds(few), ["main", "Form Factor:{SO-DIMM|MicroDIMM}", "Features:{Registered}"]);
+});
+
+test("older listings on later pages are hidden too, when the hiding question reads that far", async () => {
+  fakeEbay((call) => {
+    const offset = Number(new URL(call.url).searchParams.get("offset"));
+    if (aspectOf(call) === null) return page(items(pageSize, offset + 1), 600);
+    return offset === 0 ? page(items(pageSize, 301), 250) : page(items(50, 501), 250);
+  });
+  const found = await source().search(search({ categoryId: 170083, hideDetails: { "Form Factor": ["SO-DIMM"] } }), 6);
+  assert.equal(found.calls, 5);
+  assert.equal(found.listings.filter((listing) => listing.hiddenDetail === "Form Factor").length, 250);
+  assert.equal(found.listings.find((listing) => listing.title.endsWith("number 550"))?.hiddenDetail, "Form Factor");
+  assert.equal(found.listings.find((listing) => listing.title.endsWith("number 551"))?.hiddenDetail, undefined);
+});
+
+test("in only mode, the hiding question keeps the search's own item details, so the counts compare like with like", async () => {
+  const calls = fakeEbay((call) => (aspectOf(call)?.includes("Form Factor") ? page([item(2)], 40) : page(items(5), 300)));
+  const found = await source().search(search({ categoryId: 170083, details: { "Type": ["DDR4 SDRAM"] }, detailsMode: "only", hideDetails: { "Form Factor": ["SO-DIMM"] } }), 6);
+  assert.deepEqual(searchCalls(calls).map(aspectOf), ["categoryId:170083,Type:{DDR4 SDRAM}", "categoryId:170083,Type:{DDR4 SDRAM},Form Factor:{SO-DIMM}"]);
+  assert.deepEqual(found.listings.map((listing) => listing.hiddenDetail), [undefined, "Form Factor", undefined, undefined, undefined]);
+});

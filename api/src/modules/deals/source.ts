@@ -26,6 +26,7 @@ export type Listing = {
   summary: string | null;
   variations: boolean;
   detailsMatch: boolean | null;
+  hiddenDetail?: string;
 };
 
 export type SearchResult = {
