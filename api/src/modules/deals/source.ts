@@ -36,7 +36,7 @@ export type SearchResult = {
   skipped: number;
 };
 
-export type FailReason = "keys" | "access" | "busy" | "down" | "request" | "reply";
+export type FailReason = "keys" | "access" | "busy" | "down" | "request" | "reply" | "gone";
 
 export class SourceError extends Error {
   reason: FailReason;
@@ -50,11 +50,40 @@ export class SourceError extends Error {
   }
 }
 
-export type Source = {
-  search(search: Search, maxPages: number): Promise<SearchResult>;
+export type FullListing = {
+  listing: Listing;
+  subtitle: string | null;
+  description: string | null;
+  conditionNote: string | null;
+  categoryPath: string | null;
+  brand: string | null;
+  model: string | null;
+  specifics: { name: string; value: string }[];
+  returns: { accepted: boolean; days: number | null; paidBy: "buyer" | "seller" | null } | null;
+  postageOptions: { cost: number | null; service: string | null; earliest: string | null; latest: string | null }[];
+  collection: "only" | "offered" | "none" | null;
+  inStock: boolean | null;
+  available: number | null;
+  sold: number | null;
+  minimumBid: number | null;
+  reserveMet: boolean | null;
+  bidders: number | null;
+  lotSize: number | null;
 };
 
-const unseenCharacters = /[\u00AD\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u{E0000}-\u{E007F}]/gu;
+export type DetailNames = {
+  categoryId: string | null;
+  categories: { id: string; name: string; count: number }[];
+  details: { name: string; values: { value: string; count: number }[] }[];
+};
+
+export type Source = {
+  search(search: Search, maxPages: number): Promise<SearchResult>;
+  full?(ref: string): Promise<{ full: FullListing; calls: number }>;
+  detailNames?(query: string, categoryId: string | null): Promise<{ names: DetailNames; calls: number }>;
+};
+
+const unseenCharacters = /[\u00AD\u061C\u115F\u1160\u200B-\u200F\u202A-\u202E\u2060-\u2069\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g;
 
 export function cleanText(value: unknown, maxLength: number): string {

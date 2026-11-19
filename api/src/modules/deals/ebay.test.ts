@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { createEbaySource, ebayMessages, isApiAddress, pageSize, retryAfterMs, searchUrl, toListing } from "./ebay.js";
+import { createEbaySource, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, pageSize, plainText, retryAfterMs, searchUrl, toDetailNames, toFull, toListing } from "./ebay.js";
 import { readSearches, type Search } from "./searches.js";
 import { SourceError, cleanText, type FailReason } from "./source.js";
 
@@ -31,7 +31,7 @@ function item(n: number, overrides: Record<string, unknown> = {}) {
     condition: "Used",
     conditionId: "3000",
     buyingOptions: ["FIXED_PRICE"],
-    itemLocation: { country: "GB", postalCode: "AB1***" },
+    itemLocation: { country: "GB", postalCode: "ZZ9***" },
     itemCreationDate: "2026-11-18T20:00:00.000Z",
     itemOriginDate: "2026-11-01T09:00:00.000Z",
     itemWebUrl: `https://www.ebay.co.uk/itm/${number}?hash=item123`,
@@ -222,7 +222,7 @@ test("a full eBay item becomes a tidy listing, with money in pence", () => {
     topRated: null,
     postageType: "fixed",
     city: null,
-    postcode: "AB1***",
+    postcode: "ZZ9",
     summary: null,
     variations: false,
     detailsMatch: null,
@@ -277,7 +277,7 @@ test("the seller's kind is kept as business or private, and anything else as unk
 test("eBay's own item reference is kept only when it has the expected shape", () => {
   assert.equal(toListing(item(3), siteHost)?.ref, "v1|110000000003|0");
   assert.equal(toListing(item(3, { itemId: "v1|110000000003|410000000001" }), siteHost)?.ref, "v1|110000000003|410000000001");
-  for (const odd of ["v2|110000000003|0", "v1|110000000003", "v1|110000000003|0/../x", "v1|11000 0000003|0", "https://evil.example", 5, null]) {
+  for (const odd of ["v2|110000000003|0", "v1|110000000003", "v1|110000000003|0/../x", "v1|11000 0000003|0", "v1|110000000004|0", "https://evil.example", 5, null]) {
     assert.equal(toListing(item(3, { itemId: odd }), siteHost)?.ref, null);
   }
 });
@@ -287,7 +287,9 @@ test("the short description and the place are tidied, capped and never trusted",
   assert.equal(listing?.summary?.startsWith("Core i5 16GB x"), true);
   assert.equal([...(listing?.summary ?? "")].length, 400);
   assert.equal(listing?.city, "Sometown");
-  assert.equal(listing?.postcode, "ZZ9***");
+  assert.equal(listing?.postcode, "ZZ9");
+  const district = (postalCode: unknown) => toListing(item(1, { itemLocation: { country: "GB", postalCode } }), siteHost)?.postcode;
+  assert.deepEqual([district("ZZ9 4AB"), district("zz99 4ab"), district(" ZZ9A***"), district("ZZ"), district("12345"), district("ZZ9<b>"), district(99)], ["ZZ9", "ZZ99", "ZZ9A", null, null, null, null]);
   const odd = toListing(item(1, { shortDescription: 7, itemLocation: { country: "GB", postalCode: "<b>ZZ9</b>", city: ["x"] } }), siteHost);
   assert.deepEqual([odd?.summary, odd?.city, odd?.postcode], [null, null, null]);
 });
@@ -1046,4 +1048,329 @@ test("too many requests carries eBay's wait, from a search and from a token requ
 test("look-alike characters in a title are turned into plain ones", () => {
   assert.equal(cleanText("\uFF24\uFF45\uFF4C\uFF4C OptiPlex\u2122 \uFB01ne \u2460", 100), "Dell OptiPlexTM fine 1");
   assert.equal(cleanText("x".repeat(50) + "\uFDFA", 52), "x".repeat(50) + "\u0635\u0644");
+});
+
+const withDetails = { categoryId: 179, details: { "Form Factor": ["SFF", "Small Form Factor"], "RAM Size": ["16 GB"] } };
+
+test("a wanted seller type and returns-only become eBay filters, and auto-correct its own setting", () => {
+  assert.equal(filterOf(searchUrl(apiHost, search({ sellerType: "business" }), 0)), "buyingOptions:{FIXED_PRICE},itemLocationCountry:GB,sellerAccountTypes:{BUSINESS}");
+  assert.equal(filterOf(searchUrl(apiHost, search({ sellerType: "private", returnsOnly: true }), 0)), "buyingOptions:{FIXED_PRICE},itemLocationCountry:GB,sellerAccountTypes:{INDIVIDUAL},returnsAccepted:true");
+  assert.equal(new URL(searchUrl(apiHost, search({ autoCorrect: true }), 0)).searchParams.get("auto_correct"), "KEYWORD");
+  assert.equal(new URL(searchUrl(apiHost, search(), 0)).searchParams.has("auto_correct"), false);
+});
+
+test("item details are sent as eBay's aspect filter only when asked, with the category in both places", () => {
+  const plain = new URL(searchUrl(apiHost, search(withDetails), 0));
+  assert.equal(plain.searchParams.has("aspect_filter"), false);
+  const filtered = new URL(searchUrl(apiHost, search(withDetails), 200, true));
+  assert.equal(filtered.searchParams.get("aspect_filter"), "categoryId:179,Form Factor:{SFF|Small Form Factor},RAM Size:{16 GB}");
+  assert.equal(filtered.searchParams.get("category_ids"), "179");
+  assert.equal(filtered.searchParams.get("offset"), "200");
+  assert.equal(filtered.searchParams.getAll("aspect_filter").length, 1);
+  assert.equal(new URL(searchUrl(apiHost, search(), 0, true)).searchParams.has("aspect_filter"), false);
+  const tricky = new URL(searchUrl(apiHost, search({ categoryId: 179, details: { "Processor": ["Core i5&limit=1#x", "a+b=c"] } }), 0, true));
+  assert.equal(tricky.searchParams.get("aspect_filter"), "categoryId:179,Processor:{Core i5&limit=1#x|a+b=c}");
+  assert.equal(tricky.searchParams.get("limit"), "200");
+  assert.equal(tricky.hash, "");
+});
+
+test("in only mode every page is filtered by the item details and every listing counts as a match", async () => {
+  const calls = fakeEbay((_call, n) => (n === 1 ? page(items(pageSize), 250) : page(items(50, 201), 250)));
+  const found = await source().search(search({ ...withDetails, detailsMode: "only" }), 3);
+  assert.equal(found.calls, 2);
+  assert.equal(searchCalls(calls).every((call) => new URL(call.url).searchParams.has("aspect_filter")), true);
+  assert.equal(found.listings.length, 250);
+  assert.equal(found.listings.every((listing) => listing.detailsMatch === true), true);
+});
+
+test("in prefer mode the last call asks again with the item details and marks which listings match", async () => {
+  const calls = fakeEbay((call) => (new URL(call.url).searchParams.has("aspect_filter") ? page([item(2), item(9)]) : page(items(3))));
+  const found = await source().search(search(withDetails), 4);
+  assert.equal(found.calls, 2);
+  assert.deepEqual(searchCalls(calls).map((call) => new URL(call.url).searchParams.has("aspect_filter")), [false, true]);
+  assert.deepEqual(found.listings.map((listing) => [listing.id, listing.detailsMatch]), [
+    ["110000000001", false],
+    ["110000000002", true],
+    ["110000000003", false],
+    ["110000000009", true],
+  ]);
+  assert.equal(found.total, 3);
+  assert.equal(found.complete, true);
+});
+
+test("prefer mode never makes more calls than it was given, and with one call it skips the second question", async () => {
+  const wide = fakeEbay((call) => (new URL(call.url).searchParams.has("aspect_filter") ? page(items(pageSize), 5000) : page(items(pageSize, Number(new URL(call.url).searchParams.get("offset")) + 1), 5000)));
+  const found = await source().search(search(withDetails), 3);
+  assert.equal(found.calls, 3);
+  assert.deepEqual(searchCalls(wide).map((call) => [new URL(call.url).searchParams.get("offset"), new URL(call.url).searchParams.has("aspect_filter")]), [["0", false], ["200", false], ["0", true]]);
+  assert.equal(found.complete, false);
+
+  mock.restoreAll();
+  const single = fakeEbay(() => page(items(3)));
+  const one = await source().search(search(withDetails), 1);
+  assert.equal(one.calls, 1);
+  assert.equal(searchCalls(single).length, 1);
+  assert.equal(one.listings.every((listing) => listing.detailsMatch === null), true);
+});
+
+test("if eBay refuses the item details, the search fails and both calls are counted", async () => {
+  fakeEbay((call) => (new URL(call.url).searchParams.has("aspect_filter") ? Response.json({ errors: [{ errorId: 12013 }] }, { status: 400 }) : page(items(3))));
+  const error = await failure(source().search(search(withDetails), 3));
+  assert.equal(error.reason, "request");
+  assert.equal(error.message, "eBay refused the search (eBay error 12013)");
+  assert.equal(error.calls, 2);
+});
+
+test("a search without item details leaves every listing unmarked", async () => {
+  fakeEbay(() => page(items(2)));
+  const found = await source().search(search(), 3);
+  assert.deepEqual(found.listings.map((listing) => listing.detailsMatch), [null, null]);
+});
+
+function fullItem(overrides: Record<string, unknown> = {}) {
+  return {
+    ...item(1),
+    subtitle: "Fully tested",
+    description: "<div><h1>OptiPlex 7070</h1><p>Intel Core i5-9500 &amp; 16GB RAM.</p><script>alert(1)</script><ul><li>256GB SSD</li><li>Windows 11 Pro</li></ul></div>",
+    conditionDescription: "A few light marks on the lid.",
+    categoryPath: "Computers/Tablets & Networking|Desktops & All-In-Ones|PC Desktops & All-In-Ones",
+    brand: "Dell",
+    mpn: "7070",
+    localizedAspects: [
+      { type: "STRING", name: "Processor", value: "Intel Core i5 9th Gen." },
+      { type: "STRING", name: "RAM Size", value: "16 GB" },
+      { type: "STRING", name: "Form Factor", value: "Small Form Factor (SFF)" },
+    ],
+    returnTerms: { returnsAccepted: true, returnPeriod: { value: 30, unit: "CALENDAR_DAY" }, returnShippingCostPayer: "BUYER" },
+    shippingOptions: [
+      { shippingServiceCode: "Royal Mail Tracked 48", shippingCost: { value: "6.99", currency: "GBP" }, shippingCostType: "FIXED", minEstimatedDeliveryDate: "2026-11-20T00:00:00.000Z", maxEstimatedDeliveryDate: "2026-11-23T00:00:00.000Z" },
+    ],
+    estimatedAvailabilities: [{ estimatedAvailabilityStatus: "IN_STOCK", estimatedAvailableQuantity: 3, estimatedSoldQuantity: 12, deliveryOptions: ["SHIP_TO_HOME", "SELLER_ARRANGED_LOCAL_PICKUP"] }],
+    lotSize: 0,
+    ...overrides,
+  };
+}
+
+test("a full listing keeps the description as plain text, the item specifics, returns, postage and stock", () => {
+  const full = toFull(fullItem(), siteHost);
+  assert.deepEqual(
+    { ...full, listing: full?.listing.id },
+    {
+      listing: "110000000001",
+      subtitle: "Fully tested",
+      description: "OptiPlex 7070 Intel Core i5-9500 & 16GB RAM. 256GB SSD Windows 11 Pro",
+      conditionNote: "A few light marks on the lid.",
+      categoryPath: "Computers/Tablets & Networking|Desktops & All-In-Ones|PC Desktops & All-In-Ones",
+      brand: "Dell",
+      model: "7070",
+      specifics: [
+        { name: "Processor", value: "Intel Core i5 9th Gen." },
+        { name: "RAM Size", value: "16 GB" },
+        { name: "Form Factor", value: "Small Form Factor (SFF)" },
+      ],
+      returns: { accepted: true, days: 30, paidBy: "buyer" },
+      postageOptions: [{ cost: 699, service: "Royal Mail Tracked 48", earliest: "2026-11-20T00:00:00.000Z", latest: "2026-11-23T00:00:00.000Z" }],
+      collection: "offered",
+      inStock: true,
+      available: 3,
+      sold: 12,
+      minimumBid: null,
+      reserveMet: null,
+      bidders: null,
+      lotSize: 0,
+    },
+  );
+  assert.equal(full?.listing.price, 9500);
+});
+
+test("a full listing reads collection, stock, returns and auction facts carefully", () => {
+  const read = (overrides: Record<string, unknown>) => toFull(fullItem(overrides), siteHost);
+  const ways = (deliveryOptions: unknown) => read({ estimatedAvailabilities: [{ deliveryOptions }] })?.collection;
+  assert.equal(ways(["SELLER_ARRANGED_LOCAL_PICKUP"]), "only");
+  assert.equal(ways(["SHIP_TO_HOME"]), "none");
+  assert.equal(ways([]), null);
+  assert.equal(ways("SELLER_ARRANGED_LOCAL_PICKUP"), null);
+  assert.equal(read({ estimatedAvailabilities: undefined })?.collection, null);
+  const stock = (estimatedAvailabilityStatus: unknown) => read({ estimatedAvailabilities: [{ estimatedAvailabilityStatus }] })?.inStock;
+  assert.deepEqual([stock("IN_STOCK"), stock("LIMITED_STOCK"), stock("OUT_OF_STOCK"), stock("MAYBE"), stock(undefined)], [true, true, false, null, null]);
+  assert.equal(read({ returnTerms: undefined })?.returns, null);
+  assert.deepEqual(read({ returnTerms: { returnsAccepted: false } })?.returns, { accepted: false, days: null, paidBy: null });
+  assert.deepEqual(read({ returnTerms: { returnsAccepted: true, returnPeriod: { value: 1, unit: "MONTH" }, returnShippingCostPayer: "SELLER" } })?.returns, { accepted: true, days: 30, paidBy: "seller" });
+  assert.deepEqual(read({ returnTerms: { returnsAccepted: "true", returnPeriod: { value: 2, unit: "YEAR" }, returnShippingCostPayer: "EBAY" } })?.returns, { accepted: false, days: null, paidBy: null });
+  const auction = read({ buyingOptions: ["AUCTION"], currentBidPrice: { value: "41.00", currency: "GBP" }, minimumPriceToBid: { value: "42.00", currency: "GBP" }, reservePriceMet: false, uniqueBidderCount: 4, bidCount: 7 });
+  assert.deepEqual([auction?.listing.price, auction?.minimumBid, auction?.reserveMet, auction?.bidders, auction?.listing.bids], [4100, 4200, false, 4, 7]);
+  assert.equal(read({ minimumPriceToBid: { value: "42.00", currency: "USD" } })?.minimumBid, null);
+});
+
+test("a full listing caps and cleans everything a seller can write", () => {
+  const full = toFull(
+    fullItem({
+      subtitle: "s".repeat(500),
+      description: `<p>${"d".repeat(9000)}</p>`,
+      conditionDescription: "c".repeat(900),
+      brand: ["Dell"],
+      mpn: 7070,
+      localizedAspects: [...Array.from({ length: 80 }, (_, i) => ({ name: `Name ${i}`, value: "v".repeat(500) })), { name: "", value: "x" }, { name: "x" }, "x", null],
+      shippingOptions: Array.from({ length: 9 }, () => ({ shippingServiceCode: "x".repeat(200), shippingCost: { value: "1.00", currency: "EUR" }, minEstimatedDeliveryDate: "soon" })),
+      estimatedAvailabilities: [{ estimatedAvailableQuantity: -1, estimatedSoldQuantity: "12" }],
+    }),
+    siteHost,
+  );
+  assert.equal(full?.subtitle?.length, 100);
+  assert.equal(full?.description?.length, 3000);
+  assert.equal(full?.conditionNote?.length, 500);
+  assert.deepEqual([full?.brand, full?.model], [null, null]);
+  assert.equal(full?.specifics.length, 60);
+  assert.equal(full?.specifics[0].value.length, 200);
+  assert.equal(full?.postageOptions.length, 5);
+  assert.deepEqual(full?.postageOptions[0], { cost: null, service: "x".repeat(60), earliest: null, latest: null });
+  assert.deepEqual([full?.available, full?.sold], [null, null]);
+  assert.equal(toFull({ ...fullItem(), title: "" }, siteHost), null);
+  assert.equal(toFull(null, siteHost), null);
+});
+
+test("a seller's description is turned into plain text without running forever", () => {
+  const cases: [unknown, string | null][] = [
+    ["<p>Hello <b>there</b></p>", "Hello there"],
+    ["a<br>b<br/>c", "a b c"],
+    ["before<script>var x = '<p>hidden</p>';</script>after", "before after"],
+    ["before<STYLE type=\"text/css\">p { color: red }</STYLE>after", "before after"],
+    ["before<script>never closed", "before"],
+    ["before<!-- a <b>comment</b> -->after", "before after"],
+    ["before<!-- never closed", "before"],
+    ["16GB &amp; 256GB &lt;fast&gt; &quot;SSD&quot; &pound;95 &#163;95 &#xA3;95 &nbsp;end", "16GB & 256GB <fast> \"SSD\" \u00A395 \u00A395 \u00A395 end"],
+    ["bad &#0; &#xD800; &#9999999; &bogus; done", "bad &bogus; done"],
+    ["RAM < 16GB is slow", "RAM < 16GB is slow"],
+    ["RAM <16GB and SSD >256GB <br> works", "RAM <16GB and SSD >256GB works"],
+    ["<<<>>>", "<<<>>>"],
+    ["\u0130\u0130\u0130\u0130\u0130\u0130\u0130\u0130\u0130\u0130<script>hidden()</script><style>p{}</style><!-- note -->after", "\u0130\u0130\u0130\u0130\u0130\u0130\u0130\u0130\u0130\u0130 after"],
+    ["<a title=\"a>b\" href='x>y'>link</a>", "link"],
+    ["<titled>kept</titled> <scripted>kept too</scripted>", "kept kept too"],
+    ["a<SCRIPT type=\"x>y\">hidden</SCRIPT >b", "a b"],
+    ["", null],
+    ["<p></p>", null],
+    [7, null],
+    [null, null],
+  ];
+  for (const [html, text] of cases) assert.equal(plainText(html, 3000), text, String(html));
+  const started = Date.now();
+  assert.equal(plainText("<script".repeat(60_000), 3000), null);
+  assert.equal(plainText("<".repeat(400_000), 3000), "<".repeat(3000));
+  assert.equal(plainText(`${"<a>".repeat(130_000)}tail`, 3000), "tail");
+  assert.equal(plainText(`${"<a b='".repeat(60_000)}tail`, 3000), null);
+  assert.equal(plainText(`${"<a b='".repeat(60_001)}>tail`, 3000), "tail");
+  assert.equal(plainText(`${"<title".repeat(60_000)}tail`, 3000), null);
+  for (const hostile of ["<a b=\"c>", "<a '", "<!--", "</script", "<script></scrip", "&#", "<a \"'>"]) plainText(hostile.repeat(50_000), 3000);
+  assert.ok(Date.now() - started < 2000);
+});
+
+test("asking for a full listing calls eBay's item address for that reference and nothing else", async () => {
+  const calls = fakeEbay(() => Response.json(fullItem()));
+  const { full, calls: used } = await source().full!("v1|110000000001|0");
+  assert.equal(used, 1);
+  assert.equal(full.listing.id, "110000000001");
+  const [call] = calls.filter((made) => made.url !== tokenUrl);
+  assert.equal(call.url, "https://api.ebay.com/buy/browse/v1/item/v1%7C110000000001%7C0");
+  assert.equal(call.url, fullUrl(apiHost, "v1|110000000001|0"));
+  assert.equal(call.method, "GET");
+  assert.equal(call.headers.get("authorization"), `Bearer ${accessToken}`);
+  assert.equal(call.headers.get("x-ebay-c-marketplace-id"), "EBAY_GB");
+  assert.equal(call.redirect, "error");
+});
+
+test("a reference that isn't eBay's shape is refused before anything is sent", async () => {
+  const calls = fakeEbay(() => Response.json(fullItem()));
+  for (const ref of ["110000000001", "v1|110000000001|0/../../sell", "v1|1|0?x=1", "https://evil.example", "", "v1|1|0\n"]) {
+    const error = await failure(source().full!(ref));
+    assert.equal(error.reason, "request");
+    assert.equal(error.calls, 0);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("a listing that has gone, a refusal and a reply that can't be read each say so", async () => {
+  fakeEbay(() => Response.json({ errors: [{ errorId: 11001 }] }, { status: 404 }));
+  const gone = await failure(source().full!("v1|110000000001|0"));
+  assert.deepEqual([gone.reason, gone.message, gone.calls], ["gone", ebayMessages.gone, 1]);
+  mock.restoreAll();
+  fakeEbay(() => Response.json({ title: "No id or price" }));
+  assert.equal((await failure(source().full!("v1|110000000001|0"))).reason, "reply");
+  mock.restoreAll();
+  fakeEbay(() => new Response("{}", { status: 429, headers: { "Retry-After": "60" } }));
+  const busy = await failure(source().full!("v1|110000000001|0"));
+  assert.deepEqual([busy.reason, busy.retryAfterMs], ["busy", 60_000]);
+  mock.restoreAll();
+  fakeEbay(() => Response.json({ errors: [{ errorId: 12001 }] }, { status: 404 }));
+  assert.equal((await failure(source().search(search(), 1))).reason, "request");
+});
+
+test("asking what item details a query has reads eBay's own names, values and categories", async () => {
+  const calls = fakeEbay(() =>
+    Response.json({
+      total: 812,
+      refinement: {
+        dominantCategoryId: "179",
+        categoryDistributions: [
+          { categoryId: "179", categoryName: "PC Desktops & All-In-Ones", matchCount: 700, refinementHref: "https://api.ebay.com/x" },
+          { categoryId: "abc", categoryName: "Broken", matchCount: 1 },
+        ],
+        aspectDistributions: [
+          { localizedAspectName: "Form Factor", aspectValueDistributions: [{ localizedAspectValue: "Tower", matchCount: 40 }, { localizedAspectValue: "SFF", matchCount: 310, refinementHref: "https://api.ebay.com/y" }, { localizedAspectValue: "", matchCount: 5 }] },
+          { localizedAspectName: "Empty", aspectValueDistributions: [] },
+          { localizedAspectName: "Brand", aspectValueDistributions: Array.from({ length: 60 }, (_, i) => ({ localizedAspectValue: `Brand ${i}`, matchCount: i })) },
+        ],
+      },
+    }),
+  );
+  const { names, calls: used } = await source().detailNames!("optiplex 7070 & more", "179");
+  assert.equal(used, 1);
+  assert.equal(names.categoryId, "179");
+  assert.deepEqual(names.categories, [{ id: "179", name: "PC Desktops & All-In-Ones", count: 700 }]);
+  assert.deepEqual(names.details[0], { name: "Form Factor", values: [{ value: "SFF", count: 310 }, { value: "Tower", count: 40 }] });
+  assert.equal(names.details.length, 2);
+  assert.equal(names.details[1].values.length, 25);
+  assert.equal(names.details[1].values[0].value, "Brand 59");
+  assert.ok(!JSON.stringify(names).includes("api.ebay.com"));
+  const url = new URL(calls.filter((made) => made.url !== tokenUrl)[0].url);
+  assert.equal(`${url.origin}${url.pathname}`, searchPath);
+  assert.deepEqual([...url.searchParams], [["q", "optiplex 7070 & more"], ["category_ids", "179"], ["fieldgroups", "ASPECT_REFINEMENTS,CATEGORY_REFINEMENTS"], ["limit", "1"]]);
+  assert.equal(new URL(detailNamesUrl(apiHost, "ddr4", null)).searchParams.has("category_ids"), false);
+});
+
+test("a reply with no refinements gives empty lists, and one that isn't an object is a failure", async () => {
+  assert.deepEqual(toDetailNames({ total: 0 }), { categoryId: null, categories: [], details: [] });
+  assert.deepEqual(toDetailNames({ refinement: { dominantCategoryId: 179, categoryDistributions: "x", aspectDistributions: [null, "x", { localizedAspectName: 5 }] } }), { categoryId: null, categories: [], details: [] });
+  assert.equal(toDetailNames([]), null);
+  fakeEbay(() => Response.json([]));
+  assert.equal((await failure(source().detailNames!("ddr4", null))).reason, "reply");
+});
+
+test("a warning from eBay about the item details fails the search, so a wrong name is never reported as a match", async () => {
+  const warned = (errorId: unknown) => Response.json({ total: 2, itemSummaries: items(2), warnings: [{ errorId, message: "The aspect_filter value is invalid" }] });
+  fakeEbay(() => warned(12018));
+  const only = await failure(source().search(search({ ...withDetails, detailsMode: "only" }), 3));
+  assert.deepEqual([only.reason, only.message, only.calls], ["request", "eBay refused the search (eBay warning 12018 about the item details)", 1]);
+  mock.restoreAll();
+  fakeEbay((call) => (new URL(call.url).searchParams.has("aspect_filter") ? warned("odd") : page(items(2))));
+  const prefer = await failure(source().search(search(withDetails), 3));
+  assert.deepEqual([prefer.message, prefer.calls], ["eBay refused the search (eBay warned about the item details)", 2]);
+  mock.restoreAll();
+  fakeEbay(() => warned(12018));
+  assert.equal((await source().search(search(), 3)).listings.length, 2);
+});
+
+test("in prefer mode, a details page too full to be the whole answer leaves the others unknown, not marked as failing", async () => {
+  fakeEbay((call) => (new URL(call.url).searchParams.has("aspect_filter") ? page(items(pageSize), 300) : page(items(250).slice(0, pageSize), 250)));
+  const found = await source().search(search(withDetails), 2);
+  assert.deepEqual([...new Set(found.listings.map((listing) => listing.detailsMatch))], [true]);
+  mock.restoreAll();
+  fakeEbay((call) => (new URL(call.url).searchParams.has("aspect_filter") ? page(items(pageSize, 1000), 300) : page(items(3))));
+  const mixed = await source().search(search(withDetails), 2);
+  assert.deepEqual(mixed.listings.slice(0, 3).map((listing) => listing.detailsMatch), [null, null, null]);
+  assert.equal(mixed.listings.slice(3).every((listing) => listing.detailsMatch === true), true);
+});
+
+test("characters that take no space, like variation marks and filler letters, are dropped from titles", () => {
+  assert.equal(cleanText("a️bㅤcᅟᅠﾠd︀\u{E0100}e", 100), "abcde");
+  assert.equal(cleanText("ㅤ️ᅟ", 100), "");
 });

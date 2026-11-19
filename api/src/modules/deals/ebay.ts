@@ -1,5 +1,5 @@
 import { conditionIds, type Buying, type Search } from "./searches.js";
-import { SourceError, cleanText, type BuyingOption, type FailReason, type Listing, type SearchResult, type Source } from "./source.js";
+import { SourceError, cleanText, type BuyingOption, type DetailNames, type FailReason, type FullListing, type Listing, type SearchResult, type Source } from "./source.js";
 
 export type EbayEnvironment = "production" | "sandbox";
 
@@ -29,6 +29,7 @@ export const ebayMessages: Record<FailReason, string> = {
   down: "couldn't reach eBay",
   request: "eBay refused the search",
   reply: "eBay's reply didn't make sense",
+  gone: "eBay says that listing has gone",
 };
 
 function failure(reason: FailReason, detail = ""): SourceError {
@@ -43,7 +44,7 @@ function pounds(pence: number): string {
   return (pence / 100).toFixed(2);
 }
 
-export function searchUrl(host: string, search: Search, offset: number): string {
+export function searchUrl(host: string, search: Search, offset: number, withDetails = false): string {
   const filters: string[] = [];
   const highest = [search.maxPrice, search.maxWithPostage].filter((limit) => limit !== null);
   const max = highest.length > 0 ? Math.min(...highest) : null;
@@ -52,10 +53,28 @@ export function searchUrl(host: string, search: Search, offset: number): string 
   if (search.conditions.length > 0) filters.push(`conditionIds:{${search.conditions.map((name) => conditionIds[name]).join("|")}}`);
   filters.push(`buyingOptions:{${search.buying.map((option) => buyingFilters[option]).join("|")}}`);
   filters.push(search.ukOnly ? "itemLocationCountry:GB" : "deliveryCountry:GB");
+  if (search.sellerType !== null) filters.push(`sellerAccountTypes:{${search.sellerType === "business" ? "BUSINESS" : "INDIVIDUAL"}}`);
+  if (search.returnsOnly) filters.push("returnsAccepted:true");
 
   const parts = [`q=${encodeURIComponent(search.query)}`, `filter=${encodeURIComponent(filters.join(","))}`];
   if (search.categoryId !== null) parts.push(`category_ids=${search.categoryId}`);
+  if (withDetails && search.details !== null && search.categoryId !== null) {
+    const wanted = Object.entries(search.details).map(([name, values]) => `${name}:{${values.join("|")}}`);
+    parts.push(`aspect_filter=${encodeURIComponent(`categoryId:${search.categoryId},${wanted.join(",")}`)}`);
+  }
+  if (search.autoCorrect) parts.push("auto_correct=KEYWORD");
   parts.push("fieldgroups=MATCHING_ITEMS,EXTENDED", "sort=newlyListed", `limit=${pageSize}`, `offset=${offset}`);
+  return `https://${host}/buy/browse/v1/item_summary/search?${parts.join("&")}`;
+}
+
+export function fullUrl(host: string, ref: string): string {
+  return `https://${host}/buy/browse/v1/item/${encodeURIComponent(ref)}`;
+}
+
+export function detailNamesUrl(host: string, query: string, categoryId: string | null): string {
+  const parts = [`q=${encodeURIComponent(query)}`];
+  if (categoryId !== null) parts.push(`category_ids=${categoryId}`);
+  parts.push("fieldgroups=ASPECT_REFINEMENTS,CATEGORY_REFINEMENTS", "limit=1");
   return `https://${host}/buy/browse/v1/item_summary/search?${parts.join("&")}`;
 }
 
@@ -115,7 +134,8 @@ export function toListing(raw: unknown, siteHost: string): Listing | null {
   const seller = isObject(raw.seller) ? raw.seller : {};
   const percent = typeof seller.feedbackPercentage === "string" && /^[0-9]{1,3}(\.[0-9]{1,2})?$/.test(seller.feedbackPercentage) ? Number(seller.feedbackPercentage) : null;
   const location = isObject(raw.itemLocation) ? raw.itemLocation : {};
-  const postcode = textOrNull(location.postalCode, 10);
+  const district = typeof location.postalCode === "string" ? location.postalCode.trim().split(/[ *]/)[0].toUpperCase() : "";
+  const ref = typeof raw.itemId === "string" && /^v1\|[0-9]{1,20}\|[0-9]{1,20}$/.test(raw.itemId) && raw.itemId.split("|")[1] === itemNumber ? raw.itemId : null;
 
   return {
     id: itemNumber,
@@ -132,16 +152,160 @@ export function toListing(raw: unknown, siteHost: string): Listing | null {
     sellerPercent: percent !== null && percent <= 100 ? percent : null,
     sellerFeedback: countOf(seller.feedbackScore),
     url: `https://${siteHost}/itm/${itemNumber}`,
-    ref: typeof raw.itemId === "string" && /^v1\|[0-9]{1,20}\|[0-9]{1,20}$/.test(raw.itemId) ? raw.itemId : null,
+    ref,
     sellerType: seller.sellerAccountType === "BUSINESS" ? "business" : seller.sellerAccountType === "INDIVIDUAL" ? "private" : null,
     topRated: typeof raw.topRatedBuyingExperience === "boolean" ? raw.topRatedBuyingExperience : null,
     postageType: postageType(raw.shippingOptions),
     city: textOrNull(location.city, 40),
-    postcode: postcode !== null && /^[A-Za-z0-9 *]{2,10}$/.test(postcode) ? postcode : null,
+    postcode: /^[A-Z]{1,2}[0-9][A-Z0-9]?$/.test(district) ? district : null,
     summary: textOrNull(raw.shortDescription, 400),
     variations: (typeof raw.itemGroupType === "string" && raw.itemGroupType !== "") || isObject(raw.primaryItemGroup),
     detailsMatch: null,
   };
+}
+
+const entities: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", pound: "\u00A3" };
+
+const blocks = ["script", "style", "noscript", "template", "title"].map((name) => ({ open: new RegExp(`<${name}(?![a-z0-9-])`, "iy"), close: new RegExp(`</${name}(?![a-z0-9-])`, "ig") }));
+
+function tagEnd(html: string, open: number, missing: Set<string>): number {
+  for (let at = open + 1; at < html.length; at++) {
+    const character = html[at];
+    if (character === ">") return at;
+    if ((character === "\"" || character === "'") && !missing.has(character)) {
+      const closing = html.indexOf(character, at + 1);
+      if (closing === -1) missing.add(character);
+      else at = closing;
+    }
+  }
+  return -1;
+}
+
+export function plainText(raw: unknown, maxLength: number): string | null {
+  if (typeof raw !== "string") return null;
+  const html = raw.slice(0, 400_000);
+  const missing = new Set<string>();
+  let text = "";
+  let at = 0;
+  while (at < html.length) {
+    const open = html.indexOf("<", at);
+    if (open === -1) {
+      text += html.slice(at);
+      break;
+    }
+    text += html.slice(at, open);
+    if (!/[A-Za-z/!?]/.test(html[open + 1] ?? "")) {
+      text += "<";
+      at = open + 1;
+      continue;
+    }
+    text += " ";
+    let close: number;
+    if (html.startsWith("<!--", open)) {
+      const end = html.indexOf("-->", open + 4);
+      close = end === -1 ? -1 : end + 2;
+    } else {
+      const block = blocks.find((entry) => {
+        entry.open.lastIndex = open;
+        return entry.open.test(html);
+      });
+      let from = open;
+      if (block !== undefined) {
+        block.close.lastIndex = open;
+        const end = block.close.exec(html);
+        from = end === null ? -1 : end.index;
+      }
+      close = from === -1 ? -1 : tagEnd(html, from, missing);
+    }
+    if (close === -1) break;
+    at = close + 1;
+  }
+  const decoded = text.replace(/&(#[0-9]{1,7}|#x[0-9a-f]{1,6}|[a-z]{2,6});/gi, (whole, name: string) => {
+    if (!name.startsWith("#")) return entities[name.toLowerCase()] ?? whole;
+    const code = /^#x/i.test(name) ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
+    return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : " ";
+  });
+  return textOrNull(decoded.replace(/\s+/g, " ").trim(), maxLength);
+}
+
+function days(raw: unknown): number | null {
+  if (!isObject(raw)) return null;
+  const value = countOf(raw.value);
+  if (value === null || typeof raw.unit !== "string") return null;
+  if (raw.unit.includes("DAY")) return value;
+  return raw.unit === "MONTH" ? value * 30 : null;
+}
+
+export function toFull(raw: unknown, siteHost: string): FullListing | null {
+  const listing = toListing(raw, siteHost);
+  if (listing === null || !isObject(raw)) return null;
+  const list = (value: unknown, most: number): unknown[] => (Array.isArray(value) ? value.slice(0, most) : []);
+
+  const specifics: FullListing["specifics"] = [];
+  for (const aspect of list(raw.localizedAspects, 60)) {
+    const name = isObject(aspect) ? cleanText(aspect.name, 60) : "";
+    const value = isObject(aspect) ? cleanText(aspect.value, 200) : "";
+    if (name !== "" && value !== "") specifics.push({ name, value });
+  }
+
+  const terms = isObject(raw.returnTerms) ? raw.returnTerms : null;
+  const payer = terms?.returnShippingCostPayer;
+  const availabilities = list(raw.estimatedAvailabilities, 5).filter(isObject);
+  const ways = availabilities.flatMap((availability) => list(availability.deliveryOptions, 10));
+  const pickup = ways.includes("SELLER_ARRANGED_LOCAL_PICKUP");
+  const posted = ways.includes("SHIP_TO_HOME");
+  const status = availabilities[0]?.estimatedAvailabilityStatus;
+
+  return {
+    listing,
+    subtitle: textOrNull(raw.subtitle, 100),
+    description: plainText(raw.description, 3000),
+    conditionNote: textOrNull(raw.conditionDescription, 500),
+    categoryPath: textOrNull(raw.categoryPath, 200),
+    brand: textOrNull(raw.brand, 60),
+    model: textOrNull(raw.mpn, 60),
+    specifics,
+    returns: terms === null ? null : { accepted: terms.returnsAccepted === true, days: days(terms.returnPeriod), paidBy: payer === "BUYER" ? "buyer" : payer === "SELLER" ? "seller" : null },
+    postageOptions: list(raw.shippingOptions, 5)
+      .filter(isObject)
+      .map((option) => ({
+        cost: money(option.shippingCost),
+        service: textOrNull(option.shippingServiceCode, 60),
+        earliest: isoDate(option.minEstimatedDeliveryDate),
+        latest: isoDate(option.maxEstimatedDeliveryDate),
+      })),
+    collection: pickup ? (posted ? "offered" : "only") : posted ? "none" : null,
+    inStock: status === "IN_STOCK" || status === "LIMITED_STOCK" ? true : status === "OUT_OF_STOCK" ? false : null,
+    available: countOf(availabilities[0]?.estimatedAvailableQuantity),
+    sold: countOf(availabilities[0]?.estimatedSoldQuantity),
+    minimumBid: money(raw.minimumPriceToBid),
+    reserveMet: typeof raw.reservePriceMet === "boolean" ? raw.reservePriceMet : null,
+    bidders: countOf(raw.uniqueBidderCount),
+    lotSize: countOf(raw.lotSize),
+  };
+}
+
+export function toDetailNames(raw: unknown): DetailNames | null {
+  if (!isObject(raw)) return null;
+  const refinement = isObject(raw.refinement) ? raw.refinement : {};
+  const list = (value: unknown, most: number): Record<string, unknown>[] => (Array.isArray(value) ? value.slice(0, most).filter(isObject) : []);
+  const categories: DetailNames["categories"] = [];
+  for (const category of list(refinement.categoryDistributions, 20)) {
+    const id = digits(category.categoryId);
+    const name = cleanText(category.categoryName, 60);
+    if (id !== null && name !== "") categories.push({ id, name, count: countOf(category.matchCount) ?? 0 });
+  }
+  const details: DetailNames["details"] = [];
+  for (const aspect of list(refinement.aspectDistributions, 40)) {
+    const name = cleanText(aspect.localizedAspectName, 60);
+    const values = list(aspect.aspectValueDistributions, 200)
+      .map((entry) => ({ value: cleanText(entry.localizedAspectValue, 60), count: countOf(entry.matchCount) ?? 0 }))
+      .filter((entry) => entry.value !== "")
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 25);
+    if (name !== "" && values.length > 0) details.push({ name, values });
+  }
+  return { categoryId: digits(refinement.dominantCategoryId), categories, details };
 }
 
 export function isApiAddress(url: string, host: string): boolean {
@@ -243,7 +407,7 @@ export function createEbaySource(options: EbayOptions): Source {
     return minting;
   }
 
-  async function getPage(url: string, countCall: () => void): Promise<unknown> {
+  async function getPage(url: string, countCall: () => void, missing: FailReason = "request"): Promise<unknown> {
     for (let attempt = 1; ; attempt++) {
       const bearer = await currentToken();
       countCall();
@@ -257,47 +421,96 @@ export function createEbaySource(options: EbayOptions): Source {
         throw failure("keys");
       }
       if (response.status === 403) throw failure("access");
+      if (response.status === 404 && missing !== "request") throw failure(missing);
       if (response.status === 429) throw busy(response);
       if (response.status >= 500) throw failure("down");
       throw failure("request", await errorNumber(response));
     }
   }
 
+  async function readPages(search: Search, pages: number, withDetails: boolean, countCall: () => void) {
+    const listings: Listing[] = [];
+    const ids = new Set<string>();
+    let total = 0;
+    let fetched = 0;
+    let skipped = 0;
+    let complete = false;
+    for (let page = 0; page < pages && !complete; page++) {
+      const body = await getPage(searchUrl(apiHost, search, page * pageSize, withDetails), countCall);
+      if (!isObject(body)) throw failure("reply");
+      const summaries = body.itemSummaries ?? [];
+      const count = countOf(body.total);
+      if (!Array.isArray(summaries) || summaries.length > pageSize || count === null) throw failure("reply");
+      if (withDetails && Array.isArray(body.warnings) && body.warnings.length > 0) {
+        const warning = isObject(body.warnings[0]) ? countOf(body.warnings[0].errorId) : null;
+        throw failure("request", warning === null ? " (eBay warned about the item details)" : ` (eBay warning ${warning} about the item details)`);
+      }
+      total = count;
+      fetched += summaries.length;
+      for (const raw of summaries) {
+        const listing = toListing(raw, siteHost);
+        if (listing === null) skipped += 1;
+        else if (!ids.has(listing.id)) {
+          ids.add(listing.id);
+          listings.push(listing);
+        }
+      }
+      complete = summaries.length < pageSize || fetched >= total;
+    }
+    return { listings, total, complete, skipped };
+  }
+
+  async function counted<Reply>(work: (countCall: () => void) => Promise<Reply>): Promise<{ reply: Reply; calls: number }> {
+    let calls = 0;
+    try {
+      const reply = await work(() => {
+        calls += 1;
+      });
+      return { reply, calls };
+    } catch (error) {
+      if (error instanceof SourceError) error.calls = calls;
+      throw error;
+    }
+  }
+
   return {
     async search(search: Search, maxPages: number): Promise<SearchResult> {
-      let calls = 0;
-      try {
-        const listings: Listing[] = [];
-        const ids = new Set<string>();
-        let total = 0;
-        let fetched = 0;
-        let skipped = 0;
-        let complete = false;
-        for (let page = 0; page < maxPages && !complete; page++) {
-          const body = await getPage(searchUrl(apiHost, search, page * pageSize), () => {
-            calls += 1;
-          });
-          if (!isObject(body)) throw failure("reply");
-          const summaries = body.itemSummaries ?? [];
-          const count = countOf(body.total);
-          if (!Array.isArray(summaries) || summaries.length > pageSize || count === null) throw failure("reply");
-          total = count;
-          fetched += summaries.length;
-          for (const raw of summaries) {
-            const listing = toListing(raw, siteHost);
-            if (listing === null) skipped += 1;
-            else if (!ids.has(listing.id)) {
-              ids.add(listing.id);
-              listings.push(listing);
-            }
-          }
-          complete = summaries.length < pageSize || fetched >= total;
+      const mode = search.details === null ? null : search.detailsMode;
+      const both = mode === "prefer" && maxPages >= 2;
+      const { reply, calls } = await counted(async (countCall) => {
+        const main = await readPages(search, both ? maxPages - 1 : maxPages, mode === "only", countCall);
+        if (mode === "only") for (const listing of main.listings) listing.detailsMatch = true;
+        if (!both) return main;
+        const tagged = await readPages(search, 1, true, countCall);
+        const byId = new Map(main.listings.map((listing) => [listing.id, listing]));
+        if (tagged.complete) for (const listing of main.listings) listing.detailsMatch = false;
+        for (const listing of tagged.listings) {
+          const same = byId.get(listing.id);
+          if (same === undefined) main.listings.push({ ...listing, detailsMatch: true });
+          else same.detailsMatch = true;
         }
-        return { listings, total, complete, calls, skipped };
-      } catch (error) {
-        if (error instanceof SourceError) error.calls = calls;
-        throw error;
-      }
+        return { ...main, skipped: main.skipped + tagged.skipped };
+      });
+      return { ...reply, calls };
+    },
+
+    async full(ref: string) {
+      if (!/^v1\|[0-9]{1,20}\|[0-9]{1,20}$/.test(ref)) throw failure("request", " (that isn't one of eBay's item references)");
+      const { reply, calls } = await counted(async (countCall) => {
+        const full = toFull(await getPage(fullUrl(apiHost, ref), countCall, "gone"), siteHost);
+        if (full === null) throw failure("reply");
+        return full;
+      });
+      return { full: reply, calls };
+    },
+
+    async detailNames(query: string, categoryId: string | null) {
+      const { reply, calls } = await counted(async (countCall) => {
+        const names = toDetailNames(await getPage(detailNamesUrl(apiHost, query, categoryId), countCall));
+        if (names === null) throw failure("reply");
+        return names;
+      });
+      return { names: reply, calls };
     },
   };
 }
