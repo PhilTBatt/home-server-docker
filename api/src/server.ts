@@ -6,8 +6,10 @@ import { createDailySummary } from "./modules/notify/daily.js";
 import { readConfig } from "./config.js";
 import { countWaiting } from "./modules/memory/routes.js";
 import { readBackupState } from "./modules/system/backup.js";
+import { dealWatcherFor } from "./modules/deals/setup.js";
 
 const config = readConfig(process.env);
+const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
 
 const app = await buildApp({ logger: true, config });
 app.log.info({ features: config.features }, "feature switches");
@@ -35,6 +37,17 @@ function runCheck() {
     sendDailySummary(new Date()).catch((error: unknown) => {
       app.log.error(error, "daily summary failed");
     });
+  }
+
+  if (dealWatcher !== undefined) {
+    dealWatcher
+      .run(new Date())
+      .then((summary) => {
+        if (summary.unsent) app.log.warn("some deal alerts couldn't be sent and will be tried again");
+      })
+      .catch((error: unknown) => {
+        app.log.error(error, "deal check failed");
+      });
   }
 }
 

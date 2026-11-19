@@ -25,6 +25,8 @@
       "Read(./beszel/**)",
       "Read(./caddy/config/**)",
       "Read(./caddy/data/**)",
+      "Read(./deals/state.json)",
+      "Read(./deals/state.json.bad)",
       "Read(./homepage/config/**)",
       "Read(./jellyfin/**)",
       "Read(./kuma/**)",

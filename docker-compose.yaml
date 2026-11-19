@@ -194,6 +194,11 @@ services:
         target: /memory/inbox
         bind:
           create_host_path: false
+      - type: bind
+        source: ./deals
+        target: /deals
+        bind:
+          create_host_path: false
     networks:
       - default
       - jarvis

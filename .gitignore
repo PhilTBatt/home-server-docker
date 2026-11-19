@@ -22,3 +22,5 @@ jarvis/data/
 CLAUDE.local.md
 PLAN.md
 *.patch
+deals/*
+!deals/README.md
