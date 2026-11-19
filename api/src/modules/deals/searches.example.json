@@ -1,5 +1,6 @@
 {
   "limits": { "callsPerDay": 1000, "alertsPerDay": 60, "alertsPerCheck": 5 },
+  "quiet": { "from": "23:00", "to": "07:00", "allow": "great" },
   "searches": [
     {
       "id": "optiplex-7070-sff",
@@ -10,9 +11,11 @@
       "maxPrice": 150,
       "conditions": ["used", "seller refurbished", "certified refurbished", "excellent refurbished", "very good refurbished", "good refurbished"],
       "mustInclude": ["7070"],
-      "exclude": ["faulty", "spares", "repair*", "untested", "no ram", "no hdd", "no ssd", "barebone*", "motherboard", "caddy", "bezel", "psu"],
+      "avoid": ["faulty", "incomplete", "parts only"],
       "sellerMinPercent": 97,
       "sellerMinFeedback": 20,
+      "guidePrice": 120,
+      "guideDate": "2026-11-19",
       "everyMinutes": 30
     },
     {
@@ -24,9 +27,11 @@
       "maxPrice": 150,
       "conditions": ["used", "seller refurbished", "certified refurbished", "excellent refurbished", "very good refurbished", "good refurbished"],
       "mustInclude": ["800", "g4"],
-      "exclude": ["faulty", "spares", "repair*", "untested", "no ram", "no hdd", "no ssd", "barebone*", "motherboard", "caddy", "bezel", "psu"],
+      "avoid": ["faulty", "incomplete", "parts only"],
       "sellerMinPercent": 97,
       "sellerMinFeedback": 20,
+      "guidePrice": 120,
+      "guideDate": "2026-11-19",
       "everyMinutes": 30
     },
     {
@@ -37,8 +42,11 @@
       "minPrice": 15,
       "maxWithPostage": 60,
       "conditions": ["new", "opened", "used"],
-      "exclude": ["sodimm", "so dimm", "laptop", "ecc", "rdimm", "server", "faulty", "spares"],
+      "avoid": ["laptop ram", "server ram", "faulty"],
       "sellerMinPercent": 97,
+      "guidePrice": 50,
+      "guideDate": "2026-11-19",
+      "unit": "GB",
       "everyMinutes": 60,
       "dropPercent": 10
     }

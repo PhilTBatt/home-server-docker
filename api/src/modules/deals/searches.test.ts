@@ -3,7 +3,8 @@ import { after, test } from "node:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { conditionIds, defaultLimits, fingerprint, loadSearches, readSearches, type Search } from "./searches.js";
+import { createHash } from "node:crypto";
+import { avoidLists, conditionIds, defaultLimits, fingerprint, loadSearches, readSearches, type Search } from "./searches.js";
 
 const sources = ["ebay"];
 const made: string[] = [];
@@ -63,6 +64,19 @@ test("the smallest search gets every default written out", () => {
     sellerMinFeedback: null,
     everyMinutes: 30,
     dropPercent: null,
+    details: null,
+    detailsMode: "prefer",
+    autoCorrect: false,
+    sellerType: null,
+    postageShown: false,
+    returnsOnly: false,
+    avoid: [],
+    guidePrice: null,
+    guideDate: null,
+    greatPercent: 20,
+    unit: null,
+    alertsPerDay: null,
+    endingSoonMinutes: null,
   });
 });
 
@@ -84,6 +98,19 @@ test("a search with every setting is read as given, with prices in pence", () =>
     sellerMinFeedback: 50,
     everyMinutes: 15,
     dropPercent: 10,
+    details: { "Form Factor": ["SFF", "Small Form Factor", "SFF"], "RAM Size": ["16 GB"] },
+    detailsMode: "only",
+    autoCorrect: true,
+    sellerType: "business",
+    postageShown: true,
+    returnsOnly: true,
+    avoid: ["faulty", "lots", "faulty"],
+    guidePrice: 110,
+    guideDate: "2026-11-19",
+    greatPercent: 25,
+    unit: "GB",
+    alertsPerDay: 10,
+    endingSoonMinutes: 30,
   });
   assert.deepEqual(search, {
     id: "optiplex",
@@ -105,6 +132,19 @@ test("a search with every setting is read as given, with prices in pence", () =>
     sellerMinFeedback: 50,
     everyMinutes: 15,
     dropPercent: 10,
+    details: { "Form Factor": ["SFF", "Small Form Factor"], "RAM Size": ["16 GB"] },
+    detailsMode: "only",
+    autoCorrect: true,
+    sellerType: "business",
+    postageShown: true,
+    returnsOnly: true,
+    avoid: ["faulty", "lots"],
+    guidePrice: 11000,
+    guideDate: "2026-11-19",
+    greatPercent: 25,
+    unit: "GB",
+    alertsPerDay: 10,
+    endingSoonMinutes: 30,
   });
 });
 
@@ -141,7 +181,7 @@ test("limits outside their ranges are refused by name", () => {
 });
 
 test("an empty list of searches is fine", () => {
-  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits });
+  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null });
 });
 
 test("searches keep the order they were written in", () => {
@@ -536,4 +576,160 @@ test("the fingerprint changes when anything that decides a match changes", () =>
 test("a price limit and a with-postage limit of the same amount aren't confused", () => {
   assert.notEqual(fingerprint(one({ maxPrice: 150 })), fingerprint(one({ maxWithPostage: 150 })));
   assert.notEqual(fingerprint(one({ exclude: ["x"] })), fingerprint(one({ mustInclude: ["x"] })));
+});
+
+test("item details need a category, and every name and value has to be safe to send to eBay", () => {
+  assert.deepEqual(one({ categoryId: 179, details: { "Form Factor": ["SFF"] } }).details, { "Form Factor": ["SFF"] });
+  assert.equal(one({ categoryId: 179, details: { "Form Factor": ["SFF"] } }).detailsMode, "prefer");
+  assert.match(problemWith({ details: { "Form Factor": ["SFF"] } }), /details only works with a categoryId/);
+  const refused: unknown[] = [
+    {},
+    [],
+    "Form Factor",
+    { "Form Factor": [] },
+    { "Form Factor": "SFF" },
+    { "Form Factor": [7] },
+    { "Form Factor": [" SFF"] },
+    { " Form Factor": ["SFF"] },
+    { "Form,Factor": ["SFF"] },
+    { "Form:Factor": ["SFF"] },
+    { "categoryId": ["1"] },
+    { "CategoryID": ["1"] },
+    { "Form Factor": ["SFF|Tower"] },
+    { "Form Factor": ["SFF}"] },
+    { "Form Factor": ["{SFF"] },
+    { "Form Factor": ["SFF\\"] },
+    { "Form Factor": ["SF\nF"] },
+    { "Form Factor": [""] },
+    { "Form Factor": ["x".repeat(61)] },
+    { ["x".repeat(61)]: ["SFF"] },
+    { "Form Factor": Array.from({ length: 21 }, (_, i) => `v${i}`) },
+    Object.fromEntries(Array.from({ length: 11 }, (_, i) => [`Name ${i}`, ["x"]])),
+  ];
+  for (const details of refused) assert.match(problemWith({ categoryId: 179, details }), /details must be 1 to 10/, JSON.stringify(details));
+  assert.match(problemIn('{"searches":[{"id":"optiplex","name":"OptiPlex","switch":"on","query":"x","categoryId":179,"details":{"__proto__":["SFF"]}}]}'), /details must be 1 to 10/);
+  assert.equal(Object.getPrototypeOf(one({ categoryId: 179, details: { "Form Factor": ["SFF"] } }).details), Object.prototype);
+  assert.deepEqual(one({ categoryId: 179, details: { "Processor": ["Intel Core i5-9500, 9th Gen: 3.0 GHz"] } }).details, { "Processor": ["Intel Core i5-9500, 9th Gen: 3.0 GHz"] });
+});
+
+test("detailsMode is prefer or only, and only alongside details", () => {
+  assert.equal(one({ categoryId: 179, details: { "Type": ["Desktop"] }, detailsMode: "only" }).detailsMode, "only");
+  assert.match(problemWith({ categoryId: 179, details: { "Type": ["Desktop"] }, detailsMode: "strict" }), /detailsMode must be prefer or only/);
+  assert.match(problemWith({ detailsMode: "only" }), /detailsMode only works with details/);
+});
+
+test("the yes-or-no settings take true or false and nothing else", () => {
+  for (const key of ["autoCorrect", "postageShown", "returnsOnly"] as const) {
+    assert.equal(one({ [key]: true })[key], true);
+    assert.equal(one({ [key]: false })[key], false);
+    for (const odd of ["true", 1, null, "yes"]) assert.match(problemWith({ [key]: odd }), new RegExp(`${key} must be true or false`));
+  }
+});
+
+test("sellerType, unit and avoid only take the names the watcher knows", () => {
+  assert.equal(one({ sellerType: "private" }).sellerType, "private");
+  for (const odd of ["Business", "trader", "", true, null]) assert.match(problemWith({ sellerType: odd }), /sellerType must be business or private/);
+  assert.equal(one({ unit: "TB" }).unit, "TB");
+  for (const odd of ["gb", "MB", "", 1, null]) assert.match(problemWith({ unit: odd }), /unit must be one of: GB, TB/);
+  assert.deepEqual(one({ avoid: ["laptop ram", "server ram"] }).avoid, ["laptop ram", "server ram"]);
+  for (const odd of [[], ["scams"], "faulty", ["faulty", 7], null]) assert.match(problemWith({ avoid: odd }), /avoid must be a list of one or more of: faulty, incomplete, parts only, lots, laptop ram, server ram/);
+});
+
+test("every built-in avoid phrase is one the matcher can use", () => {
+  for (const [name, phrases] of Object.entries(avoidLists)) {
+    assert.ok(phrases.length > 0, name);
+    assert.deepEqual(one({ exclude: phrases }).exclude, phrases, name);
+    assert.equal(new Set(phrases).size, phrases.length, name);
+  }
+});
+
+test("a guide price is in pounds, and its date and great-deal percentage only work with it", () => {
+  assert.equal(one({ guidePrice: 109.99 }).guidePrice, 10999);
+  for (const odd of [0, -5, "110", 1.999, null]) assert.match(problemWith({ guidePrice: odd }), /guidePrice must be an amount in pounds above 0/);
+  assert.equal(one({ guidePrice: 110, guideDate: "2026-02-28" }).guideDate, "2026-02-28");
+  for (const odd of ["2026-02-30", "2026-13-01", "19/11/2026", "2026-11-19T00:00:00Z", 20261119, null]) assert.match(problemWith({ guidePrice: 110, guideDate: odd }), /guideDate must be a real date/);
+  assert.match(problemWith({ guideDate: "2026-11-19" }), /guideDate only works with a guidePrice/);
+  assert.equal(one({ guidePrice: 110, greatPercent: 35 }).greatPercent, 35);
+  for (const odd of [0, 91, 12.5, "20", null]) assert.match(problemWith({ guidePrice: 110, greatPercent: odd }), /greatPercent must be a whole number from 1 to 90/);
+  assert.match(problemWith({ greatPercent: 30 }), /greatPercent only works with a guidePrice/);
+});
+
+test("a search's own daily alert limit and its ending-soon reminder have sensible ranges", () => {
+  assert.equal(one({ alertsPerDay: 1 }).alertsPerDay, 1);
+  for (const odd of [0, 251, 2.5, "10", null]) assert.match(problemWith({ alertsPerDay: odd }), /alertsPerDay must be a whole number from 1 to 250/);
+  assert.equal(one({ buying: ["auction"], endingSoonMinutes: 5, everyMinutes: 5 }).endingSoonMinutes, 5);
+  assert.equal(one({ buying: ["auction"], endingSoonMinutes: 30 }).endingSoonMinutes, 30);
+  assert.match(problemWith({ buying: ["auction"], endingSoonMinutes: 29 }), /endingSoonMinutes must be at least everyMinutes/);
+  assert.match(problemWith({ buying: ["auction"], endingSoonMinutes: 60, everyMinutes: 61 }), /endingSoonMinutes must be at least everyMinutes/);
+  for (const odd of [4, 721, 7.5, "30", null]) assert.match(problemWith({ buying: ["auction"], endingSoonMinutes: odd }), /endingSoonMinutes must be a whole number from 5 to 720/);
+  assert.match(problemWith({ endingSoonMinutes: 30 }), /endingSoonMinutes only works when buying includes auction/);
+});
+
+test("quiet hours are two clock times, may cross midnight, and let nothing through unless asked", () => {
+  const quiet = (value: unknown) => readSearches(JSON.stringify({ searches: [], quiet: value }), sources).quiet;
+  assert.deepEqual(quiet({ from: "23:00", to: "07:00" }), { from: 1380, to: 420, allow: "none" });
+  assert.deepEqual(quiet({ from: "00:00", to: "23:59", allow: "great" }), { from: 0, to: 1439, allow: "great" });
+  assert.equal(readSearches(listOf(), sources).quiet, null);
+  const problem = (value: unknown) => problemIn(JSON.stringify({ searches: [], quiet: value }));
+  for (const odd of [{ from: "23:00" }, { from: "24:00", to: "07:00" }, { from: "7:00", to: "23:00" }, { from: "23:60", to: "07:00" }, { from: 23, to: 7 }, { from: "23:00:00", to: "07:00" }]) {
+    assert.match(problem(odd), /quiet: from and to must be times like 23:00 and 07:00/, JSON.stringify(odd));
+  }
+  assert.match(problem({ from: "07:00", to: "07:00" }), /quiet: from and to can't be the same time/);
+  assert.match(problem({ from: "23:00", to: "07:00", allow: "all" }), /quiet: allow must be none or great/);
+  assert.match(problem({ from: "23:00", to: "07:00", days: ["sat"] }), /quiet: "days" isn't a setting/);
+  assert.match(problem("23:00-07:00"), /quiet must be a group of settings/);
+  assert.match(problem(null), /quiet must be a group of settings/);
+});
+
+test("a search that uses none of the newer settings keeps the fingerprint it always had", () => {
+  const old = (search: Search) =>
+    createHash("sha256")
+      .update(
+        JSON.stringify([
+          search.source,
+          search.query.toLowerCase(),
+          search.minPrice,
+          search.maxPrice,
+          search.maxWithPostage,
+          [...search.conditions].sort(),
+          [...search.buying].sort(),
+          search.endingWithinHours,
+          search.ukOnly,
+          search.exclude.map((word) => word.toLowerCase()).sort(),
+          search.mustInclude.map((word) => word.toLowerCase()).sort(),
+          search.categoryId,
+          search.sellerMinPercent,
+          search.sellerMinFeedback,
+        ]),
+      )
+      .digest("hex")
+      .slice(0, 16);
+  for (const search of [one(), one({ maxPrice: 150, exclude: ["faulty"], categoryId: 179, buying: ["auction", "buy it now"], sellerMinPercent: 98 })]) {
+    assert.equal(fingerprint(search), old(search));
+  }
+  const tuned = { guidePrice: 110, guideDate: "2026-11-19", greatPercent: 30, unit: "GB", alertsPerDay: 5, buying: ["auction"], endingSoonMinutes: 30 };
+  assert.equal(fingerprint(one(tuned)), old(one(tuned)));
+});
+
+test("the fingerprint changes when a newer setting changes which listings match", () => {
+  const base = { categoryId: 179 };
+  const prints = [
+    fingerprint(one(base)),
+    fingerprint(one({ ...base, details: { "Form Factor": ["SFF"] } })),
+    fingerprint(one({ ...base, details: { "Form Factor": ["SFF"] }, detailsMode: "only" })),
+    fingerprint(one({ ...base, details: { "Form Factor": ["Tower"] } })),
+    fingerprint(one({ ...base, autoCorrect: true })),
+    fingerprint(one({ ...base, sellerType: "business" })),
+    fingerprint(one({ ...base, sellerType: "private" })),
+    fingerprint(one({ ...base, postageShown: true })),
+    fingerprint(one({ ...base, returnsOnly: true })),
+    fingerprint(one({ ...base, avoid: ["faulty"] })),
+    fingerprint(one({ ...base, avoid: ["faulty", "lots"] })),
+  ];
+  assert.equal(new Set(prints).size, prints.length);
+  assert.equal(fingerprint(one({ ...base, avoid: ["lots", "faulty"] })), fingerprint(one({ ...base, avoid: ["faulty", "lots"] })));
+  assert.equal(
+    fingerprint(one({ ...base, details: { "RAM Size": ["16 GB"], "Form Factor": ["SFF"] } })),
+    fingerprint(one({ ...base, details: { "Form Factor": ["SFF"], "RAM Size": ["16 GB"] } })),
+  );
 });

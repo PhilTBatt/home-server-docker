@@ -15,6 +15,17 @@ export const conditionIds: Record<string, string> = {
 
 export const buyingOptions = ["buy it now", "auction"] as const;
 
+export const avoidLists: Record<string, string[]> = {
+  "faulty": ["faulty", "spares", "repair", "repairs", "for parts", "not working", "untested", "broken", "no power", "bios lock*", "bios password", "password locked"],
+  "incomplete": ["no ram", "no memory", "no hdd", "no ssd", "no hard drive", "no storage", "no drive*", "no cpu", "no processor", "no psu", "barebone*", "bare bones"],
+  "parts only": ["motherboard", "mainboard", "caddy", "bezel", "heatsink", "fan only", "psu only", "power supply only", "front panel", "riser", "case only", "chassis only", "box only", "empty box"],
+  "lots": ["job lot", "joblot", "bulk", "wholesale", "pallet"],
+  "laptop ram": ["sodimm", "so dimm", "laptop ram", "laptop memory", "notebook ram", "notebook memory", "for laptop*", "for notebook*"],
+  "server ram": ["rdimm", "lrdimm", "registered", "server ram", "server memory"],
+};
+
+export const units = ["GB", "TB"] as const;
+
 export type Buying = (typeof buyingOptions)[number];
 
 export type Search = {
@@ -37,6 +48,25 @@ export type Search = {
   sellerMinFeedback: number | null;
   everyMinutes: number;
   dropPercent: number | null;
+  details: Record<string, string[]> | null;
+  detailsMode: "prefer" | "only";
+  autoCorrect: boolean;
+  sellerType: "business" | "private" | null;
+  postageShown: boolean;
+  returnsOnly: boolean;
+  avoid: string[];
+  guidePrice: number | null;
+  guideDate: string | null;
+  greatPercent: number;
+  unit: (typeof units)[number] | null;
+  alertsPerDay: number | null;
+  endingSoonMinutes: number | null;
+};
+
+export type Quiet = {
+  from: number;
+  to: number;
+  allow: "none" | "great";
 };
 
 export type Limits = {
@@ -48,6 +78,7 @@ export type Limits = {
 export type SearchList = {
   searches: Search[];
   limits: Limits;
+  quiet: Quiet | null;
 };
 
 export const defaultLimits: Limits = { callsPerDay: 1000, alertsPerDay: 60, alertsPerCheck: 5 };
@@ -80,7 +111,48 @@ const searchSettings = [
   "sellerMinFeedback",
   "everyMinutes",
   "dropPercent",
+  "details",
+  "detailsMode",
+  "autoCorrect",
+  "sellerType",
+  "postageShown",
+  "returnsOnly",
+  "avoid",
+  "guidePrice",
+  "guideDate",
+  "greatPercent",
+  "unit",
+  "alertsPerDay",
+  "endingSoonMinutes",
 ];
+
+const detailPattern = /^[^\u0000-\u001F\u007F-\u009F\u2028\u2029{}|\\]{1,60}$/;
+
+function readDetails(raw: unknown): Record<string, string[]> | null {
+  if (!isObject(raw)) return null;
+  const names = Object.keys(raw);
+  if (names.length === 0 || names.length > 10) return null;
+  const details: Record<string, string[]> = {};
+  for (const name of names) {
+    const values = raw[name];
+    if (name !== name.trim() || !detailPattern.test(name) || /[,:]/.test(name) || name.toLowerCase() === "categoryid" || name === "__proto__") return null;
+    if (!Array.isArray(values) || values.length === 0 || values.length > 20) return null;
+    if (!values.every((value) => typeof value === "string" && value === value.trim() && detailPattern.test(value))) return null;
+    details[name] = [...new Set(values as string[])];
+  }
+  return details;
+}
+
+function clockTime(value: unknown): number | null {
+  const match = typeof value === "string" ? /^([01][0-9]|2[0-3]):([0-5][0-9])$/.exec(value) : null;
+  return match === null ? null : Number(match[1]) * 60 + Number(match[2]);
+}
+
+function realDay(value: unknown): string | null {
+  if (typeof value !== "string" || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value)) return null;
+  const time = Date.parse(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value ? value : null;
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -223,6 +295,71 @@ function readSearch(raw: unknown, sources: string[], problems: string[]): Search
     else problems.push("dropPercent must be a number from 1 to 90");
   }
 
+  let details: Record<string, string[]> | null = null;
+  if (has("details")) {
+    details = readDetails(raw.details);
+    if (details === null) problems.push("details must be 1 to 10 of eBay's item detail names, each with a list of 1 to 20 values, without { } | or \\");
+    else if (categoryId === null) problems.push("details only works with a categoryId");
+  }
+  const detailsMode = has("detailsMode") ? raw.detailsMode : "prefer";
+  if (detailsMode !== "prefer" && detailsMode !== "only") problems.push("detailsMode must be prefer or only");
+  else if (has("detailsMode") && !has("details")) problems.push("detailsMode only works with details");
+
+  const flag = (key: "autoCorrect" | "postageShown" | "returnsOnly"): boolean => {
+    if (!has(key)) return false;
+    if (typeof raw[key] !== "boolean") problems.push(`${key} must be true or false`);
+    return raw[key] === true;
+  };
+  const autoCorrect = flag("autoCorrect");
+  const postageShown = flag("postageShown");
+  const returnsOnly = flag("returnsOnly");
+
+  const sellerType = has("sellerType") ? raw.sellerType : null;
+  if (has("sellerType") && sellerType !== "business" && sellerType !== "private") problems.push("sellerType must be business or private");
+
+  let avoid: string[] = [];
+  if (has("avoid")) {
+    const given = raw.avoid;
+    if (Array.isArray(given) && given.length > 0 && given.every((entry) => typeof entry === "string" && Object.hasOwn(avoidLists, entry))) avoid = [...new Set(given as string[])];
+    else problems.push(`avoid must be a list of one or more of: ${Object.keys(avoidLists).join(", ")}`);
+  }
+
+  let guidePrice: number | null = null;
+  if (has("guidePrice")) {
+    guidePrice = pence(raw.guidePrice);
+    if (guidePrice === null) problems.push("guidePrice must be an amount in pounds above 0, like 110 or 109.99");
+  }
+  let guideDate: string | null = null;
+  if (has("guideDate")) {
+    guideDate = realDay(raw.guideDate);
+    if (guideDate === null) problems.push("guideDate must be a real date like 2026-11-19");
+    else if (!has("guidePrice")) problems.push("guideDate only works with a guidePrice");
+  }
+  let greatPercent = 20;
+  if (has("greatPercent")) {
+    const given = wholeNumber(raw.greatPercent, 1, 90);
+    if (given === null) problems.push("greatPercent must be a whole number from 1 to 90");
+    else if (!has("guidePrice")) problems.push("greatPercent only works with a guidePrice");
+    else greatPercent = given;
+  }
+
+  const unit = has("unit") ? raw.unit : null;
+  if (has("unit") && !(units as readonly unknown[]).includes(unit)) problems.push(`unit must be one of: ${units.join(", ")}`);
+
+  let alertsPerDay: number | null = null;
+  if (has("alertsPerDay")) {
+    alertsPerDay = wholeNumber(raw.alertsPerDay, 1, 250);
+    if (alertsPerDay === null) problems.push("alertsPerDay must be a whole number from 1 to 250");
+  }
+
+  let endingSoonMinutes: number | null = null;
+  if (has("endingSoonMinutes")) {
+    endingSoonMinutes = wholeNumber(raw.endingSoonMinutes, 5, 720);
+    if (endingSoonMinutes === null) problems.push("endingSoonMinutes must be a whole number from 5 to 720");
+    else if (!buying.includes("auction")) problems.push("endingSoonMinutes only works when buying includes auction");
+    else if (endingSoonMinutes < everyMinutes) problems.push("endingSoonMinutes must be at least everyMinutes, or most reminders would be missed");
+  }
+
   if (problems.length > before) return null;
   return {
     id,
@@ -244,7 +381,38 @@ function readSearch(raw: unknown, sources: string[], problems: string[]): Search
     sellerMinFeedback,
     everyMinutes,
     dropPercent,
+    details,
+    detailsMode: detailsMode as "prefer" | "only",
+    autoCorrect,
+    sellerType: sellerType as "business" | "private" | null,
+    postageShown,
+    returnsOnly,
+    avoid,
+    guidePrice,
+    guideDate,
+    greatPercent,
+    unit: unit as (typeof units)[number] | null,
+    alertsPerDay,
+    endingSoonMinutes,
   };
+}
+
+function readQuiet(raw: unknown, problems: string[]): Quiet | null {
+  if (raw === undefined) return null;
+  if (!isObject(raw)) {
+    problems.push("quiet must be a group of settings in { }");
+    return null;
+  }
+  const before = problems.length;
+  problems.push(...unknownSettings(raw, ["from", "to", "allow"]).map((problem) => `quiet: ${problem}`));
+  const from = clockTime(raw.from);
+  const to = clockTime(raw.to);
+  if (from === null || to === null) problems.push("quiet: from and to must be times like 23:00 and 07:00");
+  else if (from === to) problems.push("quiet: from and to can't be the same time");
+  const allow = Object.hasOwn(raw, "allow") ? raw.allow : "none";
+  if (allow !== "none" && allow !== "great") problems.push("quiet: allow must be none or great");
+  if (problems.length > before || from === null || to === null) return null;
+  return { from, to, allow: allow as "none" | "great" };
 }
 
 function readLimits(raw: unknown, problems: string[]): Limits {
@@ -282,8 +450,9 @@ export function readSearches(text: string, sources: string[]): SearchList {
   }
   if (!isObject(parsed)) fail(["it must start with { and hold a searches list"]);
 
-  const problems = unknownSettings(parsed, ["searches", "limits"]);
+  const problems = unknownSettings(parsed, ["searches", "limits", "quiet"]);
   const limits = readLimits(parsed.limits, problems);
+  const quiet = readQuiet(parsed.quiet, problems);
   const rawSearches = parsed.searches;
   if (!Array.isArray(rawSearches)) fail([...problems, "searches must be a list in [ ]"]);
   if (rawSearches.length > maxSearches) fail([...problems, `there can be ${maxSearches} searches at most`]);
@@ -302,7 +471,7 @@ export function readSearches(text: string, sources: string[]): SearchList {
   });
 
   if (problems.length > 0) fail(problems);
-  return { searches, limits };
+  return { searches, limits, quiet };
 }
 
 export async function loadSearches(path: string, sources: string[]): Promise<SearchList> {
@@ -313,7 +482,7 @@ export async function loadSearches(path: string, sources: string[]): Promise<Sea
 }
 
 export function fingerprint(search: Search): string {
-  const criteria = [
+  const criteria: unknown[] = [
     search.source,
     search.query.toLowerCase(),
     search.minPrice,
@@ -329,5 +498,14 @@ export function fingerprint(search: Search): string {
     search.sellerMinPercent,
     search.sellerMinFeedback,
   ];
+  const later = [
+    search.details === null ? null : [search.detailsMode, Object.entries(search.details).sort(([a], [b]) => a.localeCompare(b))],
+    search.autoCorrect,
+    search.sellerType,
+    search.postageShown,
+    search.returnsOnly,
+    [...search.avoid].sort(),
+  ];
+  if (JSON.stringify(later) !== "[null,false,null,false,false,[]]") criteria.push(later);
   return createHash("sha256").update(JSON.stringify(criteria)).digest("hex").slice(0, 16);
 }
