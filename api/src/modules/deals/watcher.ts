@@ -38,6 +38,7 @@ export type WatcherStatus = {
 export type SearchStatus = {
   id: string;
   name: string;
+  group: string | null;
   on: boolean;
   source: string;
   query: string;
@@ -89,6 +90,7 @@ export type MatchedListing = {
 export type MatchGroup = {
   id: string;
   name: string;
+  group: string | null;
   source: string;
   checkedAt: string;
   count: number;
@@ -604,6 +606,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         return {
           id: search.id,
           name: search.name,
+          group: search.group,
           on: search.on,
           source: search.source,
           query: search.query,
@@ -633,6 +636,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         groups.push({
           id: search.id,
           name: search.name,
+          group: search.group,
           source: search.source,
           checkedAt: new Date(result.checkedAt).toISOString(),
           count: result.listings.length,

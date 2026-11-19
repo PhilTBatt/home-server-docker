@@ -941,6 +941,7 @@ test("matches lists each search's current listings, cheapest first, with only wh
     {
       id: "optiplex",
       name: "OptiPlex",
+      group: null,
       source: "ebay",
       checkedAt: at(0).toISOString(),
       count: 2,
@@ -971,7 +972,7 @@ test("matches lists each search's current listings, cheapest first, with only wh
         },
       ],
     },
-    { id: "ram", name: "DDR4 RAM", source: "ebay", checkedAt: at(0).toISOString(), count: 0, listings: [] },
+    { id: "ram", name: "DDR4 RAM", group: null, source: "ebay", checkedAt: at(0).toISOString(), count: 0, listings: [] },
   ]);
 });
 
@@ -1023,8 +1024,8 @@ test("searches reports each search's settings and how its last check went", asyn
   world.found.set("optiplex", listings(1, 2));
   await watcher.run(at(0));
   assert.deepEqual(watcher.searches(), [
-    { id: "optiplex", name: "OptiPlex", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: {} },
-    { id: "ram", name: "DDR4 RAM", on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: null },
+    { id: "optiplex", name: "OptiPlex", group: null, on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: {} },
+    { id: "ram", name: "DDR4 RAM", group: null, on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: null },
   ]);
 });
 

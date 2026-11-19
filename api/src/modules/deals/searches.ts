@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 export const conditionIds: Record<string, string> = {
   "new": "1000",
@@ -28,11 +29,16 @@ export const avoidLists: Record<string, string[]> = {
 
 export const units = ["GB", "TB"] as const;
 
+export const groups = ["whole pc", "server", "cpu", "motherboard", "ram", "storage", "graphics", "power supply", "case", "cooling", "network", "expansion", "ups", "other"] as const;
+
+export type Group = (typeof groups)[number];
+
 export type Buying = (typeof buyingOptions)[number];
 
 export type Search = {
   id: string;
   name: string;
+  group: Group | null;
   on: boolean;
   source: string;
   query: string;
@@ -85,12 +91,16 @@ export type SearchList = {
   limits: Limits;
   quiet: Quiet | null;
   postcode: string | null;
+  files: string[];
 };
 
 export const defaultLimits: Limits = { callsPerDay: 1000, alertsPerDay: 60, alertsPerCheck: 5 };
 
 const maxFileLength = 256 * 1024;
-const maxSearches = 50;
+export const maxSearches = 150;
+const maxMoreFiles = 5;
+const moreFilePattern = /^[a-z0-9][a-z0-9-]{0,40}\.json$/;
+const notSearchFiles = ["searches.json", "state.json"];
 const maxProblemsShown = 5;
 export const maxHiddenDetails = 3;
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
@@ -102,6 +112,7 @@ const postcodePattern = /^([A-Z]{1,2}[0-9][A-Z0-9]?) ?([0-9][A-Z]{2})?$/;
 const searchSettings = [
   "id",
   "name",
+  "group",
   "switch",
   "source",
   "query",
@@ -213,6 +224,9 @@ function readSearch(raw: unknown, sources: string[], problems: string[], postcod
   if (name === "") problems.push("name must be 1 to 40 plain letters, digits, spaces or . , : + & ( ) ' / _ - and start with a letter or digit");
 
   if (raw.switch !== "on" && raw.switch !== "off") problems.push("switch must be on or off");
+
+  const group = has("group") ? raw.group : null;
+  if (has("group") && !(groups as readonly unknown[]).includes(group)) problems.push(`group must be one of: ${groups.join(", ")}`);
 
   const source = has("source") ? raw.source : "ebay";
   if (typeof source !== "string" || !sources.includes(source)) problems.push(`source must be one of: ${sources.join(", ")}`);
@@ -395,6 +409,7 @@ function readSearch(raw: unknown, sources: string[], problems: string[], postcod
   return {
     id,
     name,
+    group: group as Group | null,
     on: raw.switch === "on",
     source: source as string,
     query,
@@ -484,47 +499,104 @@ function fail(problems: string[]): never {
   throw new Error(`${shown}${more}`);
 }
 
-export function readSearches(text: string, sources: string[]): SearchList {
-  if (text.length > maxFileLength) fail(["the file is too big"]);
-  let parsed: unknown;
+function parseJson(text: string, label: string, problems: string[]): unknown {
+  if (text.length > maxFileLength) {
+    problems.push(`${label}the file is too big`);
+    return undefined;
+  }
   try {
-    parsed = JSON.parse(text.replace(/^\uFEFF/, ""));
+    return JSON.parse(text.replace(/^\uFEFF/, ""));
   } catch (error) {
     const place = /\(line (\d+) column (\d+)\)/.exec(error instanceof Error ? error.message : "");
-    fail([place ? `it isn't valid JSON (line ${place[1]}, column ${place[2]})` : "it isn't valid JSON"]);
+    problems.push(`${label}${place ? `it isn't valid JSON (line ${place[1]}, column ${place[2]})` : "it isn't valid JSON"}`);
+    return undefined;
   }
+}
+
+function readMore(raw: unknown, problems: string[]): string[] {
+  if (raw === undefined) return [];
+  const names = Array.isArray(raw) ? raw : [];
+  const fine =
+    names.length > 0 &&
+    names.length <= maxMoreFiles &&
+    names.every((name) => typeof name === "string" && moreFilePattern.test(name) && !notSearchFiles.includes(name)) &&
+    new Set(names).size === names.length;
+  if (!fine) {
+    problems.push(`more must be a list of 1 to ${maxMoreFiles} other files in the deals folder, like ["catalogue.json"]`);
+    return [];
+  }
+  return names as string[];
+}
+
+export function moreFiles(text: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
+    const listed = isObject(parsed) && Array.isArray(parsed.more) ? parsed.more : [];
+    return listed.filter((name): name is string => typeof name === "string" && moreFilePattern.test(name) && !notSearchFiles.includes(name)).slice(0, maxMoreFiles);
+  } catch {
+    return [];
+  }
+}
+
+export function readSearches(text: string, sources: string[], more: Record<string, string | null> = {}): SearchList {
+  const opening: string[] = [];
+  const parsed = parseJson(text, "", opening);
+  if (opening.length > 0) fail(opening);
   if (!isObject(parsed)) fail(["it must start with { and hold a searches list"]);
 
-  const problems = unknownSettings(parsed, ["searches", "limits", "quiet", "postcode"]);
+  const problems = unknownSettings(parsed, ["searches", "limits", "quiet", "postcode", "more"]);
   const limits = readLimits(parsed.limits, problems);
   const quiet = readQuiet(parsed.quiet, problems);
   const postcode = readPostcode(parsed.postcode, problems);
-  const rawSearches = parsed.searches;
-  if (!Array.isArray(rawSearches)) fail([...problems, "searches must be a list in [ ]"]);
-  if (rawSearches.length > maxSearches) fail([...problems, `there can be ${maxSearches} searches at most`]);
+  const files = readMore(parsed.more, problems);
+  if (!Array.isArray(parsed.searches)) fail([...problems, "searches must be a list in [ ]"]);
+
+  const lists: { label: string; raw: unknown[] }[] = [{ label: "", raw: parsed.searches }];
+  for (const file of files) {
+    const extra = more[file];
+    if (typeof extra !== "string") {
+      problems.push(`${file} couldn't be read from the deals folder`);
+      continue;
+    }
+    const before = problems.length;
+    const content = parseJson(extra, `${file}: `, problems);
+    if (problems.length > before) continue;
+    if (!isObject(content) || !Array.isArray(content.searches)) {
+      problems.push(`${file}: it must start with { and hold a searches list in [ ]`);
+      continue;
+    }
+    problems.push(...unknownSettings(content, ["searches"]).map((problem) => `${file}: ${problem}`));
+    lists.push({ label: `${file} `, raw: content.searches });
+  }
+  const count = lists.reduce((sum, list) => sum + list.raw.length, 0);
+  if (count > maxSearches) fail([...problems, `there can be ${maxSearches} searches at most, counting every file`]);
 
   const searches: Search[] = [];
   const seenIds = new Set<string>();
-  rawSearches.forEach((raw, index) => {
-    const own: string[] = [];
-    const search = readSearch(raw, sources, own, postcode);
-    const rawId = isObject(raw) && typeof raw.id === "string" && raw.id.length <= 40 && idPattern.test(raw.id) ? raw.id : null;
-    const label = rawId === null ? `search ${index + 1}` : `search ${index + 1} (${rawId})`;
-    if (rawId !== null && seenIds.has(rawId)) own.push("its id is used by an earlier search");
-    if (rawId !== null) seenIds.add(rawId);
-    problems.push(...own.map((problem) => `${label}: ${problem}`));
-    if (search !== null && own.length === 0) searches.push(search);
-  });
+  for (const list of lists) {
+    list.raw.forEach((raw, index) => {
+      const own: string[] = [];
+      const search = readSearch(raw, sources, own, postcode);
+      const rawId = isObject(raw) && typeof raw.id === "string" && raw.id.length <= 40 && idPattern.test(raw.id) ? raw.id : null;
+      const label = `${list.label}${rawId === null ? `search ${index + 1}` : `search ${index + 1} (${rawId})`}`;
+      if (rawId !== null && seenIds.has(rawId)) own.push("its id is used by an earlier search");
+      if (rawId !== null) seenIds.add(rawId);
+      problems.push(...own.map((problem) => `${label}: ${problem}`));
+      if (search !== null && own.length === 0) searches.push(search);
+    });
+  }
 
   if (problems.length > 0) fail(problems);
-  return { searches, limits, quiet, postcode };
+  return { searches, limits, quiet, postcode, files };
 }
 
 export async function loadSearches(path: string, sources: string[]): Promise<SearchList> {
   const text = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
     throw new Error(error.code === "ENOENT" ? "there's no searches.json in the deals folder" : "searches.json couldn't be read");
   });
-  return readSearches(text, sources);
+  const more: Record<string, string | null> = {};
+  for (const file of moreFiles(text)) more[file] = await readFile(join(dirname(path), file), "utf8").catch(() => null);
+  return readSearches(text, sources, more);
 }
 
 export function fingerprint(search: Search): string {

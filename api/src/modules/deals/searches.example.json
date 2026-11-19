@@ -5,6 +5,7 @@
     {
       "id": "optiplex-7070-sff",
       "name": "OptiPlex 7070 SFF",
+      "group": "whole pc",
       "switch": "off",
       "query": "optiplex 7070 sff",
       "minPrice": 40,
@@ -21,6 +22,7 @@
     {
       "id": "elitedesk-800-g4-sff",
       "name": "EliteDesk 800 G4 SFF",
+      "group": "whole pc",
       "switch": "off",
       "query": "elitedesk 800 g4 sff",
       "minPrice": 40,
@@ -37,6 +39,7 @@
     {
       "id": "ddr4-2x16gb",
       "name": "DDR4 desktop RAM 2x16GB",
+      "group": "ram",
       "switch": "off",
       "query": "ddr4 2x16gb",
       "minPrice": 15,

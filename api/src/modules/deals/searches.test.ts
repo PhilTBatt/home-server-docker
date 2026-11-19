@@ -47,6 +47,7 @@ test("the smallest search gets every default written out", () => {
   assert.deepEqual(one(), {
     id: "optiplex",
     name: "OptiPlex 7070 SFF",
+    group: null,
     on: true,
     source: "ebay",
     query: "optiplex 7070 sff",
@@ -86,6 +87,7 @@ test("the smallest search gets every default written out", () => {
 test("a search with every setting is read as given, with prices in pence", () => {
   const search = one({
     switch: "off",
+    group: "whole pc",
     source: "ebay",
     minPrice: 40,
     maxPrice: 149.99,
@@ -120,6 +122,7 @@ test("a search with every setting is read as given, with prices in pence", () =>
   assert.deepEqual(search, {
     id: "optiplex",
     name: "OptiPlex 7070 SFF",
+    group: "whole pc",
     on: false,
     source: "ebay",
     query: "optiplex 7070 sff",
@@ -189,7 +192,7 @@ test("limits outside their ranges are refused by name", () => {
 });
 
 test("an empty list of searches is fine", () => {
-  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null, postcode: null });
+  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null, postcode: null, files: [] });
 });
 
 test("searches keep the order they were written in", () => {
@@ -237,10 +240,10 @@ test("a file that's too big is refused before it's parsed", () => {
   assert.equal(problemIn(big), "the file is too big");
 });
 
-test("more than 50 searches are refused", () => {
-  const many = Array.from({ length: 51 }, (_, i) => ({ ...smallest, id: `s${i}` }));
-  assert.equal(problemIn(listOf(...many)), "there can be 50 searches at most");
-  assert.equal(readSearches(listOf(...many.slice(0, 50)), sources).searches.length, 50);
+test("more than 150 searches are refused", () => {
+  const many = Array.from({ length: 151 }, (_, i) => ({ ...smallest, id: `s${i}` }));
+  assert.equal(problemIn(listOf(...many)), "there can be 150 searches at most, counting every file");
+  assert.equal(readSearches(listOf(...many.slice(0, 150)), sources).searches.length, 150);
 });
 
 test("a search that isn't a group of settings is refused by its place in the list", () => {
@@ -513,6 +516,7 @@ test("the example list in the repo is valid, and every search in it is switched 
   assert.deepEqual(list.searches.map((search) => search.on), list.searches.map(() => false));
   assert.deepEqual(list.limits, defaultLimits);
   assert.equal(new Set(list.searches.map((search) => search.id)).size, list.searches.length);
+  assert.ok(list.searches.every((search) => search.group !== null));
 });
 
 async function fileWith(text: string | null) {
@@ -786,4 +790,56 @@ test("freePostage is true or false, and collection and free postage change the f
   const prints = [fingerprint(one({ freePostage: true })), local("LS1", 20), local("LS1", 30), local("LS2", 20)];
   assert.equal(new Set([base, ...prints]).size, 5);
   assert.equal(fingerprint(one({ freePostage: false })), base);
+});
+
+test("a search can say which part it's for, from a fixed list of groups", () => {
+  assert.equal(one({ group: "ram" }).group, "ram");
+  assert.equal(one().group, null);
+  assert.equal(fingerprint(one({ group: "ram" })), fingerprint(one()));
+  for (const odd of ["RAM", "memory", "", 1, null, ["ram"]]) assert.match(problemWith({ group: odd }), /group must be one of: whole pc, server, cpu, motherboard, ram, storage, graphics, power supply, case, cooling, network, expansion, ups, other/, String(odd));
+});
+
+test("more names other files in the deals folder whose searches are read after the main list", () => {
+  const main = JSON.stringify({ more: ["catalogue.json", "extra-2.json"], searches: [smallest] });
+  const extra = JSON.stringify({ searches: [{ ...smallest, id: "ram", query: "ddr4", group: "ram" }] });
+  const list = readSearches(main, sources, { "catalogue.json": extra, "extra-2.json": JSON.stringify({ searches: [] }) });
+  assert.deepEqual(list.searches.map((search) => search.id), ["optiplex", "ram"]);
+  assert.deepEqual(list.files, ["catalogue.json", "extra-2.json"]);
+  for (const odd of [[], "catalogue.json", ["../state.json"], ["state.json"], ["searches.json"], ["Catalogue.json"], ["a.txt"], ["a/b.json"], ["x.json", "x.json"], Array.from({ length: 6 }, (_, i) => `f${i}.json`), [7]]) {
+    assert.match(problemIn(JSON.stringify({ more: odd, searches: [] })), /more must be a list of 1 to 5 other files in the deals folder/, JSON.stringify(odd));
+  }
+});
+
+test("a problem in another file is reported with that file's name, and an id can't be used twice across files", () => {
+  const main = JSON.stringify({ more: ["catalogue.json"], searches: [smallest] });
+  const problem = (extra: string | null) => {
+    try {
+      readSearches(main, sources, extra === null ? {} : { "catalogue.json": extra });
+    } catch (error) {
+      return (error as Error).message;
+    }
+    return "";
+  };
+  assert.equal(problem(null), "catalogue.json couldn't be read from the deals folder");
+  assert.equal(problem("{"), "catalogue.json: it isn't valid JSON (line 1, column 2)");
+  assert.equal(problem("[]"), "catalogue.json: it must start with { and hold a searches list in [ ]");
+  assert.equal(problem(JSON.stringify({ searches: [], limits: {} })), "catalogue.json: \"limits\" isn't a setting");
+  assert.equal(problem(JSON.stringify({ searches: [{ ...smallest }] })), "catalogue.json search 1 (optiplex): its id is used by an earlier search");
+  assert.equal(problem(JSON.stringify({ searches: [{ ...smallest, id: "x", switch: "maybe" }] })), "catalogue.json search 1 (x): switch must be on or off");
+  assert.equal(problem("x".repeat(256 * 1024 + 1)), "catalogue.json: the file is too big");
+  const many = JSON.stringify({ searches: Array.from({ length: 150 }, (_, i) => ({ ...smallest, id: `s${i}` })) });
+  assert.equal(problem(many), "there can be 150 searches at most, counting every file");
+});
+
+test("the extra files are read from the same folder as searches.json, and a missing one is a problem", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "deals-"));
+  try {
+    await writeFile(join(dir, "searches.json"), JSON.stringify({ more: ["catalogue.json"], searches: [smallest] }));
+    await writeFile(join(dir, "catalogue.json"), JSON.stringify({ searches: [{ ...smallest, id: "ram" }] }));
+    assert.deepEqual((await loadSearches(join(dir, "searches.json"), sources)).searches.map((search) => search.id), ["optiplex", "ram"]);
+    await rm(join(dir, "catalogue.json"));
+    await assert.rejects(loadSearches(join(dir, "searches.json"), sources), /catalogue.json couldn't be read from the deals folder/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

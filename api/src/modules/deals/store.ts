@@ -1,4 +1,5 @@
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { maxSearches } from "./searches.js";
 
 export type Seen = {
   first: string;
@@ -35,8 +36,7 @@ export type Store = {
   save(memory: Memory): Promise<void>;
 };
 
-const maxFileLength = 16 * 1024 * 1024;
-const maxSearches = 50;
+const maxFileLength = 48 * 1024 * 1024;
 export const maxSeenPerSearch = 2000;
 const searchIdPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const listingIdPattern = /^[A-Za-z0-9|:.-]{1,64}$/;

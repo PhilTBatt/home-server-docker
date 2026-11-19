@@ -148,7 +148,7 @@ test("a state file that can't be read at all starts fresh and says so, without t
 });
 
 test("an enormous state file is treated as damaged, not read into memory", () => {
-  assert.equal(readMemory(`{"counters":{},"searches":{},"pad":"${"x".repeat(16 * 1024 * 1024)}"}`, true), null);
+  assert.equal(readMemory(`{"counters":{},"searches":{},"pad":"${"x".repeat(48 * 1024 * 1024)}"}`, true), null);
 });
 
 test("saving replaces the file in one step and leaves no temporary file", async () => {
@@ -257,9 +257,21 @@ test("counters that don't look right start again from zero", () => {
   assert.deepEqual(readMemory(stateWith({}, { day: "2026-11-18", calls: 7, alerts: 2, capNoted: true }), true)?.counters, { day: "2026-11-18", calls: 7, alerts: 2, capNoted: true });
 });
 
-test("at most 50 searches are read", () => {
-  const many = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`s${i}`, goodSearch]));
-  assert.equal(readMemory(stateWith(many), true)?.searches.size, 50);
+test("as many searches are read as the search list allows, and no more", () => {
+  const many = Object.fromEntries(Array.from({ length: 160 }, (_, i) => [`s${i}`, goodSearch]));
+  assert.equal(readMemory(stateWith(many), true)?.searches.size, 150);
+});
+
+test("150 searches with 2,000 seen listings each still fit in a state file that loads", () => {
+  const memory = emptyMemory();
+  memory.counters = { day: "2026-11-18", calls: 1, alerts: 1, capNoted: false };
+  for (let n = 0; n < 150; n++) {
+    const seen = new Map(Array.from({ length: maxSeenPerSearch }, (_, i) => [String(110_000_000_000 + n * 10_000 + i), { first: "2026-11-18T10:00:00.000Z", last: "2026-11-18T10:00:00.000Z", price: 12_345, ending: true as const }]));
+    memory.searches.set(`search-number-${n}`, { criteria: "0123456789abcdef", since: "2026-11-18T10:00:00.000Z", checked: "2026-11-18T10:00:00.000Z", wide: false, known: true, seen });
+  }
+  const loaded = readMemory(writeMemory(memory, true), true);
+  assert.equal(loaded?.searches.size, 150);
+  assert.equal(loaded?.searches.get("search-number-149")?.seen.size, maxSeenPerSearch);
 });
 
 test("only the most recently seen listings are kept when a search has too many", () => {
@@ -375,8 +387,8 @@ test("odd snoozes, counts and marks in the state file are dropped, not trusted",
 });
 
 test("no more snoozes or counts are read than there can be searches", () => {
-  const many = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`s${i}`, 1]));
-  const snoozes = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`s${i}`, null]));
+  const many = Object.fromEntries(Array.from({ length: 160 }, (_, i) => [`s${i}`, 1]));
+  const snoozes = Object.fromEntries(Array.from({ length: 160 }, (_, i) => [`s${i}`, null]));
   const memory = readMemory(JSON.stringify({ counters: { day: "2026-11-18", calls: 0, alerts: 0, capNoted: false }, searches: {}, alertsToday: many, snoozed: snoozes }), true);
-  assert.deepEqual([memory?.alertsToday.size, memory?.snoozed.size], [50, 50]);
+  assert.deepEqual([memory?.alertsToday.size, memory?.snoozed.size], [150, 150]);
 });
