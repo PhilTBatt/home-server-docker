@@ -19,7 +19,11 @@ await app.listen({ port: 3000, host: "0.0.0.0" });
 
 const allProblems = () => currentProblems(undefined, dealWatcher?.problems());
 const checkAndNotify = createNotifier(config.ntfyTopic, allProblems);
-const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, allProblems, 8, config.features, countWaiting, readBackupState);
+const countDeals = () => {
+  const searches = dealWatcher?.searches() ?? [];
+  return { on: searches.filter((search) => search.on).length, off: searches.filter((search) => !search.on).length };
+};
+const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, allProblems, 8, config.features, countWaiting, readBackupState, dealWatcher === undefined ? undefined : countDeals);
 
 function runCheck() {
   if (config.features.alerts) {

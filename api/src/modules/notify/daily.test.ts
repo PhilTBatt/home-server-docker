@@ -365,3 +365,51 @@ test("an unreadable backup status doesn't stop the summary going out", async () 
   assert.equal(await send(new Date("2026-11-13T08:00:00Z")), true);
   assert.match(String(fetchMock.mock.calls[0].arguments[1]?.body), /Backups: couldn't read the backup status\.$/);
 });
+
+test("without a deal count, the summary has no Deals line", () => {
+  assert.doesNotMatch(summaryFor(status, [], allOn, 0, neverRun).message, /Deals/);
+  assert.doesNotMatch(summaryFor(status, [], allOn, 0, neverRun, undefined).message, /Deals/);
+});
+
+test("the Deals line says how many searches are being watched and how many are off", () => {
+  const line = (on: number, off: number) => summaryFor(status, [], allOn, 0, neverRun, { on, off }).message.split("\n").at(-1);
+  assert.equal(line(3, 0), "Deals: watching 3 searches.");
+  assert.equal(line(1, 0), "Deals: watching 1 search.");
+  assert.equal(line(2, 1), "Deals: watching 2 searches, 1 switched off.");
+  assert.equal(line(1, 4), "Deals: watching 1 search, 4 switched off.");
+  assert.equal(line(0, 3), "Deals: no searches switched on (3 off).");
+  assert.equal(line(0, 0), "Deals: no searches yet.");
+});
+
+test("the Deals line comes after the backups and before what's switched off", () => {
+  const features: Features = { ...allOn, heartbeat: false };
+  const lines = summaryFor(status, [diskLow], features, 2, neverRun, { on: 3, off: 1 }).message.split("\n");
+  assert.deepEqual(lines.slice(-4), ["Brain: 2 notes waiting.", "Backups: never run.", "Deals: watching 3 searches, 1 switched off.", "Switched off: heartbeat."]);
+});
+
+test("the summary that's sent includes the deal count when it's given one, asked for at send time", async () => {
+  const fetchMock = fakeNtfy();
+  let asked = 0;
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0, async () => neverRun, () => {
+    asked += 1;
+    return { on: 2, off: 0 };
+  });
+  assert.equal(await send(new Date("2026-11-13T07:59:00Z")), false);
+  assert.equal(asked, 0);
+  assert.equal(await send(new Date("2026-11-13T08:00:00Z")), true);
+  assert.equal(asked, 1);
+  assert.match(String(fetchMock.mock.calls[0].arguments[1]?.body), /\nDeals: watching 2 searches\.$/);
+});
+
+test("the summary that's sent has no Deals line when it isn't given a count", async () => {
+  const fetchMock = fakeNtfy();
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0, async () => neverRun);
+  await send(new Date("2026-11-13T08:00:00Z"));
+  assert.doesNotMatch(String(fetchMock.mock.calls[0].arguments[1]?.body), /Deals/);
+});
+
+test("a deal watcher problem is listed under Problems in the summary like any other", () => {
+  const keys: Problem = { code: "deals-source", message: "The deal watcher can't check its searches: eBay refused the keys." };
+  const lines = summaryFor(status, [diskLow, keys], allOn, 0, neverRun, { on: 3, off: 0 }).message.split("\n");
+  assert.deepEqual(lines.slice(3, 6), ["Problems:", diskLow.message, keys.message]);
+});

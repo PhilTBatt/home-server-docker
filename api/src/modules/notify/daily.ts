@@ -53,13 +53,24 @@ function backupLine(backup: BackupState | null): string {
   return `Backups: the last run (${ran}) failed: ${backup.lastRun.problem}. ${lastGood}`;
 }
 
+export type DealCount = {
+  on: number;
+  off: number;
+};
+
+function dealsLine(deals: DealCount): string {
+  if (deals.on === 0) return deals.off === 0 ? "Deals: no searches yet." : `Deals: no searches switched on (${deals.off} off).`;
+  const watching = `Deals: watching ${deals.on} search${deals.on === 1 ? "" : "es"}`;
+  return deals.off === 0 ? `${watching}.` : `${watching}, ${deals.off} switched off.`;
+}
+
 function brainLine(waiting: number | null): string {
   if (waiting === null) return "Brain: couldn't read the inbox.";
   if (waiting === 0) return "Brain: no notes waiting.";
   return `Brain: ${waiting} note${waiting === 1 ? "" : "s"} waiting.`;
 }
 
-export function summaryFor(status: Status, problems: Problem[], features: Features, waiting: number | null, backup: BackupState | null): Notification {
+export function summaryFor(status: Status, problems: Problem[], features: Features, waiting: number | null, backup: BackupState | null, deals?: DealCount): Notification {
   const memoryFree = (status.memoryAvailableMB / 1024).toFixed(1);
   const memoryTotal = (status.memoryTotalMB / 1024).toFixed(1);
   const off = switchedOff(features);
@@ -71,6 +82,7 @@ export function summaryFor(status: Status, problems: Problem[], features: Featur
   ];
   if (features.memoryInbox) lines.push(brainLine(waiting));
   lines.push(backupLine(backup));
+  if (deals !== undefined) lines.push(dealsLine(deals));
   if (off.length > 0) lines.push(`Switched off: ${off.join(", ")}.`);
   return { title: "Home Hub: daily summary", message: lines.join("\n"), tags: "memo" };
 }
@@ -82,7 +94,8 @@ export function createDailySummary(
   hour: number,
   features: Features,
   getWaiting: () => Promise<number>,
-  getBackup: () => Promise<BackupState>
+  getBackup: () => Promise<BackupState>,
+  getDeals?: () => DealCount
 ) {
   let lastSentDay = "";
   return async function sendIfDue(now: Date): Promise<boolean> {
@@ -94,7 +107,7 @@ export function createDailySummary(
     const problems = await getProblems();
     const waiting = features.memoryInbox ? await getWaiting().catch(() => null) : null;
     const backup = await getBackup().catch(() => null);
-    await sendToNtfy(topic, summaryFor(status, problems, features, waiting, backup));
+    await sendToNtfy(topic, summaryFor(status, problems, features, waiting, backup, getDeals?.()));
     lastSentDay = time.day;
     return true;
   };
