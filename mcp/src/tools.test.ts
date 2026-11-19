@@ -286,7 +286,7 @@ test("get_deal_matches takes an optional search id, and asks for that search onl
   const fake = fakeApi();
   const { listTools, callTool } = await connect(fake);
   const tool = (await listTools()).find((t) => t.name === matchesTool);
-  assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}), ["search"]);
+  assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}), ["search", "searches", "group", "words", "maxTotal", "limit", "ids"]);
   assert.deepEqual(tool?.inputSchema.required ?? [], []);
   await callTool(matchesTool, {});
   await callTool(matchesTool, { search: "optiplex-7070-sff" });
@@ -329,4 +329,45 @@ test("the deal tools say they fail while the watcher is switched off, so a 404 i
   for (const tool of (await listTools()).filter((t) => t.name.includes("deal"))) {
     assert.match(tool.description ?? "", /404 while the deal watcher is switched off/);
   }
+});
+test("get_deal_matches turns its filters into the route's query, with the price in pounds and pence", async () => {
+  const fake = fakeApi();
+  const { callTool } = await connect(fake);
+  await callTool(matchesTool, { group: "ram", words: " ddr4 3200 ", maxTotal: 120, limit: 5 });
+  await callTool(matchesTool, { searches: ["ddr4-2x16gb", "hukd-ddr4"], maxTotal: 99.5 });
+  await callTool(matchesTool, { group: "power supply", words: "  " });
+  await callTool(matchesTool, { ids: ["110000000001", "hukd-5000001"] });
+  assert.deepEqual(fake.calls, [
+    "GET /deals/ai/matches?group=ram&words=ddr4+3200&maxTotal=120.00&limit=5",
+    "GET /deals/ai/matches?searches=ddr4-2x16gb%2Chukd-ddr4&maxTotal=99.50",
+    "GET /deals/ai/matches?group=power+supply",
+    "GET /deals/ai/matches?ids=110000000001%2Chukd-5000001",
+  ]);
+});
+
+test("get_deal_matches refuses odd filters without calling the API", async () => {
+  const fake = fakeApi();
+  const { callTool } = await connect(fake);
+  const odd: Record<string, unknown>[] = [
+    { group: "memory" },
+    { searches: [] },
+    { searches: ["Bad Id"] },
+    { searches: Array.from({ length: 21 }, (_, i) => `s${i}`) },
+    { words: "ddr*" },
+    { words: "a\nb" },
+    { words: "x".repeat(101) },
+    { maxTotal: 0 },
+    { maxTotal: -1 },
+    { maxTotal: 1.234 },
+    { maxTotal: "120" },
+    { limit: 0 },
+    { limit: 51 },
+    { limit: 2.5 },
+    { ids: [] },
+    { ids: ["v1|110000000001|0"] },
+    { ids: ["hukd-"] },
+    { ids: Array.from({ length: 21 }, (_, i) => String(i + 1)) },
+  ];
+  for (const input of odd) assert.ok(refused(await callTool(matchesTool, input)), JSON.stringify(input));
+  assert.deepEqual(fake.calls, []);
 });

@@ -1941,3 +1941,12 @@ test("a search that hides item details gets one more page for each, and what the
   assert.equal(status.matches, 1);
   assert.equal(status.hidden?.details, 1);
 });
+
+test("matches can keep only some listings, counting what was kept and still placing each among all the matches", async () => {
+  const { world, watcher } = richSetup();
+  world.found.set("optiplex", [listing(1, { id: "110000000001", title: "OptiPlex 7070 i5", price: 9000 }), listing(2, { id: "110000000002", title: "OptiPlex 7070 i7", price: 12000 }), listing(3, { id: "110000000003", title: "OptiPlex 7070 i7 32GB", price: 15000 })]);
+  await watcher.run(at(0));
+  const [group] = watcher.matches(at(1), 1, (kept) => kept.title.includes("i7"));
+  assert.deepEqual([group.count, group.listings.map((kept) => kept.id), group.listings[0].place], [2, ["110000000002"], 2]);
+  assert.equal(watcher.matches(at(1))[0].count, 3);
+});

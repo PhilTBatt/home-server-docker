@@ -3,7 +3,7 @@ import { test } from "node:test";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
 import { aiNote, deals } from "./routes.js";
-import type { Categories, CategoryDetails } from "./source.js";
+import type { Categories, CategoryDetails, Listing } from "./source.js";
 import type { DealWatcher, FullReply, LookupReply, MatchGroup, MatchedListing, NamesReply, RunSummary, SearchStatus, WatcherStatus } from "./watcher.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true };
@@ -597,4 +597,86 @@ test("a category lookup that is refused, waiting or out of calls says which", as
     const two = await app.inject({ method: "GET", url: "/deals/categories/170083/details" });
     assert.deepEqual([two.statusCode, two.json()], [code, { error: forDetails }]);
   }
+});
+
+const ramListings: MatchedListing[] = [
+  { ...matched, id: "110000000011", title: "Corsair 32GB (2x16GB) DDR4 3200", price: 8500, postage: 500, total: 9000 },
+  { ...matched, id: "110000000012", title: "Kingston 32GB DDR4 2666 kit", price: 11000, postage: null, total: 11000 },
+  { ...matched, id: "110000000013", title: "Crucial 16GB DDR5 4800", price: 6000, postage: 0, total: 6000 },
+];
+
+function filterWatcher() {
+  const made = fakeWatcher();
+  const all: MatchGroup[] = [groups[0], { ...groups[1], count: 3, listings: ramListings }, { ...groups[1], id: "hukd-ddr4", name: "HotUKDeals: DDR4", source: "hotukdeals", count: 0, listings: [] }];
+  made.watcher.matches = (now, most, keep) => {
+    made.seen.matchTimes.push(now.toISOString());
+    made.seen.matchMost.push(most);
+    return all.map((group) => {
+      const kept = keep === undefined ? group.listings : group.listings.filter((listing) => keep(listing as unknown as Listing));
+      return { ...group, count: keep === undefined ? group.count : kept.length, listings: kept.slice(0, most ?? 50) };
+    });
+  };
+  return made;
+}
+
+test("the AI matches can be filtered by group, searches, words in the title, a top price and a number per search", async () => {
+  const { watcher, seen } = filterWatcher();
+  const { app } = buildApp(watcher, allOn, true);
+  const ask = async (query: string) => {
+    const response = await app.inject({ method: "GET", url: `/deals/ai/matches?${query}` });
+    assert.equal(response.statusCode, 200, query);
+    return (response.json().searches as MatchGroup[]).map((group) => `${group.id}: ${group.listings.map((listing) => listing.id.slice(-2)).join(" ")}`);
+  };
+  assert.deepEqual(await ask("group=ram"), ["ram: 11 12 13", "hukd-ddr4: "]);
+  assert.deepEqual(await ask("group=ram&words=ddr4%2032gb"), ["ram: 11 12"]);
+  assert.deepEqual(await ask("group=ram&maxTotal=100"), ["ram: 11 13", "hukd-ddr4: "]);
+  assert.deepEqual(await ask("group=ram&maxTotal=89.99"), ["ram: 13", "hukd-ddr4: "]);
+  assert.deepEqual(await ask("group=ram&maxTotal=90.00"), ["ram: 11 13", "hukd-ddr4: "]);
+  assert.deepEqual(await ask("searches=ram,optiplex&limit=1"), ["optiplex: 01", "ram: 11"]);
+  assert.deepEqual(await ask("searches=nothing"), []);
+  assert.deepEqual(await ask("words=dell"), ["optiplex: 01"]);
+  assert.deepEqual(await ask("ids=110000000012,hukd-5000001"), ["ram: 12"]);
+  assert.deepEqual(await ask("ids=hukd-5000001"), []);
+  assert.deepEqual(seen.matchMost, [50, 50, 50, 50, 50, 1, 50, 50, 50, 50]);
+  const plain = await app.inject({ method: "GET", url: "/deals/ai/matches" });
+  assert.equal(plain.statusCode, 200);
+  assert.deepEqual(seen.matchMost.at(-1), 15);
+  const grouped = await app.inject({ method: "GET", url: "/deals/ai/matches?group=ram" });
+  assert.deepEqual(grouped.json().searches[0].count, 3);
+  const worded = await app.inject({ method: "GET", url: "/deals/ai/matches?group=ram&words=32gb&limit=1" });
+  assert.deepEqual([worded.json().searches[0].count, worded.json().searches[0].listings.length], [2, 1]);
+});
+
+test("odd AI filters are refused with what's allowed", async () => {
+  const { watcher, seen } = filterWatcher();
+  const { app } = buildApp(watcher, allOn, true);
+  const cases: [string, string][] = [
+    ["colour=red", "The filters are: search, searches, group, words, maxTotal, limit, ids"],
+    ["limit=5", "maxTotal and limit need searches, group, words or ids with them"],
+    ["maxTotal=100", "maxTotal and limit need searches, group, words or ids with them"],
+    ["ids=abc", "ids must be up to 20 listing ids from the matches, separated by commas"],
+    ["ids=1,,2", "ids must be up to 20 listing ids from the matches, separated by commas"],
+    [`ids=${Array.from({ length: 21 }, (_, i) => String(i + 1)).join(",")}`, "ids must be up to 20 listing ids from the matches, separated by commas"],
+    ["group=ram&group=cpu", "Give each filter once"],
+    ["group=memory", "group must be one of: whole pc, server, cpu, motherboard, ram, storage, graphics, power supply, case, cooling, network, expansion, ups, other"],
+    ["searches=a,,b", "searches must be up to 20 search ids, separated by commas"],
+    [`searches=${Array.from({ length: 21 }, (_, i) => `s${i}`).join(",")}`, "searches must be up to 20 search ids, separated by commas"],
+    ["searches=Bad", "searches must be up to 20 search ids, separated by commas"],
+    ["words=ddr*", "words must be up to 100 characters, without *"],
+    [`words=${"x".repeat(101)}`, "words must be up to 100 characters, without *"],
+    ["words=a%0Ab", "words must be up to 100 characters, without *"],
+    ["maxTotal=0", "maxTotal must be an amount in pounds, like 120 or 119.99"],
+    ["maxTotal=-5", "maxTotal must be an amount in pounds, like 120 or 119.99"],
+    ["maxTotal=12.345", "maxTotal must be an amount in pounds, like 120 or 119.99"],
+    ["maxTotal=1e3", "maxTotal must be an amount in pounds, like 120 or 119.99"],
+    ["limit=0", "limit must be a whole number from 1 to 50"],
+    ["limit=51", "limit must be a whole number from 1 to 50"],
+    ["limit=2.5", "limit must be a whole number from 1 to 50"],
+    ["search=optiplex&group=ram", "search can't be mixed with other filters; use searches instead"],
+  ];
+  for (const [query, error] of cases) {
+    const response = await app.inject({ method: "GET", url: `/deals/ai/matches?${query}` });
+    assert.deepEqual([response.statusCode, response.json()], [400, { error }], query);
+  }
+  assert.deepEqual(seen.matchTimes, []);
 });

@@ -114,7 +114,7 @@ export type DealWatcher = {
   problems(): Problem[];
   status(now?: Date): WatcherStatus;
   searches(): SearchStatus[];
-  matches(now: Date, most?: number): MatchGroup[];
+  matches(now: Date, most?: number, keep?: (listing: Listing) => boolean): MatchGroup[];
   snooze(id: string, until: Date | null): Promise<boolean>;
   wake(id: string): Promise<boolean>;
   full(id: string, now: Date): Promise<FullReply>;
@@ -627,21 +627,22 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       });
     },
 
-    matches(now, most = matchesShown) {
+    matches(now, most = matchesShown, keep) {
       const groups: MatchGroup[] = [];
       for (const search of list?.searches ?? []) {
         const result = results.get(search.id);
         if (!search.on || result === undefined || now.getTime() - result.checkedAt > freshFor) continue;
         const seen = memory?.searches.get(search.id)?.seen;
+        const kept = keep === undefined ? result.listings : result.listings.filter(keep);
         groups.push({
           id: search.id,
           name: search.name,
           group: search.group,
           source: search.source,
           checkedAt: new Date(result.checkedAt).toISOString(),
-          count: result.listings.length,
+          count: kept.length,
           guidePrice: search.guidePrice,
-          listings: result.listings.slice(0, Math.min(most, matchesShown)).map((listing) => describe(search, listing, result.listings, seen?.get(listing.id)?.first ?? null)),
+          listings: kept.slice(0, Math.min(most, matchesShown)).map((listing) => describe(search, listing, result.listings, seen?.get(listing.id)?.first ?? null)),
         });
       }
       return groups;

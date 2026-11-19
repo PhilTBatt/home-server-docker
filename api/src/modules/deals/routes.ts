@@ -1,5 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import type { Config } from "../../config.js";
+import { hasPhrase, totalPrice } from "./match.js";
+import { groups } from "./searches.js";
+import type { Listing } from "./source.js";
 import type { DealWatcher, FullReply } from "./watcher.js";
 
 type DealOptions = Pick<Config, "features"> & {
@@ -19,8 +22,10 @@ const usedUp = { error: "Today's eBay calls, or today's listings read in full, a
 const waiting = { error: "eBay asked the watcher to wait, so nothing is being read for now" };
 const lookupWait = { error: "Something was looked up on eBay less than ten seconds ago" };
 const briefMatches = 15;
+const maxShown = 50;
 const searchIdPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const itemPattern = /^[0-9]{1,20}$/;
+const listingPattern = /^(hukd-)?[0-9]{1,20}$/;
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
 
 export const aiNote =
@@ -33,6 +38,56 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function searchId(params: unknown): string | null {
   const id = isObject(params) ? params.id : null;
   return typeof id === "string" && id.length <= 40 && searchIdPattern.test(id) ? id : null;
+}
+
+type Filters = {
+  search: string | null;
+  searches: string[] | null;
+  group: string | null;
+  words: string[];
+  maxTotal: number | null;
+  limit: number;
+  ids: string[] | null;
+  filtered: boolean;
+};
+
+function readFilters(query: Record<string, unknown>): Filters | { error: string } {
+  const known = ["search", "searches", "group", "words", "maxTotal", "limit", "ids"];
+  const isId = (id: unknown) => typeof id === "string" && id.length <= 40 && searchIdPattern.test(id);
+  if (query.search !== undefined && !isId(query.search)) return { error: "That isn't a search id" };
+  if (Object.keys(query).some((key) => !known.includes(key))) return { error: `The filters are: ${known.join(", ")}` };
+  if (Object.values(query).some((value) => typeof value !== "string")) return { error: "Give each filter once" };
+  const given = query as Record<string, string>;
+  if (given.search !== undefined && Object.keys(given).length > 1) return { error: "search can't be mixed with other filters; use searches instead" };
+  let searches: string[] | null = null;
+  if (given.searches !== undefined) {
+    searches = given.searches.split(",");
+    if (searches.length > 20 || !searches.every(isId)) return { error: "searches must be up to 20 search ids, separated by commas" };
+  }
+  const group = given.group ?? null;
+  if (group !== null && !(groups as readonly string[]).includes(group)) return { error: `group must be one of: ${groups.join(", ")}` };
+  const text = given.words ?? "";
+  if (text.length > 100 || controlCharacters.test(text) || text.includes("*")) return { error: "words must be up to 100 characters, without *" };
+  const words = text.split(/\s+/).filter((word) => /[A-Za-z0-9]/.test(word));
+  let maxTotal: number | null = null;
+  if (given.maxTotal !== undefined) {
+    const pounds = /^[0-9]{1,6}(\.[0-9]{1,2})?$/.test(given.maxTotal) ? Number(given.maxTotal) : Number.NaN;
+    if (!(pounds > 0)) return { error: "maxTotal must be an amount in pounds, like 120 or 119.99" };
+    maxTotal = Math.round(pounds * 100);
+  }
+  let ids: string[] | null = null;
+  if (given.ids !== undefined) {
+    ids = given.ids.split(",");
+    if (ids.length > 20 || !ids.every((id) => listingPattern.test(id))) return { error: "ids must be up to 20 listing ids from the matches, separated by commas" };
+  }
+  let limit = maxShown;
+  if (given.limit !== undefined) {
+    limit = /^[0-9]{1,2}$/.test(given.limit) ? Number(given.limit) : 0;
+    if (limit < 1 || limit > maxShown) return { error: `limit must be a whole number from 1 to ${maxShown}` };
+  }
+  const narrowed = searches !== null || group !== null || words.length > 0 || ids !== null;
+  if (!narrowed && (maxTotal !== null || given.limit !== undefined)) return { error: "maxTotal and limit need searches, group, words or ids with them" };
+  return { search: given.search ?? null, searches, group, words, maxTotal, limit, ids, filtered: narrowed };
 }
 
 function fullReply(result: FullReply): { code: number; body: Record<string, unknown> } {
@@ -89,11 +144,21 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
   app.get("/ai/matches", async (request, reply) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
     if (options.ai !== true) return reply.code(403).send(aiOff);
-    const asked = isObject(request.query) ? request.query.search : undefined;
-    if (asked !== undefined && !(typeof asked === "string" && asked.length <= 40 && searchIdPattern.test(asked))) return reply.code(400).send({ error: "That isn't a search id" });
+    const asked = readFilters(isObject(request.query) ? request.query : {});
+    if ("error" in asked) return reply.code(400).send({ error: asked.error });
     const time = now();
-    const groups = asked === undefined ? watcher.matches(time, briefMatches) : watcher.matches(time).filter((group) => group.id === asked);
-    if (asked !== undefined && groups.length === 0) return reply.code(404).send({ error: "That search has no matches checked in the last six hours" });
+    if (asked.search !== null) {
+      const groups = watcher.matches(time).filter((group) => group.id === asked.search);
+      if (groups.length === 0) return reply.code(404).send({ error: "That search has no matches checked in the last six hours" });
+      return { note: aiNote, asOf: time.toISOString(), searches: groups };
+    }
+    if (!asked.filtered) return { note: aiNote, asOf: time.toISOString(), searches: watcher.matches(time, briefMatches) };
+    const keep = (listing: Listing) =>
+      (asked.maxTotal === null || totalPrice(listing) <= asked.maxTotal) && asked.words.every((word) => hasPhrase(listing.title, word)) && (asked.ids === null || asked.ids.includes(listing.id));
+    const groups = watcher
+      .matches(time, asked.limit, keep)
+      .filter((group) => (asked.searches === null || asked.searches.includes(group.id)) && (asked.group === null || group.group === asked.group))
+      .filter((group) => group.count > 0 || (asked.words.length === 0 && asked.ids === null));
     return { note: aiNote, asOf: time.toISOString(), searches: groups };
   });
 
