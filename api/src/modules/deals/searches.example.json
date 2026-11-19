@@ -1,0 +1,46 @@
+{
+  "limits": { "callsPerDay": 1000, "alertsPerDay": 60, "alertsPerCheck": 5 },
+  "searches": [
+    {
+      "id": "optiplex-7070-sff",
+      "name": "OptiPlex 7070 SFF",
+      "switch": "off",
+      "query": "optiplex 7070 sff",
+      "minPrice": 40,
+      "maxPrice": 150,
+      "conditions": ["used", "seller refurbished", "certified refurbished", "excellent refurbished", "very good refurbished", "good refurbished"],
+      "mustInclude": ["7070"],
+      "exclude": ["faulty", "spares", "repair*", "untested", "no ram", "no hdd", "no ssd", "barebone*", "motherboard", "caddy", "bezel", "psu"],
+      "sellerMinPercent": 97,
+      "sellerMinFeedback": 20,
+      "everyMinutes": 30
+    },
+    {
+      "id": "elitedesk-800-g4-sff",
+      "name": "EliteDesk 800 G4 SFF",
+      "switch": "off",
+      "query": "elitedesk 800 g4 sff",
+      "minPrice": 40,
+      "maxPrice": 150,
+      "conditions": ["used", "seller refurbished", "certified refurbished", "excellent refurbished", "very good refurbished", "good refurbished"],
+      "mustInclude": ["800", "g4"],
+      "exclude": ["faulty", "spares", "repair*", "untested", "no ram", "no hdd", "no ssd", "barebone*", "motherboard", "caddy", "bezel", "psu"],
+      "sellerMinPercent": 97,
+      "sellerMinFeedback": 20,
+      "everyMinutes": 30
+    },
+    {
+      "id": "ddr4-2x16gb",
+      "name": "DDR4 desktop RAM 2x16GB",
+      "switch": "off",
+      "query": "ddr4 2x16gb",
+      "minPrice": 15,
+      "maxWithPostage": 60,
+      "conditions": ["new", "opened", "used"],
+      "exclude": ["sodimm", "so dimm", "laptop", "ecc", "rdimm", "server", "faulty", "spares"],
+      "sellerMinPercent": 97,
+      "everyMinutes": 60,
+      "dropPercent": 10
+    }
+  ]
+}
