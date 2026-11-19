@@ -39,6 +39,9 @@ I built it using my own ideas, with AI helping me plan and learn what I needed t
 ## Switches
 New features are built switched off. Each switch is a line in `api/.env` set to exactly `on` or `off`. Anything else, or a missing switch, stops the API starting, so a typo can't quietly change what's on. `GET /system/features`, the phone page and the daily summary all show what's off. The MCP server has one switch of its own, `MCP_ACTIONS`, which `bash host/hub-mcp.sh read-only` turns off. Jobs that run on the server itself, like the nightly backup, are switched on and off by enabling or disabling their systemd timer.
 
+### The deal watcher's settings
+`DEALS` switches it on. While it's on, `api/.env` also needs `DEALS_SEEN` (`memory` or `disk`), `EBAY_ENVIRONMENT` (`production` or `sandbox`), `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET`. Each search has its own `switch` in `deals/searches.json`. `docs/deals.md` has the rest.
+
 ### Jarvis's settings
 Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he starts.
 - `ANTHROPIC_API_KEY`: required.
@@ -74,10 +77,11 @@ Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he sta
 - `hub/`: the phone page.
 - `mcp/`: the MCP server for Claude Code. Same setup as `api/`.
 - `jarvis/`: Jarvis, a text chat (voice later) that reads the brain, with two engines to compare: the Agent SDK and a plain API call. Its settings live in `jarvis/.env` (below), and `jarvis/data/` (git-ignored) holds the answer log and any saved chats. `jarvis/Dockerfile` is his image for sound.
-- `host/`: files that run outside Docker (the Wi-Fi watchdog, and the backup script with its service and timer), plus helper scripts: `hub-update.sh` pulls and rebuilds only what changed, `hub-mcp.sh` starts the MCP server, `jarvis.sh` starts Jarvis with the API token for the hub's tools and the sessions' notes, or runs his sound test, and `hub-get.sh` and `hub-post.sh` try an API route.
+- `host/`: files that run outside Docker (the Wi-Fi watchdog, and the backup script with its service and timer), plus helper scripts: `hub-update.sh` pulls and rebuilds only what changed, `hub-mcp.sh` starts the MCP server, `jarvis.sh` starts Jarvis with the API token for the hub's tools and the sessions' notes, or runs his sound test, and `hub-get.sh` and `hub-post.sh` try an API route, and `ebay-check.sh` tests the eBay keys without showing them.
+- `deals/`: the deal watcher's search list and state file, both git-ignored. Only its `README.md` is tracked.
 - `caddy/`: the Caddyfile.
 - `homepage/config/`: Homepage's settings. Logins and keys come from `homepage/.env`.
-- `docs/`: `restore.md` (getting files back from a backup), `going-private.md` (what to do if this repo goes private) and `decisions/` (why things are the way they are, one record per decision).
+- `docs/`: `restore.md` (getting files back from a backup), `going-private.md` (what to do if this repo goes private), `deals.md` (setting up and using the deal watcher) and `decisions/` (why things are the way they are, one record per decision).
 - `.github/`: tests and safety checks on every push, and Dependabot.
 - `CLAUDE.md`, `.mcp.json` and `.claude/settings.json`: how Claude Code works in this repo.
 
@@ -95,4 +99,4 @@ Node isn't installed on the server, so npm runs in a throwaway container. From t
 docker run --rm -u node -v "$PWD/api:/app" -w /app node:26-alpine npm ci
 docker run --rm -u node -v "$PWD/api:/app" -w /app node:26-alpine npm test
 ```
-For the MCP server, use `$PWD/mcp` instead, and for Jarvis `$PWD/jarvis`. GitHub runs all three test suites, and Jarvis's engine check, on every push, alongside a secret scan of the whole history. The update script has its own tests, which use a pretend `docker` and throwaway git repos, so they change nothing. GitHub doesn't run them, so run them by hand after changing the script: `bash host/hub-update.test.sh`. Likewise `bash host/jarvis.test.sh` for `host/jarvis.sh`, with a pretend `docker` and pretend sound devices.
+For the MCP server, use `$PWD/mcp` instead, and for Jarvis `$PWD/jarvis`. GitHub runs all three test suites, and Jarvis's engine check, on every push, alongside a secret scan of the whole history. The update script has its own tests, which use a pretend `docker` and throwaway git repos, so they change nothing. GitHub doesn't run them, so run them by hand after changing the script: `bash host/hub-update.test.sh`. Likewise `bash host/jarvis.test.sh` for `host/jarvis.sh`, with a pretend `docker` and pretend sound devices, and `bash host/ebay-check.test.sh` for `host/ebay-check.sh`, with a pretend `curl`, so it never contacts eBay.
