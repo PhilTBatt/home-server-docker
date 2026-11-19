@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { createEbaySource, ebayMessages, pageSize, searchUrl, toListing } from "./ebay.js";
+import { createEbaySource, ebayMessages, isApiAddress, pageSize, retryAfterMs, searchUrl, toListing } from "./ebay.js";
 import { readSearches, type Search } from "./searches.js";
 import { SourceError, cleanText, type FailReason } from "./source.js";
 
@@ -1000,4 +1000,50 @@ test("replacing a stale token is the one extra call a search may make beyond its
 test("direction marks and invisible tag characters are taken out of a title too", () => {
   const title = "Dell\u061C OptiPlex\u{E0041}\u{E0042}\u{E007F} 7070";
   assert.equal(toListing(item(1, { title }), siteHost)?.title, "Dell OptiPlex 7070");
+});
+
+test("only an https address on eBay's own API host counts as eBay's API", () => {
+  assert.equal(isApiAddress("https://api.ebay.com/buy/browse/v1/item_summary/search?q=x", "api.ebay.com"), true);
+  for (const other of [
+    "http://api.ebay.com/buy",
+    "https://api.ebay.com.evil.example/buy",
+    "https://evil.example/api.ebay.com",
+    "https://user:pass@api.ebay.com/buy",
+    "https://api.ebay.com@evil.example/buy",
+    "https://api.sandbox.ebay.com/buy",
+    "https://api.ebay.com:8443/buy",
+    "//api.ebay.com/buy",
+    "",
+  ]) {
+    assert.equal(isApiAddress(other, "api.ebay.com"), false, other);
+  }
+});
+
+test("a wait from eBay is read as seconds or a date, capped at a day, and anything odd is ignored", () => {
+  const now = Date.parse("2026-11-18T12:00:00.000Z");
+  assert.equal(retryAfterMs("120", now), 120_000);
+  assert.equal(retryAfterMs(" 5 ", now), 5000);
+  assert.equal(retryAfterMs("Wed, 18 Nov 2026 12:30:00 GMT", now), 30 * 60_000);
+  assert.equal(retryAfterMs("999999", now), 24 * 60 * 60_000);
+  for (const odd of [null, "", "0", "-5", "soon", "1e9", "Wed, 18 Nov 2026 11:00:00 GMT", "9".repeat(41)]) assert.equal(retryAfterMs(odd, now), null);
+});
+
+test("too many requests carries eBay's wait, from a search and from a token request", async () => {
+  fakeEbay(() => new Response("{}", { status: 429, headers: { "Retry-After": "600" } }));
+  const error = await createEbaySource({ clientId, clientSecret, environment: "production" }).search(search(), 1).catch((caught: unknown) => caught);
+  assert.ok(error instanceof SourceError);
+  assert.equal(error.reason, "busy");
+  assert.equal(error.retryAfterMs, 600_000);
+
+  mock.restoreAll();
+  fakeEbay(() => new Response("{}"), () => new Response("{}", { status: 429 }));
+  const noWait = await createEbaySource({ clientId, clientSecret, environment: "production" }).search(search(), 1).catch((caught: unknown) => caught);
+  assert.ok(noWait instanceof SourceError);
+  assert.equal(noWait.reason, "busy");
+  assert.equal(noWait.retryAfterMs, null);
+});
+
+test("look-alike characters in a title are turned into plain ones", () => {
+  assert.equal(cleanText("\uFF24\uFF45\uFF4C\uFF4C OptiPlex\u2122 \uFB01ne \u2460", 100), "Dell OptiPlexTM fine 1");
+  assert.equal(cleanText("x".repeat(50) + "\uFDFA", 52), "x".repeat(50) + "\u0635\u0644");
 });

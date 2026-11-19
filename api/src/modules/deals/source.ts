@@ -41,6 +41,7 @@ export type FailReason = "keys" | "access" | "busy" | "down" | "request" | "repl
 export class SourceError extends Error {
   reason: FailReason;
   calls = 0;
+  retryAfterMs: number | null = null;
 
   constructor(reason: FailReason, message: string) {
     super(message);
@@ -58,6 +59,6 @@ const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g;
 
 export function cleanText(value: unknown, maxLength: number): string {
   if (typeof value !== "string") return "";
-  const tidy = value.slice(0, maxLength * 8).replace(unseenCharacters, "").replace(controlCharacters, " ").replace(/\s+/g, " ").trim();
+  const tidy = value.slice(0, maxLength * 8).normalize("NFKC").replace(unseenCharacters, "").replace(controlCharacters, " ").replace(/\s+/g, " ").trim();
   return [...tidy].slice(0, maxLength).join("").trim();
 }

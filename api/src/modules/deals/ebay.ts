@@ -17,6 +17,7 @@ const siteHosts: Record<EbayEnvironment, string> = { production: "www.ebay.co.uk
 const scope = "https://api.ebay.com/oauth/api_scope";
 const timeoutMs = 15_000;
 const maxReplyLength = 5 * 1024 * 1024;
+const maxRetryAfterMs = 24 * 60 * 60 * 1000;
 const openEndedPrice = 10_000_000;
 const buyingFilters: Record<Buying, BuyingOption> = { "buy it now": "FIXED_PRICE", "auction": "AUCTION" };
 const knownBuying: BuyingOption[] = ["FIXED_PRICE", "AUCTION", "BEST_OFFER", "CLASSIFIED_AD"];
@@ -143,7 +144,20 @@ export function toListing(raw: unknown, siteHost: string): Listing | null {
   };
 }
 
-async function ask(url: string, init: RequestInit): Promise<Response> {
+export function isApiAddress(url: string, host: string): boolean {
+  if (!URL.canParse(url)) return false;
+  const target = new URL(url);
+  return target.protocol === "https:" && target.host === host && target.username === "" && target.password === "";
+}
+
+export function retryAfterMs(header: string | null, now: number): number | null {
+  if (header === null || header.length > 40) return null;
+  const wait = /^[0-9]{1,6}$/.test(header.trim()) ? Number(header.trim()) * 1000 : Date.parse(header) - now;
+  return Number.isFinite(wait) && wait > 0 ? Math.min(wait, maxRetryAfterMs) : null;
+}
+
+async function ask(url: string, init: RequestInit, host: string): Promise<Response> {
+  if (!isApiAddress(url, host)) throw failure("request", " (the address isn't eBay's API)");
   try {
     return await fetch(url, { ...init, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
   } catch {
@@ -196,13 +210,19 @@ export function createEbaySource(options: EbayOptions): Source {
   let token: { value: string; expiresAt: number } | null = null;
   let minting: Promise<string> | null = null;
 
+  function busy(response: Response): SourceError {
+    const error = failure("busy");
+    error.retryAfterMs = retryAfterMs(response.headers.get("retry-after"), now());
+    return error;
+  }
+
   async function mint(): Promise<string> {
     const response = await ask(`https://${apiHost}/identity/v1/oauth2/token`, {
       method: "POST",
       headers: { "Authorization": `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
       body: `grant_type=client_credentials&scope=${encodeURIComponent(scope)}`,
-    });
-    if (response.status === 429) throw failure("busy");
+    }, apiHost);
+    if (response.status === 429) throw busy(response);
     if (response.status >= 500) throw failure("down");
     if (!response.ok) throw failure("keys");
     const body = await readJson(response);
@@ -229,7 +249,7 @@ export function createEbaySource(options: EbayOptions): Source {
       countCall();
       const response = await ask(url, {
         headers: { "Authorization": `Bearer ${bearer}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_GB", "Accept": "application/json" },
-      });
+      }, apiHost);
       if (response.ok) return readJson(response);
       if (response.status === 401) {
         token = null;
@@ -237,7 +257,7 @@ export function createEbaySource(options: EbayOptions): Source {
         throw failure("keys");
       }
       if (response.status === 403) throw failure("access");
-      if (response.status === 429) throw failure("busy");
+      if (response.status === 429) throw busy(response);
       if (response.status >= 500) throw failure("down");
       throw failure("request", await errorNumber(response));
     }
