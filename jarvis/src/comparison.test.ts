@@ -602,3 +602,57 @@ test("answers written for the ear are compared with the usual style side by side
     "API, keep, finishes the sentence, written for the ear",
   ]);
 });
+
+const countsHeading = "Speech, added up for each setting: sentences played to the end, sentences that failed, and sentences not played in full (cut off or dropped when he stopped, or past the 40-sentence limit). Then how many answers made no sound, were stopped (before or after any sound), were given up on because two sentences in a row couldn't be made or couldn't be played, or went over 40 sentences.";
+
+test("a second speech table adds up each setting's sentences, and counts the answers with no sound, stopped, given up on or over 40", () => {
+  const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3 }), voiced({ question: 4, ok: false, error: "timeout" }), line({ chat: "chat-2" })];
+  const speech = [
+    said({ spoken: 1 }),
+    said({ spoken: 3 }),
+    said({ question: 2, firstSoundMadeMs: null, firstSoundMs: null, spoken: 0, failed: 2, left: 4, gaveUp: true }),
+    said({ question: 3, spoken: 5, failed: 1, left: 6, stopped: true, tooLong: true }),
+    said({ question: 4, spoken: 9 }),
+  ];
+  const report = compareReport({ lines, speech, skipped: 0 });
+  assert.equal(report.includes(`\n\n${countsHeading}\n`), true);
+  const table = report.slice(report.indexOf(countsHeading));
+  assert.deepEqual(rowOf(table, "API, keep, Kokoro voice"), ["3", "8", "3", "10", "1", "1", "1", "1"]);
+  assert.equal(table.includes("no voice"), false);
+  const header = table.split("\n").find((text) => text.includes("Not played in full"));
+  assert.deepEqual(header?.trim().split(/\s{3,}/), ["Answers", "Played", "Failed", "Not played in full", "No sound", "Stopped", "Given up", "Over 40"]);
+  assert.ok(report.indexOf(countsHeading) > report.indexOf("Speech, timed"));
+  assert.equal(table.includes("had no speech line"), false);
+});
+
+test("an answer stopped before any sound counts as stopped and as no sound, and one stopped in its first sentence only as stopped", () => {
+  const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3 })];
+  const speech = [
+    said({ firstSoundMadeMs: 900, firstSoundMs: null, spoken: 0, left: 3, stopped: true }),
+    said({ question: 2, firstSoundMs: 2600, spoken: 0, left: 3, stopped: true }),
+    said({ question: 3, firstSoundMadeMs: null, firstSoundMs: null, spoken: 0, left: 2, stopped: true }),
+  ];
+  const report = compareReport({ lines, speech, skipped: 0 });
+  assert.deepEqual(rowOf(report.slice(report.indexOf(countsHeading)), "API, keep"), ["3", "0", "0", "8", "2", "3", "0", "0"]);
+});
+
+test("the second speech table has a row for each setting with speech lines, even when nothing in it made a sound, and isn't there without any", () => {
+  const silent = compareReport({ lines: [voiced()], speech: [said({ firstSoundMadeMs: null, firstSoundMs: null, spoken: 0, failed: 2, gaveUp: true })], skipped: 0 });
+  assert.equal(silent.includes("Speech, timed"), false);
+  assert.deepEqual(rowOf(silent.slice(silent.indexOf(countsHeading)), "API, keep"), ["1", "0", "2", "0", "1", "0", "1", "0"]);
+  const two = compareReport({ lines: [voiced({ engine: "sdk", thinking: null }), voiced({ chat: "chat-2", speechStart: "clause" })], speech: [said(), said({ chat: "chat-2", spoken: 2, left: 1, stopped: true })], skipped: 0 });
+  const counts = two.slice(two.indexOf(countsHeading));
+  assert.deepEqual(rowOf(counts, "Agent SDK, whole first sentence"), ["1", "3", "0", "0", "0", "0", "0", "0"]);
+  assert.deepEqual(rowOf(counts, "API, keep, first clause early"), ["1", "2", "0", "1", "0", "1", "0", "0"]);
+  assert.equal(compareReport({ lines: [voiced(), line({ chat: "chat-2" })], skipped: 0 }).includes(countsHeading), false);
+  assert.equal(compareReport({ lines: [line()], speech: [said()], skipped: 0 }).includes(countsHeading), false);
+});
+
+test("answers with the voice on but no speech line yet are named under the second table, apart from failed and voice-off ones", () => {
+  const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3 }), voiced({ question: 4, ok: false, error: "timeout" }), line({ chat: "chat-2" })];
+  const report = compareReport({ lines, speech: [said()], skipped: 0 });
+  assert.equal(report.includes(`${countsHeading}\n`), true);
+  assert.equal(report.includes("\n2 answers with the voice on had no speech line in the log, so aren't in this table: still being spoken when this ran, or the chat ended first.\n"), true);
+  const one = compareReport({ lines: [voiced(), voiced({ question: 2 })], speech: [said()], skipped: 0 });
+  assert.equal(one.includes("\n1 answer with the voice on had no speech line in the log, so isn't in this table: still being spoken when this ran, or the chat ended first.\n"), true);
+});

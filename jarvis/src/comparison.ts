@@ -349,6 +349,16 @@ function speechRows(groups: Group[], speech: Map<string, SpeechLine>): string[][
   );
 }
 
+function speechCountRows(groups: Group[], speech: Map<string, SpeechLine>): string[][] {
+  return groups.flatMap((group) => {
+    const said = group.voice === "off" ? [] : group.lines.flatMap((line) => (line.ok ? (speech.get(questionKey(line)) ?? []) : []));
+    if (said.length === 0) return [];
+    const total = (pick: (line: SpeechLine) => number) => String(said.reduce((sum, line) => sum + pick(line), 0));
+    const count = (pick: (line: SpeechLine) => boolean) => String(said.filter(pick).length);
+    return [[group.label, String(said.length), total((line) => line.spoken), total((line) => line.failed), total((line) => line.left), count((line) => line.firstSoundMs === null), count((line) => line.stopped), count((line) => line.gaveUp), count((line) => line.tooLong)]];
+  });
+}
+
 function failureLines(groups: Group[]): string[] {
   return groups.flatMap((group) => {
     const counts = new Map<string, number>();
@@ -383,6 +393,13 @@ export function compareReport({ lines, ratings = [], newChats = [], speech = [],
     out.push(table(["", "Answers", "First words", "First sentence sent", "Its sound made", "First sound", "Longest silence"], spoken));
     const silent = groups.reduce((sum, group) => sum + (group.voice === "off" ? 0 : group.lines.filter((line) => line.ok).length - spokenAnswers(group, said).length), 0);
     if (silent > 0) out.push(`${plural(silent, "answer")} with the voice on had no sound and ${silent === 1 ? "is" : "are"} left out of this table.`);
+  }
+  const counted = speechCountRows(groups, said);
+  if (counted.length > 0) {
+    out.push("", "Speech, added up for each setting: sentences played to the end, sentences that failed, and sentences not played in full (cut off or dropped when he stopped, or past the 40-sentence limit). Then how many answers made no sound, were stopped (before or after any sound), were given up on because two sentences in a row couldn't be made or couldn't be played, or went over 40 sentences.");
+    out.push(table(["", "Answers", "Played", "Failed", "Not played in full", "No sound", "Stopped", "Given up", "Over 40"], counted));
+    const unlogged = groups.reduce((sum, group) => sum + (group.voice === "off" ? 0 : group.lines.filter((line) => line.ok && !said.has(questionKey(line))).length), 0);
+    if (unlogged > 0) out.push(`${plural(unlogged, "answer")} with the voice on had no speech line in the log, so ${unlogged === 1 ? "isn't" : "aren't"} in this table: still being spoken when this ran, or the chat ended first.`);
   }
   const uncached = lines.filter((line) => line.ok && (line.cacheReadTokens === undefined || line.cacheWriteTokens === undefined)).length;
   if (uncached > 0) out.push("", `The cache rows leave out ${plural(uncached, "answer")} logged before cache tokens were counted.`);
