@@ -9,22 +9,26 @@ export const mixerTimeoutMs = 10_000;
 
 export type SoundCard = { number: number; device: string; speakers: string; mixer: string };
 
+export class MicrophonePassedIn extends Error {}
+
+export const soundTestHint = "Start the sound test with bash host/jarvis.sh sound-test";
+
 export type Run = (command: string, args: readonly string[]) => Promise<void>;
 
 function named(names: string[]): string {
   return names.map((name) => shortError(name)).join(", ");
 }
 
-export async function findSoundCard(dir = soundDir, list: (dir: string) => Promise<string[]> = (dir) => readdir(dir)): Promise<SoundCard> {
+export async function findSoundCard(dir = soundDir, list: (dir: string) => Promise<string[]> = (dir) => readdir(dir), hint = soundTestHint): Promise<SoundCard> {
   let names: string[];
   try {
     names = await list(dir);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`No sound devices were passed in, so there's nothing to play on. Start the sound test with bash host/jarvis.sh sound-test`);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`No sound devices were passed in, so there's nothing to play on. ${hint}`);
     throw new Error(`Couldn't read ${dir}: ${shortError(error instanceof Error ? error.message : String(error))}`);
   }
   const microphones = names.filter((name) => /^pcmC\d+D\d+c$/.test(name)).sort();
-  if (microphones.length > 0) throw new Error(`A microphone device was passed in (${named(microphones)}). Jarvis must never have one, so this stops here. Check docker-compose.sound.yaml`);
+  if (microphones.length > 0) throw new MicrophonePassedIn(`A microphone device was passed in (${named(microphones)}). Jarvis must never have one, so this stops here. Check docker-compose.sound.yaml`);
   const mixers = names
     .map((name) => /^controlC(\d+)$/.exec(name))
     .filter((match) => match !== null)

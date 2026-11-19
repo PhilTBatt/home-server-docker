@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { findSoundCard, mixerCommand, mixerTimeoutMs, runCommand, setVolume, soundDir, volumeArgs, volumeControl } from "./sound-card.js";
+import { findSoundCard, MicrophonePassedIn, mixerCommand, mixerTimeoutMs, runCommand, setVolume, soundDir, soundTestHint, volumeArgs, volumeControl } from "./sound-card.js";
 
 const listing = (names: string[]) => async () => names;
 
@@ -56,6 +56,17 @@ test("with no sound devices passed in, it says to start the sound test the right
   await assert.rejects(findSoundCard(missing), { message: "No sound devices were passed in, so there's nothing to play on. Start the sound test with bash host/jarvis.sh sound-test" });
 });
 
+test("whoever asks for the card can say how to start it the right way instead", async () => {
+  const missing = join(await scratch(), "snd");
+  assert.equal(soundTestHint, "Start the sound test with bash host/jarvis.sh sound-test");
+  await assert.rejects(findSoundCard(missing, undefined, "Start Jarvis with bash host/jarvis.sh"), { message: "No sound devices were passed in, so there's nothing to play on. Start Jarvis with bash host/jarvis.sh" });
+  const gone = async () => {
+    throw Object.assign(new Error("ENOENT: no such file or directory, scandir '/dev/snd'"), { code: "ENOENT" });
+  };
+  await assert.rejects(findSoundCard("/dev/snd", gone, "Do this instead"), { message: "No sound devices were passed in, so there's nothing to play on. Do this instead" });
+  assert.equal((await findSoundCard("/dev/snd", listing(["controlC1", "pcmC1D0p"]), "Do this instead")).number, 1);
+});
+
 test("a folder that can't be read for another reason says so", async () => {
   const failing = async () => {
     throw Object.assign(new Error("EACCES: permission denied, scandir '/dev/snd'"), { code: "EACCES" });
@@ -67,6 +78,14 @@ test("any microphone device stops it, naming each one, even alongside good speak
   await assert.rejects(findSoundCard("/dev/snd", listing(["controlC1", "pcmC1D0p", "pcmC1D0c"])), { message: "A microphone device was passed in (pcmC1D0c). Jarvis must never have one, so this stops here. Check docker-compose.sound.yaml" });
   await assert.rejects(findSoundCard("/dev/snd", listing(["pcmC2D0c", "controlC1", "pcmC1D0p", "pcmC0D3c"])), { message: "A microphone device was passed in (pcmC0D3c, pcmC2D0c). Jarvis must never have one, so this stops here. Check docker-compose.sound.yaml" });
   await assert.rejects(findSoundCard("/dev/snd", listing(["pcmC1D0c"])), { message: /A microphone device was passed in \(pcmC1D0c\)/ });
+});
+
+test("a microphone is its own kind of error, so a caller can tell it from every other problem", async () => {
+  await assert.rejects(findSoundCard("/dev/snd", listing(["controlC1", "pcmC1D0p", "pcmC1D0c"])), (error: unknown) => error instanceof MicrophonePassedIn && error instanceof Error);
+  await assert.rejects(findSoundCard("/dev/snd", listing(["pcmC1D0c"]), "Do this instead"), (error: unknown) => error instanceof MicrophonePassedIn);
+  const missing = join(await scratch(), "snd");
+  const others = [() => findSoundCard("/dev/snd", listing([])), () => findSoundCard("/dev/snd", listing(["controlC1"])), () => findSoundCard("/dev/snd", listing(["controlC0", "controlC1"])), () => findSoundCard(missing)];
+  for (const other of others) await assert.rejects(other(), (error: unknown) => error instanceof Error && !(error instanceof MicrophonePassedIn));
 });
 
 test("names that only look a bit like a microphone aren't taken for one", async () => {

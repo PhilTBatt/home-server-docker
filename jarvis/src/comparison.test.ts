@@ -374,6 +374,31 @@ test("session notes on and off are compared side by side, off first, named only 
   assert.equal(isLogLine(older), true);
 });
 
+test("answers with and without a voice are compared side by side, without first, named only when both are in the log, and older lines count as without", () => {
+  const older = line();
+  const mixed = [line({ voice: "kokoro" }), older, line({ engine: "sdk", thinking: null, voice: "kokoro" })];
+  assert.deepEqual(rowOf(compareReport({ lines: mixed, skipped: 0 }), ""), ["Agent SDK, Kokoro voice", "API, keep, no voice", "API, keep, Kokoro voice"]);
+  assert.deepEqual(rowOf(compareReport({ lines: mixed, skipped: 0 }), "Answers"), ["1", "1", "1"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ voice: "kokoro" }), line({ voice: "kokoro" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [older, line({ voice: "off" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [older, line({ voice: "off" })], skipped: 0 }), "Answers"), ["2"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ sessionNotes: "on", voice: "kokoro" }), line({})], skipped: 0 }), ""), ["API, keep, no session notes, no voice", "API, keep, session notes, Kokoro voice"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ sessionNotes: "on", voice: "kokoro" }), line({ sessionNotes: "on" }), line({ voice: "kokoro" })], skipped: 0 }), ""), ["API, keep, no session notes, Kokoro voice", "API, keep, session notes, no voice", "API, keep, session notes, Kokoro voice"]);
+  assert.deepEqual(
+    groupLines([line({ voice: "kokoro" }), older]).map((group) => [group.voice, group.lines.length]),
+    [
+      ["off", 1],
+      ["kokoro", 1],
+    ],
+  );
+  assert.equal(isLogLine({ ...line(), voice: "on" }), false);
+  assert.equal(isLogLine({ ...line(), voice: "piper" }), false);
+  assert.equal(isLogLine({ ...line(), voice: null }), false);
+  assert.equal(isLogLine({ ...line(), voice: "kokoro" }), true);
+  assert.equal(isLogLine({ ...line(), voice: "off" }), true);
+  assert.equal(isLogLine(older), true);
+});
+
 test("hub tools on and off are compared side by side, off first, named only when both are in the log, and older lines count as off", () => {
   const { hubTools: _hub, ...older } = line();
   const mixed = [line({ hubTools: "on" }), older as LogLine, line({ engine: "sdk", thinking: null, hubTools: "on" })];

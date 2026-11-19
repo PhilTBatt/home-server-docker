@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainDir, chatModes, defaultVolume, engines, readConfig, readVolume, thinkingHistories } from "./config.js";
+import { brainDir, chatModes, defaultKokoroVoice, defaultVolume, engines, readConfig, readVolume, thinkingHistories, voiceModes } from "./config.js";
 
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -200,7 +200,66 @@ test("anything else in JARVIS_VOLUME is refused and named", () => {
   }
 });
 
-test("JARVIS_VOLUME doesn't need the API key, and the chat's settings don't read it yet", () => {
+test("JARVIS_VOLUME doesn't need the API key for the sound test, and the chat's settings read it too", () => {
   assert.equal(readVolume({ JARVIS_VOLUME: "60" }), 60);
-  assert.equal("volume" in readConfig({ ...base, JARVIS_VOLUME: "loud" }), false);
+  assert.equal(readConfig({ ...base, JARVIS_VOLUME: "60" }).volume, 60);
+  assert.equal(readConfig({ ...base, JARVIS_VOLUME: " 0 " }).volume, 0);
+  assert.equal(readConfig(base).volume, defaultVolume);
+});
+
+test("a wrong JARVIS_VOLUME stops the chat too, voice on or off", () => {
+  for (const voice of ["off", "kokoro"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_VOLUME: "loud" }), { message: 'JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "loud"' });
+    assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_VOLUME: "101" }), { message: 'JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "101"' });
+  }
+});
+
+test("the voice is off unless JARVIS_VOICE names a speech engine, and Kokoro is the only one so far", () => {
+  assert.deepEqual(voiceModes, ["off", "kokoro"]);
+  assert.equal(readConfig(base).voice, "off");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: "" }).voice, "off");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: "  " }).voice, "off");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: "off" }).voice, "off");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: "kokoro" }).voice, "kokoro");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: " kokoro " }).voice, "kokoro");
+});
+
+test("anything else in JARVIS_VOICE stops Jarvis and is named", () => {
+  for (const value of ["on", "Kokoro", "KOKORO", "piper", "kokoro,piper", "yes", "true", "bm_george"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_VOICE: value }), { message: `JARVIS_VOICE must be off or kokoro, not "${value}"` });
+  }
+});
+
+test("JARVIS_KOKORO_VOICE names Kokoro's voice, bm_george unless set", () => {
+  assert.equal(defaultKokoroVoice, "bm_george");
+  assert.equal(readConfig(base).kokoroVoice, "bm_george");
+  assert.equal(readConfig({ ...base, JARVIS_KOKORO_VOICE: "" }).kokoroVoice, "bm_george");
+  assert.equal(readConfig({ ...base, JARVIS_KOKORO_VOICE: "   " }).kokoroVoice, "bm_george");
+  assert.equal(readConfig({ ...base, JARVIS_KOKORO_VOICE: "bm_fable" }).kokoroVoice, "bm_fable");
+  assert.equal(readConfig({ ...base, JARVIS_KOKORO_VOICE: " bm_lewis " }).kokoroVoice, "bm_lewis");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: "kokoro", JARVIS_KOKORO_VOICE: "bm_daniel" }).kokoroVoice, "bm_daniel");
+});
+
+test("JARVIS_KOKORO_VOICE also takes Kokoro's blends of voices, with or without weights", () => {
+  for (const value of ["bm_george+bm_fable", "bm_george(2)+bm_fable(1)", "bm_george(0.7)+bm_fable(0.3)", "bm_george-bm_fable(0.2)", "af_heart", "bm_v0george", "a+b+c"]) {
+    assert.equal(readConfig({ ...base, JARVIS_KOKORO_VOICE: value }).kokoroVoice, value);
+  }
+});
+
+test("a JARVIS_KOKORO_VOICE that couldn't be a voice name stops Jarvis and is named, voice on or off", () => {
+  const shapes = ["bm george", "bm_george,bm_fable", '"bm_george"', "bm_george+", "+bm_george", "bm_george++bm_fable", "bm_george()", "bm_george(two)", "bm_george(2", "(2)", "bm-", "bm_george;", "bm_george\nbm_fable", "bm_géorge", `b${"m".repeat(200)}`];
+  for (const value of shapes) {
+    for (const voice of ["off", "kokoro"]) {
+      assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_KOKORO_VOICE: value }), { message: `JARVIS_KOKORO_VOICE must be one of Kokoro's voice names, like bm_george, or a blend like bm_george(2)+bm_fable(1), not "${value.trim()}"` });
+    }
+  }
+  assert.equal(readConfig({ ...base, JARVIS_KOKORO_VOICE: `b${"m".repeat(199)}` }).kokoroVoice.length, 200);
+});
+
+test("the voice settings are checked after the earlier ones and before JARVIS_LOG", () => {
+  assert.throws(() => readConfig({ ...base, JARVIS_SESSION_NOTES: "maybe", JARVIS_VOICE: "loud" }), { message: 'JARVIS_SESSION_NOTES must be on or off, not "maybe"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_VOICE: "loud", JARVIS_KOKORO_VOICE: "a b", JARVIS_VOLUME: "loud" }), { message: 'JARVIS_VOICE must be off or kokoro, not "loud"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_KOKORO_VOICE: "a b", JARVIS_VOLUME: "loud" }), { message: `JARVIS_KOKORO_VOICE must be one of Kokoro's voice names, like bm_george, or a blend like bm_george(2)+bm_fable(1), not "a b"` });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_VOLUME: "loud" }), { message: 'JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "loud"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_VOICE: "kokoro" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
 });

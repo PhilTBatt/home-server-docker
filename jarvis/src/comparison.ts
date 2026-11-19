@@ -1,5 +1,5 @@
 import { logVersion, type LogLine, type NewChatLine, type Rating, type RatingLine } from "./answer-log.js";
-import { chatModes, engines, hubActionsModes, hubToolsModes, lengthHintModes, sessionNotesModes, thinkingHistories, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type SessionNotesMode, type ThinkingHistory } from "./config.js";
+import { chatModes, engines, hubActionsModes, hubToolsModes, lengthHintModes, sessionNotesModes, thinkingHistories, voiceModes, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type SessionNotesMode, type ThinkingHistory, type VoiceMode } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
 export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; skipped: number };
@@ -14,6 +14,7 @@ export type Group = {
   hubTools: HubToolsMode;
   hubActions: HubActionsMode;
   sessionNotes: SessionNotesMode;
+  voice: VoiceMode;
   lines: LogLine[];
 };
 
@@ -42,6 +43,7 @@ export function isLogLine(value: unknown): value is LogLine {
     (line.hubTools === undefined || (hubToolsModes as readonly unknown[]).includes(line.hubTools)) &&
     (line.hubActions === undefined || (hubActionsModes as readonly unknown[]).includes(line.hubActions)) &&
     (line.sessionNotes === undefined || (sessionNotesModes as readonly unknown[]).includes(line.sessionNotes)) &&
+    (line.voice === undefined || (voiceModes as readonly unknown[]).includes(line.voice)) &&
     typeof line.ok === "boolean" &&
     (line.error === null || typeof line.error === "string") &&
     numberFields.every((field) => isNumberOrNull(line[field])) &&
@@ -107,14 +109,14 @@ function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
   return thinking === null ? "API" : `API, ${thinking}`;
 }
 
-function order(group: Group): [number, number, string, number, number, number, number, number] {
-  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), hubActionsModes.indexOf(group.hubActions), sessionNotesModes.indexOf(group.sessionNotes)];
+function order(group: Group): [number, number, string, number, number, number, number, number, number] {
+  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), hubActionsModes.indexOf(group.hubActions), sessionNotesModes.indexOf(group.sessionNotes), voiceModes.indexOf(group.voice)];
 }
 
 function compareGroups(a: Group, b: Group): number {
-  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, actionsA, notesA] = order(a);
-  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, actionsB, notesB] = order(b);
-  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || actionsA - actionsB || notesA - notesB;
+  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, actionsA, notesA, voiceA] = order(a);
+  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, actionsB, notesB, voiceB] = order(b);
+  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || actionsA - actionsB || notesA - notesB || voiceA - voiceB;
 }
 
 const chatNames: Record<ChatMode, string> = { fresh: "fresh", resume: "resumed" };
@@ -122,6 +124,7 @@ const hintNames: Record<LengthHints, string> = { note: "length note", jarvis: "J
 const hubNames: Record<HubToolsMode, string> = { off: "no hub tools", on: "hub tools" };
 const actionNames: Record<HubActionsMode, string> = { off: "no hub actions", on: "hub actions" };
 const notesNames: Record<SessionNotesMode, string> = { off: "no session notes", on: "session notes" };
+const voiceNames: Record<VoiceMode, string> = { off: "no voice", kokoro: "Kokoro voice" };
 
 export function groupLines(lines: LogLine[]): Group[] {
   const groups = new Map<string, Group>();
@@ -132,8 +135,9 @@ export function groupLines(lines: LogLine[]): Group[] {
     const hubTools = line.hubTools ?? "off";
     const hubActions = line.hubActions ?? "off";
     const sessionNotes = line.sessionNotes ?? "off";
-    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, hubActions, sessionNotes]);
-    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, lines: [] };
+    const voice = line.voice ?? "off";
+    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice]);
+    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, lines: [] };
     group.lines.push(line);
     groups.set(key, group);
   }
@@ -143,6 +147,7 @@ export function groupLines(lines: LogLine[]): Group[] {
   const hubSettings = new Set(lines.map((line) => line.hubTools ?? "off"));
   const actionSettings = new Set(lines.map((line) => line.hubActions ?? "off"));
   const notesSettings = new Set(lines.map((line) => line.sessionNotes ?? "off"));
+  const voiceSettings = new Set(lines.map((line) => line.voice ?? "off"));
   const label = (group: Group) => {
     const parts = [
       settingName(group.engine, group.thinking),
@@ -151,6 +156,7 @@ export function groupLines(lines: LogLine[]): Group[] {
       ...(hubSettings.size > 1 ? [hubNames[group.hubTools]] : []),
       ...(actionSettings.size > 1 ? [actionNames[group.hubActions]] : []),
       ...(notesSettings.size > 1 ? [notesNames[group.sessionNotes]] : []),
+      ...(voiceSettings.size > 1 ? [voiceNames[group.voice]] : []),
     ];
     const name = parts.join(", ");
     return models.size > 1 ? `${name} (${group.model})` : name;

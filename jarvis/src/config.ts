@@ -21,6 +21,9 @@ export type HubActionsMode = (typeof hubActionsModes)[number];
 export const sessionNotesModes = ["off", "on"] as const;
 export type SessionNotesMode = (typeof sessionNotesModes)[number];
 
+export const voiceModes = ["off", "kokoro"] as const;
+export type VoiceMode = (typeof voiceModes)[number];
+
 export type Config = {
   apiKey: string;
   engine: Engine;
@@ -32,12 +35,17 @@ export type Config = {
   hubToken: string | null;
   hubActions: boolean;
   sessionNotes: boolean;
+  voice: VoiceMode;
+  kokoroVoice: string;
+  volume: number;
   log: boolean;
 };
 
 export const defaultLengthWarn = 80_000;
 
 export const defaultVolume = 80;
+
+export const defaultKokoroVoice = "bm_george";
 
 export function readVolume(env: Record<string, string | undefined>): number {
   const text = env.JARVIS_VOLUME?.trim() || String(defaultVolume);
@@ -63,6 +71,10 @@ function isChatMode(value: string): value is ChatMode {
 
 function isLengthHints(value: string): value is LengthHints {
   return (lengthHintModes as readonly string[]).includes(value);
+}
+
+function isVoiceMode(value: string): value is VoiceMode {
+  return (voiceModes as readonly string[]).includes(value);
 }
 
 export function readConfig(env: Record<string, string | undefined>): Config {
@@ -93,8 +105,13 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (hubActions === "on" && hubTools !== "on") throw new Error("JARVIS_HUB_ACTIONS is on, but JARVIS_HUB_TOOLS is off. The actions come with the hub's tools, so turn both on");
   const sessionNotes = env.JARVIS_SESSION_NOTES?.trim() || "off";
   if (sessionNotes !== "on" && sessionNotes !== "off") throw new Error(`JARVIS_SESSION_NOTES must be on or off, not "${sessionNotes}"`);
+  const voice = env.JARVIS_VOICE?.trim() || "off";
+  if (!isVoiceMode(voice)) throw new Error(`JARVIS_VOICE must be off or kokoro, not "${voice}"`);
+  const kokoroVoice = env.JARVIS_KOKORO_VOICE?.trim() || defaultKokoroVoice;
+  if (!/^[A-Za-z0-9_]+(\([0-9.]+\))?([+-][A-Za-z0-9_]+(\([0-9.]+\))?)*$/.test(kokoroVoice) || kokoroVoice.length > 200) throw new Error(`JARVIS_KOKORO_VOICE must be one of Kokoro's voice names, like bm_george, or a blend like bm_george(2)+bm_fable(1), not "${kokoroVoice}"`);
+  const volume = readVolume(env);
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, volume, log: log === "on" };
 }

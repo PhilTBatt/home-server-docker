@@ -10,19 +10,24 @@ import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, lengthHintsFor, lengthLineFor, listenNow, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine } from "./chat.js";
-import { brainDir, readConfig } from "./config.js";
+import { brainDir, readConfig, type VoiceMode } from "./config.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
 import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes, withNotes } from "./session-notes.js";
+import { voiceFor } from "./voice.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
 const typed = listenNow(lines);
 const prompt = promptWhileOpen(lines);
 let session: AgentSession | null = null;
 let hubTools: HubTools | undefined;
+const starting = new AbortController();
 lines.on("SIGINT", () => {
-  if (session === null) process.exit(130);
+  if (session === null) {
+    starting.abort();
+    process.exit(130);
+  }
   lines.close();
   session.close();
 });
@@ -38,6 +43,7 @@ try {
   const hubNotes: string[] = [];
   hubTools = hub !== undefined && config.engine === "api" ? await startHubTools(hub, (note) => hubNotes.push(note)) : undefined;
   const notes = config.sessionNotes ? await readSessionNotes() : null;
+  let voice: VoiceMode = "off";
   const open = (setup: ChatSetup) => {
     const chat =
       config.engine === "api"
@@ -57,7 +63,7 @@ try {
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off" },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -83,11 +89,12 @@ try {
   };
   const chats = await setUpChats(config.chats, config.engine);
   if (chats.problem !== null) warn(chats.problem);
-  const first = open(chats);
   process.stdout.write(`${engineLine(config.engine, config.thinkingHistory)}\n`);
   process.stdout.write(`${settingsLine(config)}\n`);
   for (const note of hubNotes) warn(note);
   if (notes !== null) process.stdout.write(`${notesLine(notes)}\n`);
+  voice = await voiceFor(config, starting.signal, (line) => process.stdout.write(`${line}\n`));
+  const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
   await runChat({
