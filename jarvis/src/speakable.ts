@@ -2,6 +2,21 @@ const edgeMarks = /^[`'"*_([{<]+|[`'"*_)\]}>.,;:!?]+$/g;
 
 const wholeCodeSpan = /^[("'[]*`[^`]+`[)\]"'.,;:!?]*$/;
 
+const codeSpan = /(?<![\\`])(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g;
+
+const codeMarks = /(?<![\\`])`+/g;
+
+export function codeSpansIn(text: string): [number, number][] {
+  return [...text.matchAll(codeSpan)].map((found) => [found.index, found.index + found[0].length]);
+}
+
+export function looseMarkIn(text: string, spans: [number, number][]): number | null {
+  for (const found of text.matchAll(codeMarks)) {
+    if (!spans.some(([start, end]) => start <= found.index && found.index < end)) return found.index;
+  }
+  return null;
+}
+
 function isPath(word: string): boolean {
   const core = word.replace(edgeMarks, "");
   if (core.includes("\\")) return true;
@@ -21,9 +36,10 @@ function withoutPaths(text: string): string {
     .join(" ");
 }
 
-export function speakable(piece: string): string {
+export function speakable(piece: string, options: { skipCode?: boolean } = {}): string {
+  const source = options.skipCode === true ? piece.replace(codeSpan, " ") : piece;
   const text = withoutPaths(
-    piece
+    source
       .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
       .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
       .replace(/\\([\\`*_{}[\]()#+\-.!|<>~])/g, "$1")
@@ -47,5 +63,10 @@ export function speakable(piece: string): string {
     .replace(/\s+/g, " ")
     .replace(/ ([.,;:!?]+)(?= |$)/g, "$1")
     .replace(/^[\s,;:]+|[\s,]+$/g, "");
-  return /[\p{L}\p{N}]/u.test(text) ? text : "";
+  if (source === piece) return /[\p{L}\p{N}]/u.test(text) ? text : "";
+  const said = text
+    .replace(/([,;:])(?:\s*[,;:])+(?=\s|$)/g, "$1")
+    .replace(/[,;:]+(?=[.!?]|$)/g, "")
+    .replace(/(?<!\.)\.\.(?=\s|$)/g, ".");
+  return /[\p{L}\p{N}]/u.test(said) && !/^\d{1,3}[.)]?$/.test(said) ? said : "";
 }

@@ -15,7 +15,7 @@ export type AnswerSpeech = {
   report(): SpeechReport;
 };
 
-export type AnswerSpeechDeps = Pick<SpeechQueueDeps, "make" | "play" | "now" | "ahead" | "limit" | "failureLimit" | "after"> & { start: SpeechStart };
+export type AnswerSpeechDeps = Pick<SpeechQueueDeps, "make" | "play" | "now" | "ahead" | "limit" | "failureLimit" | "after"> & { start: SpeechStart; skipCode?: boolean };
 
 export type Speaker = { engine: SpeechEngine; device: string; startPlayer: (options: { device: string; rate: number }) => Player };
 
@@ -44,7 +44,7 @@ export function speakerParts(speaker: Speaker, limitMs: (bytes: number, rate: nu
 
 export function startAnswerSpeech(deps: AnswerSpeechDeps): AnswerSpeech {
   const since = deps.now();
-  const fresh = () => ({ sentences: createSentences({ start: deps.start }), queue: startSpeechQueue({ ...deps, since }) });
+  const fresh = () => ({ sentences: createSentences({ start: deps.start, skipCode: deps.skipCode }), queue: startSpeechQueue({ ...deps, since }) });
   let current = fresh();
   let closed = false;
   return {

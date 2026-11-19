@@ -3,12 +3,12 @@ import { test } from "node:test";
 import type { SpeechStart } from "./config.js";
 import { createSentences, firstClauseChars, maxPieceChars } from "./sentences.js";
 
-function fed(chunks: string[], options: { start?: SpeechStart; maxChars?: number; clauseChars?: number } = {}): string[][] {
+function fed(chunks: string[], options: { start?: SpeechStart; skipCode?: boolean; maxChars?: number; clauseChars?: number } = {}): string[][] {
   const sentences = createSentences({ start: "sentence", ...options });
   return [...chunks.map((chunk) => sentences.push(chunk)), sentences.end()];
 }
 
-function whole(text: string, options: { start?: SpeechStart; maxChars?: number; clauseChars?: number } = {}): string[] {
+function whole(text: string, options: { start?: SpeechStart; skipCode?: boolean; maxChars?: number; clauseChars?: number } = {}): string[] {
   return fed([text], options).flat();
 }
 
@@ -235,4 +235,45 @@ test("nothing in means nothing out", () => {
   assert.deepEqual(fed([]), [[]]);
   assert.deepEqual(fed(["", ""]), [[], [], []]);
   assert.deepEqual(fed(["\n\n\n"]), [[], []]);
+});
+
+test("asked to skip code, sentences leave out what's in code marks, and one that was only code isn't spoken", () => {
+  const text = "Run the tests first.\n`npm test`\nThen type `npm start` and wait. Use `bash host/jarvis.sh` to start him.";
+  assert.deepEqual(whole(text, { skipCode: true }), ["Run the tests first.", "Then type and wait.", "Use to start him."]);
+  assert.deepEqual(whole(text), ["Run the tests first.", "npm test", "Then type npm start and wait.", "Use bash to start him."]);
+  assert.deepEqual(fed([...text], { skipCode: true }).flat(), whole(text, { skipCode: true }));
+});
+
+test("asked to skip code, a first clause needs its 20 characters without the code", () => {
+  const arriving = ["Run `docker compose up -d --build`, then wait", " for it. After that it's ready."];
+  assert.deepEqual(fed(arriving, { start: "clause" }), [["Run docker compose up -d --build"], ["then wait for it."], ["After that it's ready."]]);
+  assert.deepEqual(fed(arriving, { start: "clause", skipCode: true }), [[], ["Run, then wait for it."], ["After that it's ready."]]);
+});
+
+test("asked to skip code, a sentence end inside code marks doesn't split the code, so none of it is spoken", () => {
+  const text = "Run `git commit -m 'Fix bug. Add test'` now. Then rest.";
+  assert.deepEqual(whole(text, { skipCode: true }), ["Run now.", "Then rest."]);
+  assert.deepEqual(fed([...text], { skipCode: true }).flat(), ["Run now.", "Then rest."]);
+  assert.deepEqual(whole(text), ["Run git commit -m 'Fix bug.", "Add test' now.", "Then rest."]);
+});
+
+test("asked to skip code, sentences are split around code spans found the same way the filter finds them, escaped marks and all", () => {
+  for (const text of ["Use \\` to mark code. Run `git commit -m 'Fix bug. Add test'` now.", "Use `` ` `` to mark code. Run `git commit -m 'Fix bug. Add test'` now."]) {
+    assert.deepEqual(whole(text, { skipCode: true }), ["Use to mark code.", "Run now."], text);
+    assert.deepEqual(fed([...text], { skipCode: true }).flat(), ["Use to mark code.", "Run now."], text);
+  }
+});
+
+test("asked to skip code, a mark that opens nothing holds the rest of its line, then the line is split as usual", () => {
+  const sentences = createSentences({ start: "sentence", skipCode: true });
+  assert.deepEqual(sentences.push("First this. Run `npm test. Then go on. And"), ["First this."]);
+  assert.deepEqual(sentences.push(" more.\nNext line. Ok."), ["Run npm test.", "Then go on.", "And more.", "Next line."]);
+  assert.deepEqual(sentences.end(), ["Ok."]);
+});
+
+test("asked to skip code, a stray mark pairs with the next one, as Markdown would, so what's between them isn't spoken", () => {
+  const text = "Don`t worry. It's fine. Run `npm test` now.";
+  assert.deepEqual(whole(text, { skipCode: true }), ["Don npm test now."]);
+  assert.deepEqual(fed([...text], { skipCode: true }).flat(), ["Don npm test now."]);
+  assert.deepEqual(whole(text), ["Dont worry.", "It's fine.", "Run npm test now."]);
 });

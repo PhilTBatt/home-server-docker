@@ -10,7 +10,7 @@ import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.j
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
-import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine } from "./chat.js";
+import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, withSpokenStyle } from "./chat.js";
 import { brainDir, readConfig, type VoiceMode } from "./config.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
@@ -46,12 +46,13 @@ try {
   let voice: VoiceMode = "off";
   let speaker: Speaker | null = null;
   const open = (setup: ChatSetup) => {
+    const spoken = voice !== "off" && config.spokenStyle;
     const chat =
       config.engine === "api"
         ? startApiSession({
             apiKey: config.apiKey,
             model: chatModel,
-            system: withNotes(apiChatSystem, notes ?? []),
+            system: withNotes(withSpokenStyle(apiChatSystem, spoken), notes ?? []),
             maxTokens: apiMaxTokens,
             timeoutMs: questionTimeoutMs,
             now,
@@ -60,11 +61,11 @@ try {
             history: setup.history,
             save: setup.save,
           })
-        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: withNotes(chatSystem, notes ?? []), cwd: brainDir, now, savedChats: setup.savedChats, hub });
+        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: withNotes(withSpokenStyle(chatSystem, spoken), notes ?? []), cwd: brainDir, now, savedChats: setup.savedChats, hub });
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, speechStart: config.speechStart, speechStop: config.speechStop },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, speechStart: config.speechStart, speechStop: config.speechStop, spokenStyle: config.spokenStyle ? "on" : "off" },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -111,7 +112,7 @@ try {
     lengthCap: config.lengthCap ?? undefined,
     confirm: (query, signal) => askOnce(lines, query, confirmMs, signal),
     describe: hub === undefined ? undefined : describeWithHub(hub.token),
-    speak: speaking === null ? undefined : (after) => startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, after }),
+    speak: speaking === null ? undefined : (after) => startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, skipCode: config.spokenStyle, after }),
     speechStop: config.speechStop,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);

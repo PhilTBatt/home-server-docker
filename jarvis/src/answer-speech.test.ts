@@ -398,3 +398,28 @@ test("a reason is tidied and cut short before it goes in a note", () => {
   assert.equal(note.startsWith("1 sentence of the last answer wasn't spoken: bad thing xxx"), true);
   assert.equal(note.length, "1 sentence of the last answer wasn't spoken: ".length + 300);
 });
+
+test("the setting to skip code is passed on to the sentences", async () => {
+  const skipping = setUp({ skipCode: true });
+  skipping.speech.text("Run `npm test` to check. Then rest.");
+  skipping.speech.end();
+  await skipping.speech.done();
+  assert.deepEqual(skipping.made, ["Run to check.", "Then rest."]);
+  const saying = setUp();
+  saying.speech.text("Run `npm test` to check. Then rest.");
+  saying.speech.end();
+  await saying.speech.done();
+  assert.deepEqual(saying.made, ["Run npm test to check.", "Then rest."]);
+});
+
+test("the setting to skip code is kept when the answer starts again", async () => {
+  const skipping = setUp({ skipCode: true });
+  skipping.speech.text("Run `npm test` to check. Then");
+  await turn();
+  skipping.speech.restart();
+  skipping.speech.text("Run `npm start` to begin. Then rest.");
+  skipping.speech.end();
+  await skipping.speech.done();
+  assert.deepEqual(skipping.made.slice(-2), ["Run to begin.", "Then rest."]);
+  assert.equal(skipping.made.some((sentence) => sentence.includes("npm")), false);
+});

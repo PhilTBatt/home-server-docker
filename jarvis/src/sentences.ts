@@ -1,5 +1,5 @@
 import type { SpeechStart } from "./config.js";
-import { speakable } from "./speakable.js";
+import { codeSpansIn, looseMarkIn, speakable } from "./speakable.js";
 
 export const maxPieceChars = 400;
 export const firstClauseChars = 20;
@@ -59,17 +59,18 @@ function fitting(piece: string, limit: number): string[] {
   return [...parts, rest];
 }
 
-function firstClause(text: string, least: number): number | null {
+function firstClause(text: string, least: number, skipCode: boolean): number | null {
   for (const found of text.matchAll(clauseEnd)) {
     const end = found.index + found[0].length;
-    if (!unclosed(text.slice(0, end)) && speakable(text.slice(0, end)).length >= least) return end;
+    if (!unclosed(text.slice(0, end)) && speakable(text.slice(0, end), { skipCode }).length >= least) return end;
   }
   return null;
 }
 
-export function createSentences(options: { start: SpeechStart; maxChars?: number; clauseChars?: number }): Sentences {
+export function createSentences(options: { start: SpeechStart; skipCode?: boolean; maxChars?: number; clauseChars?: number }): Sentences {
   const limit = options.maxChars ?? maxPieceChars;
   const least = options.clauseChars ?? firstClauseChars;
+  const skipCode = options.skipCode === true;
   let line = "";
   let midLine = false;
   let code: string | null = null;
@@ -77,7 +78,7 @@ export function createSentences(options: { start: SpeechStart; maxChars?: number
 
   const say = (pieces: string[]): string[] => {
     const spoken = pieces.flatMap((piece) => fitting(piece, limit)).flatMap((piece) => {
-      const text = speakable(piece);
+      const text = speakable(piece, { skipCode });
       return text === "" ? [] : [text];
     });
     given += spoken.length;
@@ -88,9 +89,14 @@ export function createSentences(options: { start: SpeechStart; maxChars?: number
     const pieces: string[] = [];
     let current = "";
     const segments = [...bySentence.segment(text)].map((part) => part.segment);
+    const spans = skipCode ? codeSpansIn(text) : [];
+    const loose = skipCode && !whole ? looseMarkIn(text, spans) : null;
+    const inCode = (at: number) => spans.some(([start, end]) => start < at && at < end) || (loose !== null && loose < at);
+    let at = 0;
     segments.forEach((segment, index) => {
       current += segment;
-      if (index === segments.length - 1 || joinsNext(current)) return;
+      at += segment.length;
+      if (index === segments.length - 1 || joinsNext(current) || inCode(at)) return;
       pieces.push(current);
       current = "";
     });
@@ -123,7 +129,7 @@ export function createSentences(options: { start: SpeechStart; maxChars?: number
     line = held;
     if (pieces.length > 0) midLine = true;
     if (options.start === "clause" && given === 0) {
-      const end = firstClause(line, least);
+      const end = firstClause(line, least, skipCode);
       if (end !== null) {
         out.push(...say([line.slice(0, end)]));
         line = line.slice(end);

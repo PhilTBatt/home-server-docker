@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { pricesPerMTok } from "./prices.js";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, askOnce, questionPrompt, chatModel, chatsLine, chatSystem, confirmMs, commandNote, costLine, heardLines, lengthLineFor, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
+import { apiChatSystem, spokenStyle, withSpokenStyle, askOnce, questionPrompt, chatModel, chatsLine, chatSystem, confirmMs, commandNote, costLine, heardLines, lengthLineFor, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -662,8 +662,8 @@ test("only a lone + or - is a rating; anything longer is a question", async () =
 });
 
 test("Jarvis's settings are printed in one line, as they're written in jarvis/.env", () => {
-  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, voice: "kokoro", kokoroVoice: "bm_fable", volume: 65, speechStart: "clause", speechStop: "sentence", log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_VOICE=kokoro, JARVIS_KOKORO_VOICE=bm_fable, JARVIS_VOLUME=65, JARVIS_SPEECH_START=clause, JARVIS_SPEECH_STOP=sentence, JARVIS_LOG=on");
-  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", speechStop: "now", log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_VOICE=off, JARVIS_KOKORO_VOICE=bm_george, JARVIS_VOLUME=80, JARVIS_SPEECH_START=sentence, JARVIS_SPEECH_STOP=now, JARVIS_LOG=off");
+  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, voice: "kokoro", kokoroVoice: "bm_fable", volume: 65, speechStart: "clause", speechStop: "sentence", spokenStyle: true, log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_VOICE=kokoro, JARVIS_KOKORO_VOICE=bm_fable, JARVIS_VOLUME=65, JARVIS_SPEECH_START=clause, JARVIS_SPEECH_STOP=sentence, JARVIS_SPOKEN_STYLE=on, JARVIS_LOG=on");
+  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", speechStop: "now", spokenStyle: false, log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_VOICE=off, JARVIS_KOKORO_VOICE=bm_george, JARVIS_VOLUME=80, JARVIS_SPEECH_START=sentence, JARVIS_SPEECH_STOP=now, JARVIS_SPOKEN_STYLE=off, JARVIS_LOG=off");
 });
 
 test("the chats line says whether this chat is saved, and what it picks up", () => {
@@ -1478,4 +1478,24 @@ test("asking on a closed chat, or after being called off, gives no answer at onc
   assert.equal(await askOnce(open.lines, "  Your answer: ", 30_000, calledOff.signal), null);
   assert.ok(Date.now() - started < 1000, "no waiting for the time limit");
   open.lines.close();
+});
+
+test("with the spoken style on, his instructions gain a paragraph on writing for the ear, after the rest, on both engines", () => {
+  for (const system of [chatSystem, apiChatSystem]) {
+    assert.equal(withSpokenStyle(system, false), system);
+    assert.equal(withSpokenStyle(system, true), `${system}\n\n${spokenStyle}`);
+  }
+  assert.ok(!spokenStyle.includes('"'), "no double quotes, which the Agent SDK's request would escape");
+  assert.ok(!spokenStyle.includes("`"), "no backticks of its own, so nothing in it looks like code");
+  for (const part of [
+    "Phil hears your answers read aloud, a sentence at a time, as well as seeing them on screen, so write for the ear.",
+    "Lead with the answer once you have it.",
+    "make the first one the shortest, because he hears nothing until it's ready.",
+    "Write numbers, times and units the way you'd say them",
+    "Don't use headings, tables or bold.",
+    "Use a list only when the order matters, with each item a short, whole sentence.",
+    "Put file paths, commands, settings, web addresses and code in inline code, between backticks, or in a code block if they're longer.",
+    "They're shown on screen but not read aloud, so never build a sentence that only makes sense if they're heard",
+    "When you say what you're about to check, or suggest he types new, use plain words without backticks.",
+  ]) assert.ok(spokenStyle.includes(part), part);
 });

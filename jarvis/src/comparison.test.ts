@@ -579,3 +579,26 @@ test("with nothing spoken in the log, there's no speech table at all", () => {
   assert.equal(compareReport({ lines: [line(), voiced({ chat: "chat-2" })], skipped: 0 }).includes("Speech, timed"), false);
   assert.equal(compareReport({ lines: [voiced()], speech: [said({ firstSoundMs: null })], skipped: 0 }).includes("Speech, timed"), false);
 });
+
+test("a log line's spoken style is checked like the other settings, and an older line without one counts as off", () => {
+  assert.equal(isLogLine(voiced({ spokenStyle: "on" })), true);
+  assert.equal(isLogLine(voiced({ spokenStyle: "off" })), true);
+  assert.equal(isLogLine(voiced()), true);
+  assert.equal(isLogLine({ ...voiced(), spokenStyle: "yes" }), false);
+  assert.equal(isLogLine({ ...voiced(), spokenStyle: null }), false);
+  assert.equal(isLogLine({ ...voiced(), spokenStyle: true }), false);
+  assert.deepEqual(groupLines([voiced({ spokenStyle: "off" }), voiced()]).map((group) => [group.spokenStyle, group.lines.length]), [["off", 2]]);
+  assert.deepEqual(groupLines([line({ spokenStyle: "on" })]).map((group) => group.spokenStyle), [null]);
+});
+
+test("answers written for the ear are compared with the usual style side by side, usual first, named only when both are in the log with the voice on", () => {
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ spokenStyle: "on" }), voiced(), line()], skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice, usual style", "API, keep, Kokoro voice, written for the ear"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ spokenStyle: "on" }), voiced({ spokenStyle: "on" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ spokenStyle: "on" }), line({ spokenStyle: "off" })], skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ spokenStyle: "on", speechStop: "sentence" }), voiced({ speechStop: "sentence" }), voiced({ spokenStyle: "on" }), voiced()], skipped: 0 }), ""), [
+    "API, keep, stops at once, usual style",
+    "API, keep, stops at once, written for the ear",
+    "API, keep, finishes the sentence, usual style",
+    "API, keep, finishes the sentence, written for the ear",
+  ]);
+});

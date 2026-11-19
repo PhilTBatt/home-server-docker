@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, SpeechStart, SpeechStop, ThinkingHistory, VoiceMode } from "./config.js";
+import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, SpeechStart, SpeechStop, SpokenStyleMode, ThinkingHistory, VoiceMode } from "./config.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
@@ -67,6 +67,7 @@ export type LogContext = {
   voice: VoiceMode;
   speechStart: SpeechStart;
   speechStop: SpeechStop;
+  spokenStyle: SpokenStyleMode;
 };
 
 export type LogLine = {
@@ -85,6 +86,7 @@ export type LogLine = {
   voice?: VoiceMode;
   speechStart?: SpeechStart;
   speechStop?: SpeechStop;
+  spokenStyle?: SpokenStyleMode;
   ok: boolean;
   error: string | null;
   firstWordsMs: number | null;
@@ -155,7 +157,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     hubActions: context.hubActions,
     sessionNotes: context.sessionNotes,
     voice: context.voice,
-    ...(context.voice === "off" ? {} : { speechStart: context.speechStart, speechStop: context.speechStop }),
+    ...(context.voice === "off" ? {} : { speechStart: context.speechStart, speechStop: context.speechStop, spokenStyle: context.spokenStyle }),
     ok: answer !== null,
     error: "error" in outcome ? errorKind(outcome.error) : null,
     firstWordsMs: wholeMs(answer?.firstWordsMs ?? null),
