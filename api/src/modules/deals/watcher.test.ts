@@ -3,9 +3,9 @@ import { test } from "node:test";
 import type { Notification } from "../notify/notifier.js";
 import { ebayMessages } from "./ebay.js";
 import { readSearches, type Search, type SearchList } from "./searches.js";
-import { SourceError, type FailReason, type Listing, type SearchResult, type Source } from "./source.js";
+import { SourceError, type DetailNames, type FailReason, type FullListing, type Listing, type SearchResult, type Source } from "./source.js";
 import { emptyMemory, readMemory, writeMemory, type Store } from "./store.js";
-import { createDealWatcher } from "./watcher.js";
+import { createDealWatcher, inQuiet } from "./watcher.js";
 
 const start = Date.parse("2026-11-18T12:00:00.000Z");
 
@@ -112,6 +112,15 @@ function failed(reason: FailReason, calls = 1): SourceError {
   const error = new SourceError(reason, ebayMessages[reason]);
   error.calls = calls;
   return error;
+}
+
+const oldKeys = ["title", "price", "postage", "total", "condition", "buying", "url", "listedAt", "endsAt", "firstSeen"];
+
+function brief(groups: ReturnType<ReturnType<typeof createDealWatcher>["matches"]>) {
+  return groups.map(({ guidePrice: _guidePrice, ...group }) => ({
+    ...group,
+    listings: group.listings.map((shown) => Object.fromEntries(Object.entries(shown).filter(([key]) => oldKeys.includes(key)))),
+  }));
 }
 
 function titles(sent: Notification[]): string[] {
@@ -928,7 +937,7 @@ test("matches lists each search's current listings, cheapest first, with only wh
   const { world, watcher } = setup([optiplex, ram]);
   world.found.set("optiplex", [listing(2, { postage: 500 }), listing(1, { buying: ["FIXED_PRICE", "BEST_OFFER"], endsAt: at(900).toISOString() })]);
   await watcher.run(at(0));
-  assert.deepEqual(watcher.matches(at(1)), [
+  assert.deepEqual(brief(watcher.matches(at(1))), [
     {
       id: "optiplex",
       name: "OptiPlex",
@@ -966,12 +975,13 @@ test("matches lists each search's current listings, cheapest first, with only wh
   ]);
 });
 
-test("matches never shows seller numbers or eBay's item ids", async () => {
+test("matches shows the seller's numbers and the item number, but never eBay's own reference", async () => {
   const { world, watcher } = setup();
-  world.found.set("optiplex", [listing(1, { sellerPercent: 87.65, sellerFeedback: 424242 })]);
+  world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0", sellerPercent: 87.65, sellerFeedback: 424242 })]);
   await watcher.run(at(0));
   const text = JSON.stringify(watcher.matches(at(1)));
-  assert.ok(!text.includes("87.65") && !text.includes("424242") && !text.includes("v1|"));
+  assert.ok(text.includes("87.65") && text.includes("424242") && text.includes('"id":"110000000001"'));
+  assert.ok(!text.includes("v1|"));
 });
 
 test("matches shows the 50 cheapest and says how many there are", async () => {
@@ -1013,21 +1023,21 @@ test("searches reports each search's settings and how its last check went", asyn
   world.found.set("optiplex", listings(1, 2));
   await watcher.run(at(0));
   assert.deepEqual(watcher.searches(), [
-    { id: "optiplex", name: "OptiPlex", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null },
-    { id: "ram", name: "DDR4 RAM", on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null },
+    { id: "optiplex", name: "OptiPlex", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: {} },
+    { id: "ram", name: "DDR4 RAM", on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: null },
   ]);
 });
 
 test("the status starts empty and then counts the day's calls and alerts", async () => {
   const { world, watcher } = setup([optiplex], { limits: { callsPerDay: 500, alertsPerDay: 20 } });
-  assert.deepEqual(watcher.status(), { lastRun: null, callsToday: 0, callsPerDay: 1000, alertsToday: 0, alertsPerDay: 60, note: null, problems: [] });
+  assert.deepEqual(watcher.status(), { lastRun: null, callsToday: 0, callsPerDay: 1000, alertsToday: 0, alertsPerDay: 60, note: null, problems: [], quiet: null });
   assert.deepEqual(watcher.problems(), []);
   assert.deepEqual(watcher.searches(), []);
   assert.deepEqual(watcher.matches(at(0)), []);
   await watcher.run(at(0));
   world.found.set("optiplex", listings(1, 2));
   await watcher.run(at(30));
-  assert.deepEqual(watcher.status(), { lastRun: at(30).toISOString(), callsToday: 2, callsPerDay: 500, alertsToday: 2, alertsPerDay: 20, note: null, problems: [] });
+  assert.deepEqual(watcher.status(), { lastRun: at(30).toISOString(), callsToday: 2, callsPerDay: 500, alertsToday: 2, alertsPerDay: 20, note: null, problems: [], quiet: null });
 });
 
 test("a search that names a source the watcher doesn't have is reported, not run", async () => {
@@ -1204,4 +1214,650 @@ test("a list that's broken over midnight doesn't keep yesterday's used-up limit 
   await watcher.run(new Date("2026-11-19T00:05:00.000Z"));
   assert.deepEqual(watcher.problems().map((problem) => problem.code), ["deals-list"]);
   assert.equal(watcher.status().callsToday, 0);
+});
+
+function fullOf(shown: Listing): FullListing {
+  return {
+    listing: shown,
+    subtitle: null,
+    description: "Tested and working.",
+    conditionNote: null,
+    categoryPath: null,
+    brand: "Dell",
+    model: null,
+    specifics: [{ name: "RAM Size", value: "16 GB" }],
+    returns: { accepted: true, days: 30, paidBy: "buyer" },
+    postageOptions: [],
+    collection: "none",
+    inStock: true,
+    available: 1,
+    sold: null,
+    minimumBid: null,
+    reserveMet: null,
+    bidders: null,
+    lotSize: null,
+  };
+}
+
+function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { quiet?: unknown; limits?: Record<string, number>; keepSeen?: boolean } = {}) {
+  const world = {
+    list: readSearches(JSON.stringify({ searches, limits: options.limits, quiet: options.quiet }), ["ebay"]),
+    found: new Map<string, Listing[] | SourceError>(),
+    sent: [] as Notification[],
+    searchCalls: [] as { id: string; maxPages: number }[],
+    fullCalls: [] as string[],
+    fullReply: null as FullListing | SourceError | Error | null,
+    nameCalls: [] as [string, string | null][],
+    namesReply: { categoryId: "179", categories: [], details: [{ name: "Form Factor", values: [{ value: "SFF", count: 9 }] }] } as DetailNames | SourceError | Error,
+    ...fakeStore(options.keepSeen ?? true),
+  };
+  const ebay: Source = {
+    async search(search, maxPages) {
+      world.searchCalls.push({ id: search.id, maxPages });
+      const reply = world.found.get(search.id) ?? [];
+      if (reply instanceof Error) throw reply;
+      return { listings: reply, total: reply.length, complete: true, calls: 1, skipped: 0 };
+    },
+    async full(ref) {
+      world.fullCalls.push(ref);
+      if (world.fullReply instanceof Error) throw world.fullReply;
+      const shown = [...world.found.values()].flatMap((reply) => (Array.isArray(reply) ? reply : [])).find((entry) => entry.ref === ref);
+      return { full: world.fullReply ?? fullOf(shown ?? listing(999)), calls: 1 };
+    },
+    async detailNames(query, categoryId) {
+      world.nameCalls.push([query, categoryId]);
+      if (world.namesReply instanceof Error) throw world.namesReply;
+      return { names: world.namesReply, calls: 1 };
+    },
+  };
+  const build = (sources: Record<string, Source> = { ebay }) =>
+    createDealWatcher({
+      loadSearches: async () => world.list,
+      sources,
+      store: world.store,
+      notify: async (notification) => {
+        world.sent.push(notification);
+      },
+    });
+  return { world, watcher: build(), restart: build };
+}
+
+function auction(n: number, endsInMinutes: number, overrides: Partial<Listing> = {}): Listing {
+  return listing(n, { buying: ["AUCTION"], bids: 2, endsAt: at(endsInMinutes).toISOString(), ...overrides });
+}
+
+test("each search says how many listings each rule hid at its last check", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, maxPrice: 95, exclude: ["number 3"], avoid: ["faulty"], sellerMinPercent: 99 }]);
+  world.found.set("optiplex", [listing(1), listing(2), listing(3), listing(4, { title: "OptiPlex 7070 faulty" }), listing(9), listing(5, { sellerPercent: 90 }), listing(10)]);
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.searches()[0].hidden, { words: 1, avoid: 1, price: 2, seller: 1 });
+  assert.equal(watcher.searches()[0].matches, 2);
+  world.found.set("optiplex", [listing(1)]);
+  await watcher.run(at(30));
+  assert.deepEqual(watcher.searches()[0].hidden, {});
+});
+
+test("a search that prefers item details gets one more call than the others, within the calls left", async () => {
+  const details = { categoryId: 179, details: { "Form Factor": ["SFF"] } };
+  const { world, watcher } = richSetup([{ ...optiplex, ...details }, { ...ram, ...details, detailsMode: "only" }, { id: "plain", name: "Plain", switch: "on", query: "x" }]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.searchCalls, [{ id: "optiplex", maxPages: 4 }, { id: "ram", maxPages: 3 }, { id: "plain", maxPages: 3 }]);
+  const tight = richSetup([{ ...optiplex, ...details }], { limits: { callsPerDay: 2 } });
+  await tight.watcher.run(at(0));
+  assert.deepEqual(tight.world.searchCalls, [{ id: "optiplex", maxPages: 2 }]);
+});
+
+test("when eBay says how long to wait, the watcher waits that long, but never under ten minutes or over a day", async () => {
+  const waits: [number | null, number, number][] = [
+    [2 * 60 * 60_000, 119, 121],
+    [60_000, 9, 11],
+    [null, 59, 61],
+    [7 * 24 * 60 * 60_000, 24 * 60 - 1, 24 * 60 + 1],
+  ];
+  for (const [retryAfterMs, stillWaiting, checkedAgain] of waits) {
+    const { world, watcher } = richSetup();
+    const busy = failed("busy");
+    busy.retryAfterMs = retryAfterMs;
+    world.found.set("optiplex", busy);
+    await watcher.run(at(0));
+    world.found.set("optiplex", []);
+    await watcher.run(at(stillWaiting));
+    assert.equal(world.searchCalls.length, 1, String(retryAfterMs));
+    await watcher.run(at(checkedAgain));
+    assert.equal(world.searchCalls.length, 2, String(retryAfterMs));
+  }
+});
+
+test("a wait from eBay only changes the pause for too many requests", async () => {
+  const { world, watcher } = richSetup();
+  const down = failed("down");
+  down.retryAfterMs = 5 * 60 * 60_000;
+  world.found.set("optiplex", down);
+  await watcher.run(at(0));
+  world.found.set("optiplex", []);
+  await watcher.run(at(11));
+  assert.equal(world.searchCalls.length, 2);
+});
+
+test("with a guide price, a great deal goes out at high priority and one over the guide at low", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, guidePrice: 100 }]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", [listing(1, { price: 7900 }), listing(2, { price: 9000 }), listing(3, { price: 10100 })]);
+  await watcher.run(at(30));
+  assert.deepEqual(world.sent.slice(1).map((sent) => sent.priority), [4, undefined, 2]);
+  assert.ok(world.sent[1].message.includes("21% under your £100.00 guide price."));
+});
+
+test("quiet hours follow the clock in London, summer and winter, and may cross midnight", () => {
+  const night = { from: 23 * 60, to: 7 * 60, allow: "none" as const };
+  const cases: [string, boolean][] = [
+    ["2026-11-18T22:59:00.000Z", false],
+    ["2026-11-18T23:00:00.000Z", true],
+    ["2026-11-19T03:30:00.000Z", true],
+    ["2026-11-19T06:59:00.000Z", true],
+    ["2026-11-19T07:00:00.000Z", false],
+    ["2026-06-18T21:59:00.000Z", false],
+    ["2026-06-18T22:00:00.000Z", true],
+    ["2026-06-19T05:59:00.000Z", true],
+    ["2026-06-19T06:00:00.000Z", false],
+  ];
+  for (const [time, quiet] of cases) assert.equal(inQuiet(night, new Date(time)), quiet, time);
+  const lunch = { from: 12 * 60, to: 13 * 60, allow: "none" as const };
+  assert.deepEqual(["2026-11-18T11:59:00.000Z", "2026-11-18T12:00:00.000Z", "2026-11-18T12:59:00.000Z", "2026-11-18T13:00:00.000Z"].map((time) => inQuiet(lunch, new Date(time))), [false, true, true, false]);
+  assert.equal(inQuiet(null, new Date("2026-11-19T03:30:00.000Z")), false);
+});
+
+test("in quiet hours alerts are held, not lost, and arrive once at the first check after", async () => {
+  const { world, watcher } = richSetup([optiplex], { quiet: { from: "12:10", to: "13:00" } });
+  await watcher.run(at(0));
+  assert.equal(world.sent.length, 1);
+  world.found.set("optiplex", listings(1, 2));
+  await watcher.run(at(30));
+  assert.equal(world.sent.length, 1);
+  assert.deepEqual(watcher.status(at(30)).quiet, { from: "12:10", to: "13:00", allow: "none", now: true });
+  await watcher.run(at(60));
+  assert.deepEqual(titles(world.sent.slice(1)), ["Deal: OptiPlex", "Deal: OptiPlex"]);
+  assert.equal(watcher.status(at(60)).quiet?.now, false);
+  await watcher.run(at(90));
+  assert.equal(world.sent.length, 3);
+});
+
+test("quiet hours that allow great deals let those through and hold the rest", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, guidePrice: 100 }], { quiet: { from: "12:10", to: "13:00", allow: "great" } });
+  await watcher.run(at(0));
+  world.found.set("optiplex", [listing(1, { price: 7000 }), listing(2, { price: 9500 })]);
+  await watcher.run(at(30));
+  assert.deepEqual(world.sent.slice(1).map((sent) => [sent.message.split("\n")[0], sent.priority]), [["Dell OptiPlex 7070 SFF number 1", 4]]);
+  await watcher.run(at(60));
+  assert.deepEqual(world.sent.slice(2).map((sent) => sent.message.split("\n")[0]), ["Dell OptiPlex 7070 SFF number 2"]);
+  await watcher.run(at(90));
+  assert.equal(world.sent.length, 3);
+});
+
+test("quiet hours that allow nothing hold even a great deal", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, guidePrice: 100 }], { quiet: { from: "12:10", to: "13:00" } });
+  await watcher.run(at(0));
+  world.found.set("optiplex", [listing(1, { price: 5000 })]);
+  await watcher.run(at(30));
+  assert.equal(world.sent.length, 1);
+  await watcher.run(at(60));
+  assert.equal(world.sent.length, 2);
+});
+
+test("in memory-only mode, alerts held by quiet hours still come after a restart", async () => {
+  const { world, watcher, restart } = richSetup([optiplex], { quiet: { from: "12:10", to: "13:00" }, keepSeen: false });
+  await watcher.run(at(0));
+  world.found.set("optiplex", [listing(1, { listedAt: at(20).toISOString() })]);
+  await watcher.run(at(30));
+  assert.equal(world.sent.length, 1);
+  await restart().run(at(60));
+  assert.deepEqual(titles(world.sent.slice(1)), ["Deal: OptiPlex"]);
+});
+
+test("a search's own daily limit holds the rest until tomorrow, without a roll-up it has no room for", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, alertsPerDay: 2 }]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2, 3, 4, 5));
+  await watcher.run(at(30));
+  assert.deepEqual(titles(world.sent.slice(1)), ["Deal: OptiPlex", "Deal: OptiPlex"]);
+  assert.deepEqual([watcher.searches()[0].alertsToday, watcher.searches()[0].alertsPerDay], [2, 2]);
+  await watcher.run(at(60));
+  assert.equal(world.sent.length, 3);
+  await watcher.run(at(24 * 60));
+  assert.deepEqual(world.sent.slice(3).map((sent) => sent.message.split("\n")[0]), ["Dell OptiPlex 7070 SFF number 3", "Dell OptiPlex 7070 SFF number 4"]);
+  assert.equal(watcher.searches()[0].alertsToday, 2);
+});
+
+test("a roll-up counts as one of a search's alerts for the day", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, alertsPerDay: 3 }], { limits: { alertsPerCheck: 2 } });
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2, 3, 4, 5, 6));
+  await watcher.run(at(30));
+  assert.deepEqual(titles(world.sent.slice(1)), ["Deal: OptiPlex", "Deal: OptiPlex", "Deals: 4 more for OptiPlex"]);
+  assert.equal(watcher.searches()[0].alertsToday, 3);
+  world.found.set("optiplex", listings(1, 2, 3, 4, 5, 6, 7));
+  await watcher.run(at(60));
+  assert.equal(world.sent.length, 4);
+});
+
+test("one search's daily limit doesn't hold another search back", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, alertsPerDay: 1 }, ram]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2));
+  world.found.set("ram", listings(11, 12));
+  await watcher.run(at(60));
+  assert.deepEqual(titles(world.sent.slice(1)), ["Deal: OptiPlex", "Deal: DDR4 RAM", "Deal: DDR4 RAM"]);
+  assert.deepEqual(watcher.searches().map((search) => search.alertsToday), [1, 2]);
+});
+
+const bidding = { ...optiplex, buying: ["auction"], endingSoonMinutes: 30, everyMinutes: 5 };
+
+test("an auction already seen gets one ending-soon alert when it's inside the window, and never a second", async () => {
+  const { world, watcher } = richSetup([bidding]);
+  world.found.set("optiplex", [auction(1, 180)]);
+  await watcher.run(at(0));
+  await watcher.run(at(120));
+  assert.equal(world.sent.length, 1);
+  await watcher.run(at(150));
+  assert.deepEqual(world.sent.slice(1).map((sent) => [sent.title, sent.priority, sent.message.split("\n")[2]]), [["Ending soon: OptiPlex", 4, "Used. Auction, 2 bids so far, ends in 30m."]]);
+  await watcher.run(at(175));
+  assert.equal(world.sent.length, 2);
+});
+
+test("an auction that first appears inside the window gets its normal alert and no ending-soon one", async () => {
+  const { world, watcher } = richSetup([bidding]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", [auction(1, 50)]);
+  await watcher.run(at(30));
+  await watcher.run(at(40));
+  assert.deepEqual(titles(world.sent.slice(1)), ["Deal: OptiPlex"]);
+});
+
+test("no ending-soon alert for an auction inside the window at the first check, one that has ended, or a buy-it-now listing", async () => {
+  const { world, watcher } = richSetup([{ ...bidding, buying: ["auction", "buy it now"] }]);
+  world.found.set("optiplex", [auction(1, 20), auction(2, 45), listing(3, { endsAt: at(45).toISOString() }), auction(4, 45, { buying: ["AUCTION", "FIXED_PRICE"] })]);
+  await watcher.run(at(0));
+  await watcher.run(at(30));
+  assert.deepEqual(world.sent.slice(1).map((sent) => sent.message.split("\n")[0]), ["Dell OptiPlex 7070 SFF number 2"]);
+  await watcher.run(at(50));
+  assert.equal(world.sent.length, 2);
+});
+
+test("the ending-soon mark survives a restart when seen listings are kept on disk", async () => {
+  const { world, watcher, restart } = richSetup([bidding]);
+  world.found.set("optiplex", [auction(1, 180)]);
+  await watcher.run(at(0));
+  await watcher.run(at(155));
+  assert.equal(world.sent.length, 2);
+  await restart().run(at(170));
+  assert.equal(world.sent.length, 2);
+});
+
+test("a search without endingSoonMinutes never sends an ending-soon alert", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, buying: ["auction"] }]);
+  world.found.set("optiplex", [auction(1, 40)]);
+  await watcher.run(at(0));
+  await watcher.run(at(30));
+  assert.equal(world.sent.length, 1);
+});
+
+test("a snoozed search isn't checked, even by Check now, until its time is up", async () => {
+  const { world, watcher } = richSetup([optiplex, ram]);
+  await watcher.run(at(0));
+  assert.equal(await watcher.snooze("optiplex", at(120)), true);
+  assert.deepEqual(watcher.searches().map((search) => [search.id, search.snoozed, search.snoozedUntil]), [["optiplex", true, at(120).toISOString()], ["ram", false, null]]);
+  world.searchCalls.length = 0;
+  await watcher.run(at(60));
+  await watcher.run(at(90), true);
+  assert.deepEqual(world.searchCalls.map((call) => call.id), ["ram", "ram"]);
+  await watcher.run(at(120));
+  assert.deepEqual(world.searchCalls.map((call) => call.id).filter((id) => id === "optiplex"), ["optiplex"]);
+  assert.equal(watcher.searches()[0].snoozed, false);
+});
+
+test("a search snoozed until woken stays snoozed across a restart, and waking it brings it back", async () => {
+  const { world, watcher, restart } = richSetup();
+  await watcher.run(at(0));
+  assert.equal(await watcher.snooze("optiplex", null), true);
+  const again = restart();
+  world.searchCalls.length = 0;
+  await again.run(at(600));
+  assert.equal(world.searchCalls.length, 0);
+  assert.deepEqual([again.searches()[0].snoozed, again.searches()[0].snoozedUntil], [true, null]);
+  assert.equal(await again.wake("optiplex"), true);
+  await again.run(at(601));
+  assert.equal(world.searchCalls.length, 1);
+});
+
+test("snoozing works before the first check, saves straight away, and refuses a search that isn't in the list", async () => {
+  const { world, watcher } = richSetup();
+  assert.equal(await watcher.snooze("nope", at(60)), false);
+  assert.equal(await watcher.wake("nope"), false);
+  assert.equal(world.disk.saves, 0);
+  assert.equal(await watcher.snooze("optiplex", at(60)), true);
+  assert.equal(world.disk.saves, 1);
+  assert.ok(world.disk.text?.includes(at(60).toISOString()));
+  await watcher.run(at(0));
+  assert.equal(world.searchCalls.length, 0);
+});
+
+test("a snooze for a search that's been removed from the list is forgotten", async () => {
+  const { world, watcher } = richSetup([optiplex, ram]);
+  await watcher.snooze("ram", null);
+  world.list = readSearches(JSON.stringify({ searches: [optiplex] }), ["ebay"]);
+  await watcher.run(at(0));
+  assert.ok(!world.disk.text?.includes("snoozed"));
+});
+
+test("a snooze that can't be saved shows as the state problem, and clears when a save works", async () => {
+  const { world, watcher } = richSetup();
+  world.disk.failSave = true;
+  assert.equal(await watcher.snooze("optiplex", null), true);
+  assert.deepEqual(watcher.problems().map((problem) => problem.code), ["deals-state"]);
+  world.disk.failSave = false;
+  await watcher.wake("optiplex");
+  assert.deepEqual(watcher.problems(), []);
+});
+
+test("matches says where each listing stands, how it compares with the guide price, and what to check first", async () => {
+  const { world, watcher } = richSetup([{ ...ram, guidePrice: 50, unit: "GB" }]);
+  world.found.set("ram", [
+    listing(1, { title: "Corsair 32GB (2x16GB) DDR4", price: 3500, postage: 500, sellerType: "private", city: "Sometown", postcode: "ZZ9***", summary: "Tested", topRated: true }),
+    listing(2, { title: "Kingston 2x16GB DDR4", price: 5500, postage: null, sellerFeedback: 2, variations: true, detailsMatch: true }),
+  ]);
+  await watcher.run(at(0));
+  const [group] = watcher.matches(at(1));
+  assert.equal(group.guidePrice, 5000);
+  const [first, second] = group.listings;
+  assert.deepEqual(
+    { place: first.place, underGuide: first.underGuide, great: first.great, perUnit: first.perUnit, cautions: first.cautions, sellerType: first.sellerType, city: first.city, postcode: first.postcode, summary: first.summary, topRated: first.topRated },
+    { place: 1, underGuide: 20, great: true, perUnit: { unit: "GB", amount: 32, pence: 125 }, cautions: [], sellerType: "private", city: "Sometown", postcode: "ZZ9***", summary: "Tested", topRated: true },
+  );
+  assert.deepEqual(
+    { place: second.place, underGuide: second.underGuide, great: second.great, cautions: second.cautions, variations: second.variations, detailsMatch: second.detailsMatch },
+    { place: 2, underGuide: -10, great: false, cautions: ["the seller has under 10 ratings", "the listing has more than one option, so this may be its lowest price", "postage isn't shown, so it may be collection only"], variations: true, detailsMatch: true },
+  );
+});
+
+test("a listing among the current matches can be read in full, once, and again only after half an hour", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, guidePrice: 120 }]);
+  world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0" }), listing(2, { id: "110000000002", ref: "v1|110000000002|0" })]);
+  await watcher.run(at(0));
+  const before = watcher.status().callsToday;
+  const reply = await watcher.full("110000000001", at(1));
+  assert.equal(reply.status, "ok");
+  if (reply.status !== "ok") return;
+  assert.deepEqual([reply.searchId, reply.searchName, reply.fetchedAt, reply.listing.id, reply.listing.place, reply.listing.underGuide], ["optiplex", "OptiPlex", at(1).toISOString(), "110000000001", 1, 24]);
+  assert.deepEqual([reply.full.description, reply.full.specifics, reply.full.returns], ["Tested and working.", [{ name: "RAM Size", value: "16 GB" }], { accepted: true, days: 30, paidBy: "buyer" }]);
+  assert.ok(!Object.hasOwn(reply.full, "listing"));
+  assert.ok(!JSON.stringify(reply).includes("v1|"));
+  await watcher.full("110000000001", at(20));
+  assert.deepEqual(world.fullCalls, ["v1|110000000001|0"]);
+  assert.equal(watcher.status().callsToday, before + 1);
+  const later = await watcher.full("110000000001", at(32));
+  assert.equal(world.fullCalls.length, 2);
+  assert.equal(later.status === "ok" && later.fetchedAt, at(32).toISOString());
+  assert.equal(watcher.status().callsToday, before + 2);
+});
+
+test("the full listing shows eBay's latest price for it, measured against the other matches", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, guidePrice: 100 }]);
+  world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0", price: 9000 }), listing(2, { id: "110000000002", price: 8000 })]);
+  await watcher.run(at(0));
+  world.fullReply = fullOf(listing(1, { id: "v1-odd-id", url: "https://evil.example/x", price: 7000 }));
+  const reply = await watcher.full("110000000001", at(1));
+  assert.equal(reply.status, "ok");
+  if (reply.status !== "ok") return;
+  assert.deepEqual([reply.listing.id, reply.listing.url, reply.listing.price, reply.listing.place, reply.listing.underGuide, reply.listing.great], ["110000000001", "https://www.ebay.co.uk/itm/110000000001", 7000, 1, 30, true]);
+});
+
+test("only a listing among the fresh matches of a switched-on search can be read in full", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, maxPrice: 100 }]);
+  world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0" }), listing(20, { id: "110000000020", ref: "v1|110000000020|0" })]);
+  assert.deepEqual(await watcher.full("110000000001", at(0)), { status: "unknown" });
+  await watcher.run(at(0));
+  for (const id of ["110000000020", "999", "v1|110000000001|0", "", "__proto__"]) assert.deepEqual(await watcher.full(id, at(1)), { status: "unknown" }, id);
+  assert.deepEqual(await watcher.full("110000000001", at(6 * 60 + 1)), { status: "unknown" });
+  assert.equal(world.fullCalls.length, 0);
+});
+
+test("a listing that has gone, or one eBay won't give, is reported and its call still counted", async () => {
+  const { world, watcher } = richSetup();
+  world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0" }), listing(2, { id: "110000000002" })]);
+  await watcher.run(at(0));
+  const before = watcher.status().callsToday;
+  world.fullReply = failed("gone");
+  assert.deepEqual(await watcher.full("110000000001", at(1)), { status: "failed", message: "eBay says that listing has gone", gone: true });
+  world.fullReply = new Error("boom");
+  assert.deepEqual(await watcher.full("110000000001", at(2)), { status: "failed", message: "the check stopped unexpectedly", gone: false });
+  world.fullReply = failed("request");
+  assert.deepEqual(await watcher.full("110000000001", at(3)), { status: "failed", message: "eBay refused the search", gone: false });
+  assert.equal(watcher.status().callsToday, before + 3);
+  assert.deepEqual(await watcher.full("110000000002", at(4)), { status: "failed", message: "this listing can't be read in full", gone: false });
+  assert.equal(world.fullCalls.length, 3);
+});
+
+test("once the day's calls are used, nothing more is read in full or looked up", async () => {
+  const { world, watcher } = richSetup([optiplex], { limits: { callsPerDay: 2 } });
+  world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0" }), listing(2, { id: "110000000002", ref: "v1|110000000002|0" })]);
+  await watcher.run(at(0));
+  assert.equal((await watcher.full("110000000001", at(1))).status, "ok");
+  assert.deepEqual(await watcher.full("110000000002", at(2)), { status: "limit" });
+  assert.deepEqual(await watcher.detailNames("ebay", "optiplex", null), { status: "limit" });
+  assert.equal((await watcher.full("110000000001", at(3))).status, "ok");
+  assert.deepEqual([world.fullCalls.length, world.nameCalls.length], [1, 0]);
+});
+
+test("a query's item details can be looked up, and the call counts even before the first check", async () => {
+  const { world, watcher } = richSetup();
+  assert.deepEqual(await watcher.detailNames("ebay", "optiplex 7070", "179", at(0)), { status: "ok", names: { categoryId: "179", categories: [], details: [{ name: "Form Factor", values: [{ value: "SFF", count: 9 }] }] } });
+  assert.deepEqual(world.nameCalls, [["optiplex 7070", "179"]]);
+  world.namesReply = failed("request", 1);
+  assert.deepEqual(await watcher.detailNames("ebay", "ddr4", null, at(0)), { status: "failed", message: "eBay refused the search" });
+  world.namesReply = new Error("boom");
+  assert.deepEqual(await watcher.detailNames("ebay", "ddr4", null, at(0)), { status: "failed", message: "the check stopped unexpectedly" });
+  assert.deepEqual(await watcher.detailNames("other", "ddr4", null, at(0)), { status: "failed", message: "that source can't list item details" });
+  await watcher.run(at(0));
+  assert.equal(watcher.status().callsToday, 4);
+});
+
+test("a source that can only search still works, and says it can't do the rest", async () => {
+  const { world, restart } = richSetup();
+  const plain: Source = { search: async () => ({ listings: [listing(1, { id: "110000000001", ref: "v1|110000000001|0" })], total: 1, complete: true, calls: 1, skipped: 0 }) };
+  const watcher = restart({ ebay: plain });
+  await watcher.run(at(0));
+  assert.deepEqual(await watcher.full("110000000001", at(1)), { status: "failed", message: "this listing can't be read in full", gone: false });
+  assert.deepEqual(await watcher.detailNames("ebay", "x", null), { status: "failed", message: "that source can't list item details" });
+  assert.equal(world.sent.length, 1);
+});
+
+test("a new day clears each search's count of alerts", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, alertsPerDay: 5 }]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2));
+  await watcher.run(at(30));
+  assert.equal(watcher.searches()[0].alertsToday, 2);
+  await watcher.run(at(24 * 60));
+  assert.equal(watcher.searches()[0].alertsToday, 0);
+  assert.ok(!world.disk.text?.includes("alertsToday"));
+});
+
+test("an auction that eBay still lists after its end time gets no ending-soon alert", async () => {
+  const { world, watcher } = richSetup([bidding]);
+  world.found.set("optiplex", [auction(1, 100)]);
+  await watcher.run(at(0));
+  await watcher.run(at(240));
+  assert.equal(world.sent.length, 1);
+});
+
+test("an auction's low opening bid isn't a great deal: it goes out at the default priority and waits for quiet hours to end", async () => {
+  const both = { ...optiplex, buying: ["auction", "buy it now"], guidePrice: 120 };
+  const { world, watcher } = richSetup([both], { quiet: { from: "12:10", to: "13:00", allow: "great" } });
+  await watcher.run(at(0));
+  world.found.set("optiplex", [auction(1, 6 * 24 * 60, { price: 99 }), listing(2, { price: 9000 })]);
+  await watcher.run(at(30));
+  assert.deepEqual(world.sent.slice(1).map((sent) => [sent.message.split("\n")[0], sent.priority]), [["Dell OptiPlex 7070 SFF number 2", 4]]);
+  await watcher.run(at(60));
+  assert.deepEqual(world.sent.slice(2).map((sent) => [sent.message.split("\n")[0], sent.priority]), [["Dell OptiPlex 7070 SFF number 1", undefined]]);
+  const [group] = watcher.matches(at(61));
+  assert.deepEqual(group.listings.map((shown) => [shown.price, shown.great, shown.underGuide]), [[99, false, null], [9000, true, 25]]);
+});
+
+test("a wait of more than an hour from eBay is reported straight away, and a shorter one only after three tries", async () => {
+  const long = richSetup([optiplex, ram]);
+  const busy = failed("busy");
+  busy.retryAfterMs = 6 * 60 * 60_000;
+  long.world.found.set("optiplex", busy);
+  await long.watcher.run(at(0));
+  assert.deepEqual(long.watcher.problems(), [{ code: "deals-source", message: "The deal watcher can't check its searches: eBay says too many requests." }]);
+  long.world.found.set("optiplex", []);
+  await long.watcher.run(at(6 * 60 + 1));
+  assert.deepEqual(long.watcher.problems(), []);
+
+  const short = richSetup();
+  const brief = failed("busy");
+  brief.retryAfterMs = 20 * 60_000;
+  short.world.found.set("optiplex", brief);
+  await short.watcher.run(at(0));
+  assert.deepEqual(short.watcher.problems(), []);
+});
+
+test("while eBay has asked for a wait, nothing is read in full or looked up either", async () => {
+  const { world, watcher } = richSetup([optiplex, ram]);
+  world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0" })]);
+  await watcher.run(at(0));
+  const busy = failed("busy");
+  busy.retryAfterMs = 3 * 60 * 60_000;
+  world.found.set("ram", busy);
+  await watcher.run(at(60));
+  assert.deepEqual(await watcher.full("110000000001", at(61)), { status: "waiting" });
+  assert.deepEqual(await watcher.detailNames("ebay", "ddr4", null, at(61)), { status: "waiting" });
+  assert.deepEqual([world.fullCalls.length, world.nameCalls.length], [0, 0]);
+  assert.equal((await watcher.full("110000000001", at(60 + 181))).status, "ok");
+});
+
+test("a read that eBay answers with too many requests makes the searches wait too", async () => {
+  const { world, watcher } = richSetup();
+  world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0" })]);
+  await watcher.run(at(0));
+  const busy = failed("busy");
+  busy.retryAfterMs = 2 * 60 * 60_000;
+  world.fullReply = busy;
+  assert.deepEqual(await watcher.full("110000000001", at(1)), { status: "failed", message: "eBay says too many requests", gone: false });
+  world.searchCalls.length = 0;
+  await watcher.run(at(60));
+  assert.equal(world.searchCalls.length, 0);
+  await watcher.run(at(122));
+  assert.equal(world.searchCalls.length, 1);
+});
+
+test("asking for the same listing several times at once makes one call, and the day's limit holds under a rush", async () => {
+  const { world, watcher } = richSetup([optiplex], { limits: { callsPerDay: 3 } });
+  world.found.set("optiplex", [1, 2, 3, 4, 5, 6].map((n) => listing(n, { id: String(110000000000 + n), ref: `v1|${110000000000 + n}|0` })));
+  await watcher.run(at(0));
+  const same = await Promise.all(Array.from({ length: 8 }, () => watcher.full("110000000001", at(1))));
+  assert.deepEqual([...new Set(same.map((reply) => reply.status))], ["ok"]);
+  assert.equal(world.fullCalls.length, 1);
+  const rush = await Promise.all([2, 3, 4, 5, 6].map((n) => watcher.full(String(110000000000 + n), at(2))));
+  assert.deepEqual(rush.map((reply) => reply.status), ["ok", "limit", "limit", "limit", "limit"]);
+  assert.equal(world.fullCalls.length, 2);
+  assert.equal(watcher.status().callsToday, 3);
+});
+
+test("at most 150 listings are read in full or looked up in a day, whatever the call limit", async () => {
+  const { world, watcher } = richSetup();
+  world.found.set("optiplex", Array.from({ length: 160 }, (_, i) => listing(i + 1, { id: String(110000000001 + i), ref: `v1|${110000000001 + i}|0` })));
+  await watcher.run(at(0));
+  const replies = [];
+  for (let i = 0; i < 152; i++) replies.push((await watcher.full(String(110000000001 + i), at(1))).status);
+  assert.deepEqual([replies.filter((status) => status === "ok").length, replies.slice(150)], [150, ["limit", "limit"]]);
+  assert.deepEqual(await watcher.detailNames("ebay", "ddr4", null, at(2)), { status: "limit" });
+  assert.equal((await watcher.full("110000000150", at(3))).status, "ok");
+  assert.equal(world.fullCalls.length, 150);
+  world.found.set("optiplex", Array.from({ length: 160 }, (_, i) => listing(i + 1, { id: String(110000000001 + i), ref: `v1|${110000000001 + i}|0` })));
+  await watcher.run(at(24 * 60));
+  assert.equal((await watcher.full("110000000155", at(24 * 60 + 1))).status, "ok");
+});
+
+test("ending-soon alerts go out soonest first, one each, never inside a roll-up, and the rest follow at the next check", async () => {
+  const { world, watcher } = richSetup([bidding], { limits: { alertsPerCheck: 1 } });
+  world.found.set("optiplex", [auction(1, 200), auction(2, 190), auction(3, 195)]);
+  await watcher.run(at(0));
+  const sentAt = async (minutes: number) => {
+    const before = world.sent.length;
+    await watcher.run(at(minutes));
+    return world.sent.slice(before).map((sent) => `${sent.title} / ${sent.message.split("\n")[0].slice(-8)}`);
+  };
+  assert.deepEqual(await sentAt(175), ["Ending soon: OptiPlex / number 2"]);
+  assert.deepEqual(await sentAt(180), ["Ending soon: OptiPlex / number 3"]);
+  assert.deepEqual(await sentAt(185), ["Ending soon: OptiPlex / number 1"]);
+  assert.deepEqual(await sentAt(189), []);
+});
+
+test("an ending-soon alert held by quiet hours or the search's daily limit is kept for the next check, not marked as sent", async () => {
+  const quiet = richSetup([bidding], { quiet: { from: "12:10", to: "13:00" } });
+  quiet.world.found.set("optiplex", [auction(1, 80)]);
+  await quiet.watcher.run(at(0));
+  await quiet.watcher.run(at(55));
+  assert.equal(quiet.world.sent.length, 1);
+  await quiet.watcher.run(at(60));
+  assert.deepEqual(titles(quiet.world.sent.slice(1)), ["Ending soon: OptiPlex"]);
+
+  const limited = richSetup([{ ...bidding, alertsPerDay: 1 }]);
+  await limited.watcher.run(at(0));
+  limited.world.found.set("optiplex", [auction(1, 200), auction(2, 11 * 60 + 45)]);
+  await limited.watcher.run(at(5));
+  assert.deepEqual(titles(limited.world.sent.slice(1)), ["Deal: OptiPlex"]);
+  await limited.watcher.run(at(175));
+  assert.equal(limited.world.sent.length, 2);
+  limited.world.found.set("optiplex", [auction(2, 11 * 60 + 45)]);
+  await limited.watcher.run(at(12 * 60 + 5));
+  assert.deepEqual(titles(limited.world.sent.slice(2)), ["Deal: OptiPlex"]);
+});
+
+test("the now-watching message still comes in quiet hours, silently", async () => {
+  const { world, watcher } = richSetup([optiplex], { quiet: { from: "11:00", to: "13:00" } });
+  await watcher.run(at(0));
+  assert.deepEqual(world.sent.map((sent) => [sent.title, sent.priority]), [["Deal watcher: now watching", 2]]);
+  const loud = richSetup();
+  await loud.watcher.run(at(0));
+  assert.ok(!Object.hasOwn(loud.world.sent[0], "priority"));
+});
+
+test("snoozing a search clears its old failure, so it stops showing as a problem", async () => {
+  const { world, watcher } = richSetup();
+  world.found.set("optiplex", failed("request"));
+  await watcher.run(at(0));
+  assert.equal(watcher.problems().length, 1);
+  await watcher.snooze("optiplex", null);
+  assert.deepEqual(watcher.problems(), []);
+  await watcher.run(at(600));
+  assert.deepEqual([watcher.problems(), watcher.searches()[0].problem], [[], null]);
+});
+
+test("matches can be asked for fewer listings per search, never more than fifty", async () => {
+  const { world, watcher } = richSetup();
+  world.found.set("optiplex", Array.from({ length: 60 }, (_, i) => listing(i + 1)));
+  await watcher.run(at(0));
+  assert.deepEqual([15, undefined, 500].map((most) => [watcher.matches(at(1), most)[0].listings.length, watcher.matches(at(1), most)[0].count]), [[15, 60], [50, 60], [50, 60]]);
+});
+
+test("a damaged state file's note isn't lost when a snooze and the first check load it at the same moment", async () => {
+  const { world, restart } = richSetup();
+  let loads = 0;
+  const slow = { ...world.store, load: async () => ({ memory: emptyMemory(), note: ++loads === 1 ? "The deal watcher's state file was damaged, so every search started fresh." : null }) };
+  const watcher = createDealWatcher({ loadSearches: async () => world.list, sources: {}, store: slow, notify: async () => undefined });
+  await Promise.all([watcher.snooze("optiplex", null), watcher.run(at(0))]);
+  assert.deepEqual([loads, watcher.status().note], [1, "The deal watcher's state file was damaged, so every search started fresh."]);
+  assert.equal(typeof restart, "function");
+});
+
+test("an ending-soon alert counts towards the search's daily limit, so a new listing in the same check waits", async () => {
+  const { world, watcher } = richSetup([{ ...bidding, alertsPerDay: 1 }]);
+  world.found.set("optiplex", [auction(1, 100)]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", [auction(1, 100), auction(2, 600)]);
+  await watcher.run(at(75));
+  assert.deepEqual(titles(world.sent.slice(1)), ["Ending soon: OptiPlex"]);
+  assert.equal(watcher.searches()[0].alertsToday, 1);
 });

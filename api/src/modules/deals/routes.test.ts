@@ -3,7 +3,7 @@ import { test } from "node:test";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
 import { deals } from "./routes.js";
-import type { DealWatcher, MatchGroup, RunSummary, SearchStatus, WatcherStatus } from "./watcher.js";
+import type { DealWatcher, FullReply, MatchGroup, MatchedListing, NamesReply, RunSummary, SearchStatus, WatcherStatus } from "./watcher.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true };
 const start = Date.parse("2026-11-18T12:00:00.000Z");
@@ -16,11 +16,42 @@ const status: WatcherStatus = {
   alertsPerDay: 60,
   note: null,
   problems: [{ code: "deals-source", message: "The deal watcher can't check a search (ram): couldn't reach eBay." }],
+  quiet: null,
 };
 
 const searches: SearchStatus[] = [
-  { id: "optiplex", name: "OptiPlex", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: "2026-11-18T11:55:00.000Z", watchingSince: "2026-11-17T09:00:00.000Z", matches: 2, total: 2, complete: true, problem: null },
+  { id: "optiplex", name: "OptiPlex", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: "2026-11-18T11:55:00.000Z", watchingSince: "2026-11-17T09:00:00.000Z", matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 1, alertsPerDay: null, guidePrice: 12000, hidden: { words: 4 } },
 ];
+
+const matched: MatchedListing = {
+  id: "110000000001",
+  title: "Dell OptiPlex 7070 SFF",
+  price: 9500,
+  postage: 699,
+  total: 10199,
+  condition: "Used",
+  buying: ["FIXED_PRICE"],
+  url: "https://www.ebay.co.uk/itm/110000000001",
+  listedAt: null,
+  endsAt: null,
+  firstSeen: "2026-11-18T11:55:00.000Z",
+  bids: null,
+  sellerType: "business",
+  sellerPercent: 99.4,
+  sellerFeedback: 1234,
+  topRated: null,
+  country: "GB",
+  city: "Sometown",
+  postcode: "ZZ9***",
+  summary: "Core i5, 16GB",
+  variations: false,
+  detailsMatch: null,
+  place: 1,
+  underGuide: 15,
+  great: false,
+  perUnit: null,
+  cautions: [],
+};
 
 const groups: MatchGroup[] = [
   {
@@ -29,14 +60,23 @@ const groups: MatchGroup[] = [
     source: "ebay",
     checkedAt: "2026-11-18T11:55:00.000Z",
     count: 1,
-    listings: [
-      { title: "Dell OptiPlex 7070 SFF", price: 9500, postage: 699, total: 10199, condition: "Used", buying: ["FIXED_PRICE"], url: "https://www.ebay.co.uk/itm/110000000001", listedAt: null, endsAt: null, firstSeen: "2026-11-18T11:55:00.000Z" },
-    ],
+    guidePrice: 12000,
+    listings: [matched],
   },
+  { id: "ram", name: "DDR4 RAM", source: "ebay", checkedAt: "2026-11-18T11:50:00.000Z", count: 0, guidePrice: null, listings: [] },
 ];
 
 function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, failed: 0, unsent: true }) {
-  const seen = { runs: [] as { now: string; force: boolean }[], matchTimes: [] as string[] };
+  const seen = {
+    runs: [] as { now: string; force: boolean }[],
+    matchTimes: [] as string[],
+    snoozes: [] as [string, string | null][],
+    wakes: [] as string[],
+    fulls: [] as string[],
+    names: [] as [string, string, string | null][],
+    full: { status: "unknown" } as FullReply,
+    namesReply: { status: "ok", names: { categoryId: "179", categories: [], details: [{ name: "Form Factor", values: [{ value: "SFF", count: 310 }] }] } } as NamesReply,
+  };
   const watcher: DealWatcher = {
     run: async (now, force = false) => {
       seen.runs.push({ now: now.toISOString(), force });
@@ -48,6 +88,22 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
     matches: (now) => {
       seen.matchTimes.push(now.toISOString());
       return groups;
+    },
+    snooze: async (id, until) => {
+      seen.snoozes.push([id, until === null ? null : until.toISOString()]);
+      return id === "optiplex";
+    },
+    wake: async (id) => {
+      seen.wakes.push(id);
+      return id === "optiplex";
+    },
+    full: async (id) => {
+      seen.fulls.push(id);
+      return seen.full;
+    },
+    detailNames: async (source, query, categoryId) => {
+      seen.names.push([source, query, categoryId]);
+      return seen.namesReply;
     },
   };
   return { watcher, seen };
@@ -178,7 +234,7 @@ test("switched off, every route says so and the watcher is never touched", async
     assert.equal(response.statusCode, 404, `${method} ${url}`);
     assert.deepEqual(response.json(), { error: "The deal watcher is switched off" });
   }
-  assert.deepEqual(seen, { runs: [], matchTimes: [] });
+  assert.deepEqual([seen.runs, seen.matchTimes, seen.snoozes, seen.wakes, seen.fulls, seen.names], [[], [], [], [], [], []]);
 });
 
 test("with no watcher every route says switched off rather than failing", async () => {

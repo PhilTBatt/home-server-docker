@@ -149,7 +149,8 @@ test("with DEALS_SEEN=memory the folder holds only the list and a state file wit
   assert.deepEqual((await readdir(dir)).sort(), ["searches.json", "state.json"]);
   const state = await readFile(join(dir, "state.json"), "utf8");
   for (const fragment of ["1100000000", "v1|", "Dell", "seller", "ebay.co.uk", "93", "seen"]) assert.ok(!state.includes(fragment), `${fragment} in ${state}`);
-  assert.deepEqual(Object.keys(JSON.parse(state)).sort(), ["counters", "searches"]);
+  assert.deepEqual(Object.keys(JSON.parse(state)).sort(), ["alertsToday", "counters", "searches"]);
+  assert.deepEqual(Object.keys(JSON.parse(state).alertsToday), Object.keys(JSON.parse(state).searches));
 });
 
 test("with DEALS_SEEN=disk the state file also holds the ids of listings already seen, and still no titles or seller", async () => {
