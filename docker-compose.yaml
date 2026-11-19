@@ -245,6 +245,7 @@ services:
       DEFAULT_VOICE: bm_george
       HF_HUB_DISABLE_TELEMETRY: "1"
       ENABLE_WEB_PLAYER: "false"
+      API_LOG_LEVEL: ERROR
     mem_limit: 2g
     networks:
       - speech

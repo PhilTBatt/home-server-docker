@@ -546,11 +546,12 @@ kokoro_port=$(grep -o '^export const kokoroUrl = "http://kokoro:[0-9]*";$' "$her
 check "the healthcheck asks the port Jarvis asks" "1" "$(grep -c "http://127.0.0.1:$kokoro_port/health\"\]$" <<< "$kokoro")"
 check "and the route Jarvis's own check asks" "1" "$(grep -c 'fetch(`${url}/health`' "$here/../jarvis/src/kokoro.ts")"
 default_voice=$(grep -o '^export const defaultKokoroVoice = "[a-z_]*";$' "$here/../jarvis/src/config.ts" | grep -o '"[a-z_]*"' | tr -d '"')
-check "Kokoro's three settings: it warms up with Jarvis's default voice, asks Hugging Face nothing as it starts, and serves no web page" "    environment:
+check "Kokoro's four settings: it warms up with Jarvis's default voice, asks Hugging Face nothing as it starts, serves no web page, and logs errors only" "    environment:
       DEFAULT_VOICE: $default_voice
       HF_HUB_DISABLE_TELEMETRY: \"1\"
-      ENABLE_WEB_PLAYER: \"false\"" "$(grep -A3 '^    environment:$' <<< "$kokoro")"
-check "and no others" "    mem_limit: 2g" "$(grep -A4 '^    environment:$' <<< "$kokoro" | tail -n 1)"
+      ENABLE_WEB_PLAYER: \"false\"
+      API_LOG_LEVEL: ERROR" "$(grep -A4 '^    environment:$' <<< "$kokoro")"
+check "and no others" "    mem_limit: 2g" "$(grep -A5 '^    environment:$' <<< "$kokoro" | tail -n 1)"
 check "Kokoro runs as its image's own ordinary user, with no extra reach into the server" "0" "$(grep -c -e 'user:' -e 'pid:' -e 'ipc:' -e 'security_opt' -e 'extra_hosts' -e 'group_add' <<< "$kokoro")"
 check "the speech network has no way out to the internet" "  speech:
     internal: true" "$(grep -A1 '^  speech:$' "$compose_file")"
