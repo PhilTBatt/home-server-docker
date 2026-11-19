@@ -31,6 +31,8 @@ const readPaths: Record<string, string> = {
   get_library: "/media/library",
   get_wifi_reconnects: "/system/wifi-reconnects",
   get_backup: "/system/backup",
+  get_deal_status: "/deals/status",
+  get_deal_searches: "/deals/searches",
 };
 
 const actions: Record<string, { args: Record<string, unknown>; call: string }> = {
@@ -93,7 +95,7 @@ test("names itself home-hub", async () => {
   assert.equal(result.serverInfo.name, "home-hub");
 });
 
-test("offers the seven read tools, then scan, stop and start, in order", async () => {
+test("offers the nine read tools, then scan, stop and start, in order", async () => {
   const { listTools } = await connect(fakeApi());
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), ...Object.keys(actions)]);
@@ -229,7 +231,7 @@ test("an unknown tool is refused without calling the API", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
-test("read-only offers only the seven read tools", async () => {
+test("read-only offers only the nine read tools", async () => {
   const { listTools } = await connect(fakeApi(), false);
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, Object.keys(readPaths));
@@ -250,4 +252,25 @@ test("read-only still answers the read tools", async () => {
   const result = (await callTool("get_library")).result as CallResult;
   assert.deepEqual(result.content, [{ type: "text", text: '{"movies":0,"series":5,"episodes":46}' }]);
   assert.deepEqual(fake.calls, ["GET /media/library"]);
+});
+
+test("no tool can reach the deal watcher's listings or start a check, so no listing reaches Claude through here", async () => {
+  const api = fakeApi();
+  const { listTools, callTool } = await connect(api);
+  const tools = await listTools();
+  for (const tool of tools.filter((t) => t.name.includes("deal"))) {
+    assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}), [], `${tool.name} takes input`);
+    await callTool(tool.name);
+  }
+  assert.deepEqual(tools.filter((t) => t.name.includes("deal")).map((t) => t.name), ["get_deal_status", "get_deal_searches"]);
+  assert.deepEqual(api.calls, ["GET /deals/status", "GET /deals/searches"]);
+  assert.ok(!JSON.stringify(tools).includes("/deals/matches"));
+  assert.ok(!JSON.stringify(tools).includes("/deals/check"));
+});
+
+test("the deal tools say they fail while the watcher is switched off, so a 404 isn't mistaken for a fault", async () => {
+  const { listTools } = await connect(fakeApi());
+  for (const tool of (await listTools()).filter((t) => t.name.includes("deal"))) {
+    assert.match(tool.description ?? "", /404 while the deal watcher is switched off/);
+  }
 });

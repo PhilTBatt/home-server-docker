@@ -16,12 +16,12 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_alerts",
-    description: "Problems on the home server right now: low disk, low memory, Wi-Fi reconnects in the last 24 hours, or a failed last backup. ok is true when there are none.",
+    description: "Problems on the home server right now: low disk, low memory, Wi-Fi reconnects in the last 24 hours, a failed last backup, or the deal watcher being unable to check. ok is true when there are none.",
     path: "/system/alerts",
   },
   {
     name: "get_features",
-    description: "Which Home Hub features are switched on: alerts, the heartbeat and the daily summary.",
+    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads and the deal watcher.",
     path: "/system/features",
   },
   {
@@ -43,6 +43,16 @@ export const readTools: ReadTool[] = [
     name: "get_backup",
     description: "When the last backup ran and whether it worked (problem is null when it did), and when the last good backup was. lastRun is null if backups have never run.",
     path: "/system/backup",
+  },
+  {
+    name: "get_deal_status",
+    description: "How the deal watcher is doing: when it last ran, today's counts of calls and alerts against their limits, where it keeps seen listings, and any problems. Fails with a 404 while the deal watcher is switched off.",
+    path: "/deals/status",
+  },
+  {
+    name: "get_deal_searches",
+    description: "The searches the deal watcher is set up with: each one's name, query, whether it's switched on, when it was last checked, how many listings match now, and any problem. It never includes the listings themselves. Fails with a 404 while the deal watcher is switched off.",
+    path: "/deals/searches",
   },
 ];
 
