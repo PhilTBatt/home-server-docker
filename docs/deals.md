@@ -57,7 +57,7 @@ A missing switch, or a value that isn't one of those listed, stops the API start
 To switch on: set `DEALS=on`, then `docker compose up --build --wait api`. To switch off: `DEALS=off` and the same command.
 
 ## The search list: `deals/searches.json`
-Copy `api/src/modules/deals/searches.example.json` to `deals/searches.json` and edit it. Git ignores it, because this repo is public and the list says what I'm shopping for and how much I'll pay. A catalogue of 70 more searches, all switched off, is in `catalogue.example.json` beside it: see "The catalogue" below.
+Copy `api/src/modules/deals/searches.example.json` to `deals/searches.json` and edit it. Git ignores it, because this repo is public and the list says what I'm shopping for and how much I'll pay. A catalogue of 112 more searches, all switched off, is in `catalogue.example.json` beside it: see "The catalogue" below.
 
 ```
 {
@@ -187,17 +187,20 @@ bash host/hub-post.sh /deals/searches/optiplex-7070-sff/wake
 When a snooze ends, listings that appeared meanwhile alert in the usual way, cheapest first. Snoozes are kept in `state.json`, so they survive a restart. With `DEALS_SEEN=memory`, a search that was snoozed for more than a day and restarted in between starts fresh with a "now watching" message instead. Snoozing a search also clears any problem it was showing.
 
 ## The catalogue
-`api/src/modules/deals/catalogue.example.json` holds 70 searches, every one switched off, across all the groups: 23 whole PCs and small servers, 8 CPUs, 3 motherboards, 6 kinds of RAM, 7 kinds of storage, 6 graphics cards, power supplies, cases, a cooler, network cards, storage cards, a UPS, and 6 HotUKDeals searches. To use it:
+`api/src/modules/deals/catalogue.example.json` holds 112 searches, every one switched off, across all the groups: 27 whole PCs, workstations and small servers, 16 CPUs, 7 motherboards and 3 CPU-and-board bundles, 8 kinds of RAM, 9 kinds of storage, 8 graphics cards, 4 power supplies, 8 cases, 3 coolers and a fan pack, network cards, storage cards, a UPS, and 12 HotUKDeals searches. With your own searches that's 150 at most, so the catalogue leaves room for 38 of yours. To use it:
 1. Copy it to `deals/catalogue.json`.
 2. Add `"more": ["catalogue.json"]` to `deals/searches.json`.
 3. Before switching one on, check its words with `/deals/details?q=...` and its category with `/deals/categories?q=...`, and set your own guide price.
 
 How much to trust it:
-- Only the RAM searches have a category (170083, Memory (RAM), seen on an ebay.co.uk page). The others have none on purpose: a wrong category quietly finds nothing.
+- Only the RAM searches have a category: 170083, Memory (RAM), seen on an ebay.co.uk page, and for `ddr4-rdimm-32gb` 11210, Server Memory (RAM), which is eBay's number on its US site and unconfirmed for eBay UK until `/deals/categories?q=32gb%20ddr4%20ecc%20rdimm` shows it. The others have none on purpose: a wrong category quietly finds nothing.
 - Guide prices are used prices, and every one is an estimate made without sold prices. For RAM and hard drives they were set against UK new prices in November 2026 (ramprices.uk, disks.co.uk): roughly half of new for RAM, and £15 to £18 a terabyte for used or recertified drives. The rest have nothing firmer behind them.
-- The RAM searches hide `Form Factor: SO-DIMM`. That value was seen on an eBay page; that it's spelt the same on eBay UK is a guess until `/deals/categories/170083/details` confirms it.
-- The six server searches exclude spare-part words (motherboard, board only, psu only and so on) instead of using the `parts only` list, which would also hide whole servers whose titles mention a drive caddy, a bezel or a riser. They don't use the `incomplete` list either, because servers are often sold without drives ("No HDD"). The seven eBay storage searches use `hideVariations`.
-- If every search were on, they'd use roughly 640 eBay calls a day when each one's results fit in a page of 200. A search with more reads up to three pages, and each hidden detail as many again, so the most is about 1,900. HotUKDeals' feed is read at most every five minutes and doesn't count towards eBay's calls.
+- The desktop RAM searches hide `Form Factor: SO-DIMM` (the laptop RAM search hides `DIMM`, and the server RAM search hides nothing). The SO-DIMM value was seen on an eBay page; that it's spelt the same on eBay UK is a guess until `/deals/categories/170083/details` confirms it.
+- The searches added for building a tower from parts (AM4 and 12th-gen Intel CPUs, their boards and bundles, 32GB sticks, Xeon workstations, two 12GB graphics cards, 500GB and 512GB NVMe drives, bigger power supplies, tower cases, coolers) have guide prices that are my own estimates, made on 19 November 2026 from UK shop prices, price trackers (PriceSpy, gpudojo) and second-hand prices that came up in web searches. The cases, coolers, the i7-12700, the X570 and B660 boards, the bundles and the workstations have less behind them.
+- `ddr4-rdimm-32gb` is server RAM on purpose, for the ThinkStation P520, the HP Z440, and the Xeon W versions of the Precision 5820 and HP Z4 G4: it searches eBay's server memory category and doesn't hide registered RAM. The catalogue's Xeon E machines (Z2 G4, Precision 3630, P330, T140, MicroServer Gen10 Plus, C246 boards) take unbuffered RAM: that's `ddr4-ecc-udimm`. The MicroServer Gen8 takes DDR3.
+- The three bundle searches need "bundle", "combo" or "kit" in the title. A CPU and board sold together can also turn up in a CPU or motherboard search, for example when its title doesn't say "bundle" or "combo"; the skills read titles, so they treat it as a bundle.
+- The six server searches exclude spare-part words (motherboard, board only, psu only and so on) instead of using the `parts only` list, which would also hide whole servers whose titles mention a drive caddy, a bezel or a riser. They don't use the `incomplete` list either, because servers are often sold without drives ("No HDD"). The nine eBay storage searches use `hideVariations`.
+- If every search were on, they'd use roughly 850 eBay calls a day when each one's results fit in a page of 200, before your own searches. A search with more reads up to three pages, and each hidden detail as many again, so the most is about 2,500. `callsPerDay` defaults to 1000, so with everything on, raise it in `limits` (eBay's own default limit for this API is 5,000 a day). HotUKDeals' feed is read at most every five minutes and doesn't count towards eBay's calls.
 
 ## HotUKDeals
 HotUKDeals publishes a feed of every new deal at `https://www.hotukdeals.com/rss/new` (the newest 30). Its robots.txt allows `/rss/`, and its terms say nothing about automated access; they do restrict passing its content to others, and nothing here does. A search with `"source": "hotukdeals"`:

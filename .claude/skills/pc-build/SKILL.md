@@ -23,6 +23,7 @@ This builds PCs only from listings the deal watcher matched in the last six hour
 ## 3. Shortlist
 - Use what the matches already tell you: `condition`, `sellerType` (a business seller gives Phil more consumer rights), `cautions`, `variations`, `postage`.
 - Leave out auction-only listings: their price is a bid that will rise. You may mention the best one separately, calling its price a bid.
+- A bundle (a CPU with a board, often with RAM: in the motherboard group, or in a CPU or motherboard search when its title doesn't say "bundle") covers each part it includes. Read it in full to see exactly what's in it, and count its total once.
 - A listing with `variations: true` shows the price of its cheapest option. Use it only if its full listing confirms the option you need at the price you count.
 - Leave out PCs sold without a drive, RAM or power supply, "for parts", "spares or repair" or BIOS-locked, unless the build adds what's missing from the matches.
 - Choose at most 10 listings to read in full, starting with the parts the best builds depend on. Each new read uses one of the watcher's 150 full reads a day.
@@ -35,9 +36,9 @@ This builds PCs only from listings the deal watcher matched in the last six hour
 ## 5. Check each build
 Check each of these that applies:
 - CPU and motherboard: the same socket, and the board supports that CPU's generation (chipset, BIOS).
-- RAM: the DDR generation the board takes. Desktop unbuffered DIMMs only: not laptop SODIMMs, and not server RAM (registered, RDIMM, LRDIMM, or a code ending in R such as PC4-2400T-R). Module size and total within the board's slots and maximum.
+- RAM: the DDR generation the board takes. A desktop board takes unbuffered DIMMs only: not laptop SODIMMs, and not server RAM (registered, RDIMM, LRDIMM, or a code ending in R such as PC4-2400T-R). A ThinkStation P520 or HP Z440 takes registered ECC RAM only; a Precision 5820 or HP Z4 G4 takes registered ECC with a Xeon W and non-ECC unbuffered with a Core i7 or i9 X-series. Go by the maker's spec page. Module size and total within the board's slots and maximum.
 - Board and case: the board's size fits the case. A maker's own small form factor (SFF) or micro PC takes only its own board.
-- Graphics: whether the CPU has built-in graphics (for example, Intel models ending in F don't, so they need a graphics card). A graphics card's height (an SFF case needs low profile), length, slot and power connectors.
+- Graphics: whether the CPU has built-in graphics. For example, Intel models ending in F don't, nor do Ryzen 5000 models without a G (such as the 5600X or 5900X), nor the Xeon E-2236, nor the Xeon W and E5 chips in the catalogue's workstations: those need a graphics card. A graphics card's height (an SFF case needs low profile), length, slot and power connectors.
 - Power supply: enough watts for the whole build. A maker's own SFF PC often has its own power supply with no spare power cables, so a graphics card that needs a PCIe power cable won't work in one.
 - Storage: the interface (SATA or NVMe M.2) and a free slot or bay.
 - Cooling: a CPU sold without a cooler needs one.
