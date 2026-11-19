@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
 import type { Problem } from "../system/alerts.js";
-import { createNotifier, notificationFor, sendToNtfy, type Notification } from "./notifier.js";
+import { createNotifier, notificationFor, safeLink, sendToNtfy, type Notification } from "./notifier.js";
 
 const diskLow: Problem = { code: "disk-low", message: "Disk is low: 22 of 230 GB free." };
 const memoryLow: Problem = { code: "memory-low", message: "Memory is low: 700 of 8000 MB available." };
@@ -204,4 +204,69 @@ test("each notifier keeps its own memory", async () => {
   assert.equal(await first(), true);
   assert.equal(await second(), true);
   assert.equal(fetchMock.mock.callCount(), 2);
+});
+
+test("a notification with no link sends no Click header", async () => {
+  const fetchMock = fakeNtfy();
+  await sendToNtfy("my-topic", sample);
+  const headers = new Headers(fetchMock.mock.calls[0].arguments[1]?.headers);
+  assert.equal(headers.get("Click"), null);
+  assert.deepEqual([...headers.keys()].sort(), ["tags", "title"]);
+});
+
+test("a notification with an https link sends it as the Click header, so a tap opens it", async () => {
+  const fetchMock = fakeNtfy();
+  await sendToNtfy("my-topic", { ...sample, click: "https://www.ebay.co.uk/itm/123456789012" });
+  const headers = new Headers(fetchMock.mock.calls[0].arguments[1]?.headers);
+  assert.equal(headers.get("Click"), "https://www.ebay.co.uk/itm/123456789012");
+  assert.equal(headers.get("Title"), "Home Hub: 1 problem");
+  assert.equal(fetchMock.mock.calls[0].arguments[1]?.body, sample.message);
+});
+
+test("a link that isn't plain https is left off, and the message still goes", async () => {
+  const bad = [
+    "http://www.ebay.co.uk/itm/1",
+    "javascript:alert(1)",
+    "intent://scan/#Intent;scheme=zxing;end",
+    "file:///etc/passwd",
+    "ntfy://ntfy.sh/other-topic",
+    "//www.ebay.co.uk/itm/1",
+    "www.ebay.co.uk/itm/1",
+    "",
+    "https://",
+    " https://www.ebay.co.uk/itm/1",
+    "https://www.ebay.co.uk/itm/1 ",
+    "https://www.ebay.co.uk/itm/1\r\nX-Priority: 5",
+    "https://www.ebay.co.uk/itm/1\nActions: http, Open, https://example.com",
+    "https://www.ebay.co.uk/itm/\u0000",
+    "https://www.ebay.co.uk/itm/caf\u00e9",
+    "https://user:pass@www.ebay.co.uk/itm/1",
+    "https://user@www.ebay.co.uk/itm/1",
+    `https://www.ebay.co.uk/itm/${"1".repeat(500)}`,
+  ];
+  for (const click of bad) {
+    const fetchMock = fakeNtfy();
+    await sendToNtfy("my-topic", { ...sample, click });
+    assert.equal(fetchMock.mock.callCount(), 1, `nothing sent for ${JSON.stringify(click)}`);
+    const headers = new Headers(fetchMock.mock.calls[0].arguments[1]?.headers);
+    assert.equal(headers.get("Click"), null, `Click sent for ${JSON.stringify(click)}`);
+    assert.equal(fetchMock.mock.calls[0].arguments[1]?.body, sample.message);
+    mock.restoreAll();
+  }
+});
+
+test("safeLink keeps an ordinary https link exactly, with its path and query", () => {
+  assert.equal(safeLink("https://www.ebay.co.uk/itm/123?hash=item1"), "https://www.ebay.co.uk/itm/123?hash=item1");
+  assert.equal(safeLink("https://hub.home/"), "https://hub.home/");
+});
+
+test("safeLink gives nothing for a missing link", () => {
+  assert.equal(safeLink(undefined), null);
+});
+
+test("the problem notifier's own messages carry no link", async () => {
+  const fetchMock = fakeNtfy();
+  const check = createNotifier("my-topic", async () => [diskLow]);
+  await check();
+  assert.equal(new Headers(fetchMock.mock.calls[0].arguments[1]?.headers).get("Click"), null);
 });

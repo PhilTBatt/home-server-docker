@@ -4,6 +4,7 @@ export type Notification = {
   title: string;
   message: string;
   tags: string;
+  click?: string;
 };
 
 export function notificationFor(previousCodes: string[], problems: Problem[]): Notification | null {
@@ -25,10 +26,21 @@ export function notificationFor(previousCodes: string[], problems: Problem[]): N
   };
 }
 
+export function safeLink(link: string | undefined): string | null {
+  if (link === undefined || !/^https:\/\/[\x21-\x7E]+$/.test(link) || link.length > 500) return null;
+  if (!URL.canParse(link)) return null;
+  const url = new URL(link);
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") return null;
+  return url.href;
+}
+
 export async function sendToNtfy(topic: string, notification: Notification, timeoutMs = 10_000): Promise<void> {
+  const headers: Record<string, string> = { Title: notification.title, Tags: notification.tags };
+  const link = safeLink(notification.click);
+  if (link !== null) headers.Click = link;
   const response = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
     method: "POST",
-    headers: { Title: notification.title, Tags: notification.tags },
+    headers,
     body: notification.message,
     signal: AbortSignal.timeout(timeoutMs),
   });
