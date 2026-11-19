@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import { test } from "node:test";
 import type { Player } from "./player.js";
-import { say, type SpeechEngine } from "./speech.js";
+import { playSound, say, soundFor, type SpeechEngine } from "./speech.js";
 
 type Seen = { steps: string[]; texts: string[]; signals: AbortSignal[]; players: { device: string; rate: number }[]; written: number[][] };
 
@@ -425,4 +425,107 @@ test("an engine that fails before it hands anything back leaves nothing listenin
   await assert.rejects(say(engine, "Hello.", "plughw:1,0", startPlayer, stop.signal), { message: "the engine couldn't be asked" });
   assert.equal(getEventListeners(stop.signal, "abort").length, 0);
   assert.deepEqual(seen.steps, []);
+});
+
+test("the sound for one sentence is asked for as one piece of text, and comes back whole", async () => {
+  const { seen, engine } = setUp({ sounds: [[1, 2, 3, 4]] });
+  assert.deepEqual([...(await soundFor(engine, "Hello there.", never()))], [1, 2, 3, 4]);
+  assert.deepEqual(seen.texts, ["Hello there."]);
+});
+
+test("an engine that sends a sentence's sound in several bits has them joined in order", async () => {
+  const { engine } = setUp({ sounds: [[1, 2], [3, 4, 5, 6], [7, 8]] });
+  assert.deepEqual([...(await soundFor(engine, "Hello there.", never()))], [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test("an engine that sends no sound for a sentence is an error, named", async () => {
+  const { engine } = setUp({ sounds: [], name: "Kokoro" });
+  await assert.rejects(soundFor(engine, "Hello.", never()), { message: "Kokoro sent no sound" });
+});
+
+test("the engine's own failure over a sentence is passed on as it is", async () => {
+  const { engine } = setUp({ sounds: [[1, 2], new Error("Kokoro replied 500")] });
+  await assert.rejects(soundFor(engine, "Hello.", never()), { message: "Kokoro replied 500" });
+});
+
+test("a sentence that was already called off never reaches the engine, and the engine is handed the same signal", async () => {
+  const stop = new AbortController();
+  const { seen, engine } = setUp();
+  await soundFor(engine, "Hello.", stop.signal);
+  assert.equal(seen.signals[0], stop.signal);
+  const why = new Error("Speech was stopped");
+  stop.abort(why);
+  await assert.rejects(soundFor(engine, "Hello again.", stop.signal), (error: unknown) => error === why);
+  assert.deepEqual(seen.texts, ["Hello."]);
+});
+
+test("one sound is played through a player of its own: started on the device at the rate, given the sound, then left to finish", async () => {
+  const { seen, startPlayer } = setUp();
+  await playSound(Uint8Array.of(5, 6, 7, 8), "plughw:2,0", 22_050, startPlayer, never());
+  assert.deepEqual(seen.steps, ["start", "write", "finish"]);
+  assert.deepEqual(seen.players, [{ device: "plughw:2,0", rate: 22_050 }]);
+  assert.deepEqual(seen.written, [[5, 6, 7, 8]]);
+});
+
+test("a sound that was already called off never starts a player", async () => {
+  const stop = new AbortController();
+  const why = new Error("Speech was stopped");
+  stop.abort(why);
+  const { seen, startPlayer } = setUp();
+  await assert.rejects(playSound(Uint8Array.of(1, 2), "plughw:1,0", 24_000, startPlayer, stop.signal), (error: unknown) => error === why);
+  assert.deepEqual(seen.steps, []);
+});
+
+test("calling a sound off stops its player at once, whether it was taking the sound or finishing, even if the player never answers", async () => {
+  const why = new Error("Speech was stopped");
+  for (const stuck of ["write", "finish"] as const) {
+    const stop = new AbortController();
+    const { seen, startPlayer } = setUp({ [stuck]: () => new Promise<void>(() => {}) });
+    const playing = playSound(Uint8Array.of(1, 2), "plughw:1,0", 24_000, startPlayer, stop.signal).then(
+      () => "played",
+      (error: unknown) => error,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(seen.steps.at(-1), stuck);
+    stop.abort(why);
+    assert.equal(seen.steps.at(-1), "stop");
+    assert.equal(await orStillWaiting(playing, 2000), why);
+    assert.equal(getEventListeners(stop.signal, "abort").length, 0);
+  }
+});
+
+test("called off in the very moment its player starts, a sound is never written and the player is stopped", async () => {
+  const stop = new AbortController();
+  const why = new Error("Speech was stopped");
+  const { seen, startPlayer } = setUp({ start: () => stop.abort(why) });
+  await assert.rejects(playSound(Uint8Array.of(1, 2), "plughw:1,0", 24_000, startPlayer, stop.signal), (error: unknown) => error === why);
+  assert.deepEqual(seen.steps, ["start", "stop"]);
+});
+
+test("a player that fails while taking a sound or finishing is stopped, and its error is passed on", async () => {
+  for (const failing of ["write", "finish"] as const) {
+    const stop = new AbortController();
+    const { seen, startPlayer } = setUp({
+      [failing]: async () => {
+        throw new Error("aplay stopped with code 1: audio open error: Device or resource busy");
+      },
+    });
+    await assert.rejects(playSound(Uint8Array.of(1, 2), "plughw:1,0", 24_000, startPlayer, stop.signal), { message: "aplay stopped with code 1: audio open error: Device or resource busy" });
+    assert.equal(seen.steps.at(-1), "stop");
+    assert.equal(getEventListeners(stop.signal, "abort").length, 0);
+  }
+});
+
+test("a player that can't be started passes its error on, and nothing is left listening on the signal after that or after a sound that played", async () => {
+  const stop = new AbortController();
+  const refusing = () => {
+    throw new Error("The sound rate must be a whole number of Hz from 2000 to 192000, not 0");
+  };
+  await assert.rejects(playSound(Uint8Array.of(1, 2), "plughw:1,0", 0, refusing, stop.signal), { message: "The sound rate must be a whole number of Hz from 2000 to 192000, not 0" });
+  assert.equal(getEventListeners(stop.signal, "abort").length, 0);
+  const { seen, startPlayer } = setUp();
+  await playSound(Uint8Array.of(1, 2), "plughw:1,0", 24_000, startPlayer, stop.signal);
+  assert.equal(getEventListeners(stop.signal, "abort").length, 0);
+  stop.abort();
+  assert.deepEqual(seen.steps, ["start", "write", "finish"]);
 });

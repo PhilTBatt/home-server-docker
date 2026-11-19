@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
 import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
+import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.js";
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
@@ -44,6 +45,7 @@ try {
   hubTools = hub !== undefined && config.engine === "api" ? await startHubTools(hub, (note) => hubNotes.push(note)) : undefined;
   const notes = config.sessionNotes ? await readSessionNotes() : null;
   let voice: VoiceMode = "off";
+  let speaker: Speaker | null = null;
   const open = (setup: ChatSetup) => {
     const chat =
       config.engine === "api"
@@ -63,7 +65,7 @@ try {
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, speechStart: config.speechStart },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -81,6 +83,7 @@ try {
       record: log?.record,
       rate: log?.rate,
       recordNewChat: log?.newChat,
+      recordSpeech: log?.speech,
       failureHint: setup.failureHint ?? undefined,
       lengthNote: hints.newLengthNote(),
       knownSize: setup.knownSize,
@@ -93,7 +96,8 @@ try {
   process.stdout.write(`${settingsLine(config)}\n`);
   for (const note of hubNotes) warn(note);
   if (notes !== null) process.stdout.write(`${notesLine(notes)}\n`);
-  voice = await voiceFor(config, starting.signal, (line) => process.stdout.write(`${line}\n`));
+  ({ mode: voice, speaker } = await voiceFor(config, starting.signal, (line) => process.stdout.write(`${line}\n`)));
+  const speaking = speaker;
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
@@ -107,6 +111,7 @@ try {
     lengthCap: config.lengthCap ?? undefined,
     confirm: (query, signal) => askOnce(lines, query, confirmMs, signal),
     describe: hub === undefined ? undefined : describeWithHub(hub.token),
+    speak: speaking === null ? undefined : () => startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart }),
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));

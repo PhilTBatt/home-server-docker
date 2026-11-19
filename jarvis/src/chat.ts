@@ -1,5 +1,7 @@
 import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
+import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
+import type { SpeechReport } from "./speech-queue.js";
 import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type ThinkingHistory } from "./config.js";
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
 import type { Prices } from "./prices.js";
@@ -77,15 +79,17 @@ export type ChatDeps = {
   newChat?: () => Promise<NewChat>;
   confirm?: (prompt: string, signal: AbortSignal) => Promise<string | null>;
   describe?: (tool: string, input: unknown, signal: AbortSignal) => Promise<string>;
+  speak?: () => AnswerSpeech;
+  recordSpeech?: (report: SpeechReport) => Promise<void>;
 };
 
-export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize"]-?: ChatDeps[Key] } & { notes: string[] };
+export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[] };
 
 export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void> };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
@@ -256,8 +260,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "volume" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "volume" | "speechStart" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_LOG=${config.log ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -299,12 +303,15 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
   };
   const newLine = () => (lineEnded ? "" : "\n");
   show("Jarvis: ");
+  const speech = deps.speak?.() ?? null;
+  state.speech = speech;
   let waiting: Promise<unknown> = Promise.resolve();
   const asking = new AbortController();
   const confirm = (tool: string, input: unknown): Promise<boolean> => {
     const asked = waiting.then(async () => {
       if (deps.confirm === undefined || asking.signal.aborted) return false;
       timer.pause();
+      speech?.gap();
       show(newLine());
       const question = deps.describe === undefined ? actionQuestion(tool, input) : await deps.describe(tool, input, asking.signal).catch(() => actionQuestion(tool, input));
       if (asking.signal.aborted) return false;
@@ -323,13 +330,24 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
       text: (delta) => {
         streamed = true;
         show(printable(delta));
+        speech?.text(delta);
       },
       tool: (name, input) => {
+        speech?.gap();
         if (!isHubAction(shortName(name))) show(`${newLine()}  (${printable(toolNote(name, input))})\n`);
       },
-      restart: () => show(`${newLine()}  (${restartNote})\n`),
-      retry: () => show(`${newLine()}  (${retryNote})\n`),
-      note: (text) => show(`${newLine()}  (${printable(text)})\n`),
+      restart: () => {
+        speech?.restart();
+        show(`${newLine()}  (${restartNote})\n`);
+      },
+      retry: () => {
+        speech?.restart();
+        show(`${newLine()}  (${retryNote})\n`);
+      },
+      note: (text) => {
+        speech?.gap();
+        show(`${newLine()}  (${printable(text)})\n`);
+      },
       confirm,
     }),
     deps.questionTimeoutMs,
@@ -340,6 +358,7 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
     answer = await timer.promise;
   } catch (error) {
     asking.abort();
+    speech?.stop();
     const reason = printable(error instanceof Error ? error.message : String(error));
     if (reason === closedMessage) {
       show(`${newLine()}  (stopped)\n`);
@@ -351,7 +370,11 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
     return "failed";
   }
   asking.abort();
-  if (!streamed) show(printable(answer.text));
+  if (!streamed) {
+    show(printable(answer.text));
+    speech?.text(answer.text);
+  }
+  speech?.end();
   const refused = answer.stats?.refusedTools ?? [];
   if (refused.length > 0) show(`${newLine()}  (${printable(refusedNote(refused))})\n`);
   show(`${newLine()}  ${timingLine(answer)}\n`);
@@ -364,7 +387,23 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
     await deps.rememberSize?.(size);
   }
   await deps.record?.({ answer });
+  if (speech !== null) {
+    state.speechLogged = speech
+      .done()
+      .then(() => deps.recordSpeech?.(speech.report()))
+      .catch(() => {});
+  }
   return "answered";
+}
+
+async function settle(deps: ChatDeps, state: ChatState): Promise<void> {
+  const speech = state.speech;
+  if (speech === null) return;
+  state.speech = null;
+  speech.stop();
+  await speech.done();
+  await state.speechLogged;
+  for (const note of speechNotes(speech.report())) deps.write(`  (${note})\n`);
 }
 
 async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps> {
@@ -384,7 +423,7 @@ async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps>
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve() };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
@@ -393,15 +432,19 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       const message = line.trim();
       if (exitWords.includes(message.toLowerCase())) break;
       const rating = Object.hasOwn(ratingWords, message) ? ratingWords[message] : undefined;
-      if (newWords.includes(message.toLowerCase())) {
+      if (message === "") {
+        state.speech?.stop();
+      } else if (newWords.includes(message.toLowerCase())) {
+        await settle(current, state);
         current = await startNewChat(current, state);
       } else if (looksLikeCommand(message)) {
         current.write(`  (${commandNote})\n`);
       } else if (rating !== undefined) {
         current.write(`  (${await rateLast(current, rating)})\n`);
-      } else if (message !== "" && overCap(current, state.lastRequestTokens)) {
+      } else if (overCap(current, state.lastRequestTokens)) {
         current.write(`  (${capNote(current.lengthCap)})\n`);
-      } else if (message !== "") {
+      } else {
+        await settle(current, state);
         const outcome = await reply(current, message, state);
         if (current.session.stoppedReason() !== null) {
           if (outcome !== "stopped") current.write(`${stoppedMessage}\n`);
@@ -412,6 +455,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
     }
   } finally {
     current.session.close();
+    await settle(current, state);
   }
   current.write(`\n${costLine(current.session.costUsd())}\n`);
 }

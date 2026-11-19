@@ -1,3 +1,4 @@
+import type { Speaker } from "./answer-speech.js";
 import { printable } from "./chat.js";
 import type { Config, VoiceMode } from "./config.js";
 import { createKokoro } from "./kokoro.js";
@@ -21,7 +22,9 @@ export type VoiceParts = {
   sayMs?: number;
 };
 
-export type Voice = { on: boolean; line: string };
+export type Voice = { on: true; line: string; speaker: Speaker } | { on: false; line: string };
+
+export type ChatVoice = { mode: VoiceMode; speaker: Speaker | null };
 
 export function voiceOnLine(engine: string, voice: string, card: SoundCard, volume: number): string {
   return `Voice: ${engine}, voice ${voice}, on sound card ${card.number} (${volumeLine(volume)})`;
@@ -52,7 +55,7 @@ export async function startVoice(parts: VoiceParts): Promise<Voice> {
     await parts.engine.check(parts.signal);
     tooLong = AbortSignal.timeout(sayMs);
     await say(parts.engine, readySentence, card.device, parts.startPlayer, AbortSignal.any([parts.signal, tooLong]));
-    return { on: true, line: voiceOnLine(parts.engine.name, parts.voice, card, parts.volume) };
+    return { on: true, line: voiceOnLine(parts.engine.name, parts.voice, card, parts.volume), speaker: { engine: parts.engine, device: card.device, startPlayer: parts.startPlayer } };
   } catch (error) {
     if (error instanceof MicrophonePassedIn || parts.signal.aborted) throw error;
     if (tooLong?.aborted === true) return { on: false, line: voiceOffLine(`His first sentence wasn't said within ${sayMs / 1000} seconds, so it was stopped`) };
@@ -60,9 +63,9 @@ export async function startVoice(parts: VoiceParts): Promise<Voice> {
   }
 }
 
-export async function voiceFor(config: Pick<Config, "voice" | "kokoroVoice" | "volume">, signal: AbortSignal, write: (line: string) => void, start: (parts: VoiceParts) => Promise<Voice> = startVoice, dir = soundDir): Promise<VoiceMode> {
-  if (config.voice === "off") return "off";
+export async function voiceFor(config: Pick<Config, "voice" | "kokoroVoice" | "volume">, signal: AbortSignal, write: (line: string) => void, start: (parts: VoiceParts) => Promise<Voice> = startVoice, dir = soundDir): Promise<ChatVoice> {
+  if (config.voice === "off") return { mode: "off", speaker: null };
   const voice = await start(voiceParts(config, signal, dir));
   write(printable(voice.line));
-  return voice.on ? config.voice : "off";
+  return voice.on ? { mode: config.voice, speaker: voice.speaker } : { mode: "off", speaker: null };
 }

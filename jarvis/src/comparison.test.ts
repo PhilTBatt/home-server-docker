@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { logVersion, type LogLine, type NewChatLine } from "./answer-log.js";
-import { compareReport, isNewChatLine, groupLines, isLogLine, isRatingLine, readLog, table, withCommas } from "./comparison.js";
+import { logVersion, type LogLine, type NewChatLine, type SpeechLine } from "./answer-log.js";
+import { compareReport, isNewChatLine, groupLines, isLogLine, isRatingLine, isSpeechLine, readLog, table, withCommas } from "./comparison.js";
 
 function line(overrides: Partial<LogLine> = {}): LogLine {
   return {
@@ -50,8 +50,8 @@ test("reading the log keeps good lines and counts the rest as skipped", () => {
 });
 
 test("reading an empty log finds nothing and skips nothing", () => {
-  assert.deepEqual(readLog(""), { lines: [], ratings: [], newChats: [], skipped: 0 });
-  assert.deepEqual(readLog("\n\n"), { lines: [], ratings: [], newChats: [], skipped: 0 });
+  assert.deepEqual(readLog(""), { lines: [], ratings: [], newChats: [], speech: [], skipped: 0 });
+  assert.deepEqual(readLog("\n\n"), { lines: [], ratings: [], newChats: [], speech: [], skipped: 0 });
 });
 
 test("a line is only trusted if every field has the right shape", () => {
@@ -418,4 +418,127 @@ test("length-hint groups come note first then Jarvis, whatever order the log is 
   assert.deepEqual(rowOf(compareReport({ lines: reversed, skipped: 0 }), ""), ["API, keep, length note", "API, keep, Jarvis says"]);
   assert.deepEqual(rowOf(compareReport({ lines: reversed, skipped: 0 }), "Answers"), ["2", "1"]);
   assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine, line({ lengthHints: "note" })], skipped: 0 }), ""), ["API, keep"]);
+});
+
+const voiced = (overrides: Partial<LogLine> = {}) => line({ voice: "kokoro", speechStart: "sentence", ...overrides });
+
+function said(overrides: Partial<SpeechLine> = {}): SpeechLine {
+  return { v: logVersion, kind: "speech", at: "2026-11-16T18:30:09.000Z", chat: "chat-1", question: 1, firstSentenceMs: 1200, firstSoundMadeMs: 2500, firstSoundMs: 2600, longestSilenceMs: 400, spoken: 3, failed: 0, left: 0, stopped: false, gaveUp: false, tooLong: false, ...overrides };
+}
+
+test("a speech line is read from the log as its own kind, checked field by field", () => {
+  assert.equal(isSpeechLine(said()), true);
+  assert.equal(isSpeechLine(said({ firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, spoken: 0, gaveUp: true })), true);
+  assert.equal(isSpeechLine({ ...said(), kind: "rating" }), false);
+  assert.equal(isSpeechLine({ ...said(), v: logVersion + 1 }), false);
+  assert.equal(isSpeechLine({ ...said(), question: 0 }), false);
+  assert.equal(isSpeechLine({ ...said(), chat: 7 }), false);
+  assert.equal(isSpeechLine({ ...said(), at: null }), false);
+  for (const field of ["firstSentenceMs", "firstSoundMadeMs", "firstSoundMs", "longestSilenceMs"]) {
+    assert.equal(isSpeechLine({ ...said(), [field]: "soon" }), false, field);
+    assert.equal(isSpeechLine({ ...said(), [field]: null }), true, field);
+  }
+  const { longestSilenceMs: _left, ...withoutSilence } = said();
+  assert.equal(isSpeechLine(withoutSilence), false);
+  for (const field of ["spoken", "failed", "left"]) {
+    assert.equal(isSpeechLine({ ...said(), [field]: -1 }), false, field);
+    assert.equal(isSpeechLine({ ...said(), [field]: 1.5 }), false, field);
+    assert.equal(isSpeechLine({ ...said(), [field]: null }), false, field);
+  }
+  for (const field of ["stopped", "gaveUp", "tooLong"]) assert.equal(isSpeechLine({ ...said(), [field]: "yes" }), false, field);
+  assert.equal(isSpeechLine(null), false);
+  assert.equal(isSpeechLine([said()]), false);
+  const read = readLog(jsonl(voiced(), said(), { ...said(), spoken: "three" }, rating(1, "good")));
+  assert.deepEqual([read.lines.length, read.speech?.length, read.ratings?.length, read.skipped], [1, 1, 1, 1]);
+  assert.equal(isLogLine(said()), false);
+});
+
+test("an answer line's way of starting speech is checked like its other settings", () => {
+  assert.equal(isLogLine(voiced({ speechStart: "clause" })), true);
+  assert.equal(isLogLine({ ...voiced(), speechStart: "word" }), false);
+  assert.equal(isLogLine({ ...voiced(), speechStart: null }), false);
+});
+
+test("the summary has the median time to first sound for each setting, from the speech lines, and a dash where nothing was spoken", () => {
+  const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3, ok: false, error: "timeout" }), line({ chat: "chat-2" })];
+  const speech = [said({ firstSoundMs: 2600 }), said({ question: 2, firstSoundMs: 3000 }), said({ question: 3, firstSoundMs: 9000 })];
+  const report = compareReport({ lines, speech, skipped: 0 });
+  assert.deepEqual(rowOf(report, ""), ["API, keep, no voice", "API, keep, Kokoro voice"]);
+  assert.deepEqual(rowOf(report, "First sound, median"), ["-", "2.80 s"]);
+  assert.equal(report.split("\n").findIndex((text) => text.startsWith("First sound, median")), report.split("\n").findIndex((text) => text.startsWith("Full answer, median")) + 1);
+  assert.deepEqual(rowOf(compareReport({ lines, skipped: 0 }), "First sound, median"), ["-", "-"]);
+});
+
+test("a speech line belongs to the answer with the same chat and question number, and the latest one counts", () => {
+  const lines = [voiced(), voiced({ chat: "chat-2" })];
+  const speech = [said({ firstSoundMs: 1000 }), said({ firstSoundMs: 2000 }), said({ chat: "chat-3", firstSoundMs: 9000 }), said({ chat: "chat-2", question: 2, firstSoundMs: 9000 })];
+  assert.deepEqual(rowOf(compareReport({ lines, speech, skipped: 0 }), "First sound, median"), ["2.00 s"]);
+});
+
+test("the summary says how many spoken answers were stopped before the end", () => {
+  const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3 }), voiced({ question: 4 }), line({ chat: "chat-2" })];
+  const speech = [said({ stopped: true }), said({ question: 2 }), said({ question: 3, stopped: true, firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, spoken: 0 }), said({ question: 4 })];
+  const report = compareReport({ lines, speech, skipped: 0 });
+  assert.deepEqual(rowOf(report, "Speech stopped early"), ["-", "1 of 3"]);
+  assert.deepEqual(rowOf(compareReport({ lines, skipped: 0 }), "Speech stopped early"), ["-", "-"]);
+});
+
+test("answers with each way of starting speech are compared side by side, whole sentence first, named only when both are in the log", () => {
+  const both = [voiced({ speechStart: "clause" }), voiced(), line()];
+  assert.deepEqual(rowOf(compareReport({ lines: both, skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice, whole first sentence", "API, keep, Kokoro voice, first clause early"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechStart: "clause" }), voiced({ speechStart: "clause" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechStart: "clause" }), line()], skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechStart: "clause" }), line({ voice: "kokoro" })], skipped: 0 }), ""), ["API, keep, whole first sentence", "API, keep, first clause early"]);
+  assert.deepEqual(
+    groupLines([voiced({ speechStart: "clause" }), voiced(), line({ voice: "kokoro" }), line({ speechStart: "clause" }), line()]).map((group) => [group.voice, group.speechStart, group.lines.length]),
+    [
+      ["off", null, 2],
+      ["kokoro", "sentence", 2],
+      ["kokoro", "clause", 1],
+    ],
+  );
+});
+
+test("the speech table keeps a chat's first question apart from its later ones, with the median and the slowest of each time", () => {
+  const lines = [voiced({ firstWordsMs: 600 }), voiced({ chat: "chat-2", firstWordsMs: 800 }), voiced({ question: 2, firstWordsMs: 500 }), voiced({ question: 3, firstWordsMs: 700 }), voiced({ question: 4, firstWordsMs: 900 })];
+  const speech = [
+    said({ firstSentenceMs: 1200, firstSoundMadeMs: 2500, firstSoundMs: 2600, longestSilenceMs: 300 }),
+    said({ chat: "chat-2", firstSentenceMs: 1400, firstSoundMadeMs: 2900, firstSoundMs: 3400, longestSilenceMs: 500 }),
+    said({ question: 2, firstSentenceMs: 1000, firstSoundMadeMs: 1900, firstSoundMs: 2000, longestSilenceMs: null }),
+    said({ question: 3, firstSentenceMs: 1100, firstSoundMadeMs: 2100, firstSoundMs: 2200, longestSilenceMs: 100 }),
+    said({ question: 4, firstSentenceMs: 1600, firstSoundMadeMs: 2700, firstSoundMs: 4000, longestSilenceMs: 1200 }),
+  ];
+  const report = compareReport({ lines, speech, skipped: 0 });
+  assert.equal(report.includes("\n\nSpeech, timed from the question being sent, and the longest silence between two sentences: the median, with the slowest in brackets.\n"), true);
+  assert.deepEqual(rowOf(report, "API, keep, first question"), ["2", "0.70 s (0.80 s)", "1.30 s (1.40 s)", "2.70 s (2.90 s)", "3.00 s (3.40 s)", "0.40 s (0.50 s)"]);
+  assert.deepEqual(rowOf(report, "API, keep, later questions"), ["3", "0.70 s (0.90 s)", "1.10 s (1.60 s)", "2.10 s (2.70 s)", "2.20 s (4.00 s)", "0.65 s (1.20 s)"]);
+  const header = report.split("\n").find((text) => text.includes("First sentence sent"));
+  assert.deepEqual(header?.trim().split(/\s{3,}/), ["Answers", "First words", "First sentence sent", "Its sound made", "First sound", "Longest silence"]);
+});
+
+test("the speech table has a row for each setting that spoke, and leaves out the ones that didn't", () => {
+  const lines = [voiced({ engine: "sdk", thinking: null }), voiced({ chat: "chat-2", speechStart: "clause", question: 2 }), line({ chat: "chat-3" })];
+  const report = compareReport({ lines, speech: [said(), said({ chat: "chat-2", question: 2 })], skipped: 0 });
+  const table = report.slice(report.indexOf("Speech, timed"));
+  assert.equal(table.includes("Agent SDK, Kokoro voice, whole first sentence, first question"), true);
+  assert.equal(table.includes("API, keep, Kokoro voice, first clause early, later questions"), true);
+  assert.equal(table.includes("no voice"), false);
+  assert.equal(table.includes("first clause early, first question"), false);
+});
+
+test("answers with the voice on that made no sound are counted under the speech table, and failed ones aren't in it", () => {
+  const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3 }), voiced({ question: 5, ok: false, error: "timeout" }), line({ chat: "chat-2" })];
+  const silent = said({ question: 2, firstSentenceMs: 400, firstSoundMadeMs: null, firstSoundMs: null, spoken: 0, failed: 2, gaveUp: true });
+  const report = compareReport({ lines, speech: [said(), silent, said({ question: 5 })], skipped: 0 });
+  assert.equal(report.includes("\n2 answers with the voice on had no sound and are left out of this table.\n"), true);
+  assert.deepEqual(rowOf(report, "API, keep, Kokoro voice, first question")[0], "1");
+  assert.equal(report.includes("later questions"), false);
+  const one = compareReport({ lines: [voiced(), voiced({ question: 2 })], speech: [said()], skipped: 0 });
+  assert.equal(one.includes("\n1 answer with the voice on had no sound and is left out of this table.\n"), true);
+  assert.equal(compareReport({ lines: [voiced()], speech: [said()], skipped: 0 }).includes("had no sound"), false);
+});
+
+test("with nothing spoken in the log, there's no speech table at all", () => {
+  assert.equal(compareReport({ lines: [line(), voiced({ chat: "chat-2" })], skipped: 0 }).includes("Speech, timed"), false);
+  assert.equal(compareReport({ lines: [voiced()], speech: [said({ firstSoundMs: null })], skipped: 0 }).includes("Speech, timed"), false);
 });

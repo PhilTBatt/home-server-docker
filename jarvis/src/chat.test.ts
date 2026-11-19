@@ -662,8 +662,8 @@ test("only a lone + or - is a rating; anything longer is a question", async () =
 });
 
 test("Jarvis's settings are printed in one line, as they're written in jarvis/.env", () => {
-  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, voice: "kokoro", kokoroVoice: "bm_fable", volume: 65, log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_VOICE=kokoro, JARVIS_KOKORO_VOICE=bm_fable, JARVIS_VOLUME=65, JARVIS_LOG=on");
-  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_VOICE=off, JARVIS_KOKORO_VOICE=bm_george, JARVIS_VOLUME=80, JARVIS_LOG=off");
+  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, voice: "kokoro", kokoroVoice: "bm_fable", volume: 65, speechStart: "clause", log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_VOICE=kokoro, JARVIS_KOKORO_VOICE=bm_fable, JARVIS_VOLUME=65, JARVIS_SPEECH_START=clause, JARVIS_LOG=on");
+  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_VOICE=off, JARVIS_KOKORO_VOICE=bm_george, JARVIS_VOLUME=80, JARVIS_SPEECH_START=sentence, JARVIS_LOG=off");
 });
 
 test("the chats line says whether this chat is saved, and what it picks up", () => {
@@ -764,7 +764,7 @@ test("an empty answer, which isn't kept in the chat, gets no length note", async
 });
 
 function newChatOf(chat: Partial<NewChat> & { session: AgentSession }): NewChat {
-  return { record: undefined, rate: undefined, failureHint: undefined, lengthNote: undefined, recordNewChat: undefined, knownSize: undefined, rememberSize: undefined, notes: [], ...chat };
+  return { record: undefined, rate: undefined, failureHint: undefined, lengthNote: undefined, recordNewChat: undefined, knownSize: undefined, rememberSize: undefined, recordSpeech: undefined, notes: [], ...chat };
 }
 
 function withSize(text: string, lastRequestTokens: number | null): Script {

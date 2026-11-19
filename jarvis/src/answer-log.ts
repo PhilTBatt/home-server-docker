@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
-import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, ThinkingHistory, VoiceMode } from "./config.js";
+import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, SpeechStart, ThinkingHistory, VoiceMode } from "./config.js";
+import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
 export const answerLogFile = fileURLToPath(new URL("../data/answers.jsonl", import.meta.url));
@@ -29,10 +30,29 @@ export type NewChatLine = {
   lastRequestTokens: number | null;
 };
 
+export type SpeechLine = {
+  v: number;
+  kind: "speech";
+  at: string;
+  chat: string;
+  question: number;
+  firstSentenceMs: number | null;
+  firstSoundMadeMs: number | null;
+  firstSoundMs: number | null;
+  longestSilenceMs: number | null;
+  spoken: number;
+  failed: number;
+  left: number;
+  stopped: boolean;
+  gaveUp: boolean;
+  tooLong: boolean;
+};
+
 export type AnswerLog = {
   record: (outcome: Outcome) => Promise<void>;
   rate: (rating: Rating) => Promise<RateResult>;
   newChat: (lastRequestTokens: number | null) => Promise<void>;
+  speech: (report: SpeechReport) => Promise<void>;
 };
 
 export type LogContext = {
@@ -45,6 +65,7 @@ export type LogContext = {
   hubActions: HubActionsMode;
   sessionNotes: SessionNotesMode;
   voice: VoiceMode;
+  speechStart: SpeechStart;
 };
 
 export type LogLine = {
@@ -61,6 +82,7 @@ export type LogLine = {
   hubActions?: HubActionsMode;
   sessionNotes?: SessionNotesMode;
   voice?: VoiceMode;
+  speechStart?: SpeechStart;
   ok: boolean;
   error: string | null;
   firstWordsMs: number | null;
@@ -131,6 +153,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     hubActions: context.hubActions,
     sessionNotes: context.sessionNotes,
     voice: context.voice,
+    ...(context.voice === "off" ? {} : { speechStart: context.speechStart }),
     ok: answer !== null,
     error: "error" in outcome ? errorKind(outcome.error) : null,
     firstWordsMs: wholeMs(answer?.firstWordsMs ?? null),
@@ -151,13 +174,33 @@ export function logLine(context: LogContext, chat: string, question: number, at:
   };
 }
 
+export function speechLine(chat: string, question: number, at: Date, report: SpeechReport): SpeechLine {
+  return {
+    v: logVersion,
+    kind: "speech",
+    at: at.toISOString(),
+    chat,
+    question,
+    firstSentenceMs: wholeMs(report.firstSentenceMs),
+    firstSoundMadeMs: wholeMs(report.firstSoundMadeMs),
+    firstSoundMs: wholeMs(report.firstSoundMs),
+    longestSilenceMs: wholeMs(report.longestSilenceMs),
+    spoken: report.spoken,
+    failed: report.failed,
+    left: report.left,
+    stopped: report.stopped,
+    gaveUp: report.gaveUp,
+    tooLong: report.tooLong,
+  };
+}
+
 export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): AnswerLog {
   let questions = 0;
   let lastAnswered: number | null = null;
   let broken = false;
   let costBefore = deps.costSoFar();
 
-  async function write(line: LogLine | RatingLine | NewChatLine): Promise<boolean> {
+  async function write(line: LogLine | RatingLine | NewChatLine | SpeechLine): Promise<boolean> {
     try {
       await deps.append(`${JSON.stringify(line)}\n`);
       return true;
@@ -188,6 +231,10 @@ export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): Answer
     async newChat(lastRequestTokens) {
       if (broken || questions === 0) return;
       await write({ v: logVersion, kind: "new chat", at: deps.now().toISOString(), chat: deps.chat, questions, lastRequestTokens });
+    },
+    async speech(report) {
+      if (broken || lastAnswered === null) return;
+      await write(speechLine(deps.chat, lastAnswered, deps.now(), report));
     },
   };
 }
