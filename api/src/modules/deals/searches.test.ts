@@ -535,6 +535,11 @@ test("the catalogue in the repo loads beside the example list, every search off 
   assert.ok(added.filter((search) => search.source === "hotukdeals").length >= 5);
   assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["ram 170083"]);
   assert.ok(fromEbay.filter((search) => search.group === "ram").every((search) => search.categoryId === "170083" && search.hideDetails !== null && search.unit === "GB"));
+  const servers = fromEbay.filter((search) => search.group === "server");
+  const spareParts = ["motherboard", "mainboard", "board only", "psu only", "power supply only"];
+  assert.ok(servers.length > 0 && servers.every((search) => spareParts.every((word) => search.exclude.includes(word))), "server searches keep spare parts out");
+  const storage = fromEbay.filter((search) => search.group === "storage");
+  assert.ok(storage.length > 0 && storage.every((search) => search.hideVariations), "eBay storage searches hide listings with several options");
   const feedCalls = (24 * 60) / Math.min(...added.filter((search) => search.source === "hotukdeals").map((search) => search.everyMinutes));
   const callsADay = fromEbay.reduce((sum, search) => sum + (24 * 60) / search.everyMinutes * (1 + Object.keys(search.hideDetails ?? {}).length), feedCalls);
   assert.ok(callsADay < 1000, String(callsADay));
