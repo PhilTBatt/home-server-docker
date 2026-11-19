@@ -519,6 +519,21 @@ test("the example list in the repo is valid, and every search in it is switched 
   assert.ok(list.searches.every((search) => search.group !== null));
 });
 
+test("the catalogue in the repo loads beside the example list, every search off and in a group, within a day's calls if all were on", async () => {
+  const folder = new URL("../../../src/modules/deals/", import.meta.url);
+  const example = JSON.parse(await readFile(new URL("searches.example.json", folder), "utf8")) as Record<string, unknown>;
+  const catalogue = await readFile(new URL("catalogue.example.json", folder), "utf8");
+  const list = readSearches(JSON.stringify({ ...example, more: ["catalogue.json"] }), sources, { "catalogue.json": catalogue });
+  const added = list.searches.slice(3);
+  assert.ok(added.length >= 60);
+  assert.ok(added.every((search) => !search.on && search.group !== null), "every catalogue search is off and grouped");
+  assert.ok(added.every((search) => search.guidePrice !== null && search.guideDate === "2026-11-19"));
+  assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["ram 170083"]);
+  assert.ok(added.filter((search) => search.group === "ram").every((search) => search.categoryId === "170083" && search.hideDetails !== null && search.unit === "GB"));
+  const callsADay = added.reduce((sum, search) => sum + (24 * 60) / search.everyMinutes * (1 + Object.keys(search.hideDetails ?? {}).length), 0);
+  assert.ok(callsADay < 1000, String(callsADay));
+});
+
 async function fileWith(text: string | null) {
   const dir = await mkdtemp(join(tmpdir(), "deals-list-"));
   made.push(dir);
