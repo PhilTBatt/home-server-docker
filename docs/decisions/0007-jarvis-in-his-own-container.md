@@ -1,7 +1,7 @@
 # 0007. Jarvis runs in his own container, started when I want to talk to him
 
 - Date: 2026-11-17
-- Status: accepted, with `host/hub-update.sh` now updating his packages, his network narrowed by 0013, and his own image and devices for sound in 0014
+- Status: accepted, with `host/hub-update.sh` now updating his packages, his network narrowed by 0013, his own image and devices for sound in 0014, and a speech engine in a container beside him in 0020
 
 ## Context
 Jarvis was started with a long `docker run` line typed by hand. He's meant to become the main way to talk to the server: by text first, later out loud in the room. A decision was needed on where his program lives and how it starts, and on whether the phone page needs a way to reach him yet.

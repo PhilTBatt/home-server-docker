@@ -7,3 +7,5 @@ services:
       - /dev/snd/pcmC${SOUND_CARD_NUMBER:?}D0p:/dev/snd/pcmC${SOUND_CARD_NUMBER:?}D0p:rw
     group_add:
       - "${AUDIO_GROUP_ID:?start it with bash host/jarvis.sh sound-test}"
+    networks:
+      - speech

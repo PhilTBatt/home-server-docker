@@ -1,7 +1,7 @@
 # 0015. Jarvis sets the speaker level himself, and nothing on the host saves it
 
 - Date: 2026-11-18
-- Status: accepted
+- Status: accepted, and the chat now sets the level too when his voice is on (0020)
 
 ## Context
 After a boot, the `Master` control on the laptop's sound card is muted at 0%, which is why the first test tone was silent. Unmuting it from a throwaway container worked, because the level lives in the kernel's sound driver, but nothing on the server saves it: `alsa-utils` isn't installed on the host, so after the next reboot it's muted again. Jarvis may also want to change the volume later.

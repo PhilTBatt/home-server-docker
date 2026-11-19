@@ -236,5 +236,27 @@ services:
     networks:
       - jarvis
 
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.10.0@sha256:f54c5960c2b9387f6349080a9944f8bc7e8cdb98a4ef9238cb0b0f9ff9795f44
+    container_name: kokoro
+    profiles:
+      - kokoro
+    environment:
+      DEFAULT_VOICE: bm_george
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      ENABLE_WEB_PLAYER: "false"
+    mem_limit: 2g
+    networks:
+      - speech
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8880/health"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 2m
+      start_interval: 2s
+
 networks:
   jarvis:
+  speech:
+    internal: true

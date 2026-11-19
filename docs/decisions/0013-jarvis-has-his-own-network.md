@@ -1,7 +1,7 @@
 # 0013. Jarvis has his own Docker network, shared only with the API
 
 - Date: 2026-11-18
-- Status: accepted
+- Status: accepted, with a second network, `speech`, added for his voice by 0020
 
 ## Context
 Apart from `beszel-agent`, which uses the host's network, every service in `docker-compose.yaml` was on Compose's one default network, Jarvis included. So he could open a connection straight to any container by name: qBittorrent, Jellyfin, the *arr apps, and Byparr, which has no login. He only needs the API, for the hub's tools and for looking up a download (record 0012), plus the internet for Anthropic's API. Nothing he has today can make his own web requests, but he can now change things, and a web tool or another MCP server could come later. The fewer things he can reach, the less a mistake or an injected instruction can touch.
