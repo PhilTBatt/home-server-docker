@@ -314,6 +314,8 @@ function fakeDealWatcher() {
     wake: async () => true,
     full: async () => ({ status: "unknown" }),
     detailNames: async () => ({ status: "limit" }),
+    categories: async () => ({ status: "limit" }),
+    categoryDetails: async () => ({ status: "limit" }),
   };
   return { watcher, runs };
 }

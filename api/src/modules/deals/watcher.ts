@@ -4,7 +4,7 @@ import type { Problem } from "../system/alerts.js";
 import { capNotification, dealNotification, endingNotification, moreNotification, watchingNotification, type Started } from "./alert.js";
 import { cautions, isAuctionOnly, isGreat, priorityFor, standing, totalPrice, underGuide, unitPrice, whyNot, type UnitPrice } from "./match.js";
 import { defaultLimits, fingerprint, type Limits, type Quiet, type Search, type SearchList } from "./searches.js";
-import { SourceError, type DetailNames, type FullListing, type Listing, type Source } from "./source.js";
+import { SourceError, type Categories, type CategoryDetails, type DetailNames, type FullListing, type Listing, type Source } from "./source.js";
 import { emptyMemory, maxSeenPerSearch, type Memory, type Seen, type Store } from "./store.js";
 
 export type WatcherOptions = {
@@ -105,6 +105,8 @@ export type FullReply =
 
 export type NamesReply = { status: "ok"; names: DetailNames } | { status: "limit" } | { status: "waiting" } | { status: "failed"; message: string };
 
+export type LookupReply<Value> = { status: "ok"; value: Value } | { status: "limit" } | { status: "waiting" } | { status: "failed"; message: string };
+
 export type DealWatcher = {
   run(now: Date, force?: boolean): Promise<RunSummary>;
   problems(): Problem[];
@@ -115,6 +117,8 @@ export type DealWatcher = {
   wake(id: string): Promise<boolean>;
   full(id: string, now: Date): Promise<FullReply>;
   detailNames(source: string, query: string, categoryId: string | null, now?: Date): Promise<NamesReply>;
+  categories(source: string, query: string, now?: Date): Promise<LookupReply<Categories>>;
+  categoryDetails(source: string, categoryId: string, now?: Date): Promise<LookupReply<CategoryDetails>>;
 };
 
 type Result = {
@@ -700,6 +704,24 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       if (stop !== null) return { status: stop };
       const outcome = await read(sourceName, now.getTime(), () => lookUp(query, categoryId));
       return "names" in outcome ? { status: "ok", names: outcome.names } : { status: "failed", message: outcome.message };
+    },
+
+    async categories(sourceName, query, now = new Date()) {
+      const lookUp = options.sources[sourceName]?.categories;
+      if (lookUp === undefined) return { status: "failed", message: "that source can't suggest categories" };
+      const stop = blocked(sourceName, now.getTime());
+      if (stop !== null) return { status: stop };
+      const outcome = await read(sourceName, now.getTime(), () => lookUp(query));
+      return "categories" in outcome ? { status: "ok", value: outcome.categories } : { status: "failed", message: outcome.message };
+    },
+
+    async categoryDetails(sourceName, categoryId, now = new Date()) {
+      const lookUp = options.sources[sourceName]?.categoryDetails;
+      if (lookUp === undefined) return { status: "failed", message: "that source can't list a category's item details" };
+      const stop = blocked(sourceName, now.getTime());
+      if (stop !== null) return { status: stop };
+      const outcome = await read(sourceName, now.getTime(), () => lookUp(categoryId));
+      return "details" in outcome ? { status: "ok", value: outcome.details } : { status: "failed", message: outcome.message };
     },
   };
 }

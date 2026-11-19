@@ -77,10 +77,21 @@ export type DetailNames = {
   details: { name: string; values: { value: string; count: number }[] }[];
 };
 
+export type Categories = {
+  categories: { id: string; name: string; path: string }[];
+};
+
+export type CategoryDetails = {
+  categoryId: string;
+  details: { name: string; required: boolean; freeText: boolean; values: string[]; moreValues: number }[];
+};
+
 export type Source = {
   search(search: Search, maxPages: number): Promise<SearchResult>;
   full?(ref: string): Promise<{ full: FullListing; calls: number }>;
   detailNames?(query: string, categoryId: string | null): Promise<{ names: DetailNames; calls: number }>;
+  categories?(query: string): Promise<{ categories: Categories; calls: number }>;
+  categoryDetails?(categoryId: string): Promise<{ details: CategoryDetails; calls: number }>;
 };
 
 const unseenCharacters = /[\u00AD\u061C\u115F\u1160\u200B-\u200F\u202A-\u202E\u2060-\u2069\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;

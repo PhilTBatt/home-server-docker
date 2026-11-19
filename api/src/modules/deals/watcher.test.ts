@@ -1249,6 +1249,8 @@ function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { 
     fullReply: null as FullListing | SourceError | Error | null,
     nameCalls: [] as [string, string | null][],
     namesReply: { categoryId: "179", categories: [], details: [{ name: "Form Factor", values: [{ value: "SFF", count: 9 }] }] } as DetailNames | SourceError | Error,
+    lookupCalls: [] as string[],
+    lookupReply: null as SourceError | null,
     ...fakeStore(options.keepSeen ?? true),
   };
   const ebay: Source = {
@@ -1268,6 +1270,16 @@ function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { 
       world.nameCalls.push([query, categoryId]);
       if (world.namesReply instanceof Error) throw world.namesReply;
       return { names: world.namesReply, calls: 1 };
+    },
+    async categories(query) {
+      world.lookupCalls.push(`categories ${query}`);
+      if (world.lookupReply !== null) throw world.lookupReply;
+      return { categories: { categories: [{ id: "170083", name: "Memory (RAM)", path: "Memory (RAM)" }] }, calls: 2 };
+    },
+    async categoryDetails(categoryId) {
+      world.lookupCalls.push(`details ${categoryId}`);
+      if (world.lookupReply !== null) throw world.lookupReply;
+      return { details: { categoryId, details: [] }, calls: 1 };
     },
   };
   const build = (sources: Record<string, Source> = { ebay }) =>
@@ -1860,4 +1872,29 @@ test("an ending-soon alert counts towards the search's daily limit, so a new lis
   await watcher.run(at(75));
   assert.deepEqual(titles(world.sent.slice(1)), ["Ending soon: OptiPlex"]);
   assert.equal(watcher.searches()[0].alertsToday, 1);
+});
+test("categories and a category's item details are looked up through the source, counting their calls against the day", async () => {
+  const { world, watcher } = richSetup();
+  assert.deepEqual(await watcher.categories("ebay", "ddr4", at(0)), { status: "ok", value: { categories: [{ id: "170083", name: "Memory (RAM)", path: "Memory (RAM)" }] } });
+  assert.deepEqual(await watcher.categoryDetails("ebay", "170083", at(0)), { status: "ok", value: { categoryId: "170083", details: [] } });
+  world.lookupReply = failed("request", 1);
+  assert.deepEqual(await watcher.categories("ebay", "ddr4", at(0)), { status: "failed", message: "eBay refused the search" });
+  assert.deepEqual(await watcher.categoryDetails("ebay", "1", at(0)), { status: "failed", message: "eBay refused the search" });
+  assert.deepEqual(await watcher.categories("other", "ddr4", at(0)), { status: "failed", message: "that source can't suggest categories" });
+  assert.deepEqual(await watcher.categoryDetails("other", "1", at(0)), { status: "failed", message: "that source can't list a category's item details" });
+  assert.deepEqual(world.lookupCalls, ["categories ddr4", "details 170083", "categories ddr4", "details 1"]);
+  await watcher.run(at(0));
+  assert.equal(watcher.status().callsToday, 6);
+});
+
+test("category lookups stop when the day's calls are used or eBay asked to wait", async () => {
+  const { world, watcher } = richSetup([optiplex], { limits: { callsPerDay: 1 } });
+  await watcher.run(at(0));
+  assert.deepEqual(await watcher.categories("ebay", "ddr4", at(1)), { status: "limit" });
+  assert.deepEqual(await watcher.categoryDetails("ebay", "170083", at(1)), { status: "limit" });
+  assert.deepEqual(world.lookupCalls, []);
+  const { world: second, watcher: other } = richSetup();
+  second.lookupReply = failed("busy", 1);
+  assert.deepEqual(await other.categories("ebay", "ddr4", at(0)), { status: "failed", message: "eBay says too many requests" });
+  assert.deepEqual(await other.categoryDetails("ebay", "170083", at(1)), { status: "waiting" });
 });

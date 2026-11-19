@@ -1,5 +1,5 @@
 import { conditionIds, type Buying, type Search } from "./searches.js";
-import { SourceError, cleanText, type BuyingOption, type DetailNames, type FailReason, type FullListing, type Listing, type SearchResult, type Source } from "./source.js";
+import { SourceError, cleanText, type BuyingOption, type Categories, type CategoryDetails, type DetailNames, type FailReason, type FullListing, type Listing, type SearchResult, type Source } from "./source.js";
 
 export type EbayEnvironment = "production" | "sandbox";
 
@@ -76,6 +76,18 @@ export function detailNamesUrl(host: string, query: string, categoryId: string |
   if (categoryId !== null) parts.push(`category_ids=${categoryId}`);
   parts.push("fieldgroups=ASPECT_REFINEMENTS,CATEGORY_REFINEMENTS", "limit=1");
   return `https://${host}/buy/browse/v1/item_summary/search?${parts.join("&")}`;
+}
+
+export function treeIdUrl(host: string): string {
+  return `https://${host}/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_GB`;
+}
+
+export function categoriesUrl(host: string, treeId: string, query: string): string {
+  return `https://${host}/commerce/taxonomy/v1/category_tree/${treeId}/get_category_suggestions?q=${encodeURIComponent(query)}`;
+}
+
+export function categoryDetailsUrl(host: string, treeId: string, categoryId: string): string {
+  return `https://${host}/commerce/taxonomy/v1/category_tree/${treeId}/get_item_aspects_for_category?category_id=${categoryId}`;
 }
 
 function money(raw: unknown): number | null {
@@ -308,6 +320,47 @@ export function toDetailNames(raw: unknown): DetailNames | null {
   return { categoryId: digits(refinement.dominantCategoryId), categories, details };
 }
 
+const valuesShown = 100;
+
+export function toCategories(raw: unknown): Categories | null {
+  if (!isObject(raw)) return null;
+  const list = (value: unknown, most: number): Record<string, unknown>[] => (Array.isArray(value) ? value.slice(0, most).filter(isObject) : []);
+  const categories: Categories["categories"] = [];
+  for (const suggestion of list(raw.categorySuggestions, 20)) {
+    const category = isObject(suggestion.category) ? suggestion.category : {};
+    const id = digits(category.categoryId);
+    const name = cleanText(category.categoryName, 60);
+    if (id === null || name === "" || categories.some((known) => known.id === id)) continue;
+    const above = list(suggestion.categoryTreeNodeAncestors, 10)
+      .map((ancestor) => ({ level: countOf(ancestor.categoryTreeNodeLevel) ?? 0, name: cleanText(ancestor.categoryName, 60) }))
+      .filter((ancestor) => ancestor.name !== "")
+      .sort((a, b) => a.level - b.level);
+    categories.push({ id, name, path: [...above.map((ancestor) => ancestor.name), name].join(" > ") });
+  }
+  return { categories };
+}
+
+export function toCategoryDetails(raw: unknown, categoryId: string): CategoryDetails | null {
+  if (!isObject(raw)) return null;
+  const aspects = Array.isArray(raw.aspects) ? raw.aspects.slice(0, 100).filter(isObject) : [];
+  const details: CategoryDetails["details"] = [];
+  for (const aspect of aspects) {
+    const name = cleanText(aspect.localizedAspectName, 60);
+    if (name === "" || details.some((known) => known.name === name)) continue;
+    const rule = isObject(aspect.aspectConstraint) ? aspect.aspectConstraint : {};
+    const given = Array.isArray(aspect.aspectValues) ? aspect.aspectValues.slice(0, 5000).filter(isObject) : [];
+    const values = [...new Set(given.map((entry) => cleanText(entry.localizedValue, 60)).filter((value) => value !== ""))];
+    details.push({
+      name,
+      required: rule.aspectRequired === true,
+      freeText: rule.aspectMode !== "SELECTION_ONLY",
+      values: values.slice(0, valuesShown),
+      moreValues: Math.max(0, values.length - valuesShown),
+    });
+  }
+  return { categoryId, details };
+}
+
 export function isApiAddress(url: string, host: string): boolean {
   if (!URL.canParse(url)) return false;
   const target = new URL(url);
@@ -373,6 +426,7 @@ export function createEbaySource(options: EbayOptions): Source {
   const basic = Buffer.from(`${options.clientId}:${options.clientSecret}`).toString("base64");
   let token: { value: string; expiresAt: number } | null = null;
   let minting: Promise<string> | null = null;
+  let tree: string | null = null;
 
   function busy(response: Response): SourceError {
     const error = failure("busy");
@@ -426,6 +480,15 @@ export function createEbaySource(options: EbayOptions): Source {
       if (response.status >= 500) throw failure("down");
       throw failure("request", await errorNumber(response));
     }
+  }
+
+  async function treeId(countCall: () => void): Promise<string> {
+    if (tree !== null) return tree;
+    const body = await getPage(treeIdUrl(apiHost), countCall);
+    const id = isObject(body) ? digits(body.categoryTreeId) : null;
+    if (id === null || id.length > 6) throw failure("reply");
+    tree = id;
+    return id;
   }
 
   async function readPages(search: Search, pages: number, withDetails: boolean, countCall: () => void) {
@@ -511,6 +574,29 @@ export function createEbaySource(options: EbayOptions): Source {
         return names;
       });
       return { names: reply, calls };
+    },
+
+    async categories(query: string) {
+      const { reply, calls } = await counted(async (countCall) => {
+        const found = toCategories(await getPage(categoriesUrl(apiHost, await treeId(countCall), query), countCall));
+        if (found === null) throw failure("reply");
+        return found;
+      });
+      return { categories: reply, calls };
+    },
+
+    async categoryDetails(categoryId: string) {
+      if (!/^[0-9]{1,10}$/.test(categoryId)) throw failure("request", " (that isn't one of eBay's category numbers)");
+      const { reply, calls } = await counted(async (countCall) => {
+        const body = await getPage(categoryDetailsUrl(apiHost, await treeId(countCall), categoryId), countCall).catch((error: unknown) => {
+          if (error instanceof SourceError && error.message.endsWith("(eBay error 62009)")) throw failure("request", " (that category has categories under it, and only the last level has item details)");
+          throw error;
+        });
+        const details = toCategoryDetails(body, categoryId);
+        if (details === null) throw failure("reply");
+        return details;
+      });
+      return { details: reply, calls };
     },
   };
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { createEbaySource, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, pageSize, plainText, retryAfterMs, searchUrl, toDetailNames, toFull, toListing } from "./ebay.js";
+import { categoriesUrl, categoryDetailsUrl, createEbaySource, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, pageSize, plainText, retryAfterMs, searchUrl, toCategories, toCategoryDetails, toDetailNames, toFull, toListing, treeIdUrl } from "./ebay.js";
 import { readSearches, type Search } from "./searches.js";
 import { SourceError, cleanText, type FailReason } from "./source.js";
 
@@ -1373,4 +1373,102 @@ test("in prefer mode, a details page too full to be the whole answer leaves the 
 test("characters that take no space, like variation marks and filler letters, are dropped from titles", () => {
   assert.equal(cleanText("a️bㅤcᅟᅠﾠd︀\u{E0100}e", 100), "abcde");
   assert.equal(cleanText("ㅤ️ᅟ", 100), "");
+});
+const taxonomy = "https://api.ebay.com/commerce/taxonomy/v1";
+
+function taxonomyReply(call: Call): Response {
+  const url = new URL(call.url);
+  if (url.pathname.endsWith("/get_default_category_tree_id")) return Response.json({ categoryTreeId: "3", categoryTreeVersion: "130" });
+  if (url.pathname.endsWith("/get_category_suggestions")) {
+    return Response.json({
+      categorySuggestions: [
+        {
+          category: { categoryId: "170083", categoryName: "Memory (RAM)" },
+          categoryTreeNodeLevel: 3,
+          categoryTreeNodeAncestors: [
+            { categoryId: "175673", categoryName: "Computer Components & Parts", categoryTreeNodeLevel: 2, categorySubtreeNodeHref: "https://api.ebay.com/x" },
+            { categoryId: "58058", categoryName: "Computers, Tablets & Network Hardware", categoryTreeNodeLevel: 1 },
+          ],
+          relevancy: "HIGH",
+        },
+        { category: { categoryId: "170083", categoryName: "Memory (RAM)" } },
+        { category: { categoryId: "abc", categoryName: "Broken" } },
+        { category: { categoryId: "177", categoryName: "" } },
+        "x",
+        { category: { categoryId: "16145", categoryName: "Laptop Memory\u202E" }, categoryTreeNodeAncestors: "nope" },
+      ],
+      categoryTreeId: "3",
+    });
+  }
+  return Response.json({
+    categoryId: "170083",
+    aspects: [
+      { localizedAspectName: "Form Factor", aspectConstraint: { aspectRequired: true, aspectMode: "SELECTION_ONLY" }, aspectValues: [{ localizedValue: "DIMM" }, { localizedValue: "SO-DIMM" }, { localizedValue: "DIMM" }, { localizedValue: "" }, "x"] },
+      { localizedAspectName: "Brand", aspectConstraint: { aspectMode: "FREE_TEXT" }, aspectValues: Array.from({ length: 130 }, (_, i) => ({ localizedValue: `Brand ${i}` })) },
+      { localizedAspectName: "Form Factor", aspectValues: [] },
+      { localizedAspectName: "", aspectValues: [{ localizedValue: "x" }] },
+      { localizedAspectName: "Type" },
+    ],
+  });
+}
+
+test("categories are suggested from eBay's UK tree, with each one's path from the top, and the tree is asked for once", async () => {
+  const calls = fakeEbay((call) => taxonomyReply(call));
+  const made = source();
+  const { categories, calls: used } = await made.categories!("ddr4 2x16gb & more");
+  assert.equal(used, 2);
+  assert.deepEqual(categories, {
+    categories: [
+      { id: "170083", name: "Memory (RAM)", path: "Computers, Tablets & Network Hardware > Computer Components & Parts > Memory (RAM)" },
+      { id: "16145", name: "Laptop Memory", path: "Laptop Memory" },
+    ],
+  });
+  assert.equal((await made.categories!("ssd")).calls, 1);
+  const asked = calls.filter((call) => call.url !== tokenUrl).map((call) => call.url);
+  assert.deepEqual(asked, [
+    `${taxonomy}/get_default_category_tree_id?marketplace_id=EBAY_GB`,
+    `${taxonomy}/category_tree/3/get_category_suggestions?q=ddr4%202x16gb%20%26%20more`,
+    `${taxonomy}/category_tree/3/get_category_suggestions?q=ssd`,
+  ]);
+  assert.ok(calls.filter((call) => call.url !== tokenUrl).every((call) => call.headers.get("X-EBAY-C-MARKETPLACE-ID") === "EBAY_GB" && call.redirect === "error"));
+  assert.ok(!JSON.stringify(categories).includes("api.ebay.com"));
+});
+
+test("a category's item details come back with whether each is required, whether sellers type them freely, and at most 100 values", async () => {
+  fakeEbay((call) => taxonomyReply(call));
+  const { details, calls: used } = await source().categoryDetails!("170083");
+  assert.equal(used, 2);
+  assert.equal(details.categoryId, "170083");
+  assert.deepEqual(details.details.map((detail) => detail.name), ["Form Factor", "Brand", "Type"]);
+  assert.deepEqual(details.details[0], { name: "Form Factor", required: true, freeText: false, values: ["DIMM", "SO-DIMM"], moreValues: 0 });
+  assert.deepEqual([details.details[1].required, details.details[1].freeText, details.details[1].values.length, details.details[1].moreValues], [false, true, 100, 30]);
+  assert.deepEqual(details.details[2], { name: "Type", required: false, freeText: true, values: [], moreValues: 0 });
+});
+
+test("a category with categories under it, a bad number or an odd reply is a failure that says so", async () => {
+  fakeEbay((call) => (call.url.includes("get_item_aspects") ? Response.json({ errors: [{ errorId: 62009, message: "The specified category ID must be a leaf category." }] }, { status: 400 }) : taxonomyReply(call)));
+  const parent = await failure(source().categoryDetails!("58058"));
+  assert.deepEqual([parent.reason, parent.message, parent.calls], ["request", "eBay refused the search (that category has categories under it, and only the last level has item details)", 2]);
+  mock.restoreAll();
+  const calls = fakeEbay((call) => taxonomyReply(call));
+  const odd = await failure(source().categoryDetails!("12a"));
+  assert.deepEqual([odd.reason, odd.calls, calls.length], ["request", 0, 0]);
+  mock.restoreAll();
+  for (const odd of ["../3", "1234567", 3, ""]) {
+    fakeEbay((call) => (call.url.includes("get_default") ? Response.json({ categoryTreeId: odd }) : taxonomyReply(call)));
+    assert.equal((await failure(source().categories!("ram"))).reason, "reply", String(odd));
+    mock.restoreAll();
+  }
+  mock.restoreAll();
+  fakeEbay((call) => (call.url.includes("get_default") ? taxonomyReply(call) : Response.json([])));
+  assert.equal((await failure(source().categories!("ram"))).reason, "reply");
+  assert.equal((await failure(source().categoryDetails!("170083"))).reason, "reply");
+  assert.deepEqual(toCategories({}), { categories: [] });
+  assert.deepEqual(toCategoryDetails({ aspects: "x" }, "1"), { categoryId: "1", details: [] });
+  assert.equal(toCategoryDetails(null, "1"), null);
+});
+
+test("the category addresses are all on eBay's API host", () => {
+  for (const url of [treeIdUrl(apiHost), categoriesUrl(apiHost, "3", "a b"), categoryDetailsUrl(apiHost, "3", "170083")]) assert.equal(isApiAddress(url, apiHost), true, url);
+  assert.equal(categoryDetailsUrl(apiHost, "3", "170083"), `${taxonomy}/category_tree/3/get_item_aspects_for_category?category_id=170083`);
 });
