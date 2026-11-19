@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", speechStop: "now", spokenStyle: false, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80, speechStart: "sentence", speechStop: "now", spokenStyle: false, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", speechStop: "now", spokenStyle: false, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80, speechStart: "sentence", speechStop: "now", spokenStyle: false, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -227,6 +227,16 @@ test("the voice is off unless JARVIS_VOICE names a speech engine, and Kokoro is 
 test("anything else in JARVIS_VOICE stops Jarvis and is named", () => {
   for (const value of ["on", "Kokoro", "KOKORO", "piper", "kokoro,piper", "yes", "true", "bm_george"]) {
     assert.throws(() => readConfig({ ...base, JARVIS_VOICE: value }), { message: `JARVIS_VOICE must be off or kokoro, not "${value}"` });
+  }
+});
+
+test("JARVIS_KOKORO_SPEED is how fast Kokoro speaks, 1 when it's missing or blank, and any plain number from 0.25 to 4", () => {
+  assert.equal(readConfig(base).kokoroSpeed, 1);
+  assert.equal(readConfig({ ...base, JARVIS_KOKORO_SPEED: "" }).kokoroSpeed, 1);
+  assert.equal(readConfig({ ...base, JARVIS_KOKORO_SPEED: "   " }).kokoroSpeed, 1);
+  for (const [value, speed] of [["0.9", 0.9], [" 1.25 ", 1.25], ["0.25", 0.25], ["4", 4], ["4.0", 4], ["1", 1]] as const) assert.equal(readConfig({ ...base, JARVIS_KOKORO_SPEED: value }).kokoroSpeed, speed, value);
+  for (const value of ["0.24", "4.01", "5", "0", "-1", "fast", "1,5", ".9", "1.", "1e0", "0x1", "1 .5", "Infinity", "NaN"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_KOKORO_SPEED: value }), { message: `JARVIS_KOKORO_SPEED must be a number from 0.25 to 4, like 1 or 0.9, not "${value.trim()}"` }, value);
   }
 });
 

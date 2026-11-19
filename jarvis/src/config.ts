@@ -46,6 +46,7 @@ export type Config = {
   sessionNotes: boolean;
   voice: VoiceMode;
   kokoroVoice: string;
+  kokoroSpeed: number;
   volume: number;
   speechStart: SpeechStart;
   speechStop: SpeechStop;
@@ -58,6 +59,10 @@ export const defaultLengthWarn = 80_000;
 export const defaultVolume = 80;
 
 export const defaultKokoroVoice = "bm_george";
+
+export const defaultKokoroSpeed = 1;
+
+export const kokoroSpeeds = { min: 0.25, max: 4 };
 
 export function readVolume(env: Record<string, string | undefined>): number {
   const text = env.JARVIS_VOLUME?.trim() || String(defaultVolume);
@@ -129,6 +134,9 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (!isVoiceMode(voice)) throw new Error(`JARVIS_VOICE must be off or kokoro, not "${voice}"`);
   const kokoroVoice = env.JARVIS_KOKORO_VOICE?.trim() || defaultKokoroVoice;
   if (!/^[A-Za-z0-9_]+(\([0-9.]+\))?([+-][A-Za-z0-9_]+(\([0-9.]+\))?)*$/.test(kokoroVoice) || kokoroVoice.length > 200) throw new Error(`JARVIS_KOKORO_VOICE must be one of Kokoro's voice names, like bm_george, or a blend like bm_george(2)+bm_fable(1), not "${kokoroVoice}"`);
+  const speedText = env.JARVIS_KOKORO_SPEED?.trim() || String(defaultKokoroSpeed);
+  const kokoroSpeed = Number(speedText);
+  if (!/^[0-9]+(\.[0-9]+)?$/.test(speedText) || kokoroSpeed < kokoroSpeeds.min || kokoroSpeed > kokoroSpeeds.max) throw new Error(`JARVIS_KOKORO_SPEED must be a number from ${kokoroSpeeds.min} to ${kokoroSpeeds.max}, like 1 or 0.9, not "${speedText}"`);
   const volume = readVolume(env);
   const speechStart = env.JARVIS_SPEECH_START?.trim() || "sentence";
   if (!isSpeechStart(speechStart)) throw new Error(`JARVIS_SPEECH_START must be sentence or clause, not "${speechStart}"`);
@@ -139,5 +147,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, volume, speechStart, speechStop, spokenStyle: spokenStyle === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, volume, speechStart, speechStop, spokenStyle: spokenStyle === "on", log: log === "on" };
 }

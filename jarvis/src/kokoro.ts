@@ -8,7 +8,7 @@ export const kokoroModel = "kokoro";
 export const kokoroSpeakMs = 30_000;
 export const kokoroCheckMs = 3_000;
 
-export type KokoroOptions = { voice: string; url?: string; speakMs?: number; checkMs?: number };
+export type KokoroOptions = { voice: string; speed?: number; url?: string; speakMs?: number; checkMs?: number };
 
 function limited(signal: AbortSignal, ms: number): AbortSignal {
   return AbortSignal.any([signal, AbortSignal.timeout(ms)]);
@@ -41,8 +41,8 @@ function refusal(status: number, text: string): string {
   return `${kokoroName} replied ${status}${said === "" ? "" : `: ${said}`}`;
 }
 
-export function speechRequest(text: string, voice: string): string {
-  return JSON.stringify({ model: kokoroModel, input: text, voice, response_format: "pcm", stream: false });
+export function speechRequest(text: string, voice: string, speed = 1): string {
+  return JSON.stringify({ model: kokoroModel, input: text, voice, speed, response_format: "pcm", stream: false });
 }
 
 export function createKokoro(options: KokoroOptions): SpeechEngine {
@@ -54,7 +54,7 @@ export function createKokoro(options: KokoroOptions): SpeechEngine {
 
   async function soundFor(text: string, signal: AbortSignal): Promise<Uint8Array> {
     const slow = `${kokoroName} took longer than ${speakMs / 1000} seconds over one piece of speech`;
-    const response = await fetch(`${url}/v1/audio/speech`, { method: "POST", headers: { "content-type": "application/json" }, body: speechRequest(text, options.voice), redirect: "error", signal: limited(signal, speakMs) }).catch((error: unknown) => {
+    const response = await fetch(`${url}/v1/audio/speech`, { method: "POST", headers: { "content-type": "application/json" }, body: speechRequest(text, options.voice, options.speed), redirect: "error", signal: limited(signal, speakMs) }).catch((error: unknown) => {
       throw failed(error, signal, slow, unreachable);
     });
     if (!response.ok) {

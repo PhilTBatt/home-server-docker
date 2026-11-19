@@ -75,8 +75,9 @@ test("Kokoro is asked at its service name inside Docker, for raw sound at 24,000
 });
 
 test("a piece of speech is asked for as raw PCM, never MP3, all in one reply, in the chosen voice", () => {
-  assert.equal(speechRequest("Hello there.", "bm_george"), '{"model":"kokoro","input":"Hello there.","voice":"bm_george","response_format":"pcm","stream":false}');
-  assert.deepEqual(JSON.parse(speechRequest('He said "hi"\nthen left.', "bm_fable(2)+bm_george(1)")), { model: "kokoro", input: 'He said "hi"\nthen left.', voice: "bm_fable(2)+bm_george(1)", response_format: "pcm", stream: false });
+  assert.equal(speechRequest("Hello there.", "bm_george"), '{"model":"kokoro","input":"Hello there.","voice":"bm_george","speed":1,"response_format":"pcm","stream":false}');
+  assert.equal(JSON.parse(speechRequest("Hello there.", "bm_george", 0.9)).speed, 0.9);
+  assert.deepEqual(JSON.parse(speechRequest('He said "hi"\nthen left.', "bm_fable(2)+bm_george(1)")), { model: "kokoro", input: 'He said "hi"\nthen left.', voice: "bm_fable(2)+bm_george(1)", speed: 1, response_format: "pcm", stream: false });
 });
 
 test("speaking posts the text to Kokoro's speech route as JSON and passes back the sound it returns", async () => {
@@ -84,6 +85,13 @@ test("speaking posts the text to Kokoro's speech route as JSON and passes back t
   const engine = createKokoro({ voice: "bm_george", url: kokoro.url });
   assert.deepEqual(await heard(engine.speak(pieces("Hello there."), never)), [[1, 2, 3, 4, 5, 6]]);
   assert.deepEqual(kokoro.asked, [{ method: "POST", path: "/v1/audio/speech", type: "application/json", body: speechRequest("Hello there.", "bm_george") }]);
+});
+
+test("the speed asked for is the one the engine was made with, and Kokoro's usual 1 without one", async () => {
+  const kokoro = await standIn((_asked, response) => sound(response, [1, 2]));
+  await heard(createKokoro({ voice: "bm_george", speed: 0.9, url: kokoro.url }).speak(pieces("One."), never));
+  await heard(createKokoro({ voice: "bm_george", url: kokoro.url }).speak(pieces("Two."), never));
+  assert.deepEqual(kokoro.asked.map((asked) => JSON.parse(asked.body).speed), [0.9, 1]);
 });
 
 test("the voice asked for is the one the engine was made with, not a fixed one", async () => {

@@ -34,9 +34,9 @@ export function voiceOffLine(reason: string): string {
   return `Voice: off, so this chat is text only. ${reason}`;
 }
 
-export function voiceParts(config: Pick<Config, "kokoroVoice" | "volume">, signal: AbortSignal, dir = soundDir): VoiceParts {
+export function voiceParts(config: Pick<Config, "kokoroVoice" | "kokoroSpeed" | "volume">, signal: AbortSignal, dir = soundDir): VoiceParts {
   return {
-    engine: createKokoro({ voice: config.kokoroVoice }),
+    engine: createKokoro({ voice: config.kokoroVoice, speed: config.kokoroSpeed }),
     voice: config.kokoroVoice,
     volume: config.volume,
     findCard: () => findSoundCard(dir, undefined, voiceStartHint),
@@ -63,7 +63,7 @@ export async function startVoice(parts: VoiceParts): Promise<Voice> {
   }
 }
 
-export async function voiceFor(config: Pick<Config, "voice" | "kokoroVoice" | "volume">, signal: AbortSignal, write: (line: string) => void, start: (parts: VoiceParts) => Promise<Voice> = startVoice, dir = soundDir): Promise<ChatVoice> {
+export async function voiceFor(config: Pick<Config, "voice" | "kokoroVoice" | "kokoroSpeed" | "volume">, signal: AbortSignal, write: (line: string) => void, start: (parts: VoiceParts) => Promise<Voice> = startVoice, dir = soundDir): Promise<ChatVoice> {
   if (config.voice === "off") return { mode: "off", speaker: null };
   const voice = await start(voiceParts(config, signal, dir));
   write(printable(voice.line));
