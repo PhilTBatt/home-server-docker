@@ -40,7 +40,7 @@ function sample(): Memory {
 }
 
 test("an empty memory has no searches and zeroed counters", () => {
-  assert.deepEqual(emptyMemory(), { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false } });
+  assert.deepEqual(emptyMemory(), { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), snoozed: new Map() });
   assert.notEqual(emptyMemory().searches, emptyMemory().searches);
 });
 
@@ -333,4 +333,50 @@ test("a state file as full as the limits allow can still be read back", () => {
   assert.equal(back?.searches.size, 50);
   assert.equal(back?.searches.get("search-number-49")?.seen.size, maxSeenPerSearch);
   assert.ok(text.length < 16 * 1024 * 1024, String(text.length));
+});
+
+test("snoozes, each search's alerts today and the ending-soon mark come back as saved, in either mode", () => {
+  const memory = sample();
+  memory.alertsToday.set("optiplex", 4);
+  memory.snoozed.set("optiplex", "2026-11-19T12:00:00.000Z");
+  memory.snoozed.set("ram", null);
+  memory.searches.get("optiplex")?.seen.set("v1|110000000003|0", { first: t1, last: t3, ending: true });
+  for (const keepSeen of [true, false]) {
+    const back = readMemory(writeMemory(memory, keepSeen), keepSeen);
+    assert.deepEqual(back?.alertsToday, new Map([["optiplex", 4]]));
+    assert.deepEqual(back?.snoozed, new Map([["optiplex", "2026-11-19T12:00:00.000Z"], ["ram", null]]));
+    assert.deepEqual(back?.searches.get("optiplex")?.seen.get("v1|110000000003|0"), keepSeen ? { first: t1, last: t3, ending: true } : undefined);
+  }
+  assert.ok(!writeMemory(memory, false).includes("110000000003"));
+});
+
+test("a state file from before snoozes existed still reads, and an empty memory writes neither new part", () => {
+  const old = readMemory(stateWith({ optiplex: goodSearch }), true);
+  assert.deepEqual([old?.alertsToday.size, old?.snoozed.size, old?.searches.size], [0, 0, 1]);
+  assert.equal(writeMemory(emptyMemory(), true), '{"counters":{"day":"","calls":0,"alerts":0,"capNoted":false},"searches":{}}');
+});
+
+test("odd snoozes, counts and marks in the state file are dropped, not trusted", () => {
+  const proto = '"__proto__": 5';
+  const text = JSON.stringify({
+    counters: { day: "2026-11-18", calls: 1, alerts: 1, capNoted: false },
+    searches: { optiplex: { ...goodSearch, seen: { "v1|1|0": { first: t1, last: t2, ending: "yes" }, "v1|2|0": { first: t1, last: t2, ending: true } } } },
+    alertsToday: { "optiplex": 3, "Bad Id": 2, "ram": -1, "zero": 0, "half": 1.5, "text": "7" },
+    snoozed: { "optiplex": "2026-11-19T12:00:00.000Z", "ram": null, "soon": "tomorrow", "number": 5, "Bad Id": null, "flag": true },
+  });
+  const memory = readMemory(text.replace('"alertsToday":{', `"alertsToday":{${proto}, `).replace('"snoozed":{', `"snoozed":{${proto}, `), true);
+  assert.equal(text.includes("__proto__"), false);
+  assert.deepEqual(memory?.alertsToday, new Map([["optiplex", 3]]));
+  assert.deepEqual(memory?.snoozed, new Map([["optiplex", "2026-11-19T12:00:00.000Z"], ["ram", null]]));
+  assert.deepEqual(memory?.searches.get("optiplex")?.seen, new Map([["v1|1|0", { first: t1, last: t2 }], ["v1|2|0", { first: t1, last: t2, ending: true }]]));
+  const noDay = readMemory(JSON.stringify({ counters: { day: "yesterday" }, searches: {}, alertsToday: { optiplex: 3 }, snoozed: { optiplex: null } }), true);
+  assert.deepEqual([noDay?.alertsToday.size, noDay?.snoozed.size], [0, 1]);
+  assert.deepEqual(readMemory(JSON.stringify({ counters: {}, searches: {}, alertsToday: [1, 2], snoozed: "all" }), true), emptyMemory());
+});
+
+test("no more snoozes or counts are read than there can be searches", () => {
+  const many = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`s${i}`, 1]));
+  const snoozes = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`s${i}`, null]));
+  const memory = readMemory(JSON.stringify({ counters: { day: "2026-11-18", calls: 0, alerts: 0, capNoted: false }, searches: {}, alertsToday: many, snoozed: snoozes }), true);
+  assert.deepEqual([memory?.alertsToday.size, memory?.snoozed.size], [50, 50]);
 });
