@@ -9,7 +9,7 @@ import type { Answer } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
 
-const quiet: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
+const quiet: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
 
 function answer(text: string): Answer {
   return { text, firstWordsMs: 500, totalMs: 1200 };

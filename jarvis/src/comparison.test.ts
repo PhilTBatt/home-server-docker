@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { logVersion, type LogLine, type NewChatLine, type SpeechLine } from "./answer-log.js";
+import { logVersion, speechLine, type LogLine, type NewChatLine, type SpeechLine } from "./answer-log.js";
 import { compareReport, isNewChatLine, groupLines, isLogLine, isRatingLine, isSpeechLine, readLog, table, withCommas } from "./comparison.js";
 
 function line(overrides: Partial<LogLine> = {}): LogLine {
@@ -605,6 +605,27 @@ test("answers written for the ear are compared with the usual style side by side
 
 const countsHeading = "Speech, added up for each setting: sentences played to the end, sentences that failed, and sentences not played in full (cut off or dropped when he stopped, or past the 40-sentence limit). Then how many answers made no sound, were stopped (before or after any sound), were given up on because two sentences in a row couldn't be made or couldn't be played, or went over 40 sentences.";
 
+test("a speech line's failures split into couldn't be made and couldn't be played are read when they add up, and older lines without the split still are", () => {
+  assert.equal(isSpeechLine(said({ failed: 3, failedMaking: 1, failedPlaying: 2 })), true);
+  assert.equal(isSpeechLine(said({ failed: 0, failedMaking: 0, failedPlaying: 0 })), true);
+  assert.equal(isSpeechLine(said({ failed: 3 })), true);
+  assert.equal(isSpeechLine(said({ failed: 3, failedMaking: 1, failedPlaying: 1 })), false);
+  assert.equal(isSpeechLine(said({ failed: 1, failedMaking: 1 })), false);
+  assert.equal(isSpeechLine(said({ failed: 1, failedPlaying: 1 })), false);
+  for (const [field, other] of [["failedMaking", "failedPlaying"], ["failedPlaying", "failedMaking"]]) {
+    assert.equal(isSpeechLine({ ...said({ failed: 0 }), [field]: -1, [other]: 1 }), false, field);
+    assert.equal(isSpeechLine({ ...said({ failed: 2 }), [field]: 0.5, [other]: 1.5 }), false, field);
+    assert.equal(isSpeechLine({ ...said({ failed: 1 }), [field]: null, [other]: 1 }), false, field);
+    assert.equal(isSpeechLine({ ...said({ failed: 1 }), [field]: true, [other]: 0 }), false, field);
+  }
+});
+
+test("a speech line as Jarvis writes it is read back by compare, failures and their split included", () => {
+  const report = { firstSentenceMs: 900.4, firstSoundMadeMs: 1700.6, firstSoundMs: 1750.2, longestSilenceMs: 320.6, spoken: 2, failed: 3, failedMaking: 1, failedPlaying: 2, left: 1, problem: "Kokoro replied 500", gaveUp: false, tooLong: false, stopped: false };
+  assert.equal(isSpeechLine(JSON.parse(JSON.stringify(speechLine("chat-1", 2, new Date("2026-11-19T21:00:00Z"), report)))), true);
+  assert.equal(isSpeechLine(JSON.parse(JSON.stringify(speechLine("chat-1", 2, new Date("2026-11-19T21:00:00Z"), { ...report, failed: 0, failedMaking: 0, failedPlaying: 0 })))), true);
+});
+
 test("a second speech table adds up each setting's sentences, and counts the answers with no sound, stopped, given up on or over 40", () => {
   const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3 }), voiced({ question: 4, ok: false, error: "timeout" }), line({ chat: "chat-2" })];
   const speech = [
@@ -655,4 +676,37 @@ test("answers with the voice on but no speech line yet are named under the secon
   assert.equal(report.includes("\n2 answers with the voice on had no speech line in the log, so aren't in this table: still being spoken when this ran, or the chat ended first.\n"), true);
   const one = compareReport({ lines: [voiced(), voiced({ question: 2 })], speech: [said()], skipped: 0 });
   assert.equal(one.includes("\n1 answer with the voice on had no speech line in the log, so isn't in this table: still being spoken when this ran, or the chat ended first.\n"), true);
+});
+
+test("under the second speech table, each setting where sentences failed gets a line saying how many couldn't be made and how many couldn't be played", () => {
+  const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3 }), voiced({ question: 4 }), voiced({ chat: "chat-2", speechStart: "clause" }), voiced({ chat: "chat-2", question: 2, speechStart: "clause" }), voiced({ chat: "chat-3", engine: "sdk", thinking: null }), voiced({ chat: "chat-4", ok: false, error: "timeout" })];
+  const speech = [
+    said({ failed: 2, failedMaking: 2, failedPlaying: 0 }),
+    said({ question: 2, failed: 1, failedMaking: 0, failedPlaying: 1 }),
+    said({ question: 3, failed: 0, failedMaking: 0, failedPlaying: 0 }),
+    said({ chat: "chat-2", failed: 1 }),
+    said({ chat: "chat-2", question: 2, failed: 3, failedMaking: 1, failedPlaying: 2 }),
+    said({ chat: "chat-3", failed: 0, failedMaking: 0, failedPlaying: 0 }),
+    said({ chat: "chat-4", failed: 5, failedMaking: 5, failedPlaying: 0 }),
+  ];
+  const report = compareReport({ lines, speech, skipped: 0 });
+  const after = report.slice(report.indexOf(countsHeading));
+  const first = "\nAPI, keep, whole first sentence: 3 sentences failed, 2 couldn't be made and 1 couldn't be played.\n";
+  const second = "\nAPI, keep, first clause early: 4 sentences failed, 1 couldn't be made, 2 couldn't be played and 1 is from older log lines that don't say which.\n";
+  const unlogged = "\n1 answer with the voice on had no speech line in the log";
+  assert.equal(after.includes(first), true);
+  assert.equal(after.includes(second), true);
+  assert.equal(after.includes("Agent SDK, whole first sentence:"), false);
+  const rows = after.split("\n");
+  const lastRow = rows.findIndex((text) => text.startsWith("API, keep, first clause early "));
+  assert.ok(lastRow > 0 && rows[lastRow + 1].startsWith("API, keep, whole first sentence:") && rows[lastRow + 2].startsWith("API, keep, first clause early:"));
+  assert.ok(after.indexOf(second) < after.indexOf(unlogged));
+  const older = compareReport({ lines: [voiced(), voiced({ question: 2 })], speech: [said({ failed: 1 }), said({ question: 2, failed: 1 })], skipped: 0 });
+  assert.equal(older.includes("\nAPI, keep: 2 sentences failed, all from older log lines that don't say which.\n"), true);
+  const olderOne = compareReport({ lines: [voiced(), voiced({ question: 2 })], speech: [said({ failed: 1 }), said({ question: 2, failed: 0, failedMaking: 0, failedPlaying: 0 })], skipped: 0 });
+  assert.equal(olderOne.includes("\nAPI, keep: 1 sentence failed, from an older log line that doesn't say which.\n"), true);
+  const one = compareReport({ lines: [voiced()], speech: [said({ failed: 1, failedMaking: 0, failedPlaying: 1 })], skipped: 0 });
+  assert.equal(one.includes("\nAPI, keep: 1 sentence failed, 0 couldn't be made and 1 couldn't be played.\n"), true);
+  const none = compareReport({ lines: [voiced()], speech: [said({ failed: 0, failedMaking: 0, failedPlaying: 0 })], skipped: 0 });
+  assert.equal(/\d sentences? failed, /.test(none), false);
 });

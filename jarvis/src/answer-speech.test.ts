@@ -28,7 +28,7 @@ function setUp(options: Partial<AnswerSpeechDeps> = {}) {
 
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 
-const quiet: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
+const quiet: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
 
 test("an answer's text, fed in as it arrives, is spoken a sentence at a time, cleaned up, with the last one said when the answer ends", async () => {
   const { speech, made, played } = setUp();

@@ -42,6 +42,8 @@ export type SpeechLine = {
   longestSilenceMs: number | null;
   spoken: number;
   failed: number;
+  failedMaking?: number;
+  failedPlaying?: number;
   left: number;
   stopped: boolean;
   gaveUp: boolean;
@@ -191,6 +193,8 @@ export function speechLine(chat: string, question: number, at: Date, report: Spe
     longestSilenceMs: wholeMs(report.longestSilenceMs),
     spoken: report.spoken,
     failed: report.failed,
+    failedMaking: report.failedMaking,
+    failedPlaying: report.failedPlaying,
     left: report.left,
     stopped: report.stopped,
     gaveUp: report.gaveUp,

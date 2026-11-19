@@ -32,7 +32,7 @@ async function settled(work: Promise<unknown>): Promise<boolean> {
   return (await Promise.race([work.then(() => true), turn().then(() => false)])) as boolean;
 }
 
-const nothing = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
+const nothing = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
 
 test("speech is made two sentences ahead at most, an answer is spoken up to 40 sentences, and two failures in a row end it", () => {
   assert.equal(speechAhead, 2);
@@ -386,7 +386,7 @@ test("a sentence that can't be made is skipped, its reason kept, and the next on
   assert.deepEqual(plays.map((play) => play.given), [[1], [3]]);
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, failed: 1, problem: "Kokoro took longer than 30 seconds over one piece of speech" });
+  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, failed: 1, failedMaking: 1, problem: "Kokoro took longer than 30 seconds over one piece of speech" });
 });
 
 test("the first reason is the one kept, and something thrown that isn't an error still gives one", async () => {
@@ -421,7 +421,7 @@ test("two sentences in a row that can't be made end the speech: the rest is left
   assert.equal(await settled(queue.done), false);
   plays[0].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, failed: 2, left: 3, problem: "Couldn't reach Kokoro at http://kokoro:8880 (ECONNREFUSED)", gaveUp: true });
+  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, failed: 2, failedMaking: 2, left: 3, problem: "Couldn't reach Kokoro at http://kokoro:8880 (ECONNREFUSED)", gaveUp: true });
 });
 
 test("a sound that was made and is waiting its turn is still played after the speech is given up on", async () => {
@@ -443,7 +443,7 @@ test("a sound that was made and is waiting its turn is still played after the sp
   assert.deepEqual(plays.map((play) => play.given), [[1], [2]]);
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, failed: 2, left: 1, problem: "Kokoro replied 500", gaveUp: true });
+  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, failed: 2, failedMaking: 2, left: 1, problem: "Kokoro replied 500", gaveUp: true });
 });
 
 test("a sentence that arrives after the speech was given up on is counted as left, even once the queue has finished", async () => {
@@ -481,7 +481,7 @@ test("a failure, a success, then a failure aren't two in a row", async () => {
   await turn();
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual([queue.report().spoken, queue.report().failed, queue.report().gaveUp, queue.report().left], [2, 2, false, 0]);
+  assert.deepEqual([queue.report().spoken, queue.report().failed, queue.report().failedMaking, queue.report().gaveUp, queue.report().left], [2, 2, 2, false, 0]);
 });
 
 test("the number of failures in a row that ends the speech can be set", async () => {
@@ -508,7 +508,7 @@ test("a sound that can't be played is skipped and the next is tried", async () =
   assert.deepEqual(plays.map((play) => play.given), [[1], [2]]);
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, failed: 1, problem: "aplay stopped with code 1: audio open error: Device or resource busy" });
+  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, failed: 1, failedPlaying: 1, problem: "aplay stopped with code 1: audio open error: Device or resource busy" });
 });
 
 test("two sounds in a row that can't be played end the speech, drop everything and call off the sentence being made", async () => {
@@ -530,7 +530,7 @@ test("two sounds in a row that can't be played end the speech, drop everything a
   assert.equal(makes[3].signal.aborted, true);
   assert.equal(await orStillWaiting(queue.done.then(() => "done")), "done");
   assert.equal(plays.length, 2);
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, failed: 2, left: 3, problem: "aplay stopped with code 1", gaveUp: true });
+  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, failed: 2, failedPlaying: 2, left: 3, problem: "aplay stopped with code 1", gaveUp: true });
 });
 
 test("a sound that comes back in the same moment the speech is given up on is counted as left, not lost", async () => {
@@ -584,7 +584,26 @@ test("a failed sound between two that play isn't two in a row either", async () 
   await turn();
   plays[3].resolve();
   await queue.done;
-  assert.deepEqual([queue.report().spoken, queue.report().failed, queue.report().gaveUp], [2, 2, false]);
+  assert.deepEqual([queue.report().spoken, queue.report().failed, queue.report().failedPlaying, queue.report().gaveUp], [2, 2, 2, false]);
+});
+
+test("failures are counted by what went wrong: a sentence that couldn't be made, or a sound that couldn't be played", async () => {
+  const { queue, makes, plays } = setUp({ ahead: 5 });
+  for (const sentence of ["One.", "Two.", "Three."]) queue.add(sentence);
+  queue.end();
+  await turn();
+  makes[0].reject(new Error("Kokoro replied 500"));
+  await turn();
+  makes[1].resolve(Uint8Array.of(2));
+  await turn();
+  makes[2].resolve(Uint8Array.of(3));
+  await turn();
+  plays[0].reject(new Error("aplay stopped with code 1"));
+  await turn();
+  plays[1].resolve();
+  await queue.done;
+  const report = queue.report();
+  assert.deepEqual([report.spoken, report.failed, report.failedMaking, report.failedPlaying, report.gaveUp, report.problem], [1, 2, 1, 1, false, "Kokoro replied 500"]);
 });
 
 test("stopping after the speech was given up on isn't counted as stopped by you", async () => {
@@ -760,7 +779,7 @@ test("a sentence that fails to play after a finish counts as a failure, with its
   plays[0].reject(new Error("aplay stopped with code 1"));
   await queue.done;
   assert.equal(plays.length, 1);
-  assert.deepEqual([queue.report().failed, queue.report().left, queue.report().problem, queue.report().spoken], [1, 1, "aplay stopped with code 1", 0]);
+  assert.deepEqual([queue.report().failed, queue.report().failedPlaying, queue.report().left, queue.report().problem, queue.report().spoken], [1, 1, 1, "aplay stopped with code 1", 0]);
 });
 
 test("finishing during the last sentence, with nothing after it, isn't a stop", async () => {

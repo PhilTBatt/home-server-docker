@@ -100,8 +100,14 @@ export function isSpeechLine(value: unknown): value is SpeechLine {
     (line.question as number) >= 1 &&
     ["firstSentenceMs", "firstSoundMadeMs", "firstSoundMs", "longestSilenceMs"].every((field) => isNumberOrNull(line[field])) &&
     ["spoken", "failed", "left"].every((field) => Number.isInteger(line[field]) && (line[field] as number) >= 0) &&
+    hasFailedSplit(line) &&
     ["stopped", "gaveUp", "tooLong"].every((field) => typeof line[field] === "boolean")
   );
+}
+
+function hasFailedSplit(line: Record<string, unknown>): boolean {
+  if (line.failedMaking === undefined && line.failedPlaying === undefined) return true;
+  return ["failedMaking", "failedPlaying"].every((field) => Number.isInteger(line[field]) && (line[field] as number) >= 0) && (line.failedMaking as number) + (line.failedPlaying as number) === line.failed;
 }
 
 export function readLog(text: string): ReadLog {
@@ -349,13 +355,31 @@ function speechRows(groups: Group[], speech: Map<string, SpeechLine>): string[][
   );
 }
 
+function speechLinesOf(group: Group, speech: Map<string, SpeechLine>): SpeechLine[] {
+  return group.voice === "off" ? [] : group.lines.flatMap((line) => (line.ok ? (speech.get(questionKey(line)) ?? []) : []));
+}
+
 function speechCountRows(groups: Group[], speech: Map<string, SpeechLine>): string[][] {
   return groups.flatMap((group) => {
-    const said = group.voice === "off" ? [] : group.lines.flatMap((line) => (line.ok ? (speech.get(questionKey(line)) ?? []) : []));
+    const said = speechLinesOf(group, speech);
     if (said.length === 0) return [];
     const total = (pick: (line: SpeechLine) => number) => String(said.reduce((sum, line) => sum + pick(line), 0));
     const count = (pick: (line: SpeechLine) => boolean) => String(said.filter(pick).length);
     return [[group.label, String(said.length), total((line) => line.spoken), total((line) => line.failed), total((line) => line.left), count((line) => line.firstSoundMs === null), count((line) => line.stopped), count((line) => line.gaveUp), count((line) => line.tooLong)]];
+  });
+}
+
+function failedSplitLines(groups: Group[], speech: Map<string, SpeechLine>): string[] {
+  return groups.flatMap((group) => {
+    const said = speechLinesOf(group, speech);
+    const total = (pick: (line: SpeechLine) => number) => said.reduce((sum, line) => sum + pick(line), 0);
+    const failed = total((line) => line.failed);
+    if (failed === 0) return [];
+    const older = total((line) => (line.failedMaking === undefined ? line.failed : 0));
+    if (older === failed) return [`${group.label}: ${plural(failed, "sentence")} failed, ${failed === 1 ? "from an older log line that doesn't" : "all from older log lines that don't"} say which.`];
+    const parts = [`${total((line) => line.failedMaking ?? 0)} couldn't be made`, `${total((line) => line.failedPlaying ?? 0)} couldn't be played`];
+    if (older > 0) parts.push(`${older} ${older === 1 ? "is" : "are"} from older log lines that don't say which`);
+    return [`${group.label}: ${plural(failed, "sentence")} failed, ${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}.`];
   });
 }
 
@@ -398,6 +422,7 @@ export function compareReport({ lines, ratings = [], newChats = [], speech = [],
   if (counted.length > 0) {
     out.push("", "Speech, added up for each setting: sentences played to the end, sentences that failed, and sentences not played in full (cut off or dropped when he stopped, or past the 40-sentence limit). Then how many answers made no sound, were stopped (before or after any sound), were given up on because two sentences in a row couldn't be made or couldn't be played, or went over 40 sentences.");
     out.push(table(["", "Answers", "Played", "Failed", "Not played in full", "No sound", "Stopped", "Given up", "Over 40"], counted));
+    out.push(...failedSplitLines(groups, said));
     const unlogged = groups.reduce((sum, group) => sum + (group.voice === "off" ? 0 : group.lines.filter((line) => line.ok && !said.has(questionKey(line))).length), 0);
     if (unlogged > 0) out.push(`${plural(unlogged, "answer")} with the voice on had no speech line in the log, so ${unlogged === 1 ? "isn't" : "aren't"} in this table: still being spoken when this ran, or the chat ended first.`);
   }

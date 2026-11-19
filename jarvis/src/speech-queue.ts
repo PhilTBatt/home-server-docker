@@ -11,6 +11,8 @@ export type SpeechReport = {
   longestSilenceMs: number | null;
   spoken: number;
   failed: number;
+  failedMaking: number;
+  failedPlaying: number;
   left: number;
   problem: string | null;
   gaveUp: boolean;
@@ -47,7 +49,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
   const making = AbortSignal.any([calledOff.signal, makingOff.signal]);
   const waiting: string[] = [];
   const ready: Uint8Array[] = [];
-  const report: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
+  const report: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
   let taken = 0;
   let ended = false;
   let over = false;
@@ -84,8 +86,9 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
     over = true;
   };
 
-  const failed = (error: unknown) => {
+  const failed = (error: unknown, stage: "failedMaking" | "failedPlaying") => {
     report.failed++;
+    report[stage]++;
     report.problem ??= error instanceof Error ? error.message : String(error);
   };
 
@@ -110,7 +113,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
             report.left++;
             return;
           }
-          failed(error);
+          failed(error, "failedMaking");
           makeFailures++;
           if (makeFailures >= failureLimit) {
             report.gaveUp = true;
@@ -151,7 +154,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
             report.left++;
             return;
           }
-          failed(error);
+          failed(error, "failedPlaying");
           playFailures++;
           if (playFailures >= failureLimit) {
             report.gaveUp = true;

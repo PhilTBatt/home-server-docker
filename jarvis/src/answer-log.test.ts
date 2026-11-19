@@ -346,7 +346,7 @@ test("each line says who was set to say a chat was getting long", () => {
   assert.equal(logLine(apiKeep, "chat-1", 1, at, { error: "Overloaded" }).lengthHints, "note");
 });
 
-const spokenWell = { firstSentenceMs: 900.4, firstSoundMadeMs: 1700.6, firstSoundMs: 1750.2, longestSilenceMs: 320.6, spoken: 2, failed: 1, left: 3, problem: "Kokoro replied 500", gaveUp: false, tooLong: true, stopped: true };
+const spokenWell = { firstSentenceMs: 900.4, firstSoundMadeMs: 1700.6, firstSoundMs: 1750.2, longestSilenceMs: 320.6, spoken: 2, failed: 1, failedMaking: 1, failedPlaying: 0, left: 3, problem: "Kokoro replied 500", gaveUp: false, tooLong: true, stopped: true };
 
 test("with a voice, each answer's line says how his speech was set to start, and without one it doesn't", () => {
   assert.equal(logLine({ ...apiKeep, voice: "kokoro", speechStart: "clause" }, "chat-1", 1, at, { answer: answered }).speechStart, "clause");
@@ -364,7 +364,7 @@ test("with a voice, each answer's line says how he was set to stop when interrup
   assert.equal(keys.indexOf("speechStop"), keys.indexOf("speechStart") + 1);
 });
 
-test("a speech line has the answer it belongs to, its three times in whole milliseconds and its counts, and never the reason a sentence failed", () => {
+test("a speech line has the answer it belongs to, its three times in whole milliseconds and its counts, with failures split into couldn't be made and couldn't be played, and never the error a sentence failed with", () => {
   assert.deepEqual(speechLine("chat-1", 3, at, spokenWell), {
     v: logVersion,
     kind: "speech",
@@ -377,6 +377,8 @@ test("a speech line has the answer it belongs to, its three times in whole milli
     longestSilenceMs: 321,
     spoken: 2,
     failed: 1,
+    failedMaking: 1,
+    failedPlaying: 0,
     left: 3,
     stopped: true,
     gaveUp: false,
@@ -391,8 +393,8 @@ test("a speech line has the answer it belongs to, its three times in whole milli
   assert.deepEqual(flags({ stopped: true }), [true, false, false]);
   assert.deepEqual(flags({ gaveUp: true }), [false, true, false]);
   assert.deepEqual(flags({ tooLong: true }), [false, false, true]);
-  const counts = speechLine("chat-1", 1, at, { ...spokenWell, spoken: 7, failed: 8, left: 9 });
-  assert.deepEqual([counts.spoken, counts.failed, counts.left], [7, 8, 9]);
+  const counts = speechLine("chat-1", 1, at, { ...spokenWell, spoken: 7, failed: 8, failedMaking: 3, failedPlaying: 5, left: 9 });
+  assert.deepEqual([counts.spoken, counts.failed, counts.failedMaking, counts.failedPlaying, counts.left], [7, 8, 3, 5, 9]);
 });
 
 function speechLog() {
