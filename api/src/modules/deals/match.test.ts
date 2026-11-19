@@ -442,3 +442,11 @@ test("a deal from a feed gets a check-at-the-shop caution instead of the collect
   const feed = readSearches(JSON.stringify({ searches: [{ id: "nvme", name: "NVMe", switch: "on", source: "hotukdeals", query: "nvme" }] }), ["ebay", "hotukdeals"]).searches[0];
   assert.deepEqual(cautions(feed, listing({ postage: null })), ["it's a deal someone posted, so check the price, postage and stock at the shop"]);
 });
+
+test("a listing with several options is hidden for them only when its search says so, after every other rule", () => {
+  assert.equal(whyNot(search({ hideVariations: true }), listing({ variations: true }), now), "options");
+  assert.equal(whyNot(search({ hideVariations: true }), listing({ variations: false }), now), null);
+  assert.equal(whyNot(search(), listing({ variations: true }), now), null);
+  assert.equal(whyNot(search({ hideVariations: true, maxPrice: 50 }), listing({ variations: true }), now), "price");
+  assert.ok(hiddenReasons.includes("options"));
+});

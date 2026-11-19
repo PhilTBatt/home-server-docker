@@ -61,6 +61,7 @@ export type Search = {
   hideDetails: Record<string, string[]> | null;
   collection: { postcode: string; miles: number } | null;
   freePostage: boolean;
+  hideVariations: boolean;
   autoCorrect: boolean;
   sellerType: "business" | "private" | null;
   postageShown: boolean;
@@ -101,7 +102,7 @@ export const maxSearches = 150;
 const maxMoreFiles = 5;
 const moreFilePattern = /^[a-z0-9][a-z0-9-]{0,40}\.json$/;
 const notSearchFiles = ["searches.json", "state.json"];
-const ebayOnly = ["conditions", "buying", "endingWithinHours", "ukOnly", "categoryId", "sellerMinPercent", "sellerMinFeedback", "details", "detailsMode", "hideDetails", "collectionMiles", "freePostage", "autoCorrect", "sellerType", "postageShown", "returnsOnly", "endingSoonMinutes"];
+const ebayOnly = ["conditions", "buying", "endingWithinHours", "ukOnly", "categoryId", "sellerMinPercent", "sellerMinFeedback", "details", "detailsMode", "hideDetails", "collectionMiles", "freePostage", "autoCorrect", "sellerType", "postageShown", "returnsOnly", "endingSoonMinutes", "hideVariations"];
 const maxProblemsShown = 5;
 export const maxHiddenDetails = 3;
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
@@ -136,6 +137,7 @@ const searchSettings = [
   "hideDetails",
   "collectionMiles",
   "freePostage",
+  "hideVariations",
   "autoCorrect",
   "sellerType",
   "postageShown",
@@ -341,7 +343,7 @@ function readSearch(raw: unknown, sources: string[], problems: string[], postcod
     else hideDetails = given;
   }
 
-  const flag = (key: "autoCorrect" | "postageShown" | "returnsOnly" | "freePostage"): boolean => {
+  const flag = (key: "autoCorrect" | "postageShown" | "returnsOnly" | "freePostage" | "hideVariations"): boolean => {
     if (!has(key)) return false;
     if (typeof raw[key] !== "boolean") problems.push(`${key} must be true or false`);
     return raw[key] === true;
@@ -350,6 +352,7 @@ function readSearch(raw: unknown, sources: string[], problems: string[], postcod
   const postageShown = flag("postageShown");
   const returnsOnly = flag("returnsOnly");
   const freePostage = flag("freePostage");
+  const hideVariations = flag("hideVariations");
 
   let collection: Search["collection"] = null;
   if (has("collectionMiles")) {
@@ -434,6 +437,7 @@ function readSearch(raw: unknown, sources: string[], problems: string[], postcod
     hideDetails,
     collection,
     freePostage,
+    hideVariations,
     autoCorrect,
     sellerType: sellerType as "business" | "private" | null,
     postageShown,
@@ -629,5 +633,6 @@ export function fingerprint(search: Search): string {
   if (JSON.stringify(later) !== "[null,false,null,false,false,[]]") criteria.push(later);
   const newer = [search.hideDetails === null ? null : Object.entries(search.hideDetails).sort(([a], [b]) => a.localeCompare(b)), search.collection, search.freePostage];
   if (JSON.stringify(newer) !== "[null,null,false]") criteria.push(newer);
+  if (search.hideVariations) criteria.push(["hideVariations"]);
   return createHash("sha256").update(JSON.stringify(criteria)).digest("hex").slice(0, 16);
 }

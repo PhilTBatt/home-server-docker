@@ -70,6 +70,7 @@ test("the smallest search gets every default written out", () => {
     hideDetails: null,
     collection: null,
     freePostage: false,
+    hideVariations: false,
     autoCorrect: false,
     sellerType: null,
     postageShown: false,
@@ -107,6 +108,7 @@ test("a search with every setting is read as given, with prices in pence", () =>
     detailsMode: "only",
     hideDetails: { "Features": ["Registered"] },
     freePostage: true,
+    hideVariations: true,
     autoCorrect: true,
     sellerType: "business",
     postageShown: true,
@@ -145,6 +147,7 @@ test("a search with every setting is read as given, with prices in pence", () =>
     hideDetails: { "Features": ["Registered"] },
     collection: null,
     freePostage: true,
+    hideVariations: true,
     autoCorrect: true,
     sellerType: "business",
     postageShown: true,
@@ -874,5 +877,29 @@ test("a search from a source other than eBay can't use eBay's own settings", () 
       message = (error as Error).message;
     }
     assert.ok(message.includes(`${key} only works with eBay searches`), `${key}: ${message}`);
+  }
+});
+
+test("hideVariations is true or false, and only for eBay", () => {
+  assert.equal(one({ hideVariations: true }).hideVariations, true);
+  assert.equal(one().hideVariations, false);
+  assert.match(problemWith({ hideVariations: "yes" }), /hideVariations must be true or false/);
+  assert.throws(() => readSearches(JSON.stringify({ searches: [{ ...smallest, source: "other", hideVariations: true }] }), ["ebay", "other"]), /hideVariations only works with eBay searches/);
+});
+
+test("with hideVariations off, searches keep the fingerprints they had before it, including ones using the round-three settings", () => {
+  const optiplex = { id: "optiplex", name: "OptiPlex 7070 SFF", switch: "on", query: "optiplex 7070 sff" };
+  const print = (extra: Record<string, unknown>, top: Record<string, unknown>) =>
+    fingerprint(readSearches(JSON.stringify({ ...top, searches: [{ ...optiplex, ...extra }] }), ["ebay"]).searches[0]);
+  const before: [Record<string, unknown>, string, Record<string, unknown>][] = [
+    [{}, "755b0f3ca7146201", {}],
+    [{ freePostage: true }, "87fb95f178e59b3e", {}],
+    [{ collectionMiles: 10 }, "49541e1b3d9dbc55", { postcode: "LS15 8AA" }],
+    [{ categoryId: 170083, hideDetails: { "Form Factor": ["SO-DIMM"] } }, "6045b6245cf078c7", {}],
+  ];
+  for (const [extra, was, top] of before) {
+    assert.equal(print(extra, top), was, JSON.stringify(extra));
+    assert.equal(print({ ...extra, hideVariations: false }, top), was, JSON.stringify(extra));
+    assert.notEqual(print({ ...extra, hideVariations: true }, top), was, JSON.stringify(extra));
   }
 });

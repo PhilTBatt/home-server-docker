@@ -30,7 +30,7 @@ export function isAuctionOnly(listing: Listing): boolean {
   return listing.buying.includes("AUCTION") && !listing.buying.includes("FIXED_PRICE");
 }
 
-export const hiddenReasons = ["price", "condition", "place", "buying", "ending", "seller", "postage", "words", "avoid", "details"] as const;
+export const hiddenReasons = ["price", "condition", "place", "buying", "ending", "seller", "postage", "words", "avoid", "details", "options"] as const;
 
 export type HiddenReason = (typeof hiddenReasons)[number];
 
@@ -61,6 +61,7 @@ export function whyNot(search: Search, listing: Listing, now: Date): HiddenReaso
   if (search.exclude.some((phrase) => hasPhrase(listing.title, phrase))) return "words";
   if (search.avoid.some((name) => (avoidLists[name] ?? []).some((phrase) => hasPhrase(listing.title, phrase)))) return "avoid";
   if (listing.hiddenDetail !== undefined) return "details";
+  if (search.hideVariations && listing.variations) return "options";
   return null;
 }
 
