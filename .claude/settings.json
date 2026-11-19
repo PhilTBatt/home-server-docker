@@ -21,7 +21,28 @@
       "mcp__hub__get_deal_status",
       "mcp__hub__get_deal_searches",
       "mcp__hub__get_deal_matches",
-      "mcp__hub__get_deal_listing"
+      "mcp__hub__get_deal_listing",
+      "WebSearch",
+      "WebFetch(domain:www.dell.com)",
+      "WebFetch(domain:dl.dell.com)",
+      "WebFetch(domain:www.hp.com)",
+      "WebFetch(domain:support.hp.com)",
+      "WebFetch(domain:h20195.www2.hp.com)",
+      "WebFetch(domain:psref.lenovo.com)",
+      "WebFetch(domain:pcsupport.lenovo.com)",
+      "WebFetch(domain:www.intel.com)",
+      "WebFetch(domain:www.amd.com)",
+      "WebFetch(domain:www.kingston.com)",
+      "WebFetch(domain:www.crucial.com)",
+      "WebFetch(domain:semiconductor.samsung.com)",
+      "WebFetch(domain:www.micron.com)",
+      "WebFetch(domain:www.corsair.com)",
+      "WebFetch(domain:www.westerndigital.com)",
+      "WebFetch(domain:www.seagate.com)",
+      "WebFetch(domain:www.mrmemory.co.uk)",
+      "WebFetch(domain:jellyfin.org)",
+      "WebFetch(domain:linux-hardware.org)",
+      "WebFetch(domain:www.servethehome.com)"
     ],
     "deny": [
       "Read(**/.env)",
@@ -34,7 +55,13 @@
       "Read(./homepage/config/**)",
       "Read(./jellyfin/**)",
       "Read(./kuma/**)",
-      "Read(./media-stack/**)"
+      "Read(./media-stack/**)",
+      "Read(~/hub-memory/**)",
+      "WebFetch(domain:ebay.co.uk)",
+      "WebFetch(domain:*.ebay.co.uk)",
+      "WebFetch(domain:ebay.com)",
+      "WebFetch(domain:www.ebay.com)",
+      "WebFetch(domain:m.ebay.com)"
     ]
   }
 }
