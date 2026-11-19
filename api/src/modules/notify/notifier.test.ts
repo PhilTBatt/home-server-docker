@@ -288,3 +288,21 @@ test("a deal problem whose wording changes but whose kind doesn't isn't announce
   const down: Problem = { code: "deals-source", message: "The deal watcher can't check its searches: couldn't reach eBay." };
   assert.equal(notificationFor(["deals-source"], [down]), null);
 });
+
+test("sendToNtfy sends a priority only when it isn't the default", async () => {
+  const sent = async (priority: Notification["priority"]) => {
+    const fetchMock = fakeNtfy();
+    await sendToNtfy("my-topic", { ...sample, priority });
+    const headers = new Headers(fetchMock.mock.calls[0].arguments[1]?.headers);
+    mock.restoreAll();
+    return headers.get("Priority");
+  };
+  assert.equal(await sent(4), "4");
+  assert.equal(await sent(2), "2");
+  assert.equal(await sent(5), "5");
+  assert.equal(await sent(1), "1");
+  assert.equal(await sent(3), null);
+  assert.equal(await sent(undefined), null);
+  assert.equal(await sent(9 as unknown as 5), null);
+  assert.equal(await sent("5\r\nX-Evil: 1" as unknown as 5), null);
+});

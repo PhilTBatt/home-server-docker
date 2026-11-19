@@ -5,6 +5,7 @@ export type Notification = {
   message: string;
   tags: string;
   click?: string;
+  priority?: 1 | 2 | 3 | 4 | 5;
 };
 
 export function notificationFor(previousCodes: string[], problems: Problem[]): Notification | null {
@@ -38,6 +39,7 @@ export async function sendToNtfy(topic: string, notification: Notification, time
   const headers: Record<string, string> = { Title: notification.title, Tags: notification.tags };
   const link = safeLink(notification.click);
   if (link !== null) headers.Click = link;
+  if (notification.priority !== undefined && [1, 2, 4, 5].includes(notification.priority)) headers.Priority = String(notification.priority);
   const response = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
     method: "POST",
     headers,

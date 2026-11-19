@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { safeLink } from "../notify/notifier.js";
-import { capNotification, dealNotification, money, moreNotification, priceLine, timeLeft, watchingNotification } from "./alert.js";
+import { capNotification, dealNotification, endingNotification, money, moreNotification, priceLine, timeLeft, watchingNotification } from "./alert.js";
 import { readSearches, type Search } from "./searches.js";
 import type { Listing } from "./source.js";
 
@@ -107,7 +107,7 @@ test("the standing line reads naturally in every place", () => {
 });
 
 test("the seller line copes with one rating and with no count", () => {
-  const sellerLine = (overrides: Partial<Listing>) => dealNotification(search(), listing(overrides), null, null, now, false).message.split("\n").at(-1);
+  const sellerLine = (overrides: Partial<Listing>) => dealNotification(search(), listing(overrides), null, null, now, false).message.split("\n").find((line) => line.startsWith("Seller"));
   assert.equal(sellerLine({ sellerPercent: 100, sellerFeedback: 1 }), "Seller: 100% positive from 1 rating.");
   assert.equal(sellerLine({ sellerPercent: 98.5, sellerFeedback: null }), "Seller: 98.5% positive.");
   assert.equal(sellerLine({ sellerPercent: 0, sellerFeedback: 0 }), "Seller: 0% positive from 0 ratings.");
@@ -220,4 +220,107 @@ test("the paused message names the limit and says nothing is lost", () => {
     message: "Today's limit of 60 deal alerts is used up. Alerts start again tomorrow, with anything still unseen.",
     tags: "zzz",
   });
+});
+
+test("the seller line says business or private when eBay says which", () => {
+  const sellerLine = (overrides: Partial<Listing>) => dealNotification(search(), listing(overrides), null, null, now, false).message.split("\n").find((line) => line.includes("eller"));
+  assert.equal(sellerLine({ sellerType: "business" }), "Business seller: 99.4% positive from 1,234 ratings.");
+  assert.equal(sellerLine({ sellerType: "private" }), "Private seller: 99.4% positive from 1,234 ratings.");
+  assert.equal(sellerLine({ sellerType: "private", sellerPercent: null }), "Private seller.");
+  assert.equal(sellerLine({ sellerType: null, sellerPercent: null }), undefined);
+});
+
+test("with a guide price the alert says how far under or over it the total is", () => {
+  const guideLine = (settings: Record<string, unknown>, overrides: Partial<Listing>) => dealNotification(search(settings), listing(overrides), null, null, now, false).message.split("\n").find((line) => line.includes("guide price"));
+  assert.equal(guideLine({ guidePrice: 130 }, { price: 9500, postage: 699 }), "21% under your £130.00 guide price.");
+  assert.equal(guideLine({ guidePrice: 95 }, { price: 9500, postage: 699 }), "8% over your £95.00 guide price.");
+  assert.equal(guideLine({ guidePrice: 101.99 }, { price: 9500, postage: 699 }), "Right on your £101.99 guide price.");
+  assert.equal(guideLine({}, {}), undefined);
+});
+
+test("a guide price set more than 30 days ago is flagged as possibly out of date", () => {
+  const line = (guideDate: string) => dealNotification(search({ guidePrice: 130, guideDate }), listing(), null, null, now, false).message.split("\n")[3];
+  assert.equal(line("2026-11-01"), "21% under your £130.00 guide price.");
+  assert.equal(line("2026-10-20"), "21% under your £130.00 guide price.");
+  assert.equal(line("2026-10-18"), "21% under your £130.00 guide price (set 2026-10-18, so check it's still right).");
+});
+
+test("a great deal is sent at high priority, one over the guide price at low, and the rest at the default", () => {
+  const priority = (settings: Record<string, unknown>, price: number) => dealNotification(search(settings), listing({ price, postage: 0 }), null, null, now, false).priority;
+  assert.equal(priority({ guidePrice: 100 }, 8000), 4);
+  assert.equal(priority({ guidePrice: 100 }, 9000), undefined);
+  assert.equal(priority({ guidePrice: 100 }, 10500), 2);
+  assert.equal(priority({}, 100), undefined);
+  assert.ok(!Object.hasOwn(dealNotification(search(), listing(), null, null, now, false), "priority"));
+});
+
+test("a unit search adds a price per unit, and says the size came from the title", () => {
+  const kit = listing({ title: "Corsair Vengeance 32GB (2x16GB) DDR4", price: 4500, postage: 499 });
+  assert.equal(dealNotification(search({ unit: "GB" }), kit, null, null, now, false).message.split("\n")[3], "About £1.56 per GB (32 GB, read from the title).");
+  const drive = listing({ title: "Crucial MX500 500GB SSD", price: 3000, postage: 0 });
+  assert.equal(dealNotification(search({ unit: "TB" }), drive, null, null, now, false).message.split("\n")[3], "About £60.00 per TB (0.5 TB, read from the title).");
+  assert.ok(!dealNotification(search({ unit: "GB" }), listing({ title: "DDR4 desktop memory" }), null, null, now, false).message.includes(" per GB"));
+});
+
+test("the alert says whether eBay's item details back the listing up, and lists what to check first", () => {
+  const message = (overrides: Partial<Listing>, settings: Record<string, unknown> = {}) => dealNotification(search(settings), listing(overrides), null, null, now, false).message;
+  assert.ok(message({ detailsMatch: true }).includes("\neBay's item details match what you asked for.\n"));
+  assert.ok(message({ detailsMatch: false }).includes("\neBay's item details don't confirm what you asked for.\n"));
+  assert.ok(!message({ detailsMatch: null }).includes("item details"));
+  assert.equal(message({ sellerFeedback: 3, variations: true }, { guidePrice: 400 }).split("\n").at(-1), "Check first: the seller has under 10 ratings; it's under half your guide price; the listing has more than one option, so this may be its lowest price.");
+  assert.ok(!message({}).includes("Check first"));
+  assert.ok(!message({ postage: null }).includes("Check first"));
+});
+
+test("a full alert keeps its lines in a fixed order", () => {
+  const all = listing({ title: "Corsair 32GB (2x16GB) DDR4", price: 4000, postage: 500, sellerType: "private", sellerFeedback: 4, detailsMatch: true });
+  const other = listing({ id: "v1|110000000002|0", price: 6000, postage: 0 });
+  const sent = dealNotification(search({ guidePrice: 60, unit: "GB" }), all, { place: 1, of: 2, other: 6000 }, null, now, false);
+  assert.deepEqual(sent.message.split("\n"), [
+    "Corsair 32GB (2x16GB) DDR4",
+    "£40.00 + £5.00 postage = £45.00",
+    "Used. Buy it now.",
+    "25% under your £60.00 guide price.",
+    "About £1.41 per GB (32 GB, read from the title).",
+    "Cheapest of 2 matches right now; the next is £60.00.",
+    "eBay's item details match what you asked for.",
+    "Private seller: 99.4% positive from 4 ratings.",
+    "Check first: the seller has under 10 ratings.",
+  ]);
+  assert.equal(sent.priority, 4);
+  assert.equal(other.price, 6000);
+});
+
+test("an alert never carries where the seller is or the listing's description", () => {
+  const sent = dealNotification(search({ guidePrice: 200, unit: "GB" }), listing({ city: "Sometown", postcode: "ZZ9***", summary: "A PRIVATE SUMMARY", ref: "v1|110000000001|0" }), null, null, now, false);
+  for (const hidden of ["Sometown", "ZZ9", "PRIVATE SUMMARY", "v1|"]) assert.ok(!JSON.stringify(sent).includes(hidden), hidden);
+});
+
+test("an ending-soon alert gives the bid, the time left and the link, at high priority", () => {
+  const auction = listing({ buying: ["AUCTION"], price: 4100, postage: 699, bids: 7, endsAt: "2026-11-18T12:25:00.000Z", sellerType: "private" });
+  assert.deepEqual(endingNotification(search({ buying: ["auction"], guidePrice: 100 }), auction, now, false), {
+    title: "Ending soon: OptiPlex 7070 SFF",
+    message: "Dell OptiPlex 7070 SFF i5-9500 16GB RAM 256GB SSD\nCurrent bid £41.00 + £6.99 postage = £47.99\nUsed. Auction, 7 bids so far, ends in 25m.\nThe bid so far is 52% under your £100.00 guide price.\nPrivate seller: 99.4% positive from 1,234 ratings.",
+    tags: "hourglass_flowing_sand",
+    click: "https://www.ebay.co.uk/itm/110000000001",
+    priority: 4,
+  });
+  assert.equal(endingNotification(search({ buying: ["auction"] }), auction, now, true).title, "Sandbox ending soon: OptiPlex 7070 SFF");
+});
+
+test("an auction's bid is never judged against the guide price as if it were the price", () => {
+  const bid = listing({ buying: ["AUCTION"], price: 99, postage: 0, bids: 0, endsAt: "2026-11-24T12:00:00.000Z", title: "Corsair 32GB (2x16GB) DDR4" });
+  const sent = dealNotification(search({ buying: ["auction", "buy it now"], guidePrice: 120, unit: "GB" }), bid, null, null, now, false);
+  assert.ok(!sent.message.includes("guide price") && !sent.message.includes("per GB") && !sent.message.includes("Check first"), sent.message);
+  assert.ok(!Object.hasOwn(sent, "priority"));
+  const both = listing({ buying: ["AUCTION", "FIXED_PRICE"], price: 9000, postage: 0 });
+  assert.ok(dealNotification(search({ buying: ["auction", "buy it now"], guidePrice: 120 }), both, null, null, now, false).message.includes("25% under your £120.00 guide price."));
+});
+
+test("an ending-soon alert words the bid against the guide price as a bid, under, over or level", () => {
+  const line = (price: number) => endingNotification(search({ buying: ["auction"], guidePrice: 100 }), listing({ buying: ["AUCTION"], price, postage: 0, endsAt: "2026-11-18T12:25:00.000Z" }), now, false).message.split("\n")[3];
+  assert.equal(line(8040), "The bid so far is 19% under your £100.00 guide price.");
+  assert.equal(line(10040), "The bid so far is 1% over your £100.00 guide price.");
+  assert.equal(line(10000), "The bid so far is right on your £100.00 guide price.");
+  assert.ok(!endingNotification(search({ buying: ["auction"] }), listing({ buying: ["AUCTION"] }), now, false).message.includes("guide"));
 });

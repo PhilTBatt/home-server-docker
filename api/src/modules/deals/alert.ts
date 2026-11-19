@@ -1,5 +1,5 @@
 import type { Notification } from "../notify/notifier.js";
-import { isAuctionOnly, totalPrice, type Standing } from "./match.js";
+import { cautions, guidePercent, isAuctionOnly, priorityFor, totalPrice, underGuide, unitPrice, type Standing } from "./match.js";
 import type { Search } from "./searches.js";
 import type { Listing } from "./source.js";
 
@@ -53,9 +53,45 @@ function standingLine(listing: Listing, place: Standing | null): string | null {
 }
 
 function sellerLine(listing: Listing): string | null {
-  if (listing.sellerPercent === null) return null;
+  const kind = listing.sellerType === "business" ? "Business seller" : listing.sellerType === "private" ? "Private seller" : "Seller";
+  if (listing.sellerPercent === null) return listing.sellerType === null ? null : `${kind}.`;
   const ratings = listing.sellerFeedback === null ? "" : ` from ${listing.sellerFeedback.toLocaleString("en-GB")} rating${listing.sellerFeedback === 1 ? "" : "s"}`;
-  return `Seller: ${listing.sellerPercent}% positive${ratings}.`;
+  return `${kind}: ${listing.sellerPercent}% positive${ratings}.`;
+}
+
+const guideGoesStaleAfter = 30 * 24 * 60 * 60 * 1000;
+
+function guideLine(search: Search, listing: Listing, now: Date): string | null {
+  const under = underGuide(search, listing);
+  if (under === null || search.guidePrice === null) return null;
+  const stale = search.guideDate !== null && now.getTime() - Date.parse(search.guideDate) > guideGoesStaleAfter;
+  const guide = `your ${money(search.guidePrice)} guide price${stale ? ` (set ${search.guideDate}, so check it's still right)` : ""}`;
+  if (under > 0) return `${under}% under ${guide}.`;
+  return under < 0 ? `${-under}% over ${guide}.` : `Right on ${guide}.`;
+}
+
+function bidLine(search: Search, listing: Listing): string | null {
+  const percent = guidePercent(search, listing);
+  if (percent === null || search.guidePrice === null) return null;
+  const guide = `your ${money(search.guidePrice)} guide price`;
+  if (percent > 0) return `The bid so far is ${percent}% under ${guide}.`;
+  return percent < 0 ? `The bid so far is ${-percent}% over ${guide}.` : `The bid so far is right on ${guide}.`;
+}
+
+function unitLine(search: Search, listing: Listing): string | null {
+  const per = unitPrice(search, listing);
+  if (per === null) return null;
+  return `About ${money(per.pence)} per ${per.unit} (${Number(per.amount.toFixed(2))} ${per.unit}, read from the title).`;
+}
+
+function detailsLine(listing: Listing): string | null {
+  if (listing.detailsMatch === null) return null;
+  return listing.detailsMatch ? "eBay's item details match what you asked for." : "eBay's item details don't confirm what you asked for.";
+}
+
+function cautionLine(search: Search, listing: Listing): string | null {
+  const found = cautions(search, listing).filter((caution) => !caution.startsWith("postage"));
+  return found.length === 0 ? null : `Check first: ${found.join("; ")}.`;
 }
 
 export function dealNotification(search: Search, listing: Listing, place: Standing | null, was: number | null, now: Date, sandbox: boolean): Notification {
@@ -65,15 +101,32 @@ export function dealNotification(search: Search, listing: Listing, place: Standi
     listing.title,
     drop ? `Was ${money(was)}, now ${priceLine(listing)}` : price,
     buyingLine(listing, now),
+    guideLine(search, listing, now),
+    unitLine(search, listing),
     standingLine(listing, place),
+    detailsLine(listing),
     sellerLine(listing),
+    cautionLine(search, listing),
   ];
   const kind = drop ? "price drop" : "deal";
+  const priority = priorityFor(search, listing);
   return {
     title: `${sandbox ? `Sandbox ${kind}` : `${kind[0].toUpperCase()}${kind.slice(1)}`}: ${search.name}`,
     message: lines.filter((line) => line !== null).join("\n"),
     tags: drop ? "chart_with_downwards_trend" : "moneybag",
     click: listing.url,
+    ...(priority === 3 ? {} : { priority }),
+  };
+}
+
+export function endingNotification(search: Search, listing: Listing, now: Date, sandbox: boolean): Notification {
+  const lines = [listing.title, `Current bid ${priceLine(listing)}`, buyingLine(listing, now), bidLine(search, listing), sellerLine(listing)];
+  return {
+    title: `${sandbox ? "Sandbox ending soon" : "Ending soon"}: ${search.name}`,
+    message: lines.filter((line) => line !== null).join("\n"),
+    tags: "hourglass_flowing_sand",
+    click: listing.url,
+    priority: 4,
   };
 }
 
