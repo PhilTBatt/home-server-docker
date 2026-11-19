@@ -50,6 +50,7 @@ What that means in practice:
 | `EBAY_ENVIRONMENT` | `production` or `sandbox` | while `DEALS=on` |
 | `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` | the keyset's App ID and Cert ID | while `DEALS=on` |
 | `NTFY_TOPIC` | the topic the alerts already use | while `DEALS=on` |
+| `DEALS_AI` | `on` or `off`: whether Claude's tools may read the listings | while `DEALS=on` |
 
 A missing switch, or a value that isn't one of those listed, stops the API starting and names the line.
 
@@ -93,27 +94,103 @@ Every search needs `id`, `name`, `switch` and `query`. Everything else is option
 | `sellerMinPercent`, `sellerMinFeedback` | Minimum positive-feedback percentage and number of ratings. A seller whose numbers eBay doesn't give is ruled out. |
 | `everyMinutes` | How often to check, 5 to 1440. Default 30. |
 | `dropPercent` | Alert again when a seen listing's price falls by this much since its last alert. |
+| `avoid` | Built-in lists of title words that rule a listing out, on top of `exclude`. Any of: `faulty`, `incomplete`, `parts only`, `lots`, `laptop ram`, `server ram`. The words in each are in `avoidLists` at the top of `searches.ts`. |
+| `sellerType` | `business` or `private`. Leave it out for either. A seller eBay hasn't labelled is let through. |
+| `postageShown` | `true` hides listings that show no postage price, which usually means collection only. |
+| `returnsOnly` | `true` asks eBay for listings that accept returns. |
+| `autoCorrect` | `true` lets eBay correct a misspelt query. |
+| `details`, `detailsMode` | eBay's own item details, like `{ "Form Factor": ["SFF"] }`. Needs a `categoryId`. See "Item details" below. |
+| `guidePrice`, `guideDate`, `greatPercent` | What you'd call a fair total price, in pounds, the day you set it, and how far under it counts as a great deal (default 20). See "Guide prices" below. |
+| `unit` | `GB` or `TB`: adds a price per unit to each alert, with the size read from the title. Only sensible when the search is for one kind of thing, like RAM kits or drives. |
+| `alertsPerDay` | This search's own daily limit on notifications, on top of the overall one. The rest wait until tomorrow. |
+| `endingSoonMinutes` | For auctions: one more alert when an auction you've already been told about is this close to ending, 5 to 720 and at least `everyMinutes`. |
 
 A mistyped setting name is refused, not ignored, so `"maxprice"` can't quietly remove a price limit. If the file has a problem, nothing is checked, and the problem (which search, which setting) shows in `/system/alerts`, and on the phone while `ALERTS=on`, until it's fixed.
 
 `limits` is optional: `callsPerDay` (default 1000, eBay's own default limit for this API is 5,000 a day), `alertsPerDay` (60) and `alertsPerCheck` (5).
 
+`quiet` is optional: `{ "from": "23:00", "to": "07:00", "allow": "great" }`. Between those times, by the clock in London, deal alerts are held and sent at the first check after. `"allow": "great"` lets great deals and ending-soon alerts through; leave it out and neither does. An ending-soon alert that was held is sent afterwards only if the auction is still inside its window. Two messages still arrive, silently: "now watching" (it only follows a change you just made) and the daily "alerts paused" notice. Check now doesn't override quiet hours.
+
 ## What's kept where
-- **In memory only:** the listings from each search's last check (titles, prices, links). They're gone on restart and never shown once they're more than six hours old.
-- **`deals/state.json`:** each search's fingerprint, when it started and was last checked, and today's counts. Nothing from eBay.
-- **With `DEALS_SEEN=disk` only:** the ids of listings already alerted, with times, and their price if the search uses `dropPercent`. Never titles, links or anything about the seller.
+- **In memory only:** the listings from each search's last check: title, prices, link, condition, the seller's rating and whether they're a business, the town and postcode district eBay shows, and eBay's short summary. They're gone on restart and never shown once they're more than six hours old. A listing read in full (description, item specifics, returns) is kept for half an hour, also only in memory.
+- **`deals/state.json`:** each search's fingerprint, when it started and was last checked, today's counts (overall and for each search), and which searches are snoozed. Nothing from eBay.
+- **With `DEALS_SEEN=disk` only:** the ids of listings already alerted, with times, their price if the search uses `dropPercent`, and a mark once an auction's ending-soon alert has gone. Never titles, links or anything about the seller.
 - **Never, anywhere:** seller names or ids. The watcher reads a seller's feedback numbers for the `sellerMin…` checks and the alert, and nothing else about them.
 
 With `DEALS_SEEN=memory`, a restart doesn't lose much: the watcher knows when each search was last checked with nothing held back, so its first check after a restart alerts only listings created since then. If the gap is more than a day, the search starts fresh with a "now watching" message. If alerts were being held back when it restarted (a failed send, or the daily limit), the ones already sent from that check can come again: repeating one is better than losing one.
 
 Deleting `state.json` while the API is stopped is safe: every search starts fresh and the day's counts start again. While it's running, the watcher writes the file back at its next check.
 
+## Item details
+Sellers fill in structured details on a listing (eBay calls them aspects): form factor, RAM size, processor. Matching on those catches listings with poor titles, but a seller who left them blank won't match, and those are often the bargains. So there are two modes:
+- `"detailsMode": "prefer"` (the default): every listing your other rules allow still alerts. One extra call asks eBay which of them also match the details, and the alert says so. Nothing is hidden.
+- `"detailsMode": "only"`: eBay returns only listings whose details match.
+
+The names and values have to be eBay's own, exactly. To see them for a query, on the server:
+```
+bash host/hub-get.sh "/deals/details?q=optiplex+7070"
+```
+The reply gives eBay's main category for those words (`categoryId`), other categories, and each detail name with its commonest values and how many listings have each. Add `&categoryId=179` to look inside one category. Then in the search: `"categoryId": 179, "details": { "Form Factor": ["SFF", "Small Form Factor"] }`. If eBay refuses a name or value, or warns about one, the search fails and the problem shows in the alerts with eBay's number. Whether eBay always warns about a wrong name couldn't be checked without real keys, so compare the first few alerts with the listings themselves. Each lookup is one eBay call, and at most one is allowed every ten seconds.
+
+## Guide prices
+`guidePrice` is your own number: what you'd call a fair price for the thing, postage included. Each alert then says how far under or over it the listing is, and:
+- at least `greatPercent` under (default 20): high priority, so the phone makes more of it, and it comes through quiet hours that allow great deals;
+- over the guide price: low priority, so it arrives silently;
+- anything else: as now.
+
+An auction's current bid isn't judged like this: a 99p opening bid isn't a great deal. Its ending-soon alert says how the bid compares, worded as a bid.
+
+Set `guideDate` to the day you chose the price. After 30 days the alert reminds you to check it's still right. The watcher never works a price out from eBay's listings: eBay's agreement doesn't allow using its data to suggest or model prices, so the judgement stays yours (record 0021).
+
+## What an alert says about the seller
+- **Business seller or private seller**, when eBay says which. The seller chooses this when they register, so treat it as a hint.
+- **Check first**, when something deserves a second look: under 10 ratings, a price under half your guide price, or a listing with more than one option (the price shown may be for the cheapest).
+
+Why the seller type matters, as the research for this read the sources (not legal advice):
+- Buying from a business, the Consumer Rights Act 2015 applies, and a sale made at a distance usually comes with 14 days to cancel under the Consumer Contracts Regulations 2013. https://www.legislation.gov.uk/ukpga/2015/15/section/2 and https://www.legislation.gov.uk/uksi/2013/3134/regulation/30
+- Buying from a private seller, the item only has to match its description. https://www.legislation.gov.uk/ukpga/1979/54/section/13
+- eBay's Money Back Guarantee covers an item that doesn't arrive, is faulty or doesn't match the listing, when you pay at eBay's checkout. Paying any part outside eBay loses it. A collected item is covered when the seller scans your collection code. https://www.ebay.co.uk/help/policies/ebay-money-back-guarantee-policy/ebay-money-back-guarantee-policy?id=4210
+
+## Snoozing a search
+Each switched-on search has a Snooze button on the hub page, and Wake while it's snoozed. A snoozed search isn't sent to eBay at all, even by Check now, so it costs no calls. The button snoozes for a day. For another length, or until woken:
+```
+bash host/hub-post.sh /deals/searches/optiplex-7070-sff/snooze '{"hours":72}'
+bash host/hub-post.sh /deals/searches/optiplex-7070-sff/snooze
+bash host/hub-post.sh /deals/searches/optiplex-7070-sff/wake
+```
+When a snooze ends, listings that appeared meanwhile alert in the usual way, cheapest first. Snoozes are kept in `state.json`, so they survive a restart. With `DEALS_SEEN=memory`, a search that was snoozed for more than a day and restarted in between starts fresh with a "now watching" message instead. Snoozing a search also clears any problem it was showing.
+
+## Letting Claude read the listings
+With `DEALS_AI=on`, two more MCP tools work:
+- `get_deal_matches`: the 15 cheapest current matches of every search, or up to 50 for one search when asked for it by id, with everything the watcher holds about each one.
+- `get_deal_listing`: one of those in full, by its item number: the seller's description as plain text, the item specifics, the condition note, returns, postage options, collection and stock. This asks eBay, once per listing every half hour, out of the day's calls, and at most 150 listings (or item-detail lookups) a day, so a session that tries to read everything can't use up the calls the searches need.
+
+With `DEALS_AI=off` both reply 403 and no listing leaves the API through them. The hub page isn't affected either way.
+
+The switch covers Claude's tools, not the API as a whole. `/deals/matches` and `/deals/listing/<item number>` still answer anything that has the API token, because that's how the hub page works. A Claude Code session in this repo could run `host/hub-get.sh` against them, so `CLAUDE.md` tells it not to while the switch is off.
+
+Two things to know before switching it on:
+- **Sellers write the text.** A title or description can say anything, including something written to steer an AI ("ignore your instructions and..."), and text hidden with styling in a description comes through as ordinary text. These two tools only read, and nothing on the hub can buy, bid or message a seller. But the text lands in a session that may have other tools: in Claude Code that's the shell, file edits and the hub's three actions. What stops a misled session acting is Claude Code asking you first, so don't run it with those prompts skipped while it's reading listings. Both tools and every reply say to treat seller text as claims to check, never as instructions.
+- **eBay's agreement.** The copy at https://developer.ebay.com/join/api-license-agreement that could be read while building this is dated 26 June 2023 and says nothing about AI. A research pass read a copy dated 3 September 2025 which it says bans training AI on eBay's data and passing data from "Restricted APIs" to non-eBay AI tools, without saying whether the Browse API is one. Reading listings to answer your own questions isn't training, but eBay hasn't confirmed it's allowed. That's why this has its own switch, and why record 0020 is yours to accept or not.
+
+## If the eBay keys leak
+The repo is public, so this is the order that matters:
+1. Make new keys first: on https://developer.ebay.com/my/keys rotate the Cert ID (the client secret). The old one stops working.
+2. Put the new value in `api/.env` and run `docker compose up --build --wait api`.
+3. Check eBay's usage page for calls you didn't make.
+4. Only then tidy the history. Removing the secret from git doesn't un-leak it: forks and caches keep copies.
+
+GitHub can stop most of this happening: turn on secret scanning and push protection in the repo's settings (Settings, then Code security). GitHub's own lists include eBay's key formats. https://docs.github.com/en/code-security/concepts/secret-security/secret-scanning-for-partners
+
+## What the API's log holds
+Requests for one listing in full are left out of the API's request log, so item numbers don't reach Docker's log files. Other deal requests are logged like any other, and their addresses hold nothing from eBay.
+
 ## When something's wrong
 Problems go through the same alerts as everything else on the server (`/system/alerts`, the daily summary, and the phone while `ALERTS=on`):
 - The search list has a problem.
 - eBay refused the keys, or says they can't search (straight away, and that source is left alone for an hour).
 - eBay refused one search, for example a category number it doesn't know (straight away; editing the search tries it again at the next check).
-- eBay couldn't be reached, sent something unreadable, or said too many requests (after three checks running).
+- eBay couldn't be reached, sent something unreadable, or said too many requests (after three checks running, or straight away when eBay asks for a wait of more than an hour).
 - The state file couldn't be saved.
 - The day's call limit is used up.
 
@@ -124,7 +201,14 @@ All behind the API token, and all 404 with "The deal watcher is switched off" wh
 - `GET /deals/matches`: the current listings for each search, cheapest first.
 - `POST /deals/check`: check every switched-on search now, and say how many were checked, how many alerts went, and whether any couldn't be sent. Refused if asked twice within a minute.
 
-The MCP server offers `get_deal_status` and `get_deal_searches`. Neither includes listings.
+- `GET /deals/listing/<item number>`: one current match in full. 404 if it isn't a current match, 410 if eBay says it's gone.
+- `GET /deals/details?q=<words>&categoryId=<number>`: eBay's item details for a query.
+- `POST /deals/searches/<id>/snooze` with `{"hours": 24}` (or nothing, for until woken), and `POST /deals/searches/<id>/wake`.
+- `GET /deals/ai/matches` and `GET /deals/ai/listing/<item number>`: the same listings, for the MCP tools. 403 while `DEALS_AI=off`.
+
+Nothing here changes `searches.json`, and there is still no route that buys, bids, makes an offer or messages anyone.
+
+The MCP server offers `get_deal_status` and `get_deal_searches`, which never include listings, and `get_deal_matches` and `get_deal_listing`, which do and only work while `DEALS_AI=on`.
 
 ## Staying inside eBay's terms
 Not legal advice, and the agreement changes, so read the live page: https://developer.ebay.com/join/api-license-agreement. What the watcher does about the parts that matter:
@@ -133,7 +217,8 @@ Not legal advice, and the agreement changes, so read the live page: https://deve
 - **No seller names or ids stored**, and nothing from eBay on disk at all with `DEALS_SEEN=memory`.
 - **Nothing stale shown**: matches older than six hours are dropped.
 - **No price history and no price modelling.** The agreement has a clause against using eBay's data to suggest or model prices, and another about deriving average prices, so the watcher keeps no record of prices over time.
-- **Listings don't go to an AI.** The agreement was updated in 2025 with clauses about AI, so the MCP tools leave listings out until eBay has said in writing that passing them to an assistant is allowed.
+- **Listings go to an AI only when you switch that on.** `DEALS_AI` has to be written out as `on` or `off`, and listings reach Claude's tools only while it's `on`. The reasons are in "Letting Claude read the listings".
+- **Only eBay's own API host is ever called**, checked again just before each request, and a wait eBay asks for is kept (at least ten minutes, at most a day).
 
 ## Adding another source later
 A source is one file that turns a search into a list of listings (`api/src/modules/deals/source.ts` has the shape, and `ebay.ts` is the first). To add one: write the adapter, add it to the `sources` list in `setup.ts`, and give searches `"source": "its-name"`. Only add a source that has an official API or feed. Each search belongs to one source, and the phone page groups by search, so listings from different places are never mixed in one list.
@@ -141,14 +226,20 @@ A source is one file that turns a search into a list of listings (`api/src/modul
 ## Not built, and why
 - **Price history per search**: eBay's terms on price modelling, and it would mean keeping eBay's data.
 - **Sold prices**: eBay's Marketplace Insights API isn't open to new developers.
-- **Listings in the MCP tools, and a PC-build skill on top**: waiting on eBay's answer about AI.
+- **A PC-build skill on top of the two listing tools**: the tools it needs exist now; the skill is its own piece of work.
+- **Ranking by price across listings, beyond "cheapest of N"**: close to modelling prices, so it waits for eBay's answer.
+- **A Snooze button on the notification itself**: it would put a link that changes something into a public ntfy topic and need a route with no token (record 0022).
+- **Editing searches from the phone**: a route that rewrites `searches.json` is a lot of new surface for something VS Code already does.
+- **Other marketplaces**: none passed the "official API an individual can get" test in November 2026. Gumtree, CeX, Back Market and PCPartPicker have no public API for buyers; Amazon's and AliExpress's need an affiliate account; Reddit's is closed to new apps; Vinted's is for business sellers. HotUKDeals has its own keyword alerts, which do the same job without code.
 
-Records 0016 to 0019 in `docs/decisions/` have the reasoning.
+Records 0016 to 0022 in `docs/decisions/` have the reasoning.
 
 ## Questions for eBay
-One ticket to eBay Developer Support would settle the three things held back:
+One ticket to eBay Developer Support would settle what's still open:
 1. For the Marketplace Account Deletion exemption: does saving only the item numbers of listings already notified, with no user data, count as persisting eBay data?
 2. May current Browse API search results be passed to an AI assistant, not for training, to answer my own questions about them? Is the Browse API a "Restricted API" under the licence?
 3. May I keep a record of the asking prices my own searches returned over time, to judge whether a new listing is good value for me?
+4. Does showing a price per GB for one listing, or saying where a listing ranks among the current results, count as using eBay content to suggest or model prices?
+5. Does a personal app with one user need a public privacy policy?
 
-A yes to 1 makes `DEALS_SEEN=disk` safe to use, a yes to 2 opens listings to the MCP tools, and a yes to 3 opens price history.
+A yes to 1 makes `DEALS_SEEN=disk` safe to use, a yes to 2 settles the question behind `DEALS_AI`, and a yes to 3 opens price history.

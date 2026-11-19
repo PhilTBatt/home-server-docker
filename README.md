@@ -40,7 +40,7 @@ I built it using my own ideas, with AI helping me plan and learn what I needed t
 New features are built switched off. Each switch is a line in `api/.env` set to exactly `on` or `off`. Anything else, or a missing switch, stops the API starting, so a typo can't quietly change what's on. `GET /system/features`, the phone page and the daily summary all show what's off. The MCP server has one switch of its own, `MCP_ACTIONS`, which `bash host/hub-mcp.sh read-only` turns off. Jobs that run on the server itself, like the nightly backup, are switched on and off by enabling or disabling their systemd timer.
 
 ### The deal watcher's settings
-`DEALS` switches it on. While it's on, `api/.env` also needs `DEALS_SEEN` (`memory` or `disk`), `EBAY_ENVIRONMENT` (`production` or `sandbox`), `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET`. Each search has its own `switch` in `deals/searches.json`. `docs/deals.md` has the rest.
+`DEALS` switches it on. While it's on, `api/.env` also needs `DEALS_SEEN` (`memory` or `disk`), `EBAY_ENVIRONMENT` (`production` or `sandbox`), `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` and `DEALS_AI` (`on` or `off`: whether Claude's tools may read the listings). Each search has its own `switch` in `deals/searches.json`. `docs/deals.md` has the rest.
 
 ### Jarvis's settings
 Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he starts.
