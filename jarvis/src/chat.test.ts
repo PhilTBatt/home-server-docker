@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { pricesPerMTok } from "./prices.js";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, askOnce, questionPrompt, chatModel, chatsLine, chatSystem, confirmMs, commandNote, costLine, lengthLineFor, listenNow, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
+import { apiChatSystem, askOnce, questionPrompt, chatModel, chatsLine, chatSystem, confirmMs, commandNote, costLine, heardLines, lengthLineFor, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
@@ -662,8 +662,8 @@ test("only a lone + or - is a rating; anything longer is a question", async () =
 });
 
 test("Jarvis's settings are printed in one line, as they're written in jarvis/.env", () => {
-  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, voice: "kokoro", kokoroVoice: "bm_fable", volume: 65, speechStart: "clause", log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_VOICE=kokoro, JARVIS_KOKORO_VOICE=bm_fable, JARVIS_VOLUME=65, JARVIS_SPEECH_START=clause, JARVIS_LOG=on");
-  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_VOICE=off, JARVIS_KOKORO_VOICE=bm_george, JARVIS_VOLUME=80, JARVIS_SPEECH_START=sentence, JARVIS_LOG=off");
+  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, voice: "kokoro", kokoroVoice: "bm_fable", volume: 65, speechStart: "clause", speechStop: "sentence", log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_VOICE=kokoro, JARVIS_KOKORO_VOICE=bm_fable, JARVIS_VOLUME=65, JARVIS_SPEECH_START=clause, JARVIS_SPEECH_STOP=sentence, JARVIS_LOG=on");
+  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", speechStop: "now", log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_VOICE=off, JARVIS_KOKORO_VOICE=bm_george, JARVIS_VOLUME=80, JARVIS_SPEECH_START=sentence, JARVIS_SPEECH_STOP=now, JARVIS_LOG=off");
 });
 
 test("the chats line says whether this chat is saved, and what it picks up", () => {
@@ -678,12 +678,68 @@ test("the chats line says whether this chat is saved, and what it picks up", () 
 test("lines typed before the chat starts reading are kept, not lost", { timeout: 5000 }, async () => {
   const input = new PassThrough();
   const lines = createInterface({ input });
-  const typed = listenNow(lines);
+  const heard = heardLines(lines, () => {});
   input.end("first\nsecond\n");
   await new Promise((resolve) => setTimeout(resolve, 20));
-  const heard: string[] = [];
-  for await (const line of typed) heard.push(line);
-  assert.deepEqual(heard, ["first", "second"]);
+  const got: string[] = [];
+  for await (const line of heard.lines) got.push(line);
+  assert.deepEqual(got, ["first", "second"]);
+});
+
+test("a line counts as typed early when it was typed before the prompt it's read at was shown", { timeout: 5000 }, async () => {
+  const input = new PassThrough();
+  const lines = createInterface({ input });
+  let shown = 0;
+  const heard = heardLines(lines, () => shown++);
+  const reading = heard.lines[Symbol.asyncIterator]();
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+  input.write("before any prompt\n");
+  await settle();
+  heard.prompt();
+  assert.equal((await reading.next()).value, "before any prompt");
+  assert.equal(heard.early(), true);
+  heard.prompt();
+  input.write("after the prompt\n");
+  assert.equal((await reading.next()).value, "after the prompt");
+  assert.equal(heard.early(), false);
+  input.write("while he was answering\n");
+  input.write("\n");
+  await settle();
+  heard.prompt();
+  assert.equal((await reading.next()).value, "while he was answering");
+  assert.equal(heard.early(), true);
+  heard.prompt();
+  assert.equal((await reading.next()).value, "");
+  assert.equal(heard.early(), true);
+  heard.prompt();
+  input.write("\n");
+  assert.equal((await reading.next()).value, "");
+  assert.equal(heard.early(), false);
+  assert.equal(shown, 5);
+  input.end();
+  assert.equal((await reading.next()).done, true);
+});
+
+test("heard lines end when the input ends, and an input that fails fails the reading after the lines before it", async () => {
+  async function* broken(): AsyncGenerator<string> {
+    yield "one";
+    yield "two";
+    throw new Error("input broke");
+  }
+  const heard = heardLines(broken(), () => {});
+  const got: string[] = [];
+  await assert.rejects(async () => {
+    for await (const line of heard.lines) got.push(line);
+  }, { message: "input broke" });
+  assert.deepEqual(got, ["one", "two"]);
+  async function* two(): AsyncGenerator<string> {
+    yield "a";
+    yield "b";
+  }
+  const ended = heardLines(two(), () => {});
+  const all: string[] = [];
+  for await (const line of ended.lines) all.push(line);
+  assert.deepEqual(all, ["a", "b"]);
 });
 
 test("a note from the engine, like a chat that couldn't be saved, goes on its own line after the answer's words", async () => {

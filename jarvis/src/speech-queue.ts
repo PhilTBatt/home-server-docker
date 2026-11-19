@@ -26,12 +26,14 @@ export type SpeechQueueDeps = {
   ahead?: number;
   limit?: number;
   failureLimit?: number;
+  after?: Promise<void>;
 };
 
 export type SpeechQueue = {
   add(sentence: string): void;
   end(): void;
   stop(): void;
+  finish(): boolean;
   done: Promise<void>;
   report(): SpeechReport;
 };
@@ -41,6 +43,8 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
   const limit = deps.limit ?? speechSentenceLimit;
   const failureLimit = deps.failureLimit ?? speechFailureLimit;
   const calledOff = new AbortController();
+  const makingOff = new AbortController();
+  const making = AbortSignal.any([calledOff.signal, makingOff.signal]);
   const waiting: string[] = [];
   const ready: Uint8Array[] = [];
   const report: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
@@ -51,6 +55,8 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
   let playedAll = false;
   let makeFailures = 0;
   let playFailures = 0;
+  let playing = false;
+  let clear = deps.after === undefined;
   let waking: (() => void)[] = [];
   const sinceMs = () => deps.now() - deps.since;
   const changed = () => {
@@ -59,6 +65,11 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
     for (const wake of all) wake();
   };
   const change = () => new Promise<void>((resolve) => waking.push(resolve));
+  const cleared = () => {
+    clear = true;
+    changed();
+  };
+  void deps.after?.then(cleared, cleared);
 
   const leaveWaiting = () => {
     report.left += waiting.length;
@@ -86,7 +97,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
         if (sentence === undefined) return;
         report.firstSentenceMs ??= sinceMs();
         try {
-          const sound = await unlessCalledOff(deps.make(sentence, calledOff.signal), calledOff.signal);
+          const sound = await unlessCalledOff(deps.make(sentence, making), making);
           if (over) {
             report.left++;
             return;
@@ -122,19 +133,20 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
     };
     try {
       for (;;) {
-        while (!over && ready.length === 0 && !madeAll) await change();
+        while (!over && (ready.length === 0 ? !madeAll : !clear)) await change();
         const sound = over ? undefined : ready.shift();
         if (sound === undefined) return;
         changed();
         const handed = sinceMs();
+        playing = true;
         try {
-          await unlessCalledOff(deps.play(sound, calledOff.signal), calledOff.signal);
+          await unlessCalledOff(deps.play(sound, calledOff.signal), calledOff.signal).finally(() => (playing = false));
           begun(handed);
           lastEnded = sinceMs();
           report.spoken++;
           playFailures = 0;
         } catch (error) {
-          if (over) {
+          if (calledOff.signal.aborted) {
             begun(handed);
             report.left++;
             return;
@@ -182,6 +194,15 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
       leaveAll();
       calledOff.abort(new Error("Speech was stopped"));
       changed();
+    },
+    finish() {
+      if (playedAll) return false;
+      if (madeAll && ready.length === 0) return playing;
+      report.stopped = true;
+      leaveAll();
+      makingOff.abort(new Error("Speech was stopped"));
+      changed();
+      return playing;
     },
     done,
     report: () => ({ ...report }),

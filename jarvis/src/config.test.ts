@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainDir, chatModes, defaultKokoroVoice, defaultVolume, engines, readConfig, readVolume, speechStarts, thinkingHistories, voiceModes } from "./config.js";
+import { brainDir, chatModes, defaultKokoroVoice, defaultVolume, engines, readConfig, readVolume, speechStarts, speechStops, thinkingHistories, voiceModes } from "./config.js";
 
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", speechStop: "now", log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", volume: 80, speechStart: "sentence", speechStop: "now", log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -285,4 +285,28 @@ test("JARVIS_SPEECH_START is checked after the volume and before JARVIS_LOG", ()
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_VOLUME: "loud", JARVIS_SPEECH_START: "word" }), { message: 'JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "loud"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_START: "word" }), { message: 'JARVIS_SPEECH_START must be sentence or clause, not "word"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_START: "clause" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
+});
+
+test("he stops talking at once when interrupted unless JARVIS_SPEECH_STOP says sentence", () => {
+  assert.deepEqual(speechStops, ["now", "sentence"]);
+  assert.equal(readConfig(base).speechStop, "now");
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_STOP: "" }).speechStop, "now");
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_STOP: "  " }).speechStop, "now");
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_STOP: "now" }).speechStop, "now");
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_STOP: " sentence " }).speechStop, "sentence");
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_START: "clause", JARVIS_SPEECH_STOP: "sentence" }).speechStart, "clause");
+});
+
+test("anything else in JARVIS_SPEECH_STOP stops Jarvis and is named, voice on or off", () => {
+  for (const voice of ["off", "kokoro"]) {
+    for (const value of ["word", "Now", "off", "clause", "now,sentence"]) {
+      assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_SPEECH_STOP: value }), { message: `JARVIS_SPEECH_STOP must be now or sentence, not "${value}"` });
+    }
+  }
+});
+
+test("JARVIS_SPEECH_STOP is checked after JARVIS_SPEECH_START and before JARVIS_LOG", () => {
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_START: "word", JARVIS_SPEECH_STOP: "word" }), { message: 'JARVIS_SPEECH_START must be sentence or clause, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_STOP: "word" }), { message: 'JARVIS_SPEECH_STOP must be now or sentence, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_STOP: "sentence" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
 });

@@ -2,13 +2,14 @@ import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 
 export const playerCommand = "aplay";
+export const killAfterMs = 2000;
 
 export type PlayerExit = { code: number | null; signal: NodeJS.Signals | null } | { error: NodeJS.ErrnoException };
 
 export type PlayerProcess = {
   stdin: Writable;
   stderr: Readable;
-  kill(): void;
+  kill(signal: "SIGTERM" | "SIGKILL"): void;
   ended: Promise<PlayerExit>;
 };
 
@@ -29,7 +30,7 @@ export function spawnPlayer(args: readonly string[], command = playerCommand): P
     child.once("error", (error) => resolve({ error }));
     child.once("close", (code, signal) => resolve({ code, signal }));
   });
-  return { stdin: child.stdin, stderr: child.stderr, kill: () => child.kill("SIGTERM"), ended };
+  return { stdin: child.stdin, stderr: child.stderr, kill: (signal) => child.kill(signal), ended };
 }
 
 export function shortError(text: string): string {
@@ -51,7 +52,7 @@ function failure(exit: PlayerExit, said: string): Error | null {
   return new Error(`${playerCommand} ${how}${detail === "" ? "" : `: ${detail}`}`);
 }
 
-export function startPlayer(options: { device: string; rate: number; spawn?: (args: readonly string[]) => PlayerProcess }): Player {
+export function startPlayer(options: { device: string; rate: number; spawn?: (args: readonly string[]) => PlayerProcess; killAfterMs?: number }): Player {
   if (!Number.isInteger(options.rate) || options.rate < 2000 || options.rate > 192_000) throw new Error(`The sound rate must be a whole number of Hz from 2000 to 192000, not ${options.rate}`);
   if (options.device.trim() === "") throw new Error("There's no sound device to play on");
   const child = (options.spawn ?? spawnPlayer)(playerArgs(options.device, options.rate));
@@ -92,7 +93,9 @@ export function startPlayer(options: { device: string; rate: number; spawn?: (ar
       if (stopped || exitedWith !== undefined) return;
       stopped = true;
       child.stdin.destroy();
-      child.kill();
+      child.kill("SIGTERM");
+      const hard = setTimeout(() => child.kill("SIGKILL"), options.killAfterMs ?? killAfterMs);
+      void child.ended.then(() => clearTimeout(hard));
     },
   };
 }

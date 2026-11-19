@@ -149,6 +149,50 @@ test("stopping calls off the sound and nothing fed in afterwards is spoken", asy
   assert.deepEqual([made, signals.length], [[], 0]);
 });
 
+test("finishing lets the sentence that's playing end and says so, and nothing fed in afterwards is spoken", async () => {
+  let ended = () => {};
+  const played: number[][] = [];
+  const { speech, made } = setUp({
+    play: (sound) => {
+      played.push([...sound]);
+      return new Promise<void>((resolve) => (ended = resolve));
+    },
+  });
+  speech.text("One. Two. ");
+  await turn();
+  assert.deepEqual(played, [[1]]);
+  assert.equal(speech.finish(), true);
+  speech.text("Three. Four.");
+  speech.restart();
+  speech.end();
+  await turn();
+  assert.equal(await Promise.race([speech.done().then(() => "done"), turn().then(() => "playing")]), "playing");
+  ended();
+  await speech.done();
+  assert.deepEqual([made, played], [["One."], [[1]]]);
+  assert.deepEqual([speech.report().spoken, speech.report().stopped], [1, true]);
+  const idle = setUp();
+  assert.equal(idle.speech.finish(), false);
+  await idle.speech.done();
+  assert.equal(idle.speech.report().stopped, true);
+});
+
+test("the first sound waits for the last answer's speech, even after starting again", async () => {
+  let over = () => {};
+  const after = new Promise<void>((resolve) => (over = resolve));
+  const { speech, played } = setUp({ after });
+  speech.text("One. ");
+  speech.restart();
+  speech.text("Again. Two.");
+  speech.end();
+  await turn();
+  await turn();
+  assert.deepEqual(played, []);
+  over();
+  await speech.done();
+  assert.equal(played.length, 2);
+});
+
 test("once the answer has ended, anything more fed in is ignored, and ending twice is harmless", async () => {
   const { speech, made } = setUp();
   speech.text("One.");

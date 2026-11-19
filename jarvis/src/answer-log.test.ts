@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { answerLogFile, errorKind, logLine, logVersion, speechLine, startAnswerLog, type LogContext, type Outcome } from "./answer-log.js";
+import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
-const apiKeep: LogContext = { engine: "api", thinking: "keep", model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence" };
+const apiKeep: LogContext = { engine: "api", thinking: "keep", model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now" };
 const at = new Date("2026-11-16T18:30:00.000Z");
 
 const answered: Answer = {
@@ -100,7 +101,7 @@ test("an unknown largest request is logged as unknown, not zero", () => {
 
 test("a retry is logged as yes or no for the plain API call, and unknown for the Agent SDK", () => {
   assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: false } } }).retried, false);
-  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
+  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
 });
 
 test("refused tools are counted, not named, and an answer with none counts zero", () => {
@@ -130,8 +131,8 @@ test("times are logged to the whole millisecond, and costs without floating-poin
 });
 
 test("the thinking setting is only logged for the plain API engine, which is the only one it changes", () => {
-  assert.equal(logLine({ engine: "sdk", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence" }, "c", 1, at, { answer: answered }).thinking, null);
-  assert.equal(logLine({ engine: "api", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence" }, "c", 1, at, { answer: answered }).thinking, "drop");
+  assert.equal(logLine({ engine: "sdk", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now" }, "c", 1, at, { answer: answered }).thinking, null);
+  assert.equal(logLine({ engine: "api", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now" }, "c", 1, at, { answer: answered }).thinking, "drop");
 });
 
 test("each line says whether the chat was fresh or resumed", () => {
@@ -354,6 +355,15 @@ test("with a voice, each answer's line says how his speech was set to start, and
   assert.equal("speechStart" in logLine(apiKeep, "chat-1", 1, at, { error: "Overloaded" }), false);
 });
 
+test("with a voice, each answer's line says how he was set to stop when interrupted, and without one it doesn't", () => {
+  assert.equal(logLine({ ...apiKeep, voice: "kokoro", speechStop: "sentence" }, "chat-1", 1, at, { answer: answered }).speechStop, "sentence");
+  assert.equal(logLine({ ...apiKeep, voice: "kokoro" }, "chat-1", 1, at, { error: "Overloaded" }).speechStop, "now");
+  assert.equal("speechStop" in logLine({ ...apiKeep, speechStop: "sentence" }, "chat-1", 1, at, { answer: answered }), false);
+  assert.equal("speechStop" in logLine(apiKeep, "chat-1", 1, at, { error: "Overloaded" }), false);
+  const keys = Object.keys(logLine({ ...apiKeep, voice: "kokoro" }, "chat-1", 1, at, { answer: answered }));
+  assert.equal(keys.indexOf("speechStop"), keys.indexOf("speechStart") + 1);
+});
+
 test("a speech line has the answer it belongs to, its three times in whole milliseconds and its counts, and never the reason a sentence failed", () => {
   assert.deepEqual(speechLine("chat-1", 3, at, spokenWell), {
     v: logVersion,
@@ -394,9 +404,9 @@ function speechLog() {
 test("an answer's speech is logged against that answer's question number", async () => {
   const { log, written } = speechLog();
   await log.record({ answer: answered });
-  await log.speech(spokenWell);
+  await log.speech(Promise.resolve(spokenWell));
   await log.record({ answer: answered });
-  await log.speech({ ...spokenWell, firstSoundMs: 2222 });
+  await log.speech(Promise.resolve({ ...spokenWell, firstSoundMs: 2222 }));
   assert.deepEqual(
     written.map((line) => [line.kind ?? "answer", line.question, line.firstSoundMs]),
     [
@@ -409,13 +419,40 @@ test("an answer's speech is logged against that answer's question number", async
   assert.equal(JSON.stringify(written).includes("Kokoro replied 500"), false);
 });
 
+test("a speech is logged against the answer that was last logged when its speech was handed over, however late the speech ends", async () => {
+  const { log, written } = speechLog();
+  await log.record({ answer: answered });
+  let ended = (_report: typeof spokenWell) => {};
+  const first = log.speech(new Promise((resolve) => (ended = resolve)));
+  await log.record({ answer: answered });
+  await log.speech(Promise.resolve({ ...spokenWell, firstSoundMs: 2222 }));
+  ended({ ...spokenWell, firstSoundMs: 1111 });
+  await first;
+  assert.deepEqual(
+    written.map((line) => [line.kind ?? "answer", line.question, line.firstSoundMs]),
+    [
+      ["answer", 1, undefined],
+      ["answer", 2, undefined],
+      ["speech", 2, 2222],
+      ["speech", 1, 1111],
+    ],
+  );
+  await log.record({ error: "Overloaded" });
+  let late = (_report: typeof spokenWell) => {};
+  const afterFailure = log.speech(new Promise((resolve) => (late = resolve)));
+  await log.record({ answer: answered });
+  late(spokenWell);
+  await afterFailure;
+  assert.deepEqual(written.slice(4).map((line) => [line.kind ?? "answer", line.question]), [["answer", 3], ["answer", 4]]);
+});
+
 test("no speech is logged before any answer, or after a question that failed", async () => {
   const { log, written } = speechLog();
-  await log.speech(spokenWell);
+  await log.speech(Promise.resolve(spokenWell));
   assert.equal(written.length, 0);
   await log.record({ answer: answered });
   await log.record({ error: "Overloaded" });
-  await log.speech(spokenWell);
+  await log.speech(Promise.resolve(spokenWell));
   assert.deepEqual(
     written.map((line) => line.kind ?? "answer"),
     ["answer", "answer"],
@@ -428,7 +465,42 @@ test("once the log is broken, speech isn't logged either", async () => {
   const log = startAnswerLog({ ...apiKeep, voice: "kokoro" }, { append: async () => (fail ? Promise.reject(new Error("disk full")) : undefined), now: () => at, chat: "chat-1", warn: (message) => warned.push(message), costSoFar: () => null });
   await log.record({ answer: answered });
   fail = true;
-  await log.speech(spokenWell);
-  await log.speech(spokenWell);
+  await log.speech(Promise.resolve(spokenWell));
+  await log.speech(Promise.resolve(spokenWell));
   assert.equal(warned.length, 1);
+});
+
+test("a speech that was still being spoken when the log broke isn't written", async () => {
+  const warned: string[] = [];
+  let tries = 0;
+  let fail = false;
+  const log = startAnswerLog({ ...apiKeep, voice: "kokoro" }, { append: async () => {
+      tries++;
+      if (fail) throw new Error("disk full");
+    }, now: () => at, chat: "chat-1", warn: (message) => warned.push(message), costSoFar: () => null });
+  await log.record({ answer: answered });
+  let end = (_report: SpeechReport) => {};
+  const spoken = log.speech(new Promise<SpeechReport>((resolve) => (end = resolve)));
+  fail = true;
+  await log.record({ answer: answered });
+  end(spokenWell);
+  await spoken;
+  assert.deepEqual([tries, warned.length], [2, 1]);
+});
+
+test("an answer and a speech line that fail to be written at the same moment give one warning", async () => {
+  const warned: string[] = [];
+  let tries = 0;
+  let fail = false;
+  const log = startAnswerLog({ ...apiKeep, voice: "kokoro" }, { append: async () => {
+      tries++;
+      if (fail) throw new Error("disk full");
+    }, now: () => at, chat: "chat-1", warn: (message) => warned.push(message), costSoFar: () => null });
+  await log.record({ answer: answered });
+  let end = (_report: SpeechReport) => {};
+  const spoken = log.speech(new Promise<SpeechReport>((resolve) => (end = resolve)));
+  fail = true;
+  end(spokenWell);
+  await Promise.all([log.record({ answer: answered }), spoken]);
+  assert.deepEqual([tries, warned.length], [3, 1]);
 });

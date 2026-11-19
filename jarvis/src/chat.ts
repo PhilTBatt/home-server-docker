@@ -2,7 +2,7 @@ import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
 import type { SpeechReport } from "./speech-queue.js";
-import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type ThinkingHistory } from "./config.js";
+import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type SpeechStop, type ThinkingHistory } from "./config.js";
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
 import type { Prices } from "./prices.js";
 import { withPausableTimeout } from "./run.js";
@@ -60,12 +60,14 @@ export const greeting = "Jarvis is listening. Type a message and press Enter, ne
 export const stoppedMessage = "Jarvis has stopped. Start him again to carry on.";
 export const restartNote = "that went wrong, so starting again without the earlier thinking";
 export const retryNote = "couldn't reach the API, so trying once more";
+export const hushNotes = { talking: "stopped talking", unspoken: "the last answer won't be spoken", finishing: "stopping after this sentence" };
 
 export type ChatDeps = {
   lines: AsyncIterable<string>;
   session: AgentSession;
   write: (text: string) => void;
   prompt: () => void;
+  early?: () => boolean;
   questionTimeoutMs: number;
   record?: (outcome: Outcome) => Promise<void>;
   rate?: (rating: Rating) => Promise<RateResult>;
@@ -79,8 +81,9 @@ export type ChatDeps = {
   newChat?: () => Promise<NewChat>;
   confirm?: (prompt: string, signal: AbortSignal) => Promise<string | null>;
   describe?: (tool: string, input: unknown, signal: AbortSignal) => Promise<string>;
-  speak?: () => AnswerSpeech;
-  recordSpeech?: (report: SpeechReport) => Promise<void>;
+  speak?: (after?: Promise<void>) => AnswerSpeech;
+  speechStop?: SpeechStop;
+  recordSpeech?: (report: Promise<SpeechReport>) => Promise<void>;
 };
 
 export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[] };
@@ -89,7 +92,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void> };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[] };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
@@ -172,9 +175,48 @@ export function withSizeLine(message: string, sizeLine: string | null): string {
   return sizeLine === null ? message : `${message}\n\n${sizeLine}`;
 }
 
-export function listenNow(lines: AsyncIterable<string>): AsyncIterable<string> {
-  const heard = lines[Symbol.asyncIterator]();
-  return { [Symbol.asyncIterator]: () => heard };
+export type HeardLines = { lines: AsyncIterable<string>; prompt: () => void; early: () => boolean };
+
+export function heardLines(source: AsyncIterable<string>, prompt: () => void): HeardLines {
+  const heard: { text: string; prompts: number }[] = [];
+  let prompts = 0;
+  let last = 0;
+  let over = false;
+  let problem: { error: unknown } | null = null;
+  let wake = () => {};
+  void (async () => {
+    try {
+      for await (const text of source) {
+        heard.push({ text, prompts });
+        wake();
+      }
+    } catch (error) {
+      problem = { error };
+    } finally {
+      over = true;
+      wake();
+    }
+  })();
+  async function* lines(): AsyncGenerator<string> {
+    for (;;) {
+      while (heard.length === 0 && !over) await new Promise<void>((resolve) => (wake = resolve));
+      const next = heard.shift();
+      if (next === undefined) {
+        if (problem !== null) throw problem.error;
+        return;
+      }
+      last = next.prompts;
+      yield next.text;
+    }
+  }
+  return {
+    lines: lines(),
+    prompt: () => {
+      prompts++;
+      prompt();
+    },
+    early: () => last < prompts,
+  };
 }
 
 export function promptWhileOpen(lines: PromptLine): () => void {
@@ -260,8 +302,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "volume" | "speechStart" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "volume" | "speechStart" | "speechStop" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_LOG=${config.log ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -303,7 +345,7 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
   };
   const newLine = () => (lineEnded ? "" : "\n");
   show("Jarvis: ");
-  const speech = deps.speak?.() ?? null;
+  const speech = deps.speak?.(state.finishing.length === 0 ? undefined : Promise.all(state.finishing.map((old) => old.done())).then(() => {})) ?? null;
   state.speech = speech;
   let waiting: Promise<unknown> = Promise.resolve();
   const asking = new AbortController();
@@ -388,22 +430,48 @@ async function reply(deps: ChatDeps, message: string, state: ChatState): Promise
   }
   await deps.record?.({ answer });
   if (speech !== null) {
-    state.speechLogged = speech
-      .done()
-      .then(() => deps.recordSpeech?.(speech.report()))
-      .catch(() => {});
+    const over = speech.done().then(() => speech.report());
+    const logged = (deps.recordSpeech?.(over) ?? over).catch(() => {});
+    state.speechLogged = Promise.all([state.speechLogged, logged]).then(() => {});
   }
   return "answered";
 }
 
-async function settle(deps: ChatDeps, state: ChatState): Promise<void> {
+function writeSpeechNotes(deps: ChatDeps, report: SpeechReport, hushed: string | null): void {
+  for (const note of [...(hushed === null ? [] : [hushed]), ...speechNotes(report)]) deps.write(`  (${note})\n`);
+}
+
+function hushNote(report: SpeechReport, finishing: boolean): string {
+  if (finishing) return hushNotes.finishing;
+  return report.firstSoundMs === null ? hushNotes.unspoken : hushNotes.talking;
+}
+
+async function settle(deps: ChatDeps, state: ChatState, hushed = false): Promise<void> {
+  const speech = state.speech;
+  const finishing = state.finishing.splice(0);
+  state.speech = null;
+  const going = speech?.report().stopped === false;
+  for (const old of finishing) old.stop();
+  speech?.stop();
+  await speech?.done();
+  await state.speechLogged;
+  if (speech === null) return;
+  const report = speech.report();
+  writeSpeechNotes(deps, report, hushed && going && report.stopped ? hushNote(report, false) : null);
+}
+
+async function hush(deps: ChatDeps, state: ChatState): Promise<void> {
+  if (deps.speechStop !== "sentence") return settle(deps, state, true);
   const speech = state.speech;
   if (speech === null) return;
   state.speech = null;
-  speech.stop();
-  await speech.done();
-  await state.speechLogged;
-  for (const note of speechNotes(speech.report())) deps.write(`  (${note})\n`);
+  state.finishing.push(speech);
+  const letGo = () => (state.finishing = state.finishing.filter((old) => old !== speech));
+  void speech.done().then(letGo, letGo);
+  const going = !speech.report().stopped;
+  const playing = speech.finish();
+  const report = speech.report();
+  writeSpeechNotes(deps, report, going && report.stopped ? hushNote(report, playing) : null);
 }
 
 async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps> {
@@ -423,7 +491,7 @@ async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps>
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve() };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [] };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
@@ -433,7 +501,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       if (exitWords.includes(message.toLowerCase())) break;
       const rating = Object.hasOwn(ratingWords, message) ? ratingWords[message] : undefined;
       if (message === "") {
-        state.speech?.stop();
+        if (current.early?.() !== true) await hush(current, state);
       } else if (newWords.includes(message.toLowerCase())) {
         await settle(current, state);
         current = await startNewChat(current, state);
@@ -444,7 +512,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       } else if (overCap(current, state.lastRequestTokens)) {
         current.write(`  (${capNote(current.lengthCap)})\n`);
       } else {
-        await settle(current, state);
+        await hush(current, state);
         const outcome = await reply(current, message, state);
         if (current.session.stoppedReason() !== null) {
           if (outcome !== "stopped") current.write(`${stoppedMessage}\n`);

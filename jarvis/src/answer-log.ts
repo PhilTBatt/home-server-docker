@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, SpeechStart, ThinkingHistory, VoiceMode } from "./config.js";
+import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, SpeechStart, SpeechStop, ThinkingHistory, VoiceMode } from "./config.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
@@ -52,7 +52,7 @@ export type AnswerLog = {
   record: (outcome: Outcome) => Promise<void>;
   rate: (rating: Rating) => Promise<RateResult>;
   newChat: (lastRequestTokens: number | null) => Promise<void>;
-  speech: (report: SpeechReport) => Promise<void>;
+  speech: (report: Promise<SpeechReport>) => Promise<void>;
 };
 
 export type LogContext = {
@@ -66,6 +66,7 @@ export type LogContext = {
   sessionNotes: SessionNotesMode;
   voice: VoiceMode;
   speechStart: SpeechStart;
+  speechStop: SpeechStop;
 };
 
 export type LogLine = {
@@ -83,6 +84,7 @@ export type LogLine = {
   sessionNotes?: SessionNotesMode;
   voice?: VoiceMode;
   speechStart?: SpeechStart;
+  speechStop?: SpeechStop;
   ok: boolean;
   error: string | null;
   firstWordsMs: number | null;
@@ -153,7 +155,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     hubActions: context.hubActions,
     sessionNotes: context.sessionNotes,
     voice: context.voice,
-    ...(context.voice === "off" ? {} : { speechStart: context.speechStart }),
+    ...(context.voice === "off" ? {} : { speechStart: context.speechStart, speechStop: context.speechStop }),
     ok: answer !== null,
     error: "error" in outcome ? errorKind(outcome.error) : null,
     firstWordsMs: wholeMs(answer?.firstWordsMs ?? null),
@@ -205,8 +207,8 @@ export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): Answer
       await deps.append(`${JSON.stringify(line)}\n`);
       return true;
     } catch (error) {
+      if (!broken) deps.warn(`Couldn't write to the answer log, so the rest of this chat won't be logged: ${error instanceof Error ? error.message : String(error)}`);
       broken = true;
-      deps.warn(`Couldn't write to the answer log, so the rest of this chat won't be logged: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -233,8 +235,10 @@ export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): Answer
       await write({ v: logVersion, kind: "new chat", at: deps.now().toISOString(), chat: deps.chat, questions, lastRequestTokens });
     },
     async speech(report) {
-      if (broken || lastAnswered === null) return;
-      await write(speechLine(deps.chat, lastAnswered, deps.now(), report));
+      const question = lastAnswered;
+      const said = await report;
+      if (broken || question === null) return;
+      await write(speechLine(deps.chat, question, deps.now(), said));
     },
   };
 }

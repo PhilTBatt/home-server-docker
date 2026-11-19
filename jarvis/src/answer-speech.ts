@@ -10,11 +10,12 @@ export type AnswerSpeech = {
   restart(): void;
   end(): void;
   stop(): void;
+  finish(): boolean;
   done(): Promise<void>;
   report(): SpeechReport;
 };
 
-export type AnswerSpeechDeps = Pick<SpeechQueueDeps, "make" | "play" | "now" | "ahead" | "limit" | "failureLimit"> & { start: SpeechStart };
+export type AnswerSpeechDeps = Pick<SpeechQueueDeps, "make" | "play" | "now" | "ahead" | "limit" | "failureLimit" | "after"> & { start: SpeechStart };
 
 export type Speaker = { engine: SpeechEngine; device: string; startPlayer: (options: { device: string; rate: number }) => Player };
 
@@ -66,6 +67,10 @@ export function startAnswerSpeech(deps: AnswerSpeechDeps): AnswerSpeech {
     stop() {
       closed = true;
       current.queue.stop();
+    },
+    finish() {
+      closed = true;
+      return current.queue.finish();
     },
     done: () => current.queue.done,
     report: () => current.queue.report(),

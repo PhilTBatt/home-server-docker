@@ -649,15 +649,192 @@ test("left to its defaults, the forty-first sentence is the first one left out",
   await queue.done;
 });
 
-test("each sentence and each sound is handed the queue's own signal, which only stopping fires", async () => {
+test("each sentence is handed a signal that stopping or finishing fires, and each sound one that only stopping fires", async () => {
   const { queue, makes, plays } = setUp();
   queue.add("One.");
   queue.end();
   await turn();
   makes[0].resolve(Uint8Array.of(1));
   await turn();
-  assert.equal(makes[0].signal, plays[0].signal);
+  assert.notEqual(makes[0].signal, plays[0].signal);
   plays[0].resolve();
   await queue.done;
-  assert.equal(makes[0].signal.aborted, false);
+  assert.deepEqual([makes[0].signal.aborted, plays[0].signal.aborted], [false, false]);
+  for (const how of ["stop", "finish"] as const) {
+    const next = setUp();
+    next.queue.add("One.");
+    next.queue.add("Two.");
+    await turn();
+    next.makes[0].resolve(Uint8Array.of(1));
+    await turn();
+    if (how === "stop") next.queue.stop();
+    else next.queue.finish();
+    assert.deepEqual([next.makes[1].signal.aborted, next.plays[0].signal.aborted], [true, how === "stop"], how);
+    next.plays[0].resolve();
+    await next.queue.done;
+  }
+});
+
+test("finishing lets the sentence that's playing end, plays nothing after it, and calls off what's being made", async () => {
+  const { queue, makes, plays, clock } = setUp();
+  queue.add("One.");
+  queue.add("Two.");
+  queue.add("Three.");
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  assert.deepEqual([plays.length, makes.length], [1, 2]);
+  assert.equal(queue.finish(), true);
+  assert.equal(makes[1].signal.aborted, true);
+  queue.add("Four.");
+  queue.end();
+  await turn();
+  assert.equal(await settled(queue.done), false);
+  clock.at += 1500;
+  plays[0].resolve();
+  await queue.done;
+  assert.deepEqual([plays.length, makes.length], [1, 2]);
+  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, left: 2, stopped: true });
+});
+
+test("finishing with nothing playing says so and ends the speech at once", async () => {
+  const { queue, makes, plays } = setUp();
+  queue.add("One.");
+  await turn();
+  assert.equal(queue.finish(), false);
+  await queue.done;
+  assert.equal(makes[0].signal.aborted, true);
+  assert.equal(plays.length, 0);
+  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, left: 1, stopped: true });
+  const between = setUp();
+  between.queue.add("One.");
+  between.queue.add("Two.");
+  await turn();
+  between.makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  between.plays[0].resolve();
+  await turn();
+  assert.equal(between.plays.length, 1);
+  assert.equal(between.queue.finish(), false);
+  await between.queue.done;
+  assert.deepEqual([between.queue.report().spoken, between.queue.report().left, between.queue.report().stopped], [1, 1, true]);
+});
+
+test("finishing after everything has been said does nothing and isn't counted as a stop", async () => {
+  const { queue, makes, plays } = setUp();
+  queue.add("One.");
+  queue.end();
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  plays[0].resolve();
+  await queue.done;
+  assert.equal(queue.finish(), false);
+  assert.equal(queue.report().stopped, false);
+});
+
+test("stopping after finishing cuts the sentence short, and finishing twice still says a sentence is playing", async () => {
+  const { queue, makes, plays, clock } = setUp();
+  queue.add("One.");
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  clock.at += 700;
+  assert.equal(queue.finish(), true);
+  assert.equal(queue.finish(), true);
+  assert.equal(plays[0].signal.aborted, false);
+  queue.stop();
+  assert.equal(plays[0].signal.aborted, true);
+  assert.equal(await orStillWaiting(queue.done), undefined);
+  assert.deepEqual([queue.report().spoken, queue.report().left, queue.report().firstSoundMs, queue.report().stopped], [0, 1, 0, true]);
+});
+
+test("a sentence that fails to play after a finish counts as a failure, with its reason, and nothing more is played", async () => {
+  const { queue, makes, plays } = setUp();
+  queue.add("One.");
+  queue.add("Two.");
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  assert.equal(queue.finish(), true);
+  plays[0].reject(new Error("aplay stopped with code 1"));
+  await queue.done;
+  assert.equal(plays.length, 1);
+  assert.deepEqual([queue.report().failed, queue.report().left, queue.report().problem, queue.report().spoken], [1, 1, "aplay stopped with code 1", 0]);
+});
+
+test("finishing during the last sentence, with nothing after it, isn't a stop", async () => {
+  const { queue, makes, plays } = setUp();
+  queue.add("One.");
+  queue.end();
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  assert.equal(queue.finish(), true);
+  assert.equal(queue.report().stopped, false);
+  plays[0].resolve();
+  await queue.done;
+  assert.deepEqual([queue.report().stopped, queue.report().spoken, queue.report().left], [false, 1, 0]);
+  const making = setUp();
+  making.queue.add("One.");
+  making.queue.end();
+  await turn();
+  assert.equal(making.queue.finish(), false);
+  assert.equal(making.queue.report().stopped, true);
+  await making.queue.done;
+});
+
+test("the first sound waits for the last answer's speech to be over, while sentences are made ahead, and is timed from when it plays", async () => {
+  let over = () => {};
+  const after = new Promise<void>((resolve) => (over = resolve));
+  const { queue, makes, plays, clock } = setUp({ after });
+  queue.add("One.");
+  queue.add("Two.");
+  queue.add("Three.");
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  makes[1].resolve(Uint8Array.of(2));
+  await turn();
+  assert.deepEqual([plays.length, makes.length], [0, 2]);
+  clock.at += 3000;
+  over();
+  await turn();
+  assert.deepEqual(plays.map((play) => play.given), [[1]]);
+  assert.equal(makes.length, 3);
+  plays[0].resolve();
+  await turn();
+  assert.deepEqual(plays.map((play) => play.given), [[1], [2]]);
+  assert.equal(queue.report().firstSoundMs, 3000);
+  queue.stop();
+  await queue.done;
+});
+
+test("waiting for the last answer can be stopped or finished, and ends without playing anything", async () => {
+  for (const how of ["stop", "finish"] as const) {
+    const { queue, makes, plays } = setUp({ after: new Promise<void>(() => {}) });
+    queue.add("One.");
+    await turn();
+    makes[0].resolve(Uint8Array.of(1));
+    await turn();
+    if (how === "stop") queue.stop();
+    else assert.equal(queue.finish(), false);
+    assert.equal(await orStillWaiting(queue.done), undefined, how);
+    assert.deepEqual([plays.length, queue.report().left, queue.report().firstSoundMs], [0, 1, null], how);
+  }
+});
+
+test("a last answer whose speech failed doesn't hold the next one up, and nothing to say ends without waiting", async () => {
+  const failed = setUp({ after: Promise.reject(new Error("broke")) });
+  failed.queue.add("One.");
+  failed.queue.end();
+  await turn();
+  failed.makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  assert.equal(failed.plays.length, 1);
+  failed.plays[0].resolve();
+  await failed.queue.done;
+  const empty = setUp({ after: new Promise<void>(() => {}) });
+  empty.queue.end();
+  assert.equal(await orStillWaiting(empty.queue.done), undefined);
 });

@@ -1,5 +1,5 @@
 import { logVersion, type LogLine, type NewChatLine, type Rating, type RatingLine, type SpeechLine } from "./answer-log.js";
-import { chatModes, engines, hubActionsModes, hubToolsModes, lengthHintModes, sessionNotesModes, speechStarts, thinkingHistories, voiceModes, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type SessionNotesMode, type SpeechStart, type ThinkingHistory, type VoiceMode } from "./config.js";
+import { chatModes, engines, hubActionsModes, hubToolsModes, lengthHintModes, sessionNotesModes, speechStarts, speechStops, thinkingHistories, voiceModes, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type SessionNotesMode, type SpeechStart, type SpeechStop, type ThinkingHistory, type VoiceMode } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
 export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; speech?: SpeechLine[]; skipped: number };
@@ -16,6 +16,7 @@ export type Group = {
   sessionNotes: SessionNotesMode;
   voice: VoiceMode;
   speechStart: SpeechStart | null;
+  speechStop: SpeechStop | null;
   lines: LogLine[];
 };
 
@@ -46,6 +47,7 @@ export function isLogLine(value: unknown): value is LogLine {
     (line.sessionNotes === undefined || (sessionNotesModes as readonly unknown[]).includes(line.sessionNotes)) &&
     (line.voice === undefined || (voiceModes as readonly unknown[]).includes(line.voice)) &&
     (line.speechStart === undefined || (speechStarts as readonly unknown[]).includes(line.speechStart)) &&
+    (line.speechStop === undefined || (speechStops as readonly unknown[]).includes(line.speechStop)) &&
     typeof line.ok === "boolean" &&
     (line.error === null || typeof line.error === "string") &&
     numberFields.every((field) => isNumberOrNull(line[field])) &&
@@ -129,14 +131,14 @@ function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
   return thinking === null ? "API" : `API, ${thinking}`;
 }
 
-function order(group: Group): [number, number, string, number, number, number, number, number, number, number] {
-  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), hubActionsModes.indexOf(group.hubActions), sessionNotesModes.indexOf(group.sessionNotes), voiceModes.indexOf(group.voice), group.speechStart === null ? -1 : speechStarts.indexOf(group.speechStart)];
+function order(group: Group): [number, number, string, number, number, number, number, number, number, number, number] {
+  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), hubActionsModes.indexOf(group.hubActions), sessionNotesModes.indexOf(group.sessionNotes), voiceModes.indexOf(group.voice), group.speechStart === null ? -1 : speechStarts.indexOf(group.speechStart), group.speechStop === null ? -1 : speechStops.indexOf(group.speechStop)];
 }
 
 function compareGroups(a: Group, b: Group): number {
-  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, actionsA, notesA, voiceA, startA] = order(a);
-  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, actionsB, notesB, voiceB, startB] = order(b);
-  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || actionsA - actionsB || notesA - notesB || voiceA - voiceB || startA - startB;
+  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, actionsA, notesA, voiceA, startA, stopA] = order(a);
+  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, actionsB, notesB, voiceB, startB, stopB] = order(b);
+  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || actionsA - actionsB || notesA - notesB || voiceA - voiceB || startA - startB || stopA - stopB;
 }
 
 const chatNames: Record<ChatMode, string> = { fresh: "fresh", resume: "resumed" };
@@ -146,6 +148,7 @@ const actionNames: Record<HubActionsMode, string> = { off: "no hub actions", on:
 const notesNames: Record<SessionNotesMode, string> = { off: "no session notes", on: "session notes" };
 const voiceNames: Record<VoiceMode, string> = { off: "no voice", kokoro: "Kokoro voice" };
 const startNames: Record<SpeechStart, string> = { sentence: "whole first sentence", clause: "first clause early" };
+const stopNames: Record<SpeechStop, string> = { now: "stops at once", sentence: "finishes the sentence" };
 
 export function groupLines(lines: LogLine[]): Group[] {
   const groups = new Map<string, Group>();
@@ -158,8 +161,9 @@ export function groupLines(lines: LogLine[]): Group[] {
     const sessionNotes = line.sessionNotes ?? "off";
     const voice = line.voice ?? "off";
     const speechStart = voice === "off" ? null : (line.speechStart ?? "sentence");
-    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart]);
-    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, lines: [] };
+    const speechStop = voice === "off" ? null : (line.speechStop ?? "now");
+    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, speechStop]);
+    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, speechStop, lines: [] };
     group.lines.push(line);
     groups.set(key, group);
   }
@@ -171,6 +175,7 @@ export function groupLines(lines: LogLine[]): Group[] {
   const notesSettings = new Set(lines.map((line) => line.sessionNotes ?? "off"));
   const voiceSettings = new Set(lines.map((line) => line.voice ?? "off"));
   const startSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.speechStart ?? "sentence"])));
+  const stopSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.speechStop ?? "now"])));
   const label = (group: Group) => {
     const parts = [
       settingName(group.engine, group.thinking),
@@ -181,6 +186,7 @@ export function groupLines(lines: LogLine[]): Group[] {
       ...(notesSettings.size > 1 ? [notesNames[group.sessionNotes]] : []),
       ...(voiceSettings.size > 1 ? [voiceNames[group.voice]] : []),
       ...(startSettings.size > 1 && group.speechStart !== null ? [startNames[group.speechStart]] : []),
+      ...(stopSettings.size > 1 && group.speechStop !== null ? [stopNames[group.speechStop]] : []),
     ];
     const name = parts.join(", ");
     return models.size > 1 ? `${name} (${group.model})` : name;

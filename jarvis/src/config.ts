@@ -27,6 +27,9 @@ export type VoiceMode = (typeof voiceModes)[number];
 export const speechStarts = ["sentence", "clause"] as const;
 export type SpeechStart = (typeof speechStarts)[number];
 
+export const speechStops = ["now", "sentence"] as const;
+export type SpeechStop = (typeof speechStops)[number];
+
 export type Config = {
   apiKey: string;
   engine: Engine;
@@ -42,6 +45,7 @@ export type Config = {
   kokoroVoice: string;
   volume: number;
   speechStart: SpeechStart;
+  speechStop: SpeechStop;
   log: boolean;
 };
 
@@ -85,6 +89,10 @@ function isSpeechStart(value: string): value is SpeechStart {
   return (speechStarts as readonly string[]).includes(value);
 }
 
+function isSpeechStop(value: string): value is SpeechStop {
+  return (speechStops as readonly string[]).includes(value);
+}
+
 export function readConfig(env: Record<string, string | undefined>): Config {
   const apiKey = env.ANTHROPIC_API_KEY ?? "";
   if (apiKey === "") throw new Error("Missing setting: ANTHROPIC_API_KEY");
@@ -120,8 +128,10 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const volume = readVolume(env);
   const speechStart = env.JARVIS_SPEECH_START?.trim() || "sentence";
   if (!isSpeechStart(speechStart)) throw new Error(`JARVIS_SPEECH_START must be sentence or clause, not "${speechStart}"`);
+  const speechStop = env.JARVIS_SPEECH_STOP?.trim() || "now";
+  if (!isSpeechStop(speechStop)) throw new Error(`JARVIS_SPEECH_STOP must be now or sentence, not "${speechStop}"`);
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, volume, speechStart, log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, volume, speechStart, speechStop, log: log === "on" };
 }

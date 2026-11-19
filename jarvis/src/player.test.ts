@@ -3,18 +3,19 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
-import { after, test } from "node:test";
-import { playerArgs, playerCommand, shortError, spawnPlayer, startPlayer, type PlayerExit, type PlayerProcess } from "./player.js";
+import { after, mock, test } from "node:test";
+import { killAfterMs, playerArgs, playerCommand, shortError, spawnPlayer, startPlayer, type PlayerExit, type PlayerProcess } from "./player.js";
 
-type Fake = Omit<PlayerProcess, "stderr"> & { stderr: PassThrough; written: Buffer[]; killed: number; exit(exit: PlayerExit): void; ending: boolean; release(): void };
+type Fake = Omit<PlayerProcess, "stderr"> & { stderr: PassThrough; written: Buffer[]; killed: number; kills: string[]; exit(exit: PlayerExit): void; ending: boolean; release(): void };
 
-function fakeProcess(options: { holdWrites?: boolean } = {}): Fake {
+function fakeProcess(options: { holdWrites?: boolean; deaf?: boolean } = {}): Fake {
   let finish: (exit: PlayerExit) => void = () => {};
   const ended = new Promise<PlayerExit>((resolve) => (finish = resolve));
   let pending: (() => void) | null = null;
   const fake = {
     written: [] as Buffer[],
     killed: 0,
+    kills: [] as string[],
     ending: false,
     ended,
     stderr: new PassThrough(),
@@ -30,9 +31,10 @@ function fakeProcess(options: { holdWrites?: boolean } = {}): Fake {
         callback();
       },
     }),
-    kill() {
+    kill(signal: "SIGTERM" | "SIGKILL") {
       fake.killed++;
-      finish({ code: null, signal: "SIGTERM" });
+      fake.kills.push(signal);
+      if (options.deaf !== true || signal === "SIGKILL") finish({ code: null, signal });
     },
     exit(exit: PlayerExit) {
       finish(exit);
@@ -270,6 +272,40 @@ test("stopping while finishing still kills aplay, and finishing succeeds", async
   await finished;
 });
 
+test("aplay is asked to stop first, and killed outright only if it hasn't ended a short while later", async () => {
+  assert.equal(killAfterMs, 2000);
+  const deaf = fakeProcess({ deaf: true });
+  const player = startPlayer({ device: "plughw:1,0", rate: 24_000, spawn: () => deaf, killAfterMs: 30 });
+  await player.write(Uint8Array.of(1, 2));
+  player.stop();
+  assert.deepEqual(deaf.kills, ["SIGTERM"]);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(deaf.kills, ["SIGTERM"]);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(deaf.kills, ["SIGTERM", "SIGKILL"]);
+  await player.finish();
+  const fine = fakeProcess();
+  const listening = startPlayer({ device: "plughw:1,0", rate: 24_000, spawn: () => fine, killAfterMs: 30 });
+  listening.stop();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.deepEqual(fine.kills, ["SIGTERM"]);
+});
+
+test("unless told otherwise, the wait before killing outright is two seconds", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const deaf = fakeProcess({ deaf: true });
+    const player = playerOn(deaf);
+    player.stop();
+    mock.timers.tick(1999);
+    assert.deepEqual(deaf.kills, ["SIGTERM"]);
+    mock.timers.tick(1);
+    assert.deepEqual(deaf.kills, ["SIGTERM", "SIGKILL"]);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test("stopping twice kills aplay once", () => {
   const fake = fakeProcess();
   const player = playerOn(fake);
@@ -400,6 +436,18 @@ test("with a real process that never stops by itself, stopping ends it", async (
   player.stop();
   await player.finish();
   assert.ok(performance.now() - started < 5000);
+});
+
+test("with a real process that ignores being asked to stop, stopping still ends it", { timeout: 10_000 }, async () => {
+  const script = `process.on("SIGTERM",()=>{});process.stdin.resume();setInterval(()=>{},1000);setTimeout(()=>process.exit(0),8000)`;
+  const player = startPlayer({ device: "plughw:1,0", rate: 24_000, spawn: realPlayer(script), killAfterMs: 300 });
+  await player.write(new Uint8Array(1024));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const started = performance.now();
+  player.stop();
+  await player.finish();
+  const took = performance.now() - started;
+  assert.ok(took >= 250 && took < 3000, String(took));
 });
 
 test("with no such program, finishing says it isn't installed", async () => {

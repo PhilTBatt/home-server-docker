@@ -420,7 +420,7 @@ test("length-hint groups come note first then Jarvis, whatever order the log is 
   assert.deepEqual(rowOf(compareReport({ lines: [older as LogLine, line({ lengthHints: "note" })], skipped: 0 }), ""), ["API, keep"]);
 });
 
-const voiced = (overrides: Partial<LogLine> = {}) => line({ voice: "kokoro", speechStart: "sentence", ...overrides });
+const voiced = (overrides: Partial<LogLine> = {}) => line({ voice: "kokoro", speechStart: "sentence", speechStop: "now", ...overrides });
 
 function said(overrides: Partial<SpeechLine> = {}): SpeechLine {
   return { v: logVersion, kind: "speech", at: "2026-11-16T18:30:09.000Z", chat: "chat-1", question: 1, firstSentenceMs: 1200, firstSoundMadeMs: 2500, firstSoundMs: 2600, longestSilenceMs: 400, spoken: 3, failed: 0, left: 0, stopped: false, gaveUp: false, tooLong: false, ...overrides };
@@ -457,6 +457,17 @@ test("an answer line's way of starting speech is checked like its other settings
   assert.equal(isLogLine(voiced({ speechStart: "clause" })), true);
   assert.equal(isLogLine({ ...voiced(), speechStart: "word" }), false);
   assert.equal(isLogLine({ ...voiced(), speechStart: null }), false);
+});
+
+test("an answer line's way of stopping speech is checked like its other settings, and may be missing from older lines", () => {
+  assert.equal(isLogLine(voiced({ speechStop: "sentence" })), true);
+  assert.equal(isLogLine(voiced({ speechStop: "now" })), true);
+  const { speechStop, ...older } = voiced();
+  assert.equal(speechStop, "now");
+  assert.equal(isLogLine(older), true);
+  assert.equal(isLogLine({ ...voiced(), speechStop: "later" }), false);
+  assert.equal(isLogLine({ ...voiced(), speechStop: null }), false);
+  assert.equal(isLogLine({ ...voiced(), speechStop: "clause" }), false);
 });
 
 test("the summary has the median time to first sound for each setting, from the speech lines, and a dash where nothing was spoken", () => {
@@ -497,6 +508,32 @@ test("answers with each way of starting speech are compared side by side, whole 
       ["kokoro", "clause", 1],
     ],
   );
+});
+
+test("answers with each way of stopping speech are compared side by side, stopping at once first, named only when both are in the log", () => {
+  const both = [voiced({ speechStop: "sentence" }), voiced(), line()];
+  assert.deepEqual(rowOf(compareReport({ lines: both, skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice, stops at once", "API, keep, Kokoro voice, finishes the sentence"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechStop: "sentence" }), voiced({ speechStop: "sentence" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechStop: "sentence" }), line()], skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechStop: "sentence" }), line({ voice: "kokoro" })], skipped: 0 }), ""), ["API, keep, stops at once", "API, keep, finishes the sentence"]);
+  assert.deepEqual(
+    groupLines([voiced({ speechStop: "sentence" }), voiced(), line({ voice: "kokoro" }), line({ speechStop: "sentence" }), line()]).map((group) => [group.voice, group.speechStop, group.lines.length]),
+    [
+      ["off", null, 2],
+      ["kokoro", "now", 2],
+      ["kokoro", "sentence", 1],
+    ],
+  );
+});
+
+test("both settings of his speech are named when both vary, starting first, and each pair keeps its own row", () => {
+  const lines = [voiced({ speechStart: "clause", speechStop: "sentence" }), voiced({ speechStop: "sentence" }), voiced({ speechStart: "clause" }), voiced()];
+  assert.deepEqual(rowOf(compareReport({ lines, skipped: 0 }), ""), [
+    "API, keep, whole first sentence, stops at once",
+    "API, keep, whole first sentence, finishes the sentence",
+    "API, keep, first clause early, stops at once",
+    "API, keep, first clause early, finishes the sentence",
+  ]);
 });
 
 test("the speech table keeps a chat's first question apart from its later ones, with the median and the slowest of each time", () => {
