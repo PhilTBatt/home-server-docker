@@ -195,7 +195,7 @@ test("the watching message has one line per search and says what happens next", 
   );
   assert.deepEqual(notification, {
     title: "Deal watcher: now watching",
-    message: ["OptiPlex 7070 SFF: 37 match now, from £89.00.", "EliteDesk 800 G4: 1 matches now, from £120.00.", "DDR4 RAM: nothing matches yet.", "You'll hear about new ones as they appear."].join("\n"),
+    message: ["OptiPlex 7070 SFF: 37 matches now, from £89.00.", "EliteDesk 800 G4: 1 match now, from £120.00.", "DDR4 RAM: nothing matches yet.", "You'll hear about new ones as they appear."].join("\n"),
     tags: "eyes",
   });
 });

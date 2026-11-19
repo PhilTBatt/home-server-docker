@@ -90,7 +90,7 @@ export function moreNotification(search: Search, rest: Listing[], sandbox: boole
 export function watchingNotification(started: Started[], sandbox: boolean): Notification {
   const lines = started.map((search) => {
     if (search.count === 0 || search.cheapest === null) return `${search.name}: nothing matches yet.`;
-    return `${search.name}: ${search.count} match${search.count === 1 ? "es" : ""} now, from ${money(search.cheapest)}.`;
+    return `${search.name}: ${search.count} match${search.count === 1 ? "" : "es"} now, from ${money(search.cheapest)}.`;
   });
   lines.push("You'll hear about new ones as they appear.");
   return { title: sandbox ? "Deal watcher: now watching (sandbox)" : "Deal watcher: now watching", message: lines.join("\n"), tags: "eyes" };

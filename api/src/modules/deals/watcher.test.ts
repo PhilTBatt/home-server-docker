@@ -115,7 +115,7 @@ test("a new search's first check alerts nothing and sends one now-watching messa
   const summary = await watcher.run(at(0));
   assert.deepEqual(summary, { ran: true, checked: 1, alerts: 0, failed: 0, unsent: false });
   assert.deepEqual(world.sent, [
-    { title: "Deal watcher: now watching", message: "OptiPlex: 3 match now, from £91.00.\nYou'll hear about new ones as they appear.", tags: "eyes" },
+    { title: "Deal watcher: now watching", message: "OptiPlex: 3 matches now, from £91.00.\nYou'll hear about new ones as they appear.", tags: "eyes" },
   ]);
 });
 
@@ -151,7 +151,7 @@ test("several searches starting together share one now-watching message", async 
   world.found.set("optiplex", listings(1, 2));
   await watcher.run(at(0));
   assert.equal(world.sent.length, 1);
-  assert.equal(world.sent[0].message, "OptiPlex: 2 match now, from £91.00.\nDDR4 RAM: nothing matches yet.\nYou'll hear about new ones as they appear.");
+  assert.equal(world.sent[0].message, "OptiPlex: 2 matches now, from £91.00.\nDDR4 RAM: nothing matches yet.\nYou'll hear about new ones as they appear.");
 });
 
 test("listings the search's own rules turn down are never alerted, counted or shown", async () => {
@@ -373,7 +373,7 @@ test("changing what a search matches starts it fresh, with a now-watching messag
   world.sent.length = 0;
   world.list = listOf([{ ...optiplex, maxPrice: 150 }]);
   await watcher.run(at(30));
-  assert.deepEqual(world.sent, [{ title: "Deal watcher: now watching", message: "OptiPlex: 8 match now, from £91.00.\nYou'll hear about new ones as they appear.", tags: "eyes" }]);
+  assert.deepEqual(world.sent, [{ title: "Deal watcher: now watching", message: "OptiPlex: 8 matches now, from £91.00.\nYou'll hear about new ones as they appear.", tags: "eyes" }]);
   world.found.set("optiplex", listings(1, 2, 3, 4, 5, 6, 7, 8, 9));
   await watcher.run(at(60));
   assert.deepEqual(world.sent.slice(1).map((notification) => notification.click?.slice(-1)), ["9"]);
