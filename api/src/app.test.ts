@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
 import { buildApp as buildRealApp } from "./app.js";
 import type { Config } from "./config.js";
+import type { DealWatcher } from "./modules/deals/watcher.js";
 
 const config: Config = {
   apiToken: "test-token",
@@ -112,7 +113,11 @@ const protectedRoutes = [
   ["GET", "/system/alerts"],
   ["GET", "/system/features"],
   ["GET", "/memory/inbox"],
-  ["POST", "/memory/inbox"]
+  ["POST", "/memory/inbox"],
+  ["GET", "/deals/status"],
+  ["GET", "/deals/searches"],
+  ["GET", "/deals/matches"],
+  ["POST", "/deals/check"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -285,4 +290,84 @@ test("an HTTP login to the app still gets a cookie it can use", async () => {
   const response = await app.inject({ method: "POST", url: "/auth/login", payload: { token: "test-token" } });
   assert.equal(response.statusCode, 200);
   assert.doesNotMatch(String(response.headers["set-cookie"]), /; Secure(;|$)/);
+});
+
+const dealRoutes = [
+  ["GET", "/deals/status"],
+  ["GET", "/deals/searches"],
+  ["GET", "/deals/matches"],
+  ["POST", "/deals/check"],
+] as const;
+
+function fakeDealWatcher() {
+  const runs: boolean[] = [];
+  const watcher: DealWatcher = {
+    run: async (_now, force = false) => {
+      runs.push(force);
+      return { ran: true, checked: 2, alerts: 1, failed: 0, unsent: false };
+    },
+    problems: () => [],
+    status: () => ({ lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [] }),
+    searches: () => [],
+    matches: () => [],
+  };
+  return { watcher, runs };
+}
+
+test("the app serves the deal routes when the switch is on and it's given a watcher", async () => {
+  const { watcher, runs } = fakeDealWatcher();
+  const app = await buildRealApp({ logger: false, config, dealWatcher: watcher });
+  for (const [method, url] of dealRoutes) {
+    const response = await app.inject({ method, url, headers: goodHeader });
+    assert.equal(response.statusCode, 200, `${method} ${url}`);
+  }
+  assert.deepEqual(runs, [true]);
+});
+
+test("with the DEALS switch off, every deal route says so and the watcher is never touched", async () => {
+  const { watcher, runs } = fakeDealWatcher();
+  const app = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, deals: false } }, dealWatcher: watcher });
+  for (const [method, url] of dealRoutes) {
+    const response = await app.inject({ method, url, headers: goodHeader });
+    assert.equal(response.statusCode, 404, `${method} ${url}`);
+    assert.deepEqual(response.json(), { error: "The deal watcher is switched off" });
+  }
+  assert.deepEqual(runs, []);
+});
+
+test("without a watcher the deal routes say it's switched off, whatever the switch says", async () => {
+  const app = await buildApp({ logger: false });
+  for (const [method, url] of dealRoutes) {
+    const response = await app.inject({ method, url, headers: goodHeader });
+    assert.equal(response.statusCode, 404, `${method} ${url}`);
+  }
+});
+
+test("a check can't be started with a wrong token or the cookie of someone logged out", async () => {
+  const { watcher, runs } = fakeDealWatcher();
+  const app = await buildRealApp({ logger: false, config, dealWatcher: watcher });
+  for (const headers of [{}, { authorization: "Bearer wrong-token" }, { authorization: "test-token" }, { cookie: "hub_token=" }]) {
+    const response = await app.inject({ method: "POST", url: "/deals/check", headers });
+    assert.equal(response.statusCode, 401);
+  }
+  assert.deepEqual(runs, []);
+});
+
+test("no deal route ever shows the eBay keys, the ntfy topic or the API token", async () => {
+  const { watcher } = fakeDealWatcher();
+  const app = await buildRealApp({ logger: false, config, dealWatcher: watcher });
+  for (const [method, url] of dealRoutes) {
+    const response = await app.inject({ method, url, headers: goodHeader });
+    for (const secret of ["test-ebay-id", "test-ebay-secret", "test-topic", "test-token"]) {
+      assert.ok(!response.body.includes(secret), `${secret} in ${url}`);
+      assert.ok(!JSON.stringify(response.headers).includes(secret), `${secret} in the headers of ${url}`);
+    }
+  }
+});
+
+test("the deal status says where seen listings are kept and which eBay it talks to", async () => {
+  const { watcher } = fakeDealWatcher();
+  const app = await buildRealApp({ logger: false, config, dealWatcher: watcher });
+  const response = await app.inject({ method: "GET", url: "/deals/status", headers: goodHeader });
+  assert.deepEqual(response.json(), { lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], seen: "memory", environment: "production" });
 });

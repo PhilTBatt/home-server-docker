@@ -7,8 +7,10 @@ import { auth } from "./modules/auth/routes.js";
 import { system } from "./modules/system/routes.js";
 import { memory } from "./modules/memory/routes.js";
 import type { Config } from "./config.js";
+import { deals } from "./modules/deals/routes.js";
+import type { DealWatcher } from "./modules/deals/watcher.js";
 
-export async function buildApp(options: { logger: boolean; config: Config }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
 
   await app.register(cookie);
@@ -29,5 +31,12 @@ export async function buildApp(options: { logger: boolean; config: Config }) {
   app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
   app.register(system, { prefix: "/system", features: options.config.features });
   app.register(memory, { prefix: "/memory", features: options.config.features });
+  app.register(deals, {
+    prefix: "/deals",
+    features: options.config.features,
+    watcher: options.dealWatcher,
+    seen: options.config.deals.seen,
+    environment: options.config.deals.ebayEnvironment,
+  });
   return app;
 }

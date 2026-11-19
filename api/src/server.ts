@@ -11,7 +11,7 @@ import { dealWatcherFor } from "./modules/deals/setup.js";
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
 
-const app = await buildApp({ logger: true, config });
+const app = await buildApp({ logger: true, config, dealWatcher });
 app.log.info({ features: config.features }, "feature switches");
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
