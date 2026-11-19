@@ -92,6 +92,22 @@
  * @property {string[]} buying
  * @property {string} url
  * @property {string | null} endsAt
+ * @property {"business" | "private" | null} [sellerType]
+ * @property {number | null} [underGuide]
+ * @property {{ unit: string, amount: number, pence: number } | null} [perUnit]
+ * @property {boolean | null} [detailsMatch]
+ * @property {string[]} [cautions]
+ */
+
+/**
+ * @typedef {object} DealSearch
+ * @property {string} id
+ * @property {string} name
+ * @property {boolean} on
+ * @property {number | null} matches
+ * @property {boolean} snoozed
+ * @property {string | null} snoozedUntil
+ * @property {Record<string, number> | null} hidden
  */
 
 /**
@@ -113,6 +129,7 @@
  * @property {number} alertsPerDay
  * @property {string | null} note
  * @property {Problem[]} problems
+ * @property {{ from: string, to: string, allow: string, now: boolean } | null} [quiet]
  */
 
 /**
@@ -167,6 +184,7 @@ const noteStatus = byId("note-status");
 const dealsSection = byId("deals");
 const dealsStatus = byId("deals-status");
 const dealsList = byId("deals-list");
+const dealsSearches = byId("deals-searches");
 const checkDealsButton = /** @type {HTMLButtonElement} */ (byId("check-deals"));
 const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/"];
 /** @type {number | undefined} */ let refreshTimer;
@@ -430,8 +448,54 @@ function dealItem(listing) {
   const details = [dealPrice(listing)];
   if (listing.condition !== null) details.push(listing.condition);
   if (auction) details.push(listing.endsAt === null ? "auction" : `auction, ends ${new Date(listing.endsAt).toLocaleString()}`);
+  if (listing.sellerType === "business" || listing.sellerType === "private") details.push(`${listing.sellerType} seller`);
+  if (typeof listing.underGuide === "number") details.push(listing.underGuide < 0 ? `${-listing.underGuide}% over guide` : `${listing.underGuide}% under guide`);
+  if (listing.perUnit) details.push(`about ${formatMoney(listing.perUnit.pence)} per ${listing.perUnit.unit}`);
+  if (listing.detailsMatch === true) details.push("item details match");
+  if (Array.isArray(listing.cautions) && listing.cautions.length > 0) details.push(`check: ${listing.cautions.join("; ")}`);
   item.append(`: ${details.join(", ")}`);
   return item;
+}
+
+/**
+ * @param {DealSearch} search
+ * @returns {HTMLLIElement}
+ */
+function dealSearchItem(search) {
+  const hidden = Object.values(search.hidden ?? {}).reduce((sum, count) => sum + count, 0);
+  const found = search.matches === null ? "not checked yet" : `${search.matches} matching${hidden > 0 ? `, ${hidden} hidden by its rules` : ""}`;
+  const until = search.snoozedUntil === null ? "until woken" : `until ${new Date(search.snoozedUntil).toLocaleString()}`;
+  const item = listItem(`${search.name}: ${search.snoozed ? `snoozed ${until}` : found}. `);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = search.snoozed ? "Wake" : "Snooze for a day";
+  button.addEventListener("click", () => snoozeDealSearch(search, button));
+  item.append(button);
+  return item;
+}
+
+/**
+ * @param {DealSearch} search
+ * @param {HTMLButtonElement} button
+ */
+async function snoozeDealSearch(search, button) {
+  button.disabled = true;
+  const path = `/api/deals/searches/${encodeURIComponent(search.id)}/${search.snoozed ? "wake" : "snooze"}`;
+  try {
+    const response = search.snoozed
+      ? await fetch(path, { method: "POST" })
+      : await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hours: 24 }) });
+    if (response.ok) {
+      await loadDeals();
+      return;
+    }
+    /** @type {ApiError | null} */
+    const body = await response.json().catch(() => null);
+    dealsStatus.textContent = `Couldn't ${search.snoozed ? "wake" : "snooze"} ${search.name}: ${body?.error ?? `the API replied ${response.status}`}.`;
+  } catch {
+    dealsStatus.textContent = "Couldn't reach the API.";
+  }
+  button.disabled = false;
 }
 
 /**
@@ -457,18 +521,23 @@ function dealSummary(status) {
   const ran = status.lastRun === null ? "Not checked yet." : `Last checked ${new Date(status.lastRun).toLocaleString()}.`;
   const used = `Today: ${status.callsToday} of ${status.callsPerDay} calls, ${status.alertsToday} of ${status.alertsPerDay} alerts.`;
   const parts = [ran, used, ...status.problems.map((problem) => problem.message)];
+  if (status.quiet?.now) parts.push(`Quiet hours until ${status.quiet.to}: ${status.quiet.allow === "great" ? "only great deals and ending-soon alerts come through" : "alerts are held"}.`);
   if (status.note !== null) parts.push(status.note);
   return parts.join(" ");
 }
 
 async function loadDeals() {
-  const [statusResponse, matchesResponse] = await Promise.all([fetch("/api/deals/status"), fetch("/api/deals/matches")]);
+  const [statusResponse, matchesResponse, searchesResponse] = await Promise.all([fetch("/api/deals/status"), fetch("/api/deals/matches"), fetch("/api/deals/searches")]);
   if (!statusResponse.ok || !matchesResponse.ok) {
     const status = statusResponse.ok ? matchesResponse.status : statusResponse.status;
     dealsStatus.textContent = `Couldn't load the deals: the API replied ${status}.`;
     dealsList.replaceChildren();
+    dealsSearches.replaceChildren();
     return;
   }
+  /** @type {unknown} */
+  const searches = searchesResponse.ok ? await searchesResponse.json() : [];
+  dealsSearches.replaceChildren(...(Array.isArray(searches) ? /** @type {DealSearch[]} */ (searches) : []).filter((search) => search.on).map(dealSearchItem));
   /** @type {DealStatus} */
   const status = await statusResponse.json();
   /** @type {DealGroup[]} */
