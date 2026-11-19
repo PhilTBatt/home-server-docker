@@ -270,3 +270,21 @@ test("the problem notifier's own messages carry no link", async () => {
   await check();
   assert.equal(new Headers(fetchMock.mock.calls[0].arguments[1]?.headers).get("Click"), null);
 });
+
+test("a deal watcher problem is announced like any other, and its going gets an all-clear", async () => {
+  const fetchMock = fakeNtfy();
+  const keys: Problem = { code: "deals-source", message: "The deal watcher can't check its searches: eBay refused the keys." };
+  const readings: Problem[][] = [[], [keys], [keys], [diskLow, keys], [diskLow], []];
+  const check = createNotifier("my-topic", async () => readings.shift() ?? []);
+  const sent = [];
+  for (let i = 0; i < 6; i++) sent.push(await check());
+  assert.deepEqual(sent, [false, true, false, true, true, true]);
+  assert.equal(fetchMock.mock.calls[0].arguments[1]?.body, keys.message);
+  assert.equal(fetchMock.mock.calls[1].arguments[1]?.body, `${diskLow.message}\n${keys.message}`);
+  assert.equal(fetchMock.mock.calls[3].arguments[1]?.body, "No problems on the server.");
+});
+
+test("a deal problem whose wording changes but whose kind doesn't isn't announced twice", () => {
+  const down: Problem = { code: "deals-source", message: "The deal watcher can't check its searches: couldn't reach eBay." };
+  assert.equal(notificationFor(["deals-source"], [down]), null);
+});

@@ -1,5 +1,6 @@
 import { londonTime } from "../notify/daily.js";
 import type { Notification } from "../notify/notifier.js";
+import type { Problem } from "../system/alerts.js";
 import { capNotification, dealNotification, moreNotification, watchingNotification, type Started } from "./alert.js";
 import { matches, standing, totalPrice } from "./match.js";
 import { defaultLimits, fingerprint, type Limits, type Search, type SearchList } from "./searches.js";
@@ -23,11 +24,6 @@ export type RunSummary = {
   unsent: boolean;
 };
 
-export type WatcherProblem = {
-  code: "deals-list" | "deals-source" | "deals-state" | "deals-limit";
-  message: string;
-};
-
 export type WatcherStatus = {
   lastRun: string | null;
   callsToday: number;
@@ -35,7 +31,7 @@ export type WatcherStatus = {
   alertsToday: number;
   alertsPerDay: number;
   note: string | null;
-  problems: WatcherProblem[];
+  problems: Problem[];
 };
 
 export type SearchStatus = {
@@ -77,7 +73,7 @@ export type MatchGroup = {
 
 export type DealWatcher = {
   run(now: Date, force?: boolean): Promise<RunSummary>;
-  problems(): WatcherProblem[];
+  problems(): Problem[];
   status(): WatcherStatus;
   searches(): SearchStatus[];
   matches(now: Date): MatchGroup[];
@@ -339,8 +335,8 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     return summary;
   }
 
-  function problems(): WatcherProblem[] {
-    const found: WatcherProblem[] = [];
+  function problems(): Problem[] {
+    const found: Problem[] = [];
     if (listProblem !== null) found.push({ code: "deals-list", message: `The deal watcher's search list has a problem: ${listProblem}.` });
 
     const failing = [...failures].filter(([, failure]) => needsAPerson.includes(failure.reason) || failure.runs >= runsBeforeProblem);

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
+import type { Problem } from "./alerts.js";
 import { currentProblems, parseReconnects, system } from "./routes.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true };
@@ -168,4 +169,62 @@ test("an unreadable backup status doesn't stop the alerts", async () => {
   await rm(dir, { recursive: true, force: true });
   assert.equal(response.statusCode, 200);
   assert.equal(response.json().problems.some((p: { code: string }) => p.code === "backup-failed"), false);
+});
+
+const noBackups = join(tmpdir(), "no-such-backup-status-here");
+const dealProblem: Problem = { code: "deals-source", message: "The deal watcher can't check its searches: eBay refused the keys." };
+const listProblem: Problem = { code: "deals-list", message: "The deal watcher's search list has a problem: search 1 (ram): switch must be on or off." };
+
+test("currentProblems adds the problems it's handed after the server's own, in the order given", async () => {
+  const own = await currentProblems(noBackups);
+  const all = await currentProblems(noBackups, [dealProblem, listProblem]);
+  assert.deepEqual(all, [...own, dealProblem, listProblem]);
+});
+
+test("currentProblems with nothing extra is just the server's own", async () => {
+  assert.deepEqual(await currentProblems(noBackups, []), await currentProblems(noBackups));
+  assert.deepEqual(await currentProblems(noBackups, undefined), await currentProblems(noBackups));
+});
+
+test("currentProblems leaves the list it was handed unchanged", async () => {
+  const extra = [dealProblem];
+  await currentProblems(noBackups, extra);
+  assert.deepEqual(extra, [dealProblem]);
+});
+
+test("the alerts route includes problems from elsewhere, and isn't ok while there are any", async () => {
+  const app = Fastify();
+  app.register(system, { prefix: "/system", features: allOn, backupDir: noBackups, moreProblems: () => [dealProblem] });
+  const response = await app.inject({ method: "GET", url: "/system/alerts" });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().ok, false);
+  assert.deepEqual(response.json().problems.at(-1), dealProblem);
+});
+
+test("the alerts route asks for those problems afresh each time", async () => {
+  let current: Problem[] = [dealProblem];
+  const app = Fastify();
+  app.register(system, { prefix: "/system", features: allOn, backupDir: noBackups, moreProblems: () => current });
+  const before = (await app.inject({ method: "GET", url: "/system/alerts" })).json().problems.length;
+  current = [];
+  const after = (await app.inject({ method: "GET", url: "/system/alerts" })).json().problems.length;
+  assert.equal(before - after, 1);
+});
+
+test("only the alerts route asks for those problems", async () => {
+  let asked = 0;
+  const app = Fastify();
+  app.register(system, {
+    prefix: "/system",
+    features: allOn,
+    backupDir: noBackups,
+    moreProblems: () => {
+      asked += 1;
+      return [];
+    },
+  });
+  for (const url of ["/system/status", "/system/features", "/system/backup", "/system/wifi-reconnects"]) await app.inject({ method: "GET", url });
+  assert.equal(asked, 0);
+  await app.inject({ method: "GET", url: "/system/alerts" });
+  assert.equal(asked, 1);
 });

@@ -2,7 +2,7 @@ import { readFile, statfs } from "node:fs/promises";
 import { freemem, totalmem, uptime } from "node:os";
 import type { FastifyPluginAsync } from "fastify";
 import type { Config } from "../../config.js";
-import { findProblems, type Status } from "./alerts.js";
+import { findProblems, type Problem, type Status } from "./alerts.js";
 import { readBackupState } from "./backup.js";
 
 const reconnectLog = "/var/log/wifi-watchdog/reconnects.log";
@@ -43,19 +43,20 @@ export async function readStatus(): Promise<Status> {
   };
 }
 
-export async function currentProblems(backupDir?: string) {
+export async function currentProblems(backupDir?: string, more: Problem[] = []) {
   const status = await readStatus();
   const reconnects = parseReconnects(await readReconnectLog());
   const backup = await readBackupState(backupDir).catch(() => null);
-  return findProblems(
+  const problems = findProblems(
     status,
     reconnects.recent.map((r) => r.time),
     backup?.lastRun ?? null,
     new Date(),
   );
+  return [...problems, ...more];
 }
 
-export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?: string }> = async (app, options) => {
+export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?: string; moreProblems?: () => Problem[] }> = async (app, options) => {
   app.get("/wifi-reconnects", async () => {
     return parseReconnects(await readReconnectLog());
   });
@@ -65,7 +66,7 @@ export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?:
   });
 
   app.get("/alerts", async () => {
-    const problems = await currentProblems(options.backupDir);
+    const problems = await currentProblems(options.backupDir, options.moreProblems?.());
     return { ok: problems.length === 0, problems };
   });
 

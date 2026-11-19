@@ -17,8 +17,9 @@ app.log.info({ features: config.features }, "feature switches");
 await app.listen({ port: 3000, host: "0.0.0.0" });
 
 
-const checkAndNotify = createNotifier(config.ntfyTopic, currentProblems);
-const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, currentProblems, 8, config.features, countWaiting, readBackupState);
+const allProblems = () => currentProblems(undefined, dealWatcher?.problems());
+const checkAndNotify = createNotifier(config.ntfyTopic, allProblems);
+const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, allProblems, 8, config.features, countWaiting, readBackupState);
 
 function runCheck() {
   if (config.features.alerts) {

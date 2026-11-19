@@ -12,6 +12,7 @@ import type { DealWatcher } from "./modules/deals/watcher.js";
 
 export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
+  const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
 
   await app.register(cookie);
 
@@ -29,12 +30,12 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
       jellyfinApiKey: options.config.jellyfinApiKey,
     });
   app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
-  app.register(system, { prefix: "/system", features: options.config.features });
+  app.register(system, { prefix: "/system", features: options.config.features, moreProblems: () => dealWatcher?.problems() ?? [] });
   app.register(memory, { prefix: "/memory", features: options.config.features });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,
-    watcher: options.dealWatcher,
+    watcher: dealWatcher,
     seen: options.config.deals.seen,
     environment: options.config.deals.ebayEnvironment,
   });

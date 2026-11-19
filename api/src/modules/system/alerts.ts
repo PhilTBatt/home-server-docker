@@ -9,7 +9,7 @@ export type Status = {
 };
 
 export type Problem = {
-  code: "disk-low" | "memory-low" | "wifi-reconnects" | "backup-failed";
+  code: "disk-low" | "memory-low" | "wifi-reconnects" | "backup-failed" | "deals-list" | "deals-source" | "deals-state" | "deals-limit";
   message: string;
 };
 

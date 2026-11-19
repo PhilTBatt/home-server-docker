@@ -371,3 +371,32 @@ test("the deal status says where seen listings are kept and which eBay it talks 
   const response = await app.inject({ method: "GET", url: "/deals/status", headers: goodHeader });
   assert.deepEqual(response.json(), { lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], seen: "memory", environment: "production" });
 });
+
+test("a deal watcher problem shows in /system/alerts, so it reaches the phone like any other", async () => {
+  const { watcher } = fakeDealWatcher();
+  watcher.problems = () => [{ code: "deals-source", message: "The deal watcher can't check its searches: eBay refused the keys." }];
+  const app = await buildRealApp({ logger: false, config, dealWatcher: watcher });
+  const alerts = (await app.inject({ method: "GET", url: "/system/alerts", headers: goodHeader })).json();
+  assert.equal(alerts.ok, false);
+  assert.deepEqual(alerts.problems.at(-1), { code: "deals-source", message: "The deal watcher can't check its searches: eBay refused the keys." });
+});
+
+test("with the DEALS switch off, the watcher's problems are never asked for or shown", async () => {
+  const { watcher } = fakeDealWatcher();
+  let asked = 0;
+  watcher.problems = () => {
+    asked += 1;
+    return [{ code: "deals-state", message: "The deal watcher couldn't save its state, so it may repeat or miss alerts after a restart." }];
+  };
+  const app = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, deals: false } }, dealWatcher: watcher });
+  const alerts = (await app.inject({ method: "GET", url: "/system/alerts", headers: goodHeader })).json();
+  assert.ok(!JSON.stringify(alerts).includes("deal watcher"));
+  assert.equal(asked, 0);
+});
+
+test("with no watcher, /system/alerts works as before", async () => {
+  const app = await buildApp({ logger: false });
+  const response = await app.inject({ method: "GET", url: "/system/alerts", headers: goodHeader });
+  assert.equal(response.statusCode, 200);
+  assert.ok(!response.body.includes("deal watcher"));
+});
