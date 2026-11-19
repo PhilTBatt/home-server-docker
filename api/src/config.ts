@@ -12,6 +12,7 @@ export type DealSettings = {
   ebayEnvironment: "production" | "sandbox";
   ebayClientId: string;
   ebayClientSecret: string;
+  ai: boolean;
 };
 
 export type Config = {
@@ -49,8 +50,8 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     if (value === "" && needed) missing.push(name);
     return value;
   };
-  const readSwitch = (name: string): boolean => {
-    const value = read(name);
+  const readSwitch = (name: string, needed = true): boolean => {
+    const value = read(name, needed);
     if (value !== "" && value !== "on" && value !== "off") notOnOrOff.push(name);
     return value === "on";
   };
@@ -79,6 +80,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     ebayEnvironment: readChoice("EBAY_ENVIRONMENT", ["production", "sandbox"], features.deals),
     ebayClientId: read("EBAY_CLIENT_ID", features.deals),
     ebayClientSecret: read("EBAY_CLIENT_SECRET", features.deals),
+    ai: readSwitch("DEALS_AI", features.deals),
   };
   const problems: string[] = [];
 

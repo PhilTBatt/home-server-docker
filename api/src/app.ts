@@ -38,6 +38,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     watcher: dealWatcher,
     seen: options.config.deals.seen,
     environment: options.config.deals.ebayEnvironment,
+    ai: options.config.deals.ai,
   });
   return app;
 }

@@ -10,7 +10,7 @@ const config: Config = {
   jellyfinApiKey: "test-jellyfin-key",
   ntfyTopic: "test-topic",
   healthcheckUrl: "https://hc-ping.com/test",
-  deals: { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret" },
+  deals: { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false },
   features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true }
 };
 
@@ -373,7 +373,7 @@ test("the deal status says where seen listings are kept and which eBay it talks 
   const { watcher } = fakeDealWatcher();
   const app = await buildRealApp({ logger: false, config, dealWatcher: watcher });
   const response = await app.inject({ method: "GET", url: "/deals/status", headers: goodHeader });
-  assert.deepEqual(response.json(), { lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], quiet: null, seen: "memory", environment: "production" });
+  assert.deepEqual(response.json(), { lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], quiet: null, seen: "memory", environment: "production", ai: false });
 });
 
 test("a deal watcher problem shows in /system/alerts, so it reaches the phone like any other", async () => {
@@ -403,4 +403,21 @@ test("with no watcher, /system/alerts works as before", async () => {
   const response = await app.inject({ method: "GET", url: "/system/alerts", headers: goodHeader });
   assert.equal(response.statusCode, 200);
   assert.ok(!response.body.includes("deal watcher"));
+});
+
+test("the app passes the DEALS_AI switch on to the deal routes, and they still need the token", async () => {
+  const { watcher } = fakeDealWatcher();
+  const off = await buildRealApp({ logger: false, config, dealWatcher: watcher });
+  assert.equal((await off.inject({ method: "GET", url: "/deals/ai/matches", headers: goodHeader })).statusCode, 403);
+  const on = await buildRealApp({ logger: false, config: { ...config, deals: { ...config.deals, ai: true } }, dealWatcher: watcher });
+  const response = await on.inject({ method: "GET", url: "/deals/ai/matches", headers: goodHeader });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json().searches, []);
+  assert.equal((await on.inject({ method: "GET", url: "/deals/status", headers: goodHeader })).json().ai, true);
+  for (const url of ["/deals/ai/matches", "/deals/ai/listing/110000000001", "/deals/listing/110000000001", "/deals/details?q=ddr4"]) {
+    assert.equal((await on.inject({ method: "GET", url })).statusCode, 401, url);
+  }
+  for (const url of ["/deals/searches/optiplex/snooze", "/deals/searches/optiplex/wake"]) {
+    assert.equal((await on.inject({ method: "POST", url })).statusCode, 401, url);
+  }
 });

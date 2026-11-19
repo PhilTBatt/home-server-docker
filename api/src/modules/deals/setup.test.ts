@@ -22,7 +22,7 @@ const topic = "not-a-real-topic";
 const accessToken = "not-a-real-access-token";
 
 function settings(overrides: Partial<Config["deals"]> = {}): Pick<Config, "deals" | "ntfyTopic"> {
-  return { ntfyTopic: topic, deals: { seen: "memory", ebayEnvironment: "production", ebayClientId: clientId, ebayClientSecret: clientSecret, ...overrides } };
+  return { ntfyTopic: topic, deals: { seen: "memory", ebayEnvironment: "production", ebayClientId: clientId, ebayClientSecret: clientSecret, ai: false, ...overrides } };
 }
 
 async function folder(searches: unknown[] | null) {

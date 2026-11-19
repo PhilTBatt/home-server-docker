@@ -18,10 +18,11 @@ const complete = {
   EBAY_ENVIRONMENT: "production",
   EBAY_CLIENT_ID: "test-ebay-id",
   EBAY_CLIENT_SECRET: "test-ebay-secret",
+  DEALS_AI: "off",
 };
 
 const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off" };
-const dealSettings = { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret" };
+const dealSettings = { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false };
 
 test("reads every setting into its own field", () => {
   assert.deepEqual(readConfig(complete), {
@@ -73,7 +74,7 @@ test("with nothing set, the always-needed settings and every switch are named, i
 
 test("with every switch on and nothing else set, every other setting is named, in a fixed order", () => {
   assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on" }), {
-    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL, DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET",
+    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL, DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, DEALS_AI",
   });
 });
 
@@ -263,7 +264,7 @@ test("note uploads and the inbox count switch separately", () => {
   assert.deepEqual(switchedOff(features), ["brain inbox"]);
 });
 
-const dealsOff = { ...complete, DEALS: "off", DEALS_SEEN: undefined, EBAY_ENVIRONMENT: undefined, EBAY_CLIENT_ID: undefined, EBAY_CLIENT_SECRET: undefined };
+const dealsOff = { ...complete, DEALS: "off", DEALS_SEEN: undefined, EBAY_ENVIRONMENT: undefined, EBAY_CLIENT_ID: undefined, EBAY_CLIENT_SECRET: undefined, DEALS_AI: undefined };
 
 test("a missing DEALS is refused like any other switch", () => {
   assert.throws(() => readConfig({ ...complete, DEALS: undefined }), {
@@ -282,15 +283,15 @@ test("DEALS must be exactly on or off", () => {
 test("with the deal watcher off, none of its settings are needed, and it shows as switched off", () => {
   const config = readConfig(dealsOff);
   assert.equal(config.features.deals, false);
-  assert.deepEqual(config.deals, { seen: "memory", ebayEnvironment: "production", ebayClientId: "", ebayClientSecret: "" });
+  assert.deepEqual(config.deals, { seen: "memory", ebayEnvironment: "production", ebayClientId: "", ebayClientSecret: "", ai: false });
   assert.deepEqual(switchedOff(config.features), ["deal watcher"]);
 });
 
 test("with the deal watcher on, each of its settings is needed, and all the missing ones are named at once", () => {
   assert.throws(() => readConfig({ ...dealsOff, DEALS: "on" }), {
-    message: "Missing settings in api/.env: DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET",
+    message: "Missing settings in api/.env: DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, DEALS_AI",
   });
-  for (const name of ["DEALS_SEEN", "EBAY_ENVIRONMENT", "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"]) {
+  for (const name of ["DEALS_SEEN", "EBAY_ENVIRONMENT", "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "DEALS_AI"]) {
     assert.throws(() => readConfig({ ...complete, [name]: undefined }), { message: `Missing settings in api/.env: ${name}` });
     assert.throws(() => readConfig({ ...complete, [name]: "" }), { message: `Missing settings in api/.env: ${name}` });
   }
@@ -305,7 +306,7 @@ test("the deal watcher needs the ntfy topic even with alerts and the daily summa
 
 test("the deal watcher's settings are read as given", () => {
   const config = readConfig({ ...complete, DEALS_SEEN: "disk", EBAY_ENVIRONMENT: "sandbox", EBAY_CLIENT_ID: " id=with#odd ", EBAY_CLIENT_SECRET: "s3cret=" });
-  assert.deepEqual(config.deals, { seen: "disk", ebayEnvironment: "sandbox", ebayClientId: " id=with#odd ", ebayClientSecret: "s3cret=" });
+  assert.deepEqual(config.deals, { seen: "disk", ebayEnvironment: "sandbox", ebayClientId: " id=with#odd ", ebayClientSecret: "s3cret=", ai: false });
 });
 
 test("DEALS_SEEN must be memory or disk, exactly", () => {
@@ -343,4 +344,20 @@ test("an error about the deal settings never includes the eBay keys or a bad val
     () => readConfig(env),
     (error: Error) => ["real-looking-id", "real-looking-secret", "somewhere-odd"].every((value) => !error.message.includes(value)),
   );
+});
+
+test("DEALS_AI is its own switch: exactly on or off, and off unless it says on", () => {
+  assert.equal(readConfig({ ...complete, DEALS_AI: "on" }).deals.ai, true);
+  assert.equal(readConfig({ ...complete, DEALS_AI: "off" }).deals.ai, false);
+  assert.equal(readConfig(dealsOff).deals.ai, false);
+  for (const value of ["ON", "true", "yes", "1", " on"]) {
+    assert.throws(() => readConfig({ ...complete, DEALS_AI: value }), { message: "Settings in api/.env that must be on or off: DEALS_AI" });
+    assert.throws(() => readConfig({ ...dealsOff, DEALS_AI: value }), { message: "Settings in api/.env that must be on or off: DEALS_AI" });
+  }
+});
+
+test("with the deal watcher off, DEALS_AI=on changes nothing that's switched on", () => {
+  const config = readConfig({ ...dealsOff, DEALS_AI: "on" });
+  assert.equal(config.features.deals, false);
+  assert.deepEqual(switchedOff(config.features), ["deal watcher"]);
 });
