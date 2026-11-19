@@ -54,7 +54,7 @@ export function searchUrl(host: string, search: Search, offset: number): string 
 
   const parts = [`q=${encodeURIComponent(search.query)}`, `filter=${encodeURIComponent(filters.join(","))}`];
   if (search.categoryId !== null) parts.push(`category_ids=${search.categoryId}`);
-  parts.push("sort=newlyListed", `limit=${pageSize}`, `offset=${offset}`);
+  parts.push("fieldgroups=MATCHING_ITEMS,EXTENDED", "sort=newlyListed", `limit=${pageSize}`, `offset=${offset}`);
   return `https://${host}/buy/browse/v1/item_summary/search?${parts.join("&")}`;
 }
 
@@ -87,6 +87,18 @@ function cheapestPostage(raw: unknown): number | null {
   return costs.length > 0 ? Math.min(...costs) : null;
 }
 
+function postageType(raw: unknown): Listing["postageType"] {
+  if (!Array.isArray(raw)) return null;
+  const types = raw.slice(0, 20).map((option) => (isObject(option) ? option.shippingCostType : null));
+  if (types.includes("FIXED")) return "fixed";
+  return types.includes("CALCULATED") ? "calculated" : null;
+}
+
+function textOrNull(raw: unknown, maxLength: number): string | null {
+  const text = cleanText(raw, maxLength);
+  return text === "" ? null : text;
+}
+
 export function toListing(raw: unknown, siteHost: string): Listing | null {
   if (!isObject(raw)) return null;
   const itemNumber = digits(raw.legacyItemId) ?? (typeof raw.itemId === "string" ? digits(raw.itemId.split("|")[1]) : null);
@@ -102,14 +114,14 @@ export function toListing(raw: unknown, siteHost: string): Listing | null {
   const seller = isObject(raw.seller) ? raw.seller : {};
   const percent = typeof seller.feedbackPercentage === "string" && /^[0-9]{1,3}(\.[0-9]{1,2})?$/.test(seller.feedbackPercentage) ? Number(seller.feedbackPercentage) : null;
   const location = isObject(raw.itemLocation) ? raw.itemLocation : {};
-  const condition = cleanText(raw.condition, 40);
+  const postcode = textOrNull(location.postalCode, 10);
 
   return {
     id: itemNumber,
     title,
     price,
     postage: cheapestPostage(raw.shippingOptions),
-    condition: condition === "" ? null : condition,
+    condition: textOrNull(raw.condition, 40),
     conditionId: digits(raw.conditionId),
     buying,
     country: typeof location.country === "string" && /^[A-Z]{2}$/.test(location.country) ? location.country : null,
@@ -119,6 +131,15 @@ export function toListing(raw: unknown, siteHost: string): Listing | null {
     sellerPercent: percent !== null && percent <= 100 ? percent : null,
     sellerFeedback: countOf(seller.feedbackScore),
     url: `https://${siteHost}/itm/${itemNumber}`,
+    ref: typeof raw.itemId === "string" && /^v1\|[0-9]{1,20}\|[0-9]{1,20}$/.test(raw.itemId) ? raw.itemId : null,
+    sellerType: seller.sellerAccountType === "BUSINESS" ? "business" : seller.sellerAccountType === "INDIVIDUAL" ? "private" : null,
+    topRated: typeof raw.topRatedBuyingExperience === "boolean" ? raw.topRatedBuyingExperience : null,
+    postageType: postageType(raw.shippingOptions),
+    city: textOrNull(location.city, 40),
+    postcode: postcode !== null && /^[A-Za-z0-9 *]{2,10}$/.test(postcode) ? postcode : null,
+    summary: textOrNull(raw.shortDescription, 400),
+    variations: (typeof raw.itemGroupType === "string" && raw.itemGroupType !== "") || isObject(raw.primaryItemGroup),
+    detailsMatch: null,
   };
 }
 

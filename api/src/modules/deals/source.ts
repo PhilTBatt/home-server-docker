@@ -17,6 +17,15 @@ export type Listing = {
   sellerPercent: number | null;
   sellerFeedback: number | null;
   url: string;
+  ref: string | null;
+  sellerType: "business" | "private" | null;
+  topRated: boolean | null;
+  postageType: "fixed" | "calculated" | null;
+  city: string | null;
+  postcode: string | null;
+  summary: string | null;
+  variations: boolean;
+  detailsMatch: boolean | null;
 };
 
 export type SearchResult = {

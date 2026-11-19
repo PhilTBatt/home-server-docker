@@ -112,7 +112,7 @@ function filterOf(url: string) {
 test("the smallest search asks eBay UK for buy-it-now items in the UK, newest first, 200 at a time", () => {
   assert.equal(
     searchUrl(apiHost, search(), 0),
-    "https://api.ebay.com/buy/browse/v1/item_summary/search?q=optiplex%207070%20sff&filter=buyingOptions%3A%7BFIXED_PRICE%7D%2CitemLocationCountry%3AGB&sort=newlyListed&limit=200&offset=0",
+    "https://api.ebay.com/buy/browse/v1/item_summary/search?q=optiplex%207070%20sff&filter=buyingOptions%3A%7BFIXED_PRICE%7D%2CitemLocationCountry%3AGB&fieldgroups=MATCHING_ITEMS,EXTENDED&sort=newlyListed&limit=200&offset=0",
   );
 });
 
@@ -168,7 +168,8 @@ test("the offset moves by page and the rest stays the same", () => {
   assert.equal(third.searchParams.get("offset"), "400");
   const rest = (url: URL) => [...url.searchParams].filter(([key]) => key !== "offset");
   assert.deepEqual(rest(third), rest(first));
-  assert.equal(rest(first).length, 4);
+  assert.equal(rest(first).length, 5);
+  assert.equal(first.searchParams.get("fieldgroups"), "MATCHING_ITEMS,EXTENDED");
 });
 
 test("a query can't add or change any other part of the request", () => {
@@ -216,6 +217,15 @@ test("a full eBay item becomes a tidy listing, with money in pence", () => {
     sellerPercent: 99.4,
     sellerFeedback: 1234,
     url: "https://www.ebay.co.uk/itm/110000000007",
+    ref: "v1|110000000007|0",
+    sellerType: null,
+    topRated: null,
+    postageType: "fixed",
+    city: null,
+    postcode: "AB1***",
+    summary: null,
+    variations: false,
+    detailsMatch: null,
   });
 });
 
@@ -231,22 +241,69 @@ test("a listing keeps only the fields the watcher uses", () => {
   assert.deepEqual(Object.keys(listing ?? {}).sort(), [
     "bids",
     "buying",
+    "city",
     "condition",
     "conditionId",
     "country",
+    "detailsMatch",
     "endsAt",
     "id",
     "listedAt",
     "postage",
+    "postageType",
+    "postcode",
     "price",
+    "ref",
     "sellerFeedback",
     "sellerPercent",
+    "sellerType",
+    "summary",
     "title",
+    "topRated",
     "url",
+    "variations",
   ]);
-  assert.ok(!JSON.stringify(listing).includes("ZZ9"));
-  assert.ok(!JSON.stringify(listing).includes("Sometown"));
   assert.ok(!JSON.stringify(listing).includes("ebayimg"));
+  assert.ok(!JSON.stringify(listing).includes("api.ebay.com"));
+});
+
+test("the seller's kind is kept as business or private, and anything else as unknown", () => {
+  const kind = (sellerAccountType: unknown) => toListing(item(1, { seller: { username: "x", feedbackPercentage: "99.0", feedbackScore: 5, sellerAccountType } }), siteHost)?.sellerType;
+  assert.equal(kind("BUSINESS"), "business");
+  assert.equal(kind("INDIVIDUAL"), "private");
+  for (const odd of [undefined, null, "", "business", "TRADER", 1, ["BUSINESS"]]) assert.equal(kind(odd), null);
+});
+
+test("eBay's own item reference is kept only when it has the expected shape", () => {
+  assert.equal(toListing(item(3), siteHost)?.ref, "v1|110000000003|0");
+  assert.equal(toListing(item(3, { itemId: "v1|110000000003|410000000001" }), siteHost)?.ref, "v1|110000000003|410000000001");
+  for (const odd of ["v2|110000000003|0", "v1|110000000003", "v1|110000000003|0/../x", "v1|11000 0000003|0", "https://evil.example", 5, null]) {
+    assert.equal(toListing(item(3, { itemId: odd }), siteHost)?.ref, null);
+  }
+});
+
+test("the short description and the place are tidied, capped and never trusted", () => {
+  const listing = toListing(item(1, { shortDescription: `  Core i5\u202E 16GB\n${"x".repeat(900)}`, itemLocation: { country: "GB", postalCode: "ZZ9***", city: "  Some\u200Btown  " } }), siteHost);
+  assert.equal(listing?.summary?.startsWith("Core i5 16GB x"), true);
+  assert.equal([...(listing?.summary ?? "")].length, 400);
+  assert.equal(listing?.city, "Sometown");
+  assert.equal(listing?.postcode, "ZZ9***");
+  const odd = toListing(item(1, { shortDescription: 7, itemLocation: { country: "GB", postalCode: "<b>ZZ9</b>", city: ["x"] } }), siteHost);
+  assert.deepEqual([odd?.summary, odd?.city, odd?.postcode], [null, null, null]);
+});
+
+test("postage is called fixed or calculated, top-rated is kept only as true or false, and a listing with options says so", () => {
+  const read = (overrides: Record<string, unknown>) => toListing(item(1, overrides), siteHost);
+  assert.equal(read({ shippingOptions: [{ shippingCostType: "CALCULATED" }] })?.postageType, "calculated");
+  assert.equal(read({ shippingOptions: [{ shippingCostType: "CALCULATED" }, { shippingCostType: "FIXED", shippingCost: { value: "3.00", currency: "GBP" } }] })?.postageType, "fixed");
+  assert.equal(read({ shippingOptions: undefined })?.postageType, null);
+  assert.equal(read({ shippingOptions: [{ shippingCostType: "SOMETHING_NEW" }] })?.postageType, null);
+  assert.equal(read({ topRatedBuyingExperience: true })?.topRated, true);
+  assert.equal(read({ topRatedBuyingExperience: "true" })?.topRated, null);
+  assert.equal(read({})?.variations, false);
+  assert.equal(read({ itemGroupType: "SELLER_DEFINED_VARIATIONS" })?.variations, true);
+  assert.equal(read({ primaryItemGroup: { itemGroupId: "1" } })?.variations, true);
+  assert.equal(read({ itemGroupType: "" })?.variations, false);
 });
 
 test("the link is always built from the item number on ebay.co.uk, never taken from the reply", () => {

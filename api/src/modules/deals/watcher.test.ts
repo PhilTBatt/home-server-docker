@@ -29,6 +29,15 @@ function listing(n: number, overrides: Partial<Listing> = {}): Listing {
     sellerPercent: 99.4,
     sellerFeedback: 1234,
     url: `https://www.ebay.co.uk/itm/${110_000_000_000 + n}`,
+    ref: null,
+    sellerType: null,
+    topRated: null,
+    postageType: null,
+    city: null,
+    postcode: null,
+    summary: null,
+    variations: false,
+    detailsMatch: null,
     ...overrides,
   };
 }
