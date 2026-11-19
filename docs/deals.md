@@ -105,6 +105,7 @@ Every search needs `id`, `name`, `switch` and `query`. Everything else is option
 | `hideDetails` | Up to 3 item details whose listings are hidden, like `{ "Form Factor": ["SO-DIMM"] }`. Needs a `categoryId`, and a name can't also be in `details`. See "Item details" below. |
 | `collectionMiles` | Only listings you can collect within this many miles (1 to 100) of the `postcode` at the top of the file. Can't be used with `freePostage` or `postageShown`. |
 | `freePostage` | `true` asks eBay for listings with free postage only. Can't be used with `collectionMiles`. |
+| `hideVariations` | `true` hides listings with several options (sizes, colours), because eBay shows only the cheapest option's price, which can make a 1 TB option look like a cheap 4 TB drive. They count under `options` in the search's hidden numbers. |
 | `guidePrice`, `guideDate`, `greatPercent` | What you'd call a fair total price, in pounds, the day you set it, and how far under it counts as a great deal (default 20). See "Guide prices" below. |
 | `unit` | `GB` or `TB`: adds a price per unit to each alert, with the size read from the title. Only sensible when the search is for one kind of thing, like RAM kits or drives. |
 | `alertsPerDay` | This search's own daily limit on notifications, on top of the overall one. The rest wait until tomorrow. |
@@ -195,6 +196,7 @@ How much to trust it:
 - Only the RAM searches have a category (170083, Memory (RAM), seen on an ebay.co.uk page). The others have none on purpose: a wrong category quietly finds nothing.
 - Guide prices are used prices, and every one is an estimate made without sold prices. For RAM and hard drives they were set against UK new prices in November 2026 (ramprices.uk, disks.co.uk): roughly half of new for RAM, and £15 to £18 a terabyte for used or recertified drives. The rest have nothing firmer behind them.
 - The RAM searches hide `Form Factor: SO-DIMM`. That value was seen on an eBay page; that it's spelt the same on eBay UK is a guess until `/deals/categories/170083/details` confirms it.
+- The six server searches exclude spare-part words (motherboard, board only, psu only and so on) instead of using the `parts only` list, which would also hide whole servers whose titles mention a drive caddy, a bezel or a riser. They don't use the `incomplete` list either, because servers are often sold without drives ("No HDD"). The seven eBay storage searches use `hideVariations`.
 - If every search were on, they'd use roughly 640 eBay calls a day when each one's results fit in a page of 200. A search with more reads up to three pages, and each hidden detail as many again, so the most is about 1,900. HotUKDeals' feed is read at most every five minutes and doesn't count towards eBay's calls.
 
 ## HotUKDeals
@@ -209,7 +211,7 @@ It's the newest 30 deals across the whole site, so a niche part will rarely turn
 
 ## Letting Claude read the listings
 With `DEALS_AI=on`, two more MCP tools work:
-- `get_deal_matches`: the 15 cheapest current matches of every search, up to 50 for one search when asked for it by id, or only the ones asked for by `group`, `searches`, title `words` or listing `ids`, with `maxTotal` (pounds, with postage) and `limit` (per search) alongside, with everything the watcher holds about each one. With filters, each search's `count` is how many of its matches passed them, looked for among all its matches, not just the cheapest 50.
+- `get_deal_matches`: the 15 cheapest current matches of every search, up to 50 for one search when asked for it by id, or only the ones asked for by `group`, `searches`, title `words` or listing `ids`, with `maxTotal` (pounds, with postage) and `limit` (per search) alongside, with everything the watcher holds about each one. With filters, each search's `count` is how many of its matches passed them, looked for among all its matches, not just the cheapest 50. One reply holds about 45,000 characters at most, shared round the searches cheapest first, because Claude Code saves any tool reply over 50,000 characters to a file; `cut: true` says some didn't fit.
 - `get_deal_listing`: one of those in full, by its item number: the seller's description as plain text, the item specifics, the condition note, returns, postage options, collection and stock. This asks eBay, once per listing every half hour, out of the day's calls, and at most 150 listings (or item-detail lookups) a day, so a session that tries to read everything can't use up the calls the searches need.
 
 With `DEALS_AI=off` both reply 403 and no listing leaves the API through them. The hub page isn't affected either way.
