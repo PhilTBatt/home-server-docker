@@ -555,6 +555,10 @@ check "and no others" "    mem_limit: 2g" "$(grep -A5 '^    environment:$' <<< "
 check "Kokoro runs as its image's own ordinary user, with no extra reach into the server" "0" "$(grep -c -e 'user:' -e 'pid:' -e 'ipc:' -e 'security_opt' -e 'extra_hosts' -e 'group_add' <<< "$kokoro")"
 check "the speech network has no way out to the internet" "  speech:
     internal: true" "$(grep -A1 '^  speech:$' "$compose_file")"
+speech=$(awk '/^[^ \t\r#]/ {top = $0} top == "networks:" && /^  speech:$/ {on=1; next} on && (/^[^ \t\r#]/ || /^  ?[^ \t\r#]/) {on=0} on && !/^[ \t\r]*(#|$)/' "$compose_file")
+check "and the server has no address on it, so Kokoro can't reach the server's own services, and nothing else is set on it" "    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated" "$speech"
 check "the compose service has the name the script starts and Jarvis asks" "1" "$(grep -c '^export const kokoroUrl = "http://kokoro:8880";$' "$here/../jarvis/src/kokoro.ts")"
 others=$(awk '/^  kokoro:$/ {skip=1; next} skip && /^  [a-z]/ {skip=0} skip && /^[a-z]/ {skip=0} !skip' "$compose_file")
 check "nothing else in the main compose file is on the speech network" "1" "$(grep -c 'speech' <<< "$others")"
@@ -575,6 +579,7 @@ check "the sound file never pulls an image from a registry" "1" "$(grep -c '^   
 check "the sound file is the only place Jarvis joins the speech network" "    networks:
       - speech" "$(grep -A1 '^    networks:$' "$sound_file")"
 check "and it's the only network the sound file adds" "1" "$(grep -c '^      - [a-z]*$' "$sound_file")"
+check "the sound file names networks only where Jarvis joins speech, so it changes no network's settings" "1" "$(grep -c 'networks' "$sound_file")"
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
