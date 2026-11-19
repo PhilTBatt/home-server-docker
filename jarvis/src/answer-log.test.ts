@@ -5,7 +5,7 @@ import { answerLogFile, errorKind, logLine, logVersion, speechLine, startAnswerL
 import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
-const apiKeep: LogContext = { engine: "api", thinking: "keep", model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", spokenStyle: "off" };
+const apiKeep: LogContext = { engine: "api", thinking: "keep", model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
 const at = new Date("2026-11-16T18:30:00.000Z");
 
 const answered: Answer = {
@@ -101,7 +101,7 @@ test("an unknown largest request is logged as unknown, not zero", () => {
 
 test("a retry is logged as yes or no for the plain API call, and unknown for the Agent SDK", () => {
   assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: false } } }).retried, false);
-  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", spokenStyle: "off" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
+  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
 });
 
 test("refused tools are counted, not named, and an answer with none counts zero", () => {
@@ -131,8 +131,8 @@ test("times are logged to the whole millisecond, and costs without floating-poin
 });
 
 test("the thinking setting is only logged for the plain API engine, which is the only one it changes", () => {
-  assert.equal(logLine({ engine: "sdk", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", spokenStyle: "off" }, "c", 1, at, { answer: answered }).thinking, null);
-  assert.equal(logLine({ engine: "api", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", spokenStyle: "off" }, "c", 1, at, { answer: answered }).thinking, "drop");
+  assert.equal(logLine({ engine: "sdk", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" }, "c", 1, at, { answer: answered }).thinking, null);
+  assert.equal(logLine({ engine: "api", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" }, "c", 1, at, { answer: answered }).thinking, "drop");
 });
 
 test("each line says whether the chat was fresh or resumed", () => {
@@ -346,7 +346,7 @@ test("each line says who was set to say a chat was getting long", () => {
   assert.equal(logLine(apiKeep, "chat-1", 1, at, { error: "Overloaded" }).lengthHints, "note");
 });
 
-const spokenWell = { firstSentenceMs: 900.4, firstSoundMadeMs: 1700.6, firstSoundMs: 1750.2, longestSilenceMs: 320.6, spoken: 2, failed: 1, failedMaking: 1, failedPlaying: 0, left: 3, problem: "Kokoro replied 500", gaveUp: false, tooLong: true, stopped: true };
+const spokenWell = { firstSentenceMs: 900.4, firstSoundMadeMs: 1700.6, firstSoundMs: 1750.2, longestSilenceMs: 320.6, spoken: 2, failed: 1, failedMaking: 1, failedPlaying: 0, left: 3, requests: 4, requestedSentences: 6, problem: "Kokoro replied 500", gaveUp: false, tooLong: true, stopped: true };
 
 test("with a voice, each answer's line says how his speech was set to start, and without one it doesn't", () => {
   assert.equal(logLine({ ...apiKeep, voice: "kokoro", speechStart: "clause" }, "chat-1", 1, at, { answer: answered }).speechStart, "clause");
@@ -364,7 +364,7 @@ test("with a voice, each answer's line says how he was set to stop when interrup
   assert.equal(keys.indexOf("speechStop"), keys.indexOf("speechStart") + 1);
 });
 
-test("a speech line has the answer it belongs to, its three times in whole milliseconds and its counts, with failures split into couldn't be made and couldn't be played, and never the error a sentence failed with", () => {
+test("a speech line has the answer it belongs to, its three times in whole milliseconds and its counts, with failures split into couldn't be made and couldn't be played and how many requests Kokoro got for how many sentences, and never the error a sentence failed with", () => {
   assert.deepEqual(speechLine("chat-1", 3, at, spokenWell), {
     v: logVersion,
     kind: "speech",
@@ -380,6 +380,8 @@ test("a speech line has the answer it belongs to, its three times in whole milli
     failedMaking: 1,
     failedPlaying: 0,
     left: 3,
+    requests: 4,
+    requestedSentences: 6,
     stopped: true,
     gaveUp: false,
     tooLong: true,
@@ -393,8 +395,8 @@ test("a speech line has the answer it belongs to, its three times in whole milli
   assert.deepEqual(flags({ stopped: true }), [true, false, false]);
   assert.deepEqual(flags({ gaveUp: true }), [false, true, false]);
   assert.deepEqual(flags({ tooLong: true }), [false, false, true]);
-  const counts = speechLine("chat-1", 1, at, { ...spokenWell, spoken: 7, failed: 8, failedMaking: 3, failedPlaying: 5, left: 9 });
-  assert.deepEqual([counts.spoken, counts.failed, counts.failedMaking, counts.failedPlaying, counts.left], [7, 8, 3, 5, 9]);
+  const counts = speechLine("chat-1", 1, at, { ...spokenWell, spoken: 7, failed: 8, failedMaking: 3, failedPlaying: 5, left: 9, requests: 10, requestedSentences: 11 });
+  assert.deepEqual([counts.spoken, counts.failed, counts.failedMaking, counts.failedPlaying, counts.left, counts.requests, counts.requestedSentences], [7, 8, 3, 5, 9, 10, 11]);
 });
 
 function speechLog() {
@@ -513,5 +515,14 @@ test("an answer's line records whether his answers were written for the ear, onl
   assert.equal("spokenStyle" in logLine({ ...apiKeep, spokenStyle: "on" }, "chat-1", 1, at, { answer: answered }), false);
   assert.equal("spokenStyle" in logLine(apiKeep, "chat-1", 1, at, { error: "Overloaded" }), false);
   const keys = Object.keys(logLine({ ...apiKeep, voice: "kokoro", spokenStyle: "on" }, "chat-1", 1, at, { answer: answered }));
-  assert.equal(keys.indexOf("spokenStyle"), keys.indexOf("speechStop") + 1);
+  assert.equal(keys.indexOf("spokenStyle"), keys.indexOf("speechBundle") + 1);
+});
+
+test("an answer's line records whether his sentences were bundled, only with the voice on, after how he stops", () => {
+  assert.equal(logLine({ ...apiKeep, voice: "kokoro", speechBundle: "on" }, "chat-1", 1, at, { answer: answered }).speechBundle, "on");
+  assert.equal(logLine({ ...apiKeep, voice: "kokoro" }, "chat-1", 1, at, { error: "Overloaded" }).speechBundle, "off");
+  assert.equal("speechBundle" in logLine({ ...apiKeep, speechBundle: "on" }, "chat-1", 1, at, { answer: answered }), false);
+  assert.equal("speechBundle" in logLine(apiKeep, "chat-1", 1, at, { error: "Overloaded" }), false);
+  const keys = Object.keys(logLine({ ...apiKeep, voice: "kokoro", speechBundle: "on" }, "chat-1", 1, at, { answer: answered }));
+  assert.equal(keys.indexOf("speechBundle"), keys.indexOf("speechStop") + 1);
 });

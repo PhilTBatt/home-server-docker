@@ -65,7 +65,7 @@ try {
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, speechStart: config.speechStart, speechStop: config.speechStop, spokenStyle: config.spokenStyle ? "on" : "off" },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, speechStart: config.speechStart, speechStop: config.speechStop, speechBundle: config.speechBundle ? "on" : "off", spokenStyle: config.spokenStyle ? "on" : "off" },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -112,7 +112,7 @@ try {
     lengthCap: config.lengthCap ?? undefined,
     confirm: (query, signal) => askOnce(lines, query, confirmMs, signal),
     describe: hub === undefined ? undefined : describeWithHub(hub.token),
-    speak: speaking === null ? undefined : (after) => startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, skipCode: config.spokenStyle, after }),
+    speak: speaking === null ? undefined : (after) => startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after }),
     speechStop: config.speechStop,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);

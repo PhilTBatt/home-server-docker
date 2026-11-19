@@ -580,6 +580,28 @@ test("with nothing spoken in the log, there's no speech table at all", () => {
   assert.equal(compareReport({ lines: [voiced()], speech: [said({ firstSoundMs: null })], skipped: 0 }).includes("Speech, timed"), false);
 });
 
+test("a log line's bundle setting is checked like the other settings, and an older line without one counts as off", () => {
+  assert.equal(isLogLine(voiced({ speechBundle: "on" })), true);
+  assert.equal(isLogLine(voiced({ speechBundle: "off" })), true);
+  assert.equal(isLogLine({ ...voiced(), speechBundle: "yes" }), false);
+  assert.equal(isLogLine({ ...voiced(), speechBundle: null }), false);
+  assert.equal(isLogLine({ ...voiced(), speechBundle: true }), false);
+  assert.deepEqual(groupLines([voiced({ speechBundle: "off" }), voiced()]).map((group) => [group.speechBundle, group.lines.length]), [["off", 2]]);
+  assert.deepEqual(groupLines([line({ speechBundle: "on" })]).map((group) => group.speechBundle), [null]);
+});
+
+test("bundled sentences are compared with a sentence at a time side by side, a sentence at a time first, named only when both are in the log with the voice on, before the style", () => {
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechBundle: "on" }), voiced(), line()], skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice, a sentence at a time", "API, keep, Kokoro voice, sentences bundled"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechBundle: "on" }), voiced({ speechBundle: "on" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechBundle: "on" }), line({ speechBundle: "off" })], skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ speechBundle: "on", spokenStyle: "on" }), voiced({ spokenStyle: "on" }), voiced({ speechBundle: "on", speechStop: "sentence" }), voiced({ speechStop: "sentence" })], skipped: 0 }), ""), [
+    "API, keep, stops at once, a sentence at a time, written for the ear",
+    "API, keep, stops at once, sentences bundled, written for the ear",
+    "API, keep, finishes the sentence, a sentence at a time, usual style",
+    "API, keep, finishes the sentence, sentences bundled, usual style",
+  ]);
+});
+
 test("a log line's spoken style is checked like the other settings, and an older line without one counts as off", () => {
   assert.equal(isLogLine(voiced({ spokenStyle: "on" })), true);
   assert.equal(isLogLine(voiced({ spokenStyle: "off" })), true);
@@ -620,10 +642,30 @@ test("a speech line's failures split into couldn't be made and couldn't be playe
   }
 });
 
-test("a speech line as Jarvis writes it is read back by compare, failures and their split included", () => {
-  const report = { firstSentenceMs: 900.4, firstSoundMadeMs: 1700.6, firstSoundMs: 1750.2, longestSilenceMs: 320.6, spoken: 2, failed: 3, failedMaking: 1, failedPlaying: 2, left: 1, problem: "Kokoro replied 500", gaveUp: false, tooLong: false, stopped: false };
+test("a speech line's requests and the sentences in them are read when they make sense, and older lines without them still are", () => {
+  assert.equal(isSpeechLine(said({ requests: 2, requestedSentences: 5 })), true);
+  assert.equal(isSpeechLine(said({ requests: 3, requestedSentences: 3 })), true);
+  assert.equal(isSpeechLine(said({ requests: 0, requestedSentences: 0 })), true);
+  assert.equal(isSpeechLine(said()), true);
+  assert.equal(isSpeechLine(said({ requests: 4, requestedSentences: 3 })), false);
+  assert.equal(isSpeechLine(said({ requests: 0, requestedSentences: 2 })), false);
+  assert.equal(isSpeechLine(said({ requests: 2 })), false);
+  assert.equal(isSpeechLine(said({ requestedSentences: 2 })), false);
+  assert.equal(isSpeechLine(said({ requests: -1, requestedSentences: -1 })), false);
+  assert.equal(isSpeechLine(said({ requests: -2, requestedSentences: -1 })), false);
+  for (const [field, other] of [["requests", "requestedSentences"], ["requestedSentences", "requests"]]) {
+    assert.equal(isSpeechLine({ ...said(), [field]: -1, [other]: 0 }), false, field);
+    assert.equal(isSpeechLine({ ...said(), [field]: 1.5, [other]: 2 }), false, field);
+    assert.equal(isSpeechLine({ ...said(), [field]: null, [other]: 1 }), false, field);
+    assert.equal(isSpeechLine({ ...said(), [field]: "1", [other]: 1 }), false, field);
+  }
+});
+
+test("a speech line as Jarvis writes it is read back by compare, failures, their split and the requests included", () => {
+  const report = { firstSentenceMs: 900.4, firstSoundMadeMs: 1700.6, firstSoundMs: 1750.2, longestSilenceMs: 320.6, spoken: 2, failed: 3, failedMaking: 1, failedPlaying: 2, left: 1, requests: 4, requestedSentences: 6, problem: "Kokoro replied 500", gaveUp: false, tooLong: false, stopped: false };
   assert.equal(isSpeechLine(JSON.parse(JSON.stringify(speechLine("chat-1", 2, new Date("2026-11-19T21:00:00Z"), report)))), true);
   assert.equal(isSpeechLine(JSON.parse(JSON.stringify(speechLine("chat-1", 2, new Date("2026-11-19T21:00:00Z"), { ...report, failed: 0, failedMaking: 0, failedPlaying: 0 })))), true);
+  assert.equal(isSpeechLine(JSON.parse(JSON.stringify(speechLine("chat-1", 2, new Date("2026-11-19T21:00:00Z"), { ...report, requests: 0, requestedSentences: 0 })))), true);
 });
 
 test("a second speech table adds up each setting's sentences, and counts the answers with no sound, stopped, given up on or over 40", () => {
@@ -709,4 +751,29 @@ test("under the second speech table, each setting where sentences failed gets a 
   assert.equal(one.includes("\nAPI, keep: 1 sentence failed, 0 couldn't be made and 1 couldn't be played.\n"), true);
   const none = compareReport({ lines: [voiced()], speech: [said({ failed: 0, failedMaking: 0, failedPlaying: 0 })], skipped: 0 });
   assert.equal(/\d sentences? failed, /.test(none), false);
+});
+
+test("under the second speech table, each setting gets a line saying how many sentences Kokoro was asked for in how many requests, from the answers that log it", () => {
+  const lines = [voiced(), voiced({ question: 2 }), voiced({ question: 3 }), voiced({ chat: "chat-2", speechBundle: "on" }), voiced({ chat: "chat-2", question: 2, speechBundle: "on" }), voiced({ chat: "chat-3", engine: "sdk", thinking: null })];
+  const speech = [
+    said({ requests: 3, requestedSentences: 3 }),
+    said({ question: 2, requests: 2, requestedSentences: 2 }),
+    said({ question: 3 }),
+    said({ chat: "chat-2", requests: 2, requestedSentences: 7 }),
+    said({ chat: "chat-2", question: 2, requests: 1, requestedSentences: 1 }),
+    said({ chat: "chat-3", requests: 0, requestedSentences: 0 }),
+  ];
+  const report = compareReport({ lines, speech, skipped: 0 });
+  const after = report.slice(report.indexOf(countsHeading));
+  assert.equal(after.includes("\nAPI, keep, a sentence at a time: Kokoro was asked for 5 sentences in 5 requests, 1.0 a request, from the 2 of 3 answers that log it.\n"), true);
+  assert.equal(after.includes("\nAPI, keep, sentences bundled: Kokoro was asked for 8 sentences in 3 requests, 2.7 a request.\n"), true);
+  assert.equal(after.includes("Agent SDK, a sentence at a time: Kokoro was asked"), false);
+  const rows = after.split("\n");
+  const lastRow = rows.findIndex((text) => text.startsWith("API, keep, sentences bundled "));
+  assert.ok(lastRow > 0 && rows[lastRow + 1].startsWith("API, keep, a sentence at a time: Kokoro") && rows[lastRow + 2].startsWith("API, keep, sentences bundled: Kokoro"));
+  const one = compareReport({ lines: [voiced()], speech: [said({ requests: 1, requestedSentences: 1 })], skipped: 0 });
+  assert.equal(one.includes("\nAPI, keep: Kokoro was asked for 1 sentence in 1 request, 1.0 a request.\n"), true);
+  assert.equal(compareReport({ lines: [voiced()], speech: [said()], skipped: 0 }).includes("Kokoro was asked"), false);
+  const failedFirst = compareReport({ lines: [voiced()], speech: [said({ failed: 1, failedMaking: 1, failedPlaying: 0, requests: 2, requestedSentences: 2 })], skipped: 0 });
+  assert.ok(failedFirst.indexOf("1 sentence failed") < failedFirst.indexOf("Kokoro was asked"));
 });

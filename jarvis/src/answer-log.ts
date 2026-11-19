@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, SpeechStart, SpeechStop, SpokenStyleMode, ThinkingHistory, VoiceMode } from "./config.js";
+import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, SpeechBundleMode, SpeechStart, SpeechStop, SpokenStyleMode, ThinkingHistory, VoiceMode } from "./config.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
@@ -45,6 +45,8 @@ export type SpeechLine = {
   failedMaking?: number;
   failedPlaying?: number;
   left: number;
+  requests?: number;
+  requestedSentences?: number;
   stopped: boolean;
   gaveUp: boolean;
   tooLong: boolean;
@@ -69,6 +71,7 @@ export type LogContext = {
   voice: VoiceMode;
   speechStart: SpeechStart;
   speechStop: SpeechStop;
+  speechBundle: SpeechBundleMode;
   spokenStyle: SpokenStyleMode;
 };
 
@@ -88,6 +91,7 @@ export type LogLine = {
   voice?: VoiceMode;
   speechStart?: SpeechStart;
   speechStop?: SpeechStop;
+  speechBundle?: SpeechBundleMode;
   spokenStyle?: SpokenStyleMode;
   ok: boolean;
   error: string | null;
@@ -159,7 +163,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     hubActions: context.hubActions,
     sessionNotes: context.sessionNotes,
     voice: context.voice,
-    ...(context.voice === "off" ? {} : { speechStart: context.speechStart, speechStop: context.speechStop, spokenStyle: context.spokenStyle }),
+    ...(context.voice === "off" ? {} : { speechStart: context.speechStart, speechStop: context.speechStop, speechBundle: context.speechBundle, spokenStyle: context.spokenStyle }),
     ok: answer !== null,
     error: "error" in outcome ? errorKind(outcome.error) : null,
     firstWordsMs: wholeMs(answer?.firstWordsMs ?? null),
@@ -196,6 +200,8 @@ export function speechLine(chat: string, question: number, at: Date, report: Spe
     failedMaking: report.failedMaking,
     failedPlaying: report.failedPlaying,
     left: report.left,
+    requests: report.requests,
+    requestedSentences: report.requestedSentences,
     stopped: report.stopped,
     gaveUp: report.gaveUp,
     tooLong: report.tooLong,

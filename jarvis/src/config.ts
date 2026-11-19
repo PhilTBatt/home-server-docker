@@ -30,6 +30,9 @@ export type SpeechStart = (typeof speechStarts)[number];
 export const speechStops = ["now", "sentence"] as const;
 export type SpeechStop = (typeof speechStops)[number];
 
+export const speechBundleModes = ["off", "on"] as const;
+export type SpeechBundleMode = (typeof speechBundleModes)[number];
+
 export const spokenStyleModes = ["off", "on"] as const;
 export type SpokenStyleMode = (typeof spokenStyleModes)[number];
 
@@ -50,6 +53,7 @@ export type Config = {
   volume: number;
   speechStart: SpeechStart;
   speechStop: SpeechStop;
+  speechBundle: boolean;
   spokenStyle: boolean;
   log: boolean;
 };
@@ -142,10 +146,12 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (!isSpeechStart(speechStart)) throw new Error(`JARVIS_SPEECH_START must be sentence or clause, not "${speechStart}"`);
   const speechStop = env.JARVIS_SPEECH_STOP?.trim() || "now";
   if (!isSpeechStop(speechStop)) throw new Error(`JARVIS_SPEECH_STOP must be now or sentence, not "${speechStop}"`);
+  const speechBundle = env.JARVIS_SPEECH_BUNDLE?.trim() || "off";
+  if (speechBundle !== "on" && speechBundle !== "off") throw new Error(`JARVIS_SPEECH_BUNDLE must be on or off, not "${speechBundle}"`);
   const spokenStyle = env.JARVIS_SPOKEN_STYLE?.trim() || "off";
   if (spokenStyle !== "on" && spokenStyle !== "off") throw new Error(`JARVIS_SPOKEN_STYLE must be on or off, not "${spokenStyle}"`);
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, volume, speechStart, speechStop, spokenStyle: spokenStyle === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", log: log === "on" };
 }

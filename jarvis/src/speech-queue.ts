@@ -3,6 +3,7 @@ import { unlessCalledOff } from "./speech.js";
 export const speechAhead = 2;
 export const speechSentenceLimit = 40;
 export const speechFailureLimit = 2;
+export const speechBundleLimit = 250;
 
 export type SpeechReport = {
   firstSentenceMs: number | null;
@@ -14,6 +15,8 @@ export type SpeechReport = {
   failedMaking: number;
   failedPlaying: number;
   left: number;
+  requests: number;
+  requestedSentences: number;
   problem: string | null;
   gaveUp: boolean;
   tooLong: boolean;
@@ -28,6 +31,8 @@ export type SpeechQueueDeps = {
   ahead?: number;
   limit?: number;
   failureLimit?: number;
+  bundle?: boolean;
+  bundleLimit?: number;
   after?: Promise<void>;
 };
 
@@ -40,16 +45,21 @@ export type SpeechQueue = {
   report(): SpeechReport;
 };
 
+export function endsSentence(text: string): boolean {
+  return /[.!?…]["'”’)\]]*$/.test(text.trimEnd());
+}
+
 export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
   const ahead = deps.ahead ?? speechAhead;
   const limit = deps.limit ?? speechSentenceLimit;
   const failureLimit = deps.failureLimit ?? speechFailureLimit;
+  const bundleLimit = deps.bundle === true ? (deps.bundleLimit ?? speechBundleLimit) : 0;
   const calledOff = new AbortController();
   const makingOff = new AbortController();
   const making = AbortSignal.any([calledOff.signal, makingOff.signal]);
   const waiting: string[] = [];
-  const ready: Uint8Array[] = [];
-  const report: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
+  const ready: { sound: Uint8Array; sentences: number }[] = [];
+  const report: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, requests: 0, requestedSentences: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
   let taken = 0;
   let ended = false;
   let over = false;
@@ -58,6 +68,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
   let makeFailures = 0;
   let playFailures = 0;
   let playing = false;
+  let lastPiece = 0;
   let clear = deps.after === undefined;
   let waking: (() => void)[] = [];
   const sinceMs = () => deps.now() - deps.since;
@@ -81,39 +92,55 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
 
   const leaveAll = () => {
     leaveWaiting();
-    report.left += ready.length;
+    report.left += ready.reduce((sum, made) => sum + made.sentences, 0);
     ready.length = 0;
     over = true;
   };
 
-  const failed = (error: unknown, stage: "failedMaking" | "failedPlaying") => {
-    report.failed++;
-    report[stage]++;
+  const failed = (error: unknown, stage: "failedMaking" | "failedPlaying", sentences: number) => {
+    report.failed += sentences;
+    report[stage] += sentences;
     report.problem ??= error instanceof Error ? error.message : String(error);
+  };
+
+  const nextPiece = (): { text: string; sentences: number; length: number } | undefined => {
+    const first = waiting.shift();
+    if (first === undefined) return undefined;
+    const parts = [first];
+    let length = first.length;
+    const room = lastPiece === 0 ? 0 : Math.min(bundleLimit, lastPiece * 2);
+    while (waiting.length > 0 && endsSentence(parts[parts.length - 1]) && length + 1 + waiting[0].length <= room) {
+      length += 1 + waiting[0].length;
+      parts.push(waiting.shift() as string);
+    }
+    return { text: parts.join(" "), sentences: parts.length, length };
   };
 
   async function makeAll(): Promise<void> {
     try {
       for (;;) {
         while (!over && ((waiting.length === 0 && !ended) || ready.length >= ahead)) await change();
-        const sentence = over ? undefined : waiting.shift();
-        if (sentence === undefined) return;
+        const piece = over ? undefined : nextPiece();
+        if (piece === undefined) return;
         report.firstSentenceMs ??= sinceMs();
+        report.requests++;
+        report.requestedSentences += piece.sentences;
         try {
-          const sound = await unlessCalledOff(deps.make(sentence, making), making);
+          const sound = await unlessCalledOff(deps.make(piece.text, making), making);
           if (over) {
-            report.left++;
+            report.left += piece.sentences;
             return;
           }
           report.firstSoundMadeMs ??= sinceMs();
           makeFailures = 0;
-          ready.push(sound);
+          lastPiece = piece.length;
+          ready.push({ sound, sentences: piece.sentences });
         } catch (error) {
           if (over) {
-            report.left++;
+            report.left += piece.sentences;
             return;
           }
-          failed(error, "failedMaking");
+          failed(error, "failedMaking", piece.sentences);
           makeFailures++;
           if (makeFailures >= failureLimit) {
             report.gaveUp = true;
@@ -137,24 +164,24 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
     try {
       for (;;) {
         while (!over && (ready.length === 0 ? !madeAll : !clear)) await change();
-        const sound = over ? undefined : ready.shift();
-        if (sound === undefined) return;
+        const made = over ? undefined : ready.shift();
+        if (made === undefined) return;
         changed();
         const handed = sinceMs();
         playing = true;
         try {
-          await unlessCalledOff(deps.play(sound, calledOff.signal), calledOff.signal).finally(() => (playing = false));
+          await unlessCalledOff(deps.play(made.sound, calledOff.signal), calledOff.signal).finally(() => (playing = false));
           begun(handed);
           lastEnded = sinceMs();
-          report.spoken++;
+          report.spoken += made.sentences;
           playFailures = 0;
         } catch (error) {
           if (calledOff.signal.aborted) {
             begun(handed);
-            report.left++;
+            report.left += made.sentences;
             return;
           }
-          failed(error, "failedPlaying");
+          failed(error, "failedPlaying", made.sentences);
           playFailures++;
           if (playFailures >= failureLimit) {
             report.gaveUp = true;

@@ -28,7 +28,7 @@ function setUp(options: Partial<AnswerSpeechDeps> = {}) {
 
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 
-const quiet: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
+const quiet: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, requests: 0, requestedSentences: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
 
 test("an answer's text, fed in as it arrives, is spoken a sentence at a time, cleaned up, with the last one said when the answer ends", async () => {
   const { speech, made, played } = setUp();
@@ -44,6 +44,31 @@ test("an answer's text, fed in as it arrives, is spoken a sentence at a time, cl
   assert.deepEqual(made, ["Sure.", "The disk is half full.", "See for more"]);
   assert.deepEqual(played, [[1], [2], [3]]);
   assert.equal(speech.report().spoken, 3);
+});
+
+test("with bundling on, an answer's first sentence is spoken alone and the sentences waiting behind it are joined, counted one by one", async () => {
+  const { speech, made } = setUp({ bundle: true });
+  speech.text("Hello there. Yes. Now. Then more. Later on, again. End.");
+  speech.end();
+  await speech.done();
+  assert.deepEqual(made, ["Hello there.", "Yes. Now. Then more.", "Later on, again. End."]);
+  assert.equal(speech.report().spoken, 6);
+  const apart = setUp();
+  apart.speech.text("Hello there. Yes. Now. Then more. Later on, again. End.");
+  apart.speech.end();
+  await apart.speech.done();
+  assert.equal(apart.made.length, 6);
+});
+
+test("with bundling and the first clause early, the clause is spoken alone and the next piece can be up to twice its length", async () => {
+  const { speech, made } = setUp({ bundle: true, start: "clause" });
+  speech.text("Well, that depends on the weather, which");
+  await turn();
+  speech.text(" is fine today. Yes, and that is good. Ok, then. Done. Bye now.");
+  speech.end();
+  await speech.done();
+  assert.deepEqual(made, ["Well, that depends on the weather", "which is fine today. Yes, and that is good. Ok, then. Done.", "Bye now."]);
+  assert.equal(speech.report().spoken, 6);
 });
 
 test("a gap hands over what was held back at once, and what follows starts a new sentence", async () => {

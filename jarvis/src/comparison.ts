@@ -1,5 +1,5 @@
 import { logVersion, type LogLine, type NewChatLine, type Rating, type RatingLine, type SpeechLine } from "./answer-log.js";
-import { chatModes, engines, hubActionsModes, hubToolsModes, lengthHintModes, sessionNotesModes, speechStarts, speechStops, spokenStyleModes, thinkingHistories, voiceModes, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type SessionNotesMode, type SpeechStart, type SpeechStop, type SpokenStyleMode, type ThinkingHistory, type VoiceMode } from "./config.js";
+import { chatModes, engines, hubActionsModes, hubToolsModes, lengthHintModes, sessionNotesModes, speechBundleModes, speechStarts, speechStops, spokenStyleModes, thinkingHistories, voiceModes, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type SessionNotesMode, type SpeechBundleMode, type SpeechStart, type SpeechStop, type SpokenStyleMode, type ThinkingHistory, type VoiceMode } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
 export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; speech?: SpeechLine[]; skipped: number };
@@ -17,6 +17,7 @@ export type Group = {
   voice: VoiceMode;
   speechStart: SpeechStart | null;
   speechStop: SpeechStop | null;
+  speechBundle: SpeechBundleMode | null;
   spokenStyle: SpokenStyleMode | null;
   lines: LogLine[];
 };
@@ -49,6 +50,7 @@ export function isLogLine(value: unknown): value is LogLine {
     (line.voice === undefined || (voiceModes as readonly unknown[]).includes(line.voice)) &&
     (line.speechStart === undefined || (speechStarts as readonly unknown[]).includes(line.speechStart)) &&
     (line.speechStop === undefined || (speechStops as readonly unknown[]).includes(line.speechStop)) &&
+    (line.speechBundle === undefined || (speechBundleModes as readonly unknown[]).includes(line.speechBundle)) &&
     (line.spokenStyle === undefined || (spokenStyleModes as readonly unknown[]).includes(line.spokenStyle)) &&
     typeof line.ok === "boolean" &&
     (line.error === null || typeof line.error === "string") &&
@@ -101,8 +103,17 @@ export function isSpeechLine(value: unknown): value is SpeechLine {
     ["firstSentenceMs", "firstSoundMadeMs", "firstSoundMs", "longestSilenceMs"].every((field) => isNumberOrNull(line[field])) &&
     ["spoken", "failed", "left"].every((field) => Number.isInteger(line[field]) && (line[field] as number) >= 0) &&
     hasFailedSplit(line) &&
+    hasRequests(line) &&
     ["stopped", "gaveUp", "tooLong"].every((field) => typeof line[field] === "boolean")
   );
+}
+
+function hasRequests(line: Record<string, unknown>): boolean {
+  if (line.requests === undefined && line.requestedSentences === undefined) return true;
+  if (!["requests", "requestedSentences"].every((field) => Number.isInteger(line[field]) && (line[field] as number) >= 0)) return false;
+  const requests = line.requests as number;
+  const sentences = line.requestedSentences as number;
+  return sentences >= requests && (requests === 0) === (sentences === 0);
 }
 
 function hasFailedSplit(line: Record<string, unknown>): boolean {
@@ -139,14 +150,14 @@ function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
   return thinking === null ? "API" : `API, ${thinking}`;
 }
 
-function order(group: Group): [number, number, string, number, number, number, number, number, number, number, number, number] {
-  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), hubActionsModes.indexOf(group.hubActions), sessionNotesModes.indexOf(group.sessionNotes), voiceModes.indexOf(group.voice), group.speechStart === null ? -1 : speechStarts.indexOf(group.speechStart), group.speechStop === null ? -1 : speechStops.indexOf(group.speechStop), group.spokenStyle === null ? -1 : spokenStyleModes.indexOf(group.spokenStyle)];
+function order(group: Group): [number, number, string, number, number, number, number, number, number, number, number, number, number] {
+  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), hubActionsModes.indexOf(group.hubActions), sessionNotesModes.indexOf(group.sessionNotes), voiceModes.indexOf(group.voice), group.speechStart === null ? -1 : speechStarts.indexOf(group.speechStart), group.speechStop === null ? -1 : speechStops.indexOf(group.speechStop), group.speechBundle === null ? -1 : speechBundleModes.indexOf(group.speechBundle), group.spokenStyle === null ? -1 : spokenStyleModes.indexOf(group.spokenStyle)];
 }
 
 function compareGroups(a: Group, b: Group): number {
-  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, actionsA, notesA, voiceA, startA, stopA, styleA] = order(a);
-  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, actionsB, notesB, voiceB, startB, stopB, styleB] = order(b);
-  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || actionsA - actionsB || notesA - notesB || voiceA - voiceB || startA - startB || stopA - stopB || styleA - styleB;
+  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, actionsA, notesA, voiceA, startA, stopA, bundleA, styleA] = order(a);
+  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, actionsB, notesB, voiceB, startB, stopB, bundleB, styleB] = order(b);
+  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || actionsA - actionsB || notesA - notesB || voiceA - voiceB || startA - startB || stopA - stopB || bundleA - bundleB || styleA - styleB;
 }
 
 const chatNames: Record<ChatMode, string> = { fresh: "fresh", resume: "resumed" };
@@ -157,6 +168,7 @@ const notesNames: Record<SessionNotesMode, string> = { off: "no session notes", 
 const voiceNames: Record<VoiceMode, string> = { off: "no voice", kokoro: "Kokoro voice" };
 const startNames: Record<SpeechStart, string> = { sentence: "whole first sentence", clause: "first clause early" };
 const stopNames: Record<SpeechStop, string> = { now: "stops at once", sentence: "finishes the sentence" };
+const bundleNames: Record<SpeechBundleMode, string> = { off: "a sentence at a time", on: "sentences bundled" };
 const styleNames: Record<SpokenStyleMode, string> = { off: "usual style", on: "written for the ear" };
 
 export function groupLines(lines: LogLine[]): Group[] {
@@ -171,9 +183,10 @@ export function groupLines(lines: LogLine[]): Group[] {
     const voice = line.voice ?? "off";
     const speechStart = voice === "off" ? null : (line.speechStart ?? "sentence");
     const speechStop = voice === "off" ? null : (line.speechStop ?? "now");
+    const speechBundle = voice === "off" ? null : (line.speechBundle ?? "off");
     const spokenStyle = voice === "off" ? null : (line.spokenStyle ?? "off");
-    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, speechStop, spokenStyle]);
-    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, speechStop, spokenStyle, lines: [] };
+    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, speechStop, speechBundle, spokenStyle]);
+    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, speechStop, speechBundle, spokenStyle, lines: [] };
     group.lines.push(line);
     groups.set(key, group);
   }
@@ -186,6 +199,7 @@ export function groupLines(lines: LogLine[]): Group[] {
   const voiceSettings = new Set(lines.map((line) => line.voice ?? "off"));
   const startSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.speechStart ?? "sentence"])));
   const stopSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.speechStop ?? "now"])));
+  const bundleSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.speechBundle ?? "off"])));
   const styleSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.spokenStyle ?? "off"])));
   const label = (group: Group) => {
     const parts = [
@@ -198,6 +212,7 @@ export function groupLines(lines: LogLine[]): Group[] {
       ...(voiceSettings.size > 1 ? [voiceNames[group.voice]] : []),
       ...(startSettings.size > 1 && group.speechStart !== null ? [startNames[group.speechStart]] : []),
       ...(stopSettings.size > 1 && group.speechStop !== null ? [stopNames[group.speechStop]] : []),
+      ...(bundleSettings.size > 1 && group.speechBundle !== null ? [bundleNames[group.speechBundle]] : []),
       ...(styleSettings.size > 1 && group.spokenStyle !== null ? [styleNames[group.spokenStyle]] : []),
     ];
     const name = parts.join(", ");
@@ -383,6 +398,18 @@ function failedSplitLines(groups: Group[], speech: Map<string, SpeechLine>): str
   });
 }
 
+function requestLines(groups: Group[], speech: Map<string, SpeechLine>): string[] {
+  return groups.flatMap((group) => {
+    const said = speechLinesOf(group, speech);
+    const logged = said.filter((line) => line.requests !== undefined && line.requestedSentences !== undefined);
+    const requests = logged.reduce((sum, line) => sum + (line.requests ?? 0), 0);
+    if (requests === 0) return [];
+    const sentences = logged.reduce((sum, line) => sum + (line.requestedSentences ?? 0), 0);
+    const from = logged.length < said.length ? `, from the ${logged.length} of ${said.length} answers that log it` : "";
+    return [`${group.label}: Kokoro was asked for ${plural(sentences, "sentence")} in ${plural(requests, "request")}, ${(sentences / requests).toFixed(1)} a request${from}.`];
+  });
+}
+
 function failureLines(groups: Group[]): string[] {
   return groups.flatMap((group) => {
     const counts = new Map<string, number>();
@@ -423,6 +450,7 @@ export function compareReport({ lines, ratings = [], newChats = [], speech = [],
     out.push("", "Speech, added up for each setting: sentences played to the end, sentences that failed, and sentences not played in full (cut off or dropped when he stopped, or past the 40-sentence limit). Then how many answers made no sound, were stopped (before or after any sound), were given up on because two sentences in a row couldn't be made or couldn't be played, or went over 40 sentences.");
     out.push(table(["", "Answers", "Played", "Failed", "Not played in full", "No sound", "Stopped", "Given up", "Over 40"], counted));
     out.push(...failedSplitLines(groups, said));
+    out.push(...requestLines(groups, said));
     const unlogged = groups.reduce((sum, group) => sum + (group.voice === "off" ? 0 : group.lines.filter((line) => line.ok && !said.has(questionKey(line))).length), 0);
     if (unlogged > 0) out.push(`${plural(unlogged, "answer")} with the voice on had no speech line in the log, so ${unlogged === 1 ? "isn't" : "aren't"} in this table: still being spoken when this ran, or the chat ended first.`);
   }

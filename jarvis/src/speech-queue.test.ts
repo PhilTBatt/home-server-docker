@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { speechAhead, speechFailureLimit, speechSentenceLimit, startSpeechQueue, type SpeechQueueDeps } from "./speech-queue.js";
+import { endsSentence, speechAhead, speechBundleLimit, speechFailureLimit, speechSentenceLimit, startSpeechQueue, type SpeechQueueDeps } from "./speech-queue.js";
 
 type Asked<Given, Result> = { given: Given; signal: AbortSignal; resolve: (result: Result) => void; reject: (error: unknown) => void };
 
@@ -32,7 +32,7 @@ async function settled(work: Promise<unknown>): Promise<boolean> {
   return (await Promise.race([work.then(() => true), turn().then(() => false)])) as boolean;
 }
 
-const nothing = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
+const nothing = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, requests: 0, requestedSentences: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
 
 test("speech is made two sentences ahead at most, an answer is spoken up to 40 sentences, and two failures in a row end it", () => {
   assert.equal(speechAhead, 2);
@@ -60,7 +60,7 @@ test("sentences are made and played in the order they were added, each with its 
   assert.equal(await settled(queue.done), false);
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2 });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 2, requestedSentences: 2, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2 });
 });
 
 test("only one sentence is being made at a time, and only one sound is playing", async () => {
@@ -154,14 +154,14 @@ test("the times are counted from when the question was sent: first sentence aske
   clock.at += 900;
   makes[0].resolve(Uint8Array.of(1));
   await turn();
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 700, firstSoundMadeMs: 1600 });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 1, requestedSentences: 1, firstSentenceMs: 700, firstSoundMadeMs: 1600 });
   clock.at += 400;
   queue.add("Two.");
   await turn();
   makes[1].resolve(Uint8Array.of(2));
   plays[0].resolve();
   await turn();
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 700, firstSoundMadeMs: 1600, firstSoundMs: 1600, spoken: 1 });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 2, requestedSentences: 2, firstSentenceMs: 700, firstSoundMadeMs: 1600, firstSoundMs: 1600, spoken: 1 });
 });
 
 test("the first sound's time is when it reached the player, which can be later than when it was made", async () => {
@@ -300,7 +300,7 @@ test("stopping calls off the sentence being made and the sound being played, dro
   queue.stop();
   assert.deepEqual([makes[2].signal.aborted, plays[0].signal.aborted], [true, true]);
   assert.equal(await orStillWaiting(queue.done.then(() => "done")), "done");
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, left: 5, stopped: true });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 3, requestedSentences: 3, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, left: 5, stopped: true });
   await turn();
   assert.deepEqual([makes.length, plays.length], [3, 1]);
 });
@@ -311,7 +311,7 @@ test("stopping before anything was made is done at once too, with no first sound
   await turn();
   queue.stop();
   assert.equal(await orStillWaiting(queue.done.then(() => "done")), "done");
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, left: 1, stopped: true });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 1, requestedSentences: 1, firstSentenceMs: 0, left: 1, stopped: true });
   assert.equal(makes[0].signal.aborted, true);
 });
 
@@ -344,7 +344,7 @@ test("stopping twice, or after everything has been said, does nothing more", asy
   await queue.done;
   queue.stop();
   queue.stop();
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1 });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 1, requestedSentences: 1, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1 });
   assert.equal(plays[0].signal.aborted, false);
   const second = setUp();
   second.queue.add("One.");
@@ -386,7 +386,7 @@ test("a sentence that can't be made is skipped, its reason kept, and the next on
   assert.deepEqual(plays.map((play) => play.given), [[1], [3]]);
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, failed: 1, failedMaking: 1, problem: "Kokoro took longer than 30 seconds over one piece of speech" });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 3, requestedSentences: 3, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, failed: 1, failedMaking: 1, problem: "Kokoro took longer than 30 seconds over one piece of speech" });
 });
 
 test("the first reason is the one kept, and something thrown that isn't an error still gives one", async () => {
@@ -421,7 +421,7 @@ test("two sentences in a row that can't be made end the speech: the rest is left
   assert.equal(await settled(queue.done), false);
   plays[0].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, failed: 2, failedMaking: 2, left: 3, problem: "Couldn't reach Kokoro at http://kokoro:8880 (ECONNREFUSED)", gaveUp: true });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 3, requestedSentences: 3, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, failed: 2, failedMaking: 2, left: 3, problem: "Couldn't reach Kokoro at http://kokoro:8880 (ECONNREFUSED)", gaveUp: true });
 });
 
 test("a sound that was made and is waiting its turn is still played after the speech is given up on", async () => {
@@ -443,7 +443,7 @@ test("a sound that was made and is waiting its turn is still played after the sp
   assert.deepEqual(plays.map((play) => play.given), [[1], [2]]);
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, failed: 2, failedMaking: 2, left: 1, problem: "Kokoro replied 500", gaveUp: true });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 4, requestedSentences: 4, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, failed: 2, failedMaking: 2, left: 1, problem: "Kokoro replied 500", gaveUp: true });
 });
 
 test("a sentence that arrives after the speech was given up on is counted as left, even once the queue has finished", async () => {
@@ -508,7 +508,7 @@ test("a sound that can't be played is skipped and the next is tried", async () =
   assert.deepEqual(plays.map((play) => play.given), [[1], [2]]);
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, failed: 1, failedPlaying: 1, problem: "aplay stopped with code 1: audio open error: Device or resource busy" });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 2, requestedSentences: 2, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, failed: 1, failedPlaying: 1, problem: "aplay stopped with code 1: audio open error: Device or resource busy" });
 });
 
 test("two sounds in a row that can't be played end the speech, drop everything and call off the sentence being made", async () => {
@@ -530,7 +530,7 @@ test("two sounds in a row that can't be played end the speech, drop everything a
   assert.equal(makes[3].signal.aborted, true);
   assert.equal(await orStillWaiting(queue.done.then(() => "done")), "done");
   assert.equal(plays.length, 2);
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, failed: 2, failedPlaying: 2, left: 3, problem: "aplay stopped with code 1", gaveUp: true });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 4, requestedSentences: 4, firstSentenceMs: 0, firstSoundMadeMs: 0, failed: 2, failedPlaying: 2, left: 3, problem: "aplay stopped with code 1", gaveUp: true });
 });
 
 test("a sound that comes back in the same moment the speech is given up on is counted as left, not lost", async () => {
@@ -655,7 +655,7 @@ test("an answer longer than the limit is spoken up to the limit, and the rest is
   await turn();
   plays[1].resolve();
   await queue.done;
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, left: 2, tooLong: true });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 2, requestedSentences: 2, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, longestSilenceMs: 0, spoken: 2, left: 2, tooLong: true });
 });
 
 test("left to its defaults, the forty-first sentence is the first one left out", async () => {
@@ -713,7 +713,7 @@ test("finishing lets the sentence that's playing end, plays nothing after it, an
   plays[0].resolve();
   await queue.done;
   assert.deepEqual([plays.length, makes.length], [1, 2]);
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, left: 2, stopped: true });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 2, requestedSentences: 2, firstSentenceMs: 0, firstSoundMadeMs: 0, firstSoundMs: 0, spoken: 1, left: 2, stopped: true });
 });
 
 test("finishing with nothing playing says so and ends the speech at once", async () => {
@@ -724,7 +724,7 @@ test("finishing with nothing playing says so and ends the speech at once", async
   await queue.done;
   assert.equal(makes[0].signal.aborted, true);
   assert.equal(plays.length, 0);
-  assert.deepEqual(queue.report(), { ...nothing, firstSentenceMs: 0, left: 1, stopped: true });
+  assert.deepEqual(queue.report(), { ...nothing, requests: 1, requestedSentences: 1, firstSentenceMs: 0, left: 1, stopped: true });
   const between = setUp();
   between.queue.add("One.");
   between.queue.add("Two.");
@@ -856,4 +856,208 @@ test("a last answer whose speech failed doesn't hold the next one up, and nothin
   const empty = setUp({ after: new Promise<void>(() => {}) });
   empty.queue.end();
   assert.equal(await orStillWaiting(empty.queue.done), undefined);
+});
+
+async function madeAndPlayed(queue: ReturnType<typeof setUp>["queue"], makes: ReturnType<typeof setUp>["makes"], plays: ReturnType<typeof setUp>["plays"]) {
+  for (let step = 0; step < 50 && (await settled(queue.done)) === false; step++) {
+    for (const make of makes) make.resolve(Uint8Array.of(make.given.length));
+    for (const play of plays) play.resolve();
+    await turn();
+  }
+  return makes.map((make) => make.given);
+}
+
+test("bundled pieces are at most 250 characters, and a sentence ends with a full stop, question or exclamation mark or ellipsis, before any closing quote or bracket", () => {
+  assert.equal(speechBundleLimit, 250);
+  for (const text of ["Yes.", "Really?", "Wow!", "Wait…", 'He said "hi."', "(It's fine.)", "It's ‘done.’", "Done.  "]) assert.equal(endsSentence(text), true, text);
+  for (const text of ["First item", "a, b,", "3.5 kg", "e.g", "Done.x", "Run this:", "So;", ""]) assert.equal(endsSentence(text), false, text);
+});
+
+test("without bundling, every sentence is its own piece, however many are waiting", async () => {
+  for (const options of [{}, { bundle: false }]) {
+    const { queue, makes, plays } = setUp({ ahead: 5, ...options });
+    for (const sentence of ["Hello there.", "Yes.", "Now.", "Then more."]) queue.add(sentence);
+    queue.end();
+    assert.deepEqual(await madeAndPlayed(queue, makes, plays), ["Hello there.", "Yes.", "Now.", "Then more."]);
+    assert.deepEqual([queue.report().spoken, queue.report().requests, queue.report().requestedSentences], [4, 4, 4]);
+  }
+});
+
+test("with bundling, the first piece is one sentence however many are waiting, and each later one joins waiting sentences up to twice the last piece's length", async () => {
+  const { queue, makes, plays } = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Hello there.", "Yes.", "Now.", "Then more.", "Later on, again.", "End."]) queue.add(sentence);
+  queue.end();
+  assert.deepEqual(await madeAndPlayed(queue, makes, plays), ["Hello there.", "Yes. Now. Then more.", "Later on, again. End."]);
+  assert.deepEqual(plays.map((play) => play.given), [[12], [20], [21]]);
+  assert.deepEqual([queue.report().spoken, queue.report().left, queue.report().failed, queue.report().requests, queue.report().requestedSentences], [6, 0, 0, 3, 6]);
+});
+
+test("a piece can be exactly twice the last one, no longer, and never longer than the limit, which can be set", async () => {
+  const exact = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Abc.", "B.", "Cdef.", "G."]) exact.queue.add(sentence);
+  exact.queue.end();
+  assert.deepEqual(await madeAndPlayed(exact.queue, exact.makes, exact.plays), ["Abc.", "B. Cdef.", "G."]);
+  const spaced = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Abc.", "B.", "Cdefg."]) spaced.queue.add(sentence);
+  spaced.queue.end();
+  assert.deepEqual(await madeAndPlayed(spaced.queue, spaced.makes, spaced.plays), ["Abc.", "B.", "Cdefg."]);
+  const long = (letter: string, length: number) => `${letter.repeat(length - 1)}.`;
+  const capped = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of [long("a", 200), long("b", 120), long("c", 129), long("d", 10)]) capped.queue.add(sentence);
+  capped.queue.end();
+  assert.deepEqual((await madeAndPlayed(capped.queue, capped.makes, capped.plays)).map((given) => given.length), [200, 250, 10]);
+  const over = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of [long("a", 200), long("b", 120), long("c", 130)]) over.queue.add(sentence);
+  over.queue.end();
+  assert.deepEqual((await madeAndPlayed(over.queue, over.makes, over.plays)).map((given) => given.length), [200, 120, 130]);
+  const set = setUp({ bundle: true, bundleLimit: 30, ahead: 5 });
+  for (const sentence of [long("a", 40), long("b", 15), long("c", 14), long("d", 10)]) set.queue.add(sentence);
+  set.queue.end();
+  assert.deepEqual((await madeAndPlayed(set.queue, set.makes, set.plays)).map((given) => given.length), [40, 30, 10]);
+});
+
+test("a sentence longer than the room still goes, on its own", async () => {
+  const { queue, makes, plays } = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Hi.", "This one is longer.", "Ok."]) queue.add(sentence);
+  queue.end();
+  assert.deepEqual(await madeAndPlayed(queue, makes, plays), ["Hi.", "This one is longer.", "Ok."]);
+});
+
+test("a piece that doesn't end like a sentence, such as a list item or a line ending in a colon, ends its bundle, so it isn't run into what follows", async () => {
+  const { queue, makes, plays } = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Here's the list.", "First item", "Second item", "Done.", "Bye."]) queue.add(sentence);
+  queue.end();
+  assert.deepEqual(await madeAndPlayed(queue, makes, plays), ["Here's the list.", "First item", "Second item", "Done. Bye."]);
+  const mixed = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Here's the full list.", "Yes.", "First item", "More."]) mixed.queue.add(sentence);
+  mixed.queue.end();
+  assert.deepEqual(await madeAndPlayed(mixed.queue, mixed.makes, mixed.plays), ["Here's the full list.", "Yes. First item", "More."]);
+  const colon = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Here's what to do.", "Run this:", "Then restart."]) colon.queue.add(sentence);
+  colon.queue.end();
+  assert.deepEqual(await madeAndPlayed(colon.queue, colon.makes, colon.plays), ["Here's what to do.", "Run this:", "Then restart."]);
+});
+
+test("if the first piece couldn't be made, the next is still one sentence, and the room grows from the first piece that was made", async () => {
+  const { queue, makes, plays } = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Hello there.", "Yes, that is right.", "Now.", "Then more.", "Fine."]) queue.add(sentence);
+  queue.end();
+  await turn();
+  makes[0].reject(new Error("Kokoro replied 500"));
+  await turn();
+  assert.deepEqual(makes.map((make) => make.given), ["Hello there.", "Yes, that is right."]);
+  makes[1].resolve(Uint8Array.of(2));
+  await turn();
+  assert.deepEqual(makes.map((make) => make.given), ["Hello there.", "Yes, that is right.", "Now. Then more. Fine."]);
+  for (let step = 0; step < 10; step++) {
+    for (const make of makes) make.resolve(Uint8Array.of(3));
+    for (const play of plays) play.resolve();
+    await turn();
+  }
+  await queue.done;
+  assert.deepEqual([queue.report().spoken, queue.report().failedMaking], [4, 1]);
+});
+
+test("only sentences already waiting are bundled: nothing is held back for more to arrive", async () => {
+  const { queue, makes, plays } = setUp({ bundle: true, ahead: 5 });
+  queue.add("Hello there.");
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  queue.add("Yes, that is right.");
+  await turn();
+  assert.deepEqual(makes.map((make) => make.given), ["Hello there.", "Yes, that is right."]);
+  queue.add("Now.");
+  queue.add("Then.");
+  makes[1].resolve(Uint8Array.of(2));
+  await turn();
+  assert.deepEqual(makes.map((make) => make.given), ["Hello there.", "Yes, that is right.", "Now. Then."]);
+  queue.end();
+  assert.equal(plays.length, 1);
+});
+
+test("a bundled piece counts as all its sentences: played, failed while being made or played, or left when he's stopped or gives up", async () => {
+  const stopped = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Hello there.", "Yes.", "Now.", "Then more.", "Later on, again.", "End."]) stopped.queue.add(sentence);
+  await turn();
+  stopped.makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  stopped.plays[0].resolve();
+  stopped.makes[1].resolve(Uint8Array.of(2));
+  await turn();
+  await turn();
+  assert.deepEqual([stopped.plays.length, stopped.makes.length], [2, 3]);
+  stopped.queue.stop();
+  await stopped.queue.done;
+  assert.deepEqual([stopped.queue.report().spoken, stopped.queue.report().left, stopped.queue.report().stopped, stopped.queue.report().requests, stopped.queue.report().requestedSentences], [1, 5, true, 3, 6]);
+
+  const unmade = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Hello there.", "Yes.", "Now.", "Then more.", "Later on, again.", "End."]) unmade.queue.add(sentence);
+  unmade.queue.end();
+  await turn();
+  unmade.makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  unmade.makes[1].reject(new Error("Kokoro replied 500"));
+  await turn();
+  unmade.makes[2].resolve(Uint8Array.of(3));
+  for (let step = 0; step < 10; step++) {
+    for (const play of unmade.plays) play.resolve();
+    await turn();
+  }
+  await unmade.queue.done;
+  const notMade = unmade.queue.report();
+  assert.deepEqual([notMade.spoken, notMade.failed, notMade.failedMaking, notMade.failedPlaying, notMade.left, notMade.gaveUp, notMade.requests, notMade.requestedSentences], [3, 3, 3, 0, 0, false, 3, 6]);
+
+  const unplayed = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Hello there.", "Yes.", "Now.", "Then more.", "Later on, again.", "End."]) unplayed.queue.add(sentence);
+  unplayed.queue.end();
+  for (let step = 0; step < 3; step++) {
+    await turn();
+    for (const make of unplayed.makes) make.resolve(Uint8Array.of(make.given.length));
+  }
+  await turn();
+  unplayed.plays[0].reject(new Error("aplay stopped with code 1"));
+  await turn();
+  unplayed.plays[1].reject(new Error("aplay stopped with code 1"));
+  await unplayed.queue.done;
+  const notPlayed = unplayed.queue.report();
+  assert.deepEqual([notPlayed.spoken, notPlayed.failed, notPlayed.failedPlaying, notPlayed.left, notPlayed.gaveUp], [0, 4, 4, 2, true]);
+});
+
+test("a bundled piece whose sound arrives just as he's stopped counts all its sentences as left", async () => {
+  const { queue, makes } = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Hello there.", "Yes.", "Now.", "Then more.", "Later on, again.", "End."]) queue.add(sentence);
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  assert.deepEqual(makes.map((make) => make.given), ["Hello there.", "Yes. Now. Then more."]);
+  makes[1].resolve(Uint8Array.of(2));
+  await Promise.resolve();
+  queue.stop();
+  await queue.done;
+  assert.deepEqual([queue.report().spoken, queue.report().left, makes.length], [0, 6, 2]);
+});
+
+test("finishing during a bundled piece lets the whole piece play, and leaves the rest", async () => {
+  const { queue, makes, plays } = setUp({ bundle: true, ahead: 5 });
+  for (const sentence of ["Hello there.", "Yes.", "Now.", "Then more.", "Later on, again.", "End."]) queue.add(sentence);
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  plays[0].resolve();
+  makes[1].resolve(Uint8Array.of(2));
+  await turn();
+  await turn();
+  assert.equal(plays.length, 2);
+  assert.equal(queue.finish(), true);
+  plays[1].resolve();
+  await queue.done;
+  assert.deepEqual([queue.report().spoken, queue.report().left, queue.report().stopped], [4, 2, true]);
+});
+
+test("the 40-sentence limit counts sentences, not pieces", async () => {
+  const { queue, makes, plays } = setUp({ bundle: true, ahead: 5, limit: 3 });
+  for (const sentence of ["Hello there.", "Yes.", "Now.", "Then.", "End."]) queue.add(sentence);
+  queue.end();
+  assert.deepEqual(await madeAndPlayed(queue, makes, plays), ["Hello there.", "Yes. Now."]);
+  assert.deepEqual([queue.report().spoken, queue.report().left, queue.report().tooLong], [3, 2, true]);
 });

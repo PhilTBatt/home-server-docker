@@ -15,7 +15,7 @@ export type AnswerSpeech = {
   report(): SpeechReport;
 };
 
-export type AnswerSpeechDeps = Pick<SpeechQueueDeps, "make" | "play" | "now" | "ahead" | "limit" | "failureLimit" | "after"> & { start: SpeechStart; skipCode?: boolean };
+export type AnswerSpeechDeps = Pick<SpeechQueueDeps, "make" | "play" | "now" | "ahead" | "limit" | "failureLimit" | "bundle" | "after"> & { start: SpeechStart; skipCode?: boolean };
 
 export type Speaker = { engine: SpeechEngine; device: string; startPlayer: (options: { device: string; rate: number }) => Player };
 

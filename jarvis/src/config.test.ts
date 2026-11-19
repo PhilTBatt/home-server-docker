@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainDir, chatModes, defaultKokoroVoice, defaultVolume, engines, readConfig, readVolume, speechStarts, speechStops, spokenStyleModes, thinkingHistories, voiceModes } from "./config.js";
+import { brainDir, chatModes, defaultKokoroVoice, defaultVolume, engines, readConfig, readVolume, speechStarts, speechBundleModes, speechStops, spokenStyleModes, thinkingHistories, voiceModes } from "./config.js";
 
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80, speechStart: "sentence", speechStop: "now", spokenStyle: false, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80, speechStart: "sentence", speechStop: "now", spokenStyle: false, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -319,6 +319,29 @@ test("JARVIS_SPEECH_STOP is checked after JARVIS_SPEECH_START and before JARVIS_
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_START: "word", JARVIS_SPEECH_STOP: "word" }), { message: 'JARVIS_SPEECH_START must be sentence or clause, not "word"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_STOP: "word" }), { message: 'JARVIS_SPEECH_STOP must be now or sentence, not "word"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_STOP: "sentence" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
+});
+
+test("JARVIS_SPEECH_BUNDLE is off unless it's set to on", () => {
+  assert.deepEqual(speechBundleModes, ["off", "on"]);
+  assert.equal(readConfig(base).speechBundle, false);
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_BUNDLE: "" }).speechBundle, false);
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_BUNDLE: "  " }).speechBundle, false);
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_BUNDLE: "off" }).speechBundle, false);
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_BUNDLE: " on " }).speechBundle, true);
+  assert.equal(readConfig({ ...base, JARVIS_SPEECH_BUNDLE: "on", JARVIS_SPOKEN_STYLE: "on" }).spokenStyle, true);
+});
+
+test("anything else in JARVIS_SPEECH_BUNDLE stops Jarvis and is named, voice on or off", () => {
+  for (const voice of ["off", "kokoro"]) {
+    for (const value of ["yes", "ON", "true", "1", "bundled"]) {
+      assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_SPEECH_BUNDLE: value }), { message: `JARVIS_SPEECH_BUNDLE must be on or off, not "${value}"` });
+    }
+  }
+});
+
+test("JARVIS_SPEECH_BUNDLE is checked after JARVIS_SPEECH_STOP and before JARVIS_SPOKEN_STYLE", () => {
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_STOP: "word", JARVIS_SPEECH_BUNDLE: "word" }), { message: 'JARVIS_SPEECH_STOP must be now or sentence, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_BUNDLE: "word", JARVIS_SPOKEN_STYLE: "word" }), { message: 'JARVIS_SPEECH_BUNDLE must be on or off, not "word"' });
 });
 
 test("JARVIS_SPOKEN_STYLE is off unless it's set to on", () => {

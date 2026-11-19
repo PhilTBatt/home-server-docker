@@ -9,7 +9,7 @@ import type { Answer } from "./timing.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
 
-const quiet: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
+const quiet: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, requests: 0, requestedSentences: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
 
 function answer(text: string): Answer {
   return { text, firstWordsMs: 500, totalMs: 1200 };
@@ -909,7 +909,7 @@ test("set to finish the sentence, a failed answer stops its own speech but leave
 
 test("set to finish the sentence, the next answer is logged and the prompt comes back without waiting, and each speech line still lands against its own answer", async () => {
   const written: { kind?: string; question: number; spoken?: number }[] = [];
-  const log = startAnswerLog({ engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "kokoro", speechStart: "sentence", speechStop: "sentence", spokenStyle: "off" }, { append: async (text) => void written.push(JSON.parse(text)), now: () => new Date(0), chat: "c", warn: () => {}, costSoFar: () => null });
+  const log = startAnswerLog({ engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "kokoro", speechStart: "sentence", speechStop: "sentence", speechBundle: "off", spokenStyle: "off" }, { append: async (text) => void written.push(JSON.parse(text)), now: () => new Date(0), chat: "c", warn: () => {}, costSoFar: () => null });
   const typed = typing();
   const { speak, made } = speaker([], (number) => ({ talking: true, playing: true, report: { spoken: number } }));
   const { run, output } = chat(fakeSession({ Hello: hello, Again: hello }), typed.lines, { speak, speechStop: "sentence", record: log.record, recordSpeech: log.speech });
@@ -932,7 +932,7 @@ test("set to finish the sentence, the next answer is logged and the prompt comes
 
 test("set to finish the sentence, a question that fails while the last sentence is finishing is logged and the prompt comes back without waiting", async () => {
   const written: { kind?: string; question: number; spoken?: number }[] = [];
-  const log = startAnswerLog({ engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "kokoro", speechStart: "sentence", speechStop: "sentence", spokenStyle: "off" }, { append: async (text) => void written.push(JSON.parse(text)), now: () => new Date(0), chat: "c", warn: () => {}, costSoFar: () => null });
+  const log = startAnswerLog({ engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "kokoro", speechStart: "sentence", speechStop: "sentence", speechBundle: "off", spokenStyle: "off" }, { append: async (text) => void written.push(JSON.parse(text)), now: () => new Date(0), chat: "c", warn: () => {}, costSoFar: () => null });
   const typed = typing();
   const { speak, made } = speaker([], (number) => ({ talking: true, playing: true, report: { spoken: number } }));
   const session = fakeSession({ Hello: hello, Broken: () => Promise.reject(new Error("the engine fell over")) });
