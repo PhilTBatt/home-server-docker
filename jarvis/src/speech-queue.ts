@@ -26,6 +26,7 @@ export type SpeechReport = {
 export type SpeechQueueDeps = {
   make: (sentence: string, signal: AbortSignal) => Promise<Uint8Array>;
   play: (sound: Uint8Array, signal: AbortSignal) => Promise<void>;
+  beforePlay?: (signal: AbortSignal) => Promise<void>;
   now: () => number;
   since: number;
   ahead?: number;
@@ -167,8 +168,13 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
         const made = over ? undefined : ready.shift();
         if (made === undefined) return;
         changed();
-        const handed = sinceMs();
         playing = true;
+        await deps.beforePlay?.(calledOff.signal).catch(() => {});
+        if (calledOff.signal.aborted) {
+          report.left += made.sentences;
+          return;
+        }
+        const handed = sinceMs();
         try {
           await unlessCalledOff(deps.play(made.sound, calledOff.signal), calledOff.signal).finally(() => (playing = false));
           begun(handed);

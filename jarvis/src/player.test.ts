@@ -450,6 +450,44 @@ test("with a real process that ignores being asked to stop, stopping still ends 
   assert.ok(took >= 250 && took < 3000, String(took));
 });
 
+test("ended settles once the process has gone, whether it finished, failed or was stopped, and never fails", async () => {
+  const pending = (promise: Promise<void> | undefined) => Promise.race([promise?.then(() => "ended"), new Promise((resolve) => setImmediate(() => resolve("pending")))]);
+  const finished = fakeProcess();
+  const one = playerOn(finished);
+  assert.equal(await pending(one.ended), "pending");
+  finished.exit({ code: 0, signal: null });
+  assert.equal(await pending(one.ended), "ended");
+  const failing = fakeProcess();
+  const two = playerOn(failing);
+  failing.exit({ code: 1, signal: null });
+  assert.equal(await pending(two.ended), "ended");
+  await assert.rejects(two.finish());
+  const missing = fakeProcess();
+  const three = playerOn(missing);
+  missing.exit({ error: Object.assign(new Error("spawn aplay ENOENT"), { code: "ENOENT" }) });
+  assert.equal(await pending(three.ended), "ended");
+  const deaf = fakeProcess({ deaf: true });
+  const four = startPlayer({ device: "plughw:1,0", rate: 24_000, spawn: () => deaf, killAfterMs: 30 });
+  four.stop();
+  assert.equal(await pending(four.ended), "pending");
+  assert.deepEqual(deaf.kills, ["SIGTERM"]);
+  await four.ended;
+  assert.deepEqual(deaf.kills, ["SIGTERM", "SIGKILL"]);
+});
+
+test("with a real process that ignores being asked to stop, ended waits until it has really been killed", { timeout: 10_000 }, async () => {
+  const script = `process.on("SIGTERM",()=>{});process.stdin.resume();setInterval(()=>{},1000);setTimeout(()=>process.exit(0),8000)`;
+  const player = startPlayer({ device: "plughw:1,0", rate: 24_000, spawn: realPlayer(script), killAfterMs: 300 });
+  await player.write(new Uint8Array(1024));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const started = performance.now();
+  player.stop();
+  assert.equal(await Promise.race([player.ended?.then(() => "ended"), new Promise((resolve) => setTimeout(() => resolve("still there"), 150))]), "still there");
+  await player.ended;
+  const took = performance.now() - started;
+  assert.ok(took >= 250 && took < 3000, String(took));
+});
+
 test("with no such program, finishing says it isn't installed", async () => {
   const player = startPlayer({ device: "plughw:1,0", rate: 24_000, spawn: (args) => spawnPlayer(args, "jarvis-no-such-player") });
   await assert.rejects(player.finish(), { message: "aplay isn't installed here. Sound plays from Jarvis's own image, which bash host/jarvis.sh sound-test builds" });

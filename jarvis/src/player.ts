@@ -17,6 +17,7 @@ export type Player = {
   write(sound: Uint8Array): Promise<void>;
   finish(): Promise<void>;
   stop(): void;
+  ended?: Promise<void>;
 };
 
 export function playerArgs(device: string, rate: number): string[] {
@@ -97,5 +98,6 @@ export function startPlayer(options: { device: string; rate: number; spawn?: (ar
       const hard = setTimeout(() => child.kill("SIGKILL"), options.killAfterMs ?? killAfterMs);
       void child.ended.then(() => clearTimeout(hard));
     },
+    ended: child.ended.then(() => undefined),
   };
 }

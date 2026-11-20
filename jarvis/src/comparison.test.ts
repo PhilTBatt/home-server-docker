@@ -547,7 +547,7 @@ test("the speech table keeps a chat's first question apart from its later ones, 
     said({ question: 4, firstSentenceMs: 1600, firstSoundMadeMs: 2700, firstSoundMs: 4000, longestSilenceMs: 1200 }),
   ];
   const report = compareReport({ lines, speech, skipped: 0 });
-  assert.equal(report.includes("\n\nSpeech, timed from the question being sent, and the longest silence between two sentences: the median, with the slowest in brackets.\n"), true);
+  assert.equal(report.includes("\n\nSpeech, timed from the question being sent, and the longest silence between one sound ending and the next starting: the median, with the slowest in brackets.\n"), true);
   assert.deepEqual(rowOf(report, "API, keep, first question"), ["2", "0.70 s (0.80 s)", "1.30 s (1.40 s)", "2.70 s (2.90 s)", "3.00 s (3.40 s)", "0.40 s (0.50 s)"]);
   assert.deepEqual(rowOf(report, "API, keep, later questions"), ["3", "0.70 s (0.90 s)", "1.10 s (1.60 s)", "2.10 s (2.70 s)", "2.20 s (4.00 s)", "0.65 s (1.20 s)"]);
   const header = report.split("\n").find((text) => text.includes("First sentence sent"));

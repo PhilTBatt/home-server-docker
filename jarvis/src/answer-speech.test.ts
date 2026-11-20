@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { playLimitMs, playSpareMs, slowPlayerMessage, speakerParts, speechNotes, startAnswerSpeech, type AnswerSpeechDeps } from "./answer-speech.js";
-import type { Player } from "./player.js";
+import { playerGoneMs, playLimitMs, playSpareMs, slowPlayerMessage, speakerParts, speechNotes, startAnswerSpeech, type AnswerSpeechDeps } from "./answer-speech.js";
+import { killAfterMs, type Player } from "./player.js";
 import type { SpeechEngine } from "./speech.js";
 import type { SpeechReport } from "./speech-queue.js";
 
@@ -253,6 +253,29 @@ test("when the answer starts again, what was being said is called off, what was 
   assert.deepEqual([speech.report().spoken, speech.report().stopped, speech.report().firstSentenceMs], [2, false, 2000]);
 });
 
+test("requests made before an answer started again still count, each time it starts again, so the engine's work isn't missing from the log", async () => {
+  const made: string[] = [];
+  const { speech } = setUp({
+    bundle: true,
+    make: (sentence) => {
+      made.push(sentence);
+      return made.length <= 2 ? new Promise<Uint8Array>(() => {}) : Promise.resolve(Uint8Array.of(made.length));
+    },
+  });
+  speech.text("First try. Half");
+  await turn();
+  speech.restart();
+  speech.text("Second try. More");
+  await turn();
+  speech.restart();
+  speech.text("Third try. Its end. And more.");
+  speech.end();
+  await speech.done();
+  assert.deepEqual(made, ["First try.", "Second try.", "Third try.", "Its end. And more."]);
+  const report = speech.report();
+  assert.deepEqual([report.requests, report.requestedSentences, report.spoken, report.stopped], [4, 5, 3, false]);
+});
+
 test("starting again after the end or after stopping does nothing", async () => {
   const { speech, made } = setUp();
   speech.text("One.");
@@ -305,6 +328,7 @@ test("a speaker's parts ask its engine for one sentence at a time and play each 
       steps.push("start");
       return player;
     },
+    lastPlayer: { ended: Promise.resolve() },
   });
   const never = new AbortController().signal;
   const sound = await parts.make("Hello there.", never);
@@ -339,7 +363,7 @@ function stuckSpeaker(steps: string[], rate = 24_000) {
       steps.push("stop");
     },
   };
-  return { engine, device: "plughw:1,0", startPlayer: () => player };
+  return { engine, device: "plughw:1,0", startPlayer: () => player, lastPlayer: { ended: Promise.resolve() } };
 }
 
 test("a sentence gets twice its own length to play, plus ten seconds", () => {
@@ -391,6 +415,112 @@ test("the limit used unless told otherwise is the one worked out from the sound"
   assert.deepEqual(steps, ["write"]);
   stop.abort(new Error("Speech was stopped"));
   await assert.rejects(playing, { message: "Speech was stopped" });
+});
+
+function playersThatEndLate(starts: number[], engine: SpeechEngine) {
+  const ends: (() => void)[] = [];
+  const speaker = {
+    engine,
+    device: "plughw:1,0",
+    startPlayer: (): Player => {
+      starts.push(ends.length + 1);
+      let end = () => {};
+      const ended = new Promise<void>((resolve) => (end = resolve));
+      ends.push(end);
+      return { write: async () => {}, finish: () => new Promise<void>(() => {}), stop: () => {}, ended };
+    },
+    lastPlayer: { ended: Promise.resolve() },
+  };
+  return { speaker, ends };
+}
+
+async function stoppedWhilePlaying(parts: ReturnType<typeof speakerParts>): Promise<void> {
+  const stop = new AbortController();
+  const playing = parts.play(Uint8Array.of(1, 2), stop.signal);
+  await turn();
+  stop.abort(new Error("Speech was stopped"));
+  await assert.rejects(playing, { message: "Speech was stopped" });
+}
+
+test("a stopped player gets up to 3 seconds to end before the next starts, longer than the 2 it gets before being killed", () => {
+  assert.equal(playerGoneMs, 3000);
+  assert.ok(playerGoneMs > killAfterMs);
+});
+
+const timers = () => process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
+
+async function settled(promise: Promise<unknown>): Promise<string> {
+  return Promise.race([promise.then(() => "done", (error: Error) => `failed: ${error.message}`), new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), 15))]);
+}
+
+test("before the next sound, the speaker waits until the last player has ended, even in the next answer, so two never hold the speakers at once", async () => {
+  const starts: number[] = [];
+  const { speaker, ends } = playersThatEndLate(starts, stuckSpeaker([]).engine);
+  await stoppedWhilePlaying(speakerParts(speaker, () => 60_000));
+  const next = speakerParts(speaker, () => 60_000);
+  const waiting = next.beforePlay?.(new AbortController().signal) ?? Promise.reject(new Error("no beforePlay"));
+  assert.equal(await settled(waiting), "waiting");
+  ends[0]();
+  assert.equal(await settled(waiting), "done");
+  assert.deepEqual(starts, [1]);
+});
+
+test("playing itself doesn't wait: the waiting is done before, so it isn't part of a sound's time to play", async () => {
+  const starts: number[] = [];
+  const { speaker } = playersThatEndLate(starts, stuckSpeaker([]).engine);
+  const parts = speakerParts(speaker, () => 60_000);
+  await stoppedWhilePlaying(parts);
+  await stoppedWhilePlaying(parts);
+  assert.deepEqual(starts, [1, 2]);
+});
+
+test("a last player that still hasn't ended when its time is up doesn't hold the next one up for ever, and leaves no timer behind", async () => {
+  const starts: number[] = [];
+  const { speaker } = playersThatEndLate(starts, stuckSpeaker([]).engine);
+  const parts = speakerParts(speaker, () => 60_000, 40);
+  await stoppedWhilePlaying(parts);
+  const before = timers();
+  const began = Date.now();
+  await parts.beforePlay?.(new AbortController().signal);
+  assert.ok(Date.now() - began >= 35, String(Date.now() - began));
+  assert.ok(timers() <= before, `${timers()} timers, ${before} before`);
+});
+
+test("a stop while waiting for the last player to end comes back at once with the stop's reason, and leaves no timer behind", async () => {
+  const starts: number[] = [];
+  const { speaker } = playersThatEndLate(starts, stuckSpeaker([]).engine);
+  const parts = speakerParts(speaker, () => 60_000);
+  await stoppedWhilePlaying(parts);
+  const before = timers();
+  const stop = new AbortController();
+  const waiting = parts.beforePlay?.(stop.signal) ?? Promise.reject(new Error("no beforePlay"));
+  await turn();
+  const began = Date.now();
+  stop.abort(new Error("Speech was stopped"));
+  await assert.rejects(waiting, { message: "Speech was stopped" });
+  assert.ok(Date.now() - began < 500, String(Date.now() - began));
+  assert.ok(timers() <= before, `${timers()} timers, ${before} before`);
+  assert.deepEqual(starts, [1]);
+});
+
+test("waiting for a last player that has already ended takes no time and leaves no timer running", async () => {
+  const starts: number[] = [];
+  const { speaker, ends } = playersThatEndLate(starts, stuckSpeaker([]).engine);
+  const parts = speakerParts(speaker, () => 60_000);
+  await stoppedWhilePlaying(parts);
+  ends[0]();
+  const before = timers();
+  const waiting = parts.beforePlay?.(new AbortController().signal) ?? Promise.reject(new Error("no beforePlay"));
+  assert.equal(await Promise.race([waiting.then(() => "done"), turn().then(() => turn()).then(() => "waiting")]), "done");
+  assert.ok(timers() <= before, `${timers()} timers, ${before} before`);
+});
+
+test("a player that can't say when it has ended counts as ended, so there's nothing to wait for", async () => {
+  const steps: string[] = [];
+  const parts = speakerParts(stuckSpeaker(steps), () => 60_000);
+  await stoppedWhilePlaying(parts);
+  const waiting = parts.beforePlay?.(new AbortController().signal) ?? Promise.reject(new Error("no beforePlay"));
+  assert.equal(await Promise.race([waiting.then(() => "done"), turn().then(() => turn()).then(() => "waiting")]), "done");
 });
 
 test("an answer that was spoken in full, or that you stopped, has nothing to note", () => {

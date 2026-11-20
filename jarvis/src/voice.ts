@@ -57,7 +57,7 @@ export async function startVoice(parts: VoiceParts): Promise<Voice> {
     await parts.engine.check(parts.signal);
     tooLong = AbortSignal.timeout(sayMs);
     await say(parts.engine, readySentence, card.device, parts.startPlayer, AbortSignal.any([parts.signal, tooLong]));
-    return { on: true, line: voiceOnLine(parts.engine.name, parts.voice, card, parts.volume), speaker: { engine: parts.engine, device: card.device, startPlayer: parts.startPlayer } };
+    return { on: true, line: voiceOnLine(parts.engine.name, parts.voice, card, parts.volume), speaker: { engine: parts.engine, device: card.device, startPlayer: parts.startPlayer, lastPlayer: { ended: Promise.resolve() } } };
   } catch (error) {
     if (error instanceof MicrophonePassedIn || parts.signal.aborted) throw error;
     if (tooLong?.aborted === true) return { on: false, line: voiceOffLine(`His first sentence wasn't said within ${sayMs / 1000} seconds, so it was stopped`) };

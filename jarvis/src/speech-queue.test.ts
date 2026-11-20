@@ -1061,3 +1061,90 @@ test("the 40-sentence limit counts sentences, not pieces", async () => {
   assert.deepEqual(await madeAndPlayed(queue, makes, plays), ["Hello there.", "Yes. Now."]);
   assert.deepEqual([queue.report().spoken, queue.report().left, queue.report().tooLong], [3, 2, true]);
 });
+
+function holdBeforePlay() {
+  const waits: Asked<null, void>[] = [];
+  const beforePlay = (signal: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      waits.push({ given: null, signal, resolve, reject });
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  return { waits, beforePlay };
+}
+
+test("each sound waits for beforePlay first, and its time is from when it reaches the player after that wait", async () => {
+  const hold = holdBeforePlay();
+  const { queue, makes, plays, clock } = setUp({ beforePlay: hold.beforePlay });
+  queue.add("One.");
+  queue.add("Two.");
+  queue.end();
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  assert.deepEqual([hold.waits.length, plays.length], [1, 0]);
+  clock.at += 2500;
+  hold.waits[0].resolve();
+  await turn();
+  assert.equal(plays.length, 1);
+  clock.at += 1000;
+  plays[0].resolve();
+  await turn();
+  makes[1].resolve(Uint8Array.of(2));
+  await turn();
+  clock.at += 400;
+  hold.waits[1].resolve();
+  await turn();
+  plays[1].resolve();
+  await queue.done;
+  assert.deepEqual([queue.report().firstSoundMs, queue.report().longestSilenceMs, queue.report().spoken], [2500, 400, 2]);
+});
+
+test("a stop while waiting before a sound plays nothing, counts no sound as begun, and leaves the sentence", async () => {
+  const hold = holdBeforePlay();
+  const { queue, makes, plays } = setUp({ beforePlay: hold.beforePlay });
+  queue.add("One.");
+  queue.add("Two.");
+  queue.end();
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  assert.equal(hold.waits.length, 1);
+  queue.stop();
+  await queue.done;
+  assert.deepEqual([plays.length, hold.waits[0].signal.aborted], [0, true]);
+  assert.deepEqual(queue.report(), { ...nothing, requests: 2, requestedSentences: 2, firstSentenceMs: 0, firstSoundMadeMs: 0, left: 2, stopped: true });
+});
+
+test("finishing while waiting before a sound counts that sound as the one playing, so it's still played and nothing after it", async () => {
+  const hold = holdBeforePlay();
+  const { queue, makes, plays } = setUp({ beforePlay: hold.beforePlay });
+  queue.add("One.");
+  queue.add("Two.");
+  queue.end();
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  makes[1].resolve(Uint8Array.of(2));
+  await turn();
+  assert.equal(queue.finish(), true);
+  hold.waits[0].resolve();
+  await turn();
+  assert.deepEqual(plays.map((play) => play.given), [[1]]);
+  plays[0].resolve();
+  await queue.done;
+  assert.deepEqual([queue.report().spoken, queue.report().left, queue.report().stopped], [1, 1, true]);
+});
+
+test("a beforePlay that fails for its own reasons doesn't stop the sound being played", async () => {
+  const { queue, makes, plays } = setUp({ beforePlay: () => Promise.reject(new Error("odd")) });
+  queue.add("One.");
+  queue.end();
+  await turn();
+  makes[0].resolve(Uint8Array.of(1));
+  await turn();
+  await turn();
+  assert.equal(plays.length, 1);
+  plays[0].resolve();
+  await queue.done;
+  assert.equal(queue.report().spoken, 1);
+});

@@ -441,7 +441,7 @@ export function compareReport({ lines, ratings = [], newChats = [], speech = [],
   out.push(table(["", ...Array.from({ length: lastQuestionColumn }, (_unused, index) => (index + 1 === lastQuestionColumn ? `${index + 1}+` : String(index + 1)))], questionRows(groups)));
   const spoken = speechRows(groups, said);
   if (spoken.length > 0) {
-    out.push("", "Speech, timed from the question being sent, and the longest silence between two sentences: the median, with the slowest in brackets.");
+    out.push("", "Speech, timed from the question being sent, and the longest silence between one sound ending and the next starting: the median, with the slowest in brackets.");
     out.push(table(["", "Answers", "First words", "First sentence sent", "Its sound made", "First sound", "Longest silence"], spoken));
     const silent = groups.reduce((sum, group) => sum + (group.voice === "off" ? 0 : group.lines.filter((line) => line.ok).length - spokenAnswers(group, said).length), 0);
     if (silent > 0) out.push(`${plural(silent, "answer")} with the voice on had no sound and ${silent === 1 ? "is" : "are"} left out of this table.`);
