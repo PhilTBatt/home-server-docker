@@ -630,6 +630,8 @@ test("the AI matches can be filtered by group, searches, words in the title, a t
   };
   assert.deepEqual(await ask("group=ram"), ["ram: 11 12 13", "hukd-ddr4: "]);
   assert.deepEqual(await ask("group=ram&words=ddr4%2032gb"), ["ram: 11 12"]);
+  assert.deepEqual(await ask("group=ram&words=32%20gb%20ddr4"), ["ram: 11 12"]);
+  assert.deepEqual(await ask("group=ram&words=ddr4%203200"), ["ram: 11"]);
   assert.deepEqual(await ask("group=ram&maxTotal=100"), ["ram: 11 13", "hukd-ddr4: "]);
   assert.deepEqual(await ask("group=ram&maxTotal=89.99"), ["ram: 13", "hukd-ddr4: "]);
   assert.deepEqual(await ask("group=ram&maxTotal=90.00"), ["ram: 11 13", "hukd-ddr4: "]);
@@ -638,7 +640,7 @@ test("the AI matches can be filtered by group, searches, words in the title, a t
   assert.deepEqual(await ask("words=dell"), ["optiplex: 01"]);
   assert.deepEqual(await ask("ids=110000000012,hukd-5000001"), ["ram: 12"]);
   assert.deepEqual(await ask("ids=hukd-5000001"), []);
-  assert.deepEqual(seen.matchMost, [50, 50, 50, 50, 50, 1, 50, 50, 50, 50]);
+  assert.deepEqual(seen.matchMost, [50, 50, 50, 50, 50, 50, 50, 1, 50, 50, 50, 50]);
   const plain = await app.inject({ method: "GET", url: "/deals/ai/matches" });
   assert.equal(plain.statusCode, 200);
   assert.deepEqual(seen.matchMost.at(-1), 15);

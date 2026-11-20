@@ -11,6 +11,7 @@ export function plainWords(text: string): string {
     .replace(/[\u0300-\u036F]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
+    .replace(/([0-9])(gb|tb|mb|mhz|ghz|w)(?![a-z0-9])/g, "$1 $2")
     .trim();
   return ` ${words} `;
 }

@@ -125,6 +125,8 @@ test("the feed is read from its one address without following redirects, and a s
   assert.deepEqual(calls.map(({ url, redirect }) => ({ url, redirect })), [{ url: "https://www.hotukdeals.com/rss/new", redirect: "error" }]);
   assert.match(calls[0].agent ?? "", /^home-hub-deal-watcher\/1\.0 /);
   assert.equal(source.noCalls, true);
+  const spaced = await source.search(search("8 tb nas"), 3);
+  assert.deepEqual(spaced.listings.map((listing) => listing.title), ["WD Red Plus 8TB NAS Hard Drive"]);
 });
 
 test("the feed is kept for five minutes and shared by every search, and two searches at once read it once", async () => {

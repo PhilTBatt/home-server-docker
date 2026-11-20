@@ -53,6 +53,37 @@ test("plainWords lowers the case, drops accents and turns everything else into s
   assert.equal(plainWords("\u{1F525}\u{1F525}"), "  ");
 });
 
+test("a number and its unit match with or without a space between them", () => {
+  assert.equal(plainWords("RTX3060 12GB, 2x8GB DDR4 3200MHz, RM550W PSU, 1.5TB, 1GbE, 16Gbps"), " rtx3060 12 gb 2x8 gb ddr4 3200 mhz rm550 w psu 1 5 tb 1gbe 16gbps ");
+  assert.equal(plainWords("RTX 3060 12 GB, 2 x 8 GB DDR4 3200 MHz, 550 W PSU"), " rtx 3060 12 gb 2 x 8 gb ddr4 3200 mhz 550 w psu ");
+  assert.ok(hasPhrase("Gigabyte RTX 3060 Gaming OC 12 GB", "12gb"));
+  assert.ok(hasPhrase("Gigabyte RTX 3060 Gaming OC 12GB", "12 gb"));
+  assert.ok(hasPhrase("Corsair RM550x 550 W Gold", "550w"));
+  assert.ok(hasPhrase("Seagate 4 TB NAS", "4tb"));
+  assert.ok(!hasPhrase("Seagate 14 TB NAS", "4tb"));
+  assert.ok(!hasPhrase("Model 2012 GB", "12gb"));
+  assert.ok(!hasPhrase("PC4 2400 Gbit", "2400gb"));
+  assert.ok(hasPhrase("Kit 2 x 16 GB", "16gb"));
+  assert.ok(!hasPhrase("16 GBP voucher", "16gb"));
+  assert.ok(hasPhrase("Corsair 16GB (2x8 GB) DDR4", "2x8gb"));
+  assert.ok(hasPhrase("Corsair 32GB (2x16GB) DDR4", "2x16 gb"));
+  assert.ok(hasPhrase("Corsair 550 Watt Bronze", "550"));
+  assert.ok(hasPhrase("Corsair 550W Bronze", "550"));
+  assert.ok(hasPhrase("Corsair RM850W Gold", "rm850"));
+  assert.ok(hasPhrase("Corsair RM850 W Gold", "rm850w"));
+  assert.ok(hasPhrase("Crucial 16GB DDR4", "16"));
+});
+
+test("a unit word after a model number doesn't stop the number matching", () => {
+  assert.ok(hasPhrase("Intel Core i7 8700 W/ Stock Cooler LGA1151", "8700"));
+  assert.ok(hasPhrase("HP ProDesk 600 G4 W/ i5-8500 16GB 256GB SSD SFF", "g4"));
+  assert.ok(hasPhrase("MSI GeForce RTX 3060 W/ Box Ventus 2X 12GB", "3060"));
+  assert.ok(hasPhrase("Dell OptiPlex 7070 i5 W/ 16GB RAM", "i5"));
+  assert.ok(hasPhrase("MSI B450 MB + Ryzen 5 3600 bundle", "b450"));
+  assert.ok(hasPhrase("Dell Precision 3630 W/ Quadro", "3630"));
+  assert.ok(hasPhrase("Corsair Vengeance LPX 16 GB DDR4 3200 MHz", "3200"));
+});
+
 test("a phrase matches whole words only, whatever the case or punctuation", () => {
   assert.equal(hasPhrase("Dell OptiPlex 7070 SFF NO RAM/HDD", "no ram"), true);
   assert.equal(hasPhrase("Dell OptiPlex 7070 SFF *FAULTY*", "faulty"), true);
@@ -265,7 +296,7 @@ test("a trademark or other symbol stuck to a word can't hide it or glue letters 
   assert.equal(hasPhrase("Dell OptiPlex\u00ae 7070", "optiplex 7070"), true);
   assert.equal(hasPhrase("Dell OptiPlex 7070 Faulty\u2122", "faulty"), true);
   assert.equal(hasPhrase("FAULTY\u00a9\u2120", "faulty"), true);
-  assert.equal(plainWords("i5+16GB = \u00a395 \u2605\u2605"), " i5 16gb 95 ");
+  assert.equal(plainWords("i5+16GB = \u00a395 \u2605\u2605"), " i5 16 gb 95 ");
   assert.equal(matches(search({ exclude: ["faulty"] }), listing({ title: "Dell OptiPlex 7070 Faulty\u2122" }), now), false);
   assert.equal(matches(search({ mustInclude: ["optiplex"] }), listing({ title: "Dell OptiPlex\u2122 7070" }), now), true);
 });

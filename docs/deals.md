@@ -90,7 +90,7 @@ Every search needs `id`, `name`, `switch` and `query`. Everything else is option
 | `buying` | `["buy it now"]` (the default), `["auction"]`, or both. |
 | `endingWithinHours` | For auctions: only alert once the auction is this close to ending. |
 | `ukOnly` | `true` (the default) means the item is in the UK. `false` means anything that delivers to the UK. |
-| `exclude` | Words or phrases that rule a listing out, matched as whole words in the title, any case. `repair*` matches any word starting with `repair`. |
+| `exclude` | Words or phrases that rule a listing out, matched as whole words in the title, any case. `repair*` matches any word starting with `repair`. A number and its unit match with or without a space: `16gb` and `16 gb` both match "16GB" and "16 GB", and `2x8gb` matches "2x8 GB" (for GB, TB, MB, MHz, GHz and W). A bare number matches it with its unit too, so `550` matches "550W" and `16` matches "16GB", and in `exclude` a bare number hides those as well. |
 | `mustInclude` | Words or phrases the title must contain, matched the same way. |
 | `categoryId` | One of eBay's category numbers. eBay's page for this call allows one per request. |
 | `sellerMinPercent`, `sellerMinFeedback` | Minimum positive-feedback percentage and number of ratings. A seller whose numbers eBay doesn't give is ruled out. |
