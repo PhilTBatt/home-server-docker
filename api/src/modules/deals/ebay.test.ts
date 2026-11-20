@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { categoriesUrl, categoryDetailsUrl, createEbaySource, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, pageSize, plainText, retryAfterMs, searchUrl, toCategories, toCategoryDetails, toDetailNames, toFull, toListing, treeIdUrl } from "./ebay.js";
+import { categoriesUrl, categoryDetailsUrl, createEbaySource, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, optionsUrl, pageSize, plainText, retryAfterMs, searchUrl, toCategories, toCategoryDetails, toDetailNames, toFull, toListing, toOptions, treeIdUrl } from "./ebay.js";
 import { readSearches, type Search } from "./searches.js";
 import { SourceError, cleanText, type FailReason } from "./source.js";
 
@@ -1550,4 +1550,115 @@ test("a collection search sends eBay's local pickup filters with the postcode, a
   assert.ok((filterOf(searchUrl(apiHost, search({ freePostage: true }), 0)) ?? "").endsWith(",maxDeliveryCost:0"));
   const plain = filterOf(searchUrl(apiHost, search(), 0)) ?? "";
   assert.ok(!plain.includes("pickup") && !plain.includes("maxDeliveryCost"));
+});
+
+test("a listing with options keeps its item group number, from the group's details or its address, and nothing else does", () => {
+  const read = (overrides: Record<string, unknown>) => toListing(item(1, overrides), siteHost);
+  const href = "https://api.ebay.com/buy/browse/v1/item/get_items_by_item_group?item_group_id=226543210987";
+  assert.equal(read({ primaryItemGroup: { itemGroupId: "226543210987" } })?.groupId, "226543210987");
+  assert.equal(read({ itemGroupType: "SELLER_DEFINED_VARIATIONS", itemGroupHref: href })?.groupId, "226543210987");
+  assert.equal(read({ itemGroupType: "SELLER_DEFINED_VARIATIONS", itemGroupHref: `${href}&fieldgroups=X` })?.groupId, "226543210987");
+  assert.equal(read({ primaryItemGroup: { itemGroupId: "111" }, itemGroupHref: href })?.groupId, "111");
+  assert.equal(read({ itemGroupHref: href })?.groupId, undefined);
+  assert.equal("groupId" in (read({}) ?? {}), false);
+  for (const bad of ["https://api.ebay.com/x?item_group_id=12a", "item_group_id=../1", "https://api.ebay.com/x?other_item_group_id=1", `https://api.ebay.com/x?item_group_id=${"1".repeat(21)}`, 226543210987]) {
+    assert.equal(read({ itemGroupType: "SELLER_DEFINED_VARIATIONS", itemGroupHref: bad })?.groupId, undefined, String(bad));
+  }
+  assert.equal(read({ primaryItemGroup: { itemGroupId: "12/../3" } })?.groupId, undefined);
+});
+
+function option(n: number, aspects: [string, string][], price = "40.00", status = "IN_STOCK") {
+  return {
+    itemId: `v1|226543210987|${n}`,
+    title: "Seagate IronWolf NAS hard drive 1TB 2TB 4TB",
+    price: { value: price, currency: "GBP" },
+    localizedAspects: aspects.map(([name, value]) => ({ type: "STRING", name, value })),
+    estimatedAvailabilities: [{ estimatedAvailabilityStatus: status }],
+  };
+}
+
+test("an item group's options are read with the details that differ between them, their own prices and whether they're in stock", () => {
+  const shared: [string, string] = ["Brand", "Seagate"];
+  const options = toOptions({
+    items: [
+      option(1, [shared, ["Storage Capacity", "1 TB"], ["Colour", "Black"]], "15.00"),
+      option(2, [shared, ["Storage Capacity", "4 TB"], ["Colour", "Black"]], "52.50", "LIMITED_STOCK"),
+      option(3, [shared, ["Storage Capacity", "8 TB"]], "99.99", "OUT_OF_STOCK"),
+    ],
+    commonDescriptions: [],
+  });
+  assert.deepEqual(options, [
+    { ref: "v1|226543210987|1", price: 1500, text: "Storage Capacity: 1 TB, Colour: Black", inStock: true },
+    { ref: "v1|226543210987|2", price: 5250, text: "Storage Capacity: 4 TB, Colour: Black", inStock: true },
+    { ref: "v1|226543210987|3", price: 9999, text: "Storage Capacity: 8 TB", inStock: false },
+  ]);
+});
+
+test("an option without a price in pounds is left out, odd references and stock become unknown, and a bad reply is refused", () => {
+  const read = toOptions({
+    items: [
+      option(1, [["Size", "1 TB"]], "15.00", "SOMETHING_NEW"),
+      { ...option(2, [["Size", "2 TB"]]), price: { value: "20.00", currency: "USD" } },
+      { ...option(3, [["Size", "4 TB"]]), itemId: "v1|1|0/../x" },
+      { ...option(4, [["Size", "8 TB"]]), price: undefined },
+      "not an item",
+    ],
+  });
+  assert.deepEqual(read, [
+    { ref: "v1|226543210987|1", price: 1500, text: "Size: 1 TB", inStock: null },
+    { ref: null, price: 4000, text: "Size: 4 TB", inStock: true },
+  ]);
+  for (const bad of [null, [], {}, { items: "x" }, { items: {} }]) assert.equal(toOptions(bad), null, JSON.stringify(bad));
+  assert.deepEqual(toOptions({ items: [] }), []);
+  assert.deepEqual(toOptions({ items: [option(1, [["Size", "1 TB"]])] }), [{ ref: "v1|226543210987|1", price: 4000, text: "", inStock: true }]);
+});
+
+test("an item group of more than 100 options isn't read, sizes come first in an option's text, and what a seller writes is cleaned and kept short", () => {
+  assert.equal(toOptions({ items: Array.from({ length: 101 }, (_, i) => option(i + 1, [["Size", `${i + 1} TB`]])) }), null);
+  assert.equal(toOptions({ items: Array.from({ length: 100 }, (_, i) => option(i + 1, [["Size", `${i + 1} TB`]])) })?.length, 100);
+  const sized = toOptions({ items: [option(1, [["Model", "WD10EFRX"], ["MPN", "WD10EFRX-68FYTN0"], ["Storage Capacity", "1 TB"]]), option(2, [["Model", "WD40EFRX"], ["MPN", "WD40EFRX-68N32N0"], ["Storage Capacity", "4 TB"]])] });
+  assert.deepEqual(sized?.map((entry) => entry.text), ["Storage Capacity: 1 TB, Model: WD10EFRX, MPN: WD10EFRX-68FYTN0", "Storage Capacity: 4 TB, Model: WD40EFRX, MPN: WD40EFRX-68N32N0"]);
+  const long = "x".repeat(500);
+  const tidy = toOptions({ items: [option(1, [["Colour", `Red\u0000\u202Ered ${long}`], ["Size", "1 TB"]]), option(2, [["Colour", "Blue"], ["Size", "1 TB"]])] });
+  assert.ok(tidy !== null && tidy[0].text.length <= 200 && !/[\u0000\u202E]/.test(tidy[0].text) && tidy[0].text.startsWith("Colour: Red red"));
+  assert.equal(tidy?.[1].text, "Colour: Blue");
+  const names = Array.from({ length: 10 }, (_, i) => `Detail number ${i}`);
+  const wide = toOptions({ items: [1, 2].map((n) => option(n, names.map((name): [string, string] => [name, `${"v".repeat(55)}${n}`]))) });
+  assert.ok(wide !== null && wide[0].text.length === 200 && wide[0].text.startsWith("Detail number 0: vvv"), String(wide?.[0].text));
+});
+
+test("reading an item group's options calls eBay's group address for that number, and refuses anything that isn't one", async () => {
+  const calls = fakeEbay(() => Response.json({ items: [option(1, [["Size", "1 TB"]]), option(2, [["Size", "4 TB"]], "55.00")] }));
+  const { options, calls: used } = await source().options!("226543210987");
+  assert.equal(used, 1);
+  assert.deepEqual(options.map((entry) => [entry.text, entry.price]), [["Size: 1 TB", 4000], ["Size: 4 TB", 5500]]);
+  const [call] = calls.filter((made) => made.url !== tokenUrl);
+  assert.equal(call.url, "https://api.ebay.com/buy/browse/v1/item/get_items_by_item_group?item_group_id=226543210987");
+  assert.equal(call.url, optionsUrl(apiHost, "226543210987"));
+  assert.equal(call.method, "GET");
+  assert.equal(call.headers.get("authorization"), `Bearer ${accessToken}`);
+  assert.equal(call.headers.get("x-ebay-c-marketplace-id"), "EBAY_GB");
+  assert.equal(call.redirect, "error");
+  mock.restoreAll();
+  const none = fakeEbay(() => Response.json({ items: [] }));
+  for (const groupId of ["", "12a", "1&item_group_id=2", "../1", "1".repeat(21), "1\n"]) {
+    const error = await failure(source().options!(groupId));
+    assert.deepEqual([error.reason, error.calls], ["request", 0], groupId);
+  }
+  assert.equal(none.length, 0);
+});
+
+test("an item group that has gone, a refusal and a reply that can't be read each say so", async () => {
+  fakeEbay(() => Response.json({ errors: [{ errorId: 11002 }] }, { status: 404 }));
+  assert.deepEqual(await failure(source().options!("226543210987")).then((error) => [error.reason, error.calls]), ["gone", 1]);
+  mock.restoreAll();
+  fakeEbay(() => Response.json({ items: "nope" }));
+  assert.equal((await failure(source().options!("226543210987"))).reason, "reply");
+  mock.restoreAll();
+  fakeEbay(() => new Response("{}", { status: 429, headers: { "Retry-After": "60" } }));
+  assert.equal((await failure(source().options!("226543210987"))).reason, "busy");
+  mock.restoreAll();
+  fakeEbay(() => Response.json({ errors: [{ errorId: 11013 }] }, { status: 400 }));
+  const refused = await failure(source().options!("226543210987"));
+  assert.deepEqual([refused.reason, refused.message], ["request", `${ebayMessages.request} (eBay error 11013)`]);
 });

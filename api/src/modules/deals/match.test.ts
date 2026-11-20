@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
-import { cautions, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot } from "./match.js";
+import { cautions, chooseOption, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot, withOption } from "./match.js";
 import { readSearches, type Search } from "./searches.js";
-import type { Listing } from "./source.js";
+import type { Listing, ListingOption } from "./source.js";
 
 const now = new Date("2026-11-18T12:00:00.000Z");
 
@@ -478,4 +478,82 @@ test("the catalogue's USB Wi-Fi search keeps adapters by any of its model names 
   assert.equal(whyNot(wifi, listing({ title: "Alfa AWUS036AXML", price: 7500, postage: 0 }), now), null);
   assert.equal(whyNot(wifi, listing({ title: "Alfa AWUS036AXML", price: 7501, postage: 0 }), now), "price");
   assert.deepEqual([wifi.guidePrice, wifi.greatPercent], [3500, 50]);
+});
+
+function choice(text: string, price: number, inStock: boolean | null = true, ref: string | null = `v1|226543210987|${price}`): ListingOption {
+  return { ref, price, text, inStock };
+}
+
+const driveOptions = [choice("Storage Capacity: 1 TB", 1500), choice("Storage Capacity: 2 TB", 2800), choice("Storage Capacity: 4 TB", 5200), choice("Storage Capacity: 4 TB, Interface: SAS", 3000), choice("Storage Capacity: 8 TB", 9900)];
+
+test("the option chosen is the cheapest in stock with the size the search names, in its words or else its query", () => {
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive", mustInclude: ["4tb"], exclude: ["sas"] }), driveOptions), driveOptions[2]);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive" }), driveOptions), driveOptions[3]);
+  assert.equal(chooseOption(search({ query: "nas hard drive", mustInclude: ["8tb"] }), driveOptions), driveOptions[4]);
+  assert.equal(chooseOption(search({ query: "16tb hard drive" }), driveOptions), null);
+  const fourOut = [choice("Storage Capacity: 4 TB", 5200, false), driveOptions[0]];
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive" }), fourOut), null);
+  const unsure = choice("Storage Capacity: 4 TB", 5200, null);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive" }), [unsure, driveOptions[0]]), unsure);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive" }), [choice("Storage Capacity: 4 TB", 1000, true, null), driveOptions[2]]), driveOptions[2]);
+});
+
+test("an option fits only when its largest size is the search's and it has every size the search names", () => {
+  const kits = [choice("Capacity: 8GB (2x4GB)", 900), choice("Capacity: 16GB (2x8GB)", 2400), choice("Capacity: 32GB (2x16GB)", 2000)];
+  assert.equal(chooseOption(search({ query: "ddr4 16gb 2x8gb" }), kits), kits[1]);
+  const sticks = [choice("Total Capacity: 32GB, Capacity per Module: 16GB", 4500), choice("Total Capacity: 16GB, Capacity per Module: 16GB", 3000)];
+  assert.equal(chooseOption(search({ query: "16gb ddr4 3200" }), sticks), sticks[1]);
+  assert.equal(chooseOption(search({ query: "16gb ddr4 3200" }), [sticks[0]]), null);
+  const pcs = [choice("RAM Size: 8GB, SSD Capacity: 512GB", 9000), choice("RAM Size: 16GB, SSD Capacity: 512GB", 12500)];
+  assert.equal(chooseOption(search({ query: "mini pc 16gb 512gb" }), pcs), pcs[1]);
+  assert.equal(chooseOption(search({ query: "optiplex 7070 16gb" }), pcs), null);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive" }), [choice("Model: WD10EFRX", 1500), choice("Model: WD40EFRX", 4800)]), null);
+});
+
+test("a search that names no size in GB or TB never takes an option's price, since it can't tell which one it wants", () => {
+  const wattages = [choice("Wattage: 450W", 2000), choice("Wattage: 750W", 7500)];
+  assert.equal(chooseOption(search({ query: "750w gold" }), wattages), null);
+  assert.equal(chooseOption(search({ query: "1.92tb sata ssd" }), [choice("Capacity: 480GB", 3000), choice("Capacity: 1.92TB", 9000)]), null);
+  assert.equal(chooseOption(search({ query: "corsair 4000d" }), [choice("Colour: Black", 3000), choice("Colour: White", 2500)]), null);
+});
+
+test("the option chosen is at or over the search's lowest price when one that fits is, and without the search's excluded words", () => {
+  const health = [choice("Storage Capacity: 4 TB, Health: Fair", 2000), choice("Storage Capacity: 4 TB, Health: Good", 4500), choice("Storage Capacity: 4 TB, Health: Very good", 5000)];
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive", minPrice: 25 }), health), health[1]);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive", minPrice: 20 }), health), health[0]);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive", minPrice: 60 }), health), health[0]);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive" }), health), health[0]);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive", exclude: ["fair"] }), health), health[1]);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive", exclude: ["health"] }), health), null);
+  assert.equal(chooseOption(search({ query: "4tb nas hard drive" }), []), null);
+});
+
+test("an option read sets the listing's price, reference and option, and no fitting option leaves its price as eBay's", () => {
+  const base = listing({ title: "Seagate IronWolf 1TB 2TB 4TB 8TB NAS", price: 1500, postage: 399, variations: true, ref: "v1|226543210987|0", groupId: "226543210987" });
+  const chosen = withOption(base, driveOptions[2]);
+  assert.deepEqual([chosen.price, chosen.ref, chosen.option, chosen.postage, chosen.id, chosen.optionsRead], [5200, "v1|226543210987|5200", "Storage Capacity: 4 TB", 399, base.id, true]);
+  const none = withOption(base, null);
+  assert.deepEqual([none.price, none.ref, none.option, none.optionsRead], [1500, "v1|226543210987|0", undefined, true]);
+  assert.deepEqual(withOption(base, { ...driveOptions[2], ref: null }), none);
+  assert.equal(base.optionsRead, undefined);
+  const drive = search({ query: "4tb nas hard drive", hideVariations: true, maxWithPostage: 60 });
+  assert.equal(whyNot(drive, base, now), "options");
+  assert.equal(whyNot(drive, none, now), "options");
+  assert.equal(whyNot(drive, chosen, now), null);
+  assert.equal(whyNot(search(), none, now), null);
+  assert.equal(whyNot(drive, withOption(base, driveOptions[4]), now), "price");
+});
+
+test("with its option known, a listing's price per unit comes from the option, and it can be a great deal", () => {
+  const base = listing({ title: "Seagate IronWolf 1TB 2TB 4TB 8TB NAS", price: 1500, postage: 0, variations: true });
+  const chosen = withOption(base, driveOptions[2]);
+  const drive = search({ unit: "TB", guidePrice: 70 });
+  assert.equal(unitPrice(drive, base), null);
+  assert.deepEqual(unitPrice(drive, chosen), { unit: "TB", amount: 4, pence: 1300 });
+  assert.equal(unitPrice(drive, withOption(base, null)), null);
+  assert.deepEqual([isGreat(drive, base), priorityFor(drive, base)], [false, 3]);
+  assert.deepEqual([isGreat(drive, withOption(base, null)), priorityFor(drive, withOption(base, null))], [false, 3]);
+  assert.deepEqual([isGreat(drive, chosen), priorityFor(drive, chosen)], [true, 4]);
+  assert.deepEqual(cautions(search(), chosen), ["the listing has more than one option, and this is the price of Storage Capacity: 4 TB"]);
+  assert.deepEqual(cautions(search(), base), ["the listing has more than one option, so this may be its lowest price"]);
 });

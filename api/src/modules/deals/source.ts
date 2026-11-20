@@ -27,6 +27,16 @@ export type Listing = {
   variations: boolean;
   detailsMatch: boolean | null;
   hiddenDetail?: string;
+  groupId?: string;
+  option?: string;
+  optionsRead?: boolean;
+};
+
+export type ListingOption = {
+  ref: string | null;
+  price: number;
+  text: string;
+  inStock: boolean | null;
 };
 
 export type SearchResult = {
@@ -91,6 +101,7 @@ export type Source = {
   noCalls?: boolean;
   search(search: Search, maxPages: number): Promise<SearchResult>;
   full?(ref: string): Promise<{ full: FullListing; calls: number }>;
+  options?(groupId: string): Promise<{ options: ListingOption[]; calls: number }>;
   detailNames?(query: string, categoryId: string | null): Promise<{ names: DetailNames; calls: number }>;
   categories?(query: string): Promise<{ categories: Categories; calls: number }>;
   categoryDetails?(categoryId: string): Promise<{ details: CategoryDetails; calls: number }>;

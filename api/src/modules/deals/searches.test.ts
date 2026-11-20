@@ -71,6 +71,7 @@ test("the smallest search gets every default written out", () => {
     collection: null,
     freePostage: false,
     hideVariations: false,
+    readOptions: false,
     autoCorrect: false,
     sellerType: null,
     postageShown: false,
@@ -109,6 +110,7 @@ test("a search with every setting is read as given, with prices in pence", () =>
     hideDetails: { "Features": ["Registered"] },
     freePostage: true,
     hideVariations: true,
+    readOptions: true,
     autoCorrect: true,
     sellerType: "business",
     postageShown: true,
@@ -148,6 +150,7 @@ test("a search with every setting is read as given, with prices in pence", () =>
     collection: null,
     freePostage: true,
     hideVariations: true,
+    readOptions: true,
     autoCorrect: true,
     sellerType: "business",
     postageShown: true,
@@ -917,6 +920,13 @@ test("a search from a source other than eBay can't use eBay's own settings", () 
   }
 });
 
+test("readOptions is true or false, and only for eBay", () => {
+  assert.equal(one({ readOptions: true }).readOptions, true);
+  assert.equal(one().readOptions, false);
+  assert.match(problemWith({ readOptions: "yes" }), /readOptions must be true or false/);
+  assert.throws(() => readSearches(JSON.stringify({ searches: [{ ...smallest, source: "other", readOptions: true }] }), ["ebay", "other"]), /readOptions only works with eBay searches/);
+});
+
 test("hideVariations is true or false, and only for eBay", () => {
   assert.equal(one({ hideVariations: true }).hideVariations, true);
   assert.equal(one().hideVariations, false);
@@ -938,5 +948,8 @@ test("with hideVariations off, searches keep the fingerprints they had before it
     assert.equal(print(extra, top), was, JSON.stringify(extra));
     assert.equal(print({ ...extra, hideVariations: false }, top), was, JSON.stringify(extra));
     assert.notEqual(print({ ...extra, hideVariations: true }, top), was, JSON.stringify(extra));
+    assert.equal(print({ ...extra, readOptions: false }, top), was, JSON.stringify(extra));
+    assert.notEqual(print({ ...extra, readOptions: true }, top), was, JSON.stringify(extra));
+    assert.notEqual(print({ ...extra, readOptions: true, hideVariations: true }, top), print({ ...extra, hideVariations: true }, top), JSON.stringify(extra));
   }
 });

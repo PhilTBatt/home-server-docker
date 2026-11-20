@@ -2,9 +2,9 @@ import { londonTime } from "../notify/daily.js";
 import type { Notification } from "../notify/notifier.js";
 import type { Problem } from "../system/alerts.js";
 import { capNotification, dealNotification, endingNotification, moreNotification, watchingNotification, type Started } from "./alert.js";
-import { cautions, isAuctionOnly, isGreat, priorityFor, standing, totalPrice, underGuide, unitPrice, whyNot, type UnitPrice } from "./match.js";
+import { cautions, chooseOption, isAuctionOnly, isGreat, priceKnown, priorityFor, readsOptions, standing, totalPrice, underGuide, unitPrice, whyNot, withOption, type UnitPrice } from "./match.js";
 import { defaultLimits, fingerprint, type Limits, type Quiet, type Search, type SearchList } from "./searches.js";
-import { SourceError, type Categories, type CategoryDetails, type DetailNames, type FullListing, type Listing, type Source } from "./source.js";
+import { SourceError, type Categories, type CategoryDetails, type DetailNames, type FullListing, type Listing, type ListingOption, type Source } from "./source.js";
 import { emptyMemory, maxSeenPerSearch, type Memory, type Seen, type Store } from "./store.js";
 
 export type WatcherOptions = {
@@ -79,6 +79,7 @@ export type MatchedListing = {
   postcode: string | null;
   summary: string | null;
   variations: boolean;
+  option: string | null;
   detailsMatch: boolean | null;
   place: number;
   underGuide: number | null;
@@ -158,9 +159,12 @@ const longestWait = 24 * hourMs;
 const fullFreshFor = 30 * minuteMs;
 const fullKept = 100;
 const readsPerDay = 150;
+const optionReadsPerCheck = 10;
+const optionsKept = 500;
 export const freshFor = 6 * hourMs;
 const needsAPerson = ["keys", "access", "request"];
 const sourceWide = ["keys", "access", "busy", "down"];
+const pausesOptions = ["keys", "access", "busy"];
 const worstFirst = ["keys", "access", "busy", "request", "reply", "stopped", "down"];
 
 function londonMinutes(now: Date): number {
@@ -203,6 +207,7 @@ function describe(search: Search, listing: Listing, matched: Listing[], firstSee
     postcode: listing.postcode,
     summary: listing.summary,
     variations: listing.variations,
+    option: typeof listing.option === "string" ? listing.option : null,
     detailsMatch: listing.detailsMatch,
     place: matched.filter((other) => other.id !== listing.id && totalPrice(other) < total).length + 1,
     underGuide: underGuide(search, listing),
@@ -221,6 +226,8 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
   const pausedUntil = new Map<string, number>();
   const fullCache = new Map<string, { at: number; full: FullListing }>();
   const reading = new Map<string, Promise<FullListing | { message: string; gone: boolean }>>();
+  const optionCache = new Map<string, { until: number; options: ListingOption[] | null }>();
+  const optionsPaused = new Map<string, { until: number; reason: string; message: string }>();
   let reads = { day: "", count: 0 };
   let loading: Promise<Memory> | null = null;
   let pendingCalls = 0;
@@ -306,6 +313,55 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     return (memory?.counters.calls ?? 0) + pendingCalls >= limits().callsPerDay;
   }
 
+  async function readOptions(search: Search, source: Source, listings: Listing[], now: Date, state: Memory): Promise<Listing[]> {
+    const lookUp = source.options;
+    if (!readsOptions(search) || lookUp === undefined) return listings;
+    const time = now.getTime();
+    for (const [key, entry] of optionCache) {
+      if (entry.until < time) optionCache.delete(key);
+    }
+    let asked = 0;
+    let stopped = (optionsPaused.get(search.source)?.until ?? 0) > time;
+    const read: Listing[] = [];
+    for (const listing of listings) {
+      const groupId = listing.groupId;
+      const reason = groupId === undefined ? "words" : whyNot({ ...search, minPrice: null }, listing, now);
+      if (groupId === undefined || (reason !== null && reason !== "options")) {
+        read.push(listing);
+        continue;
+      }
+      const key = `${groupId}:${listing.price}`;
+      let entry = optionCache.get(key);
+      if (entry === undefined && !stopped && asked < optionReadsPerCheck && state.counters.calls < limits().callsPerDay) {
+        asked += 1;
+        try {
+          const reply = await lookUp(groupId);
+          state.counters.calls += reply.calls;
+          entry = { until: time + freshFor, options: reply.options };
+          optionsPaused.delete(search.source);
+        } catch (error) {
+          const known = error instanceof SourceError ? error : null;
+          if (known !== null) state.counters.calls += known.calls;
+          if (known !== null && pausesOptions.includes(known.reason)) {
+            stopped = true;
+            const message = known.reason === "access" ? "eBay says these keys can't read listings' options" : known.message;
+            optionsPaused.set(search.source, { until: time + waitAfter(known.reason, known.retryAfterMs), reason: known.reason, message });
+          } else {
+            entry = { until: time + (known?.reason === "down" ? slowRetry : freshFor), options: null };
+            if (known?.reason === "down") stopped = true;
+          }
+        }
+        if (entry !== undefined) {
+          optionCache.set(key, entry);
+          for (const oldest of [...optionCache.keys()].slice(0, Math.max(0, optionCache.size - optionsKept))) optionCache.delete(oldest);
+        }
+      }
+      if (entry !== undefined) read.push(withOption(listing, entry.options === null ? null : chooseOption(search, entry.options)));
+      else read.push(stopped || state.counters.calls >= limits().callsPerDay ? { ...listing, optionsRead: true } : listing);
+    }
+    return read;
+  }
+
   function fail(search: Search, reason: string, message: string, now: number, retryAfter: number | null = null) {
     const previous = failures.get(search.id);
     const wait = waitAfter(reason, retryAfter);
@@ -364,6 +420,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       }
     }
     if (force) pausedUntil.clear();
+    for (const [sourceName, paused] of [...optionsPaused]) {
+      if (force || paused.until <= time || !loaded.searches.some((search) => search.on && search.readOptions && search.source === sourceName)) optionsPaused.delete(sourceName);
+    }
 
     let quiet = false;
     const send = async (notification: Notification): Promise<boolean> => {
@@ -431,9 +490,10 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       lastChecked.set(search.id, time);
       summary.checked += 1;
 
+      const listings = await readOptions(search, source, found.listings, now, state);
       const hidden: Record<string, number> = {};
       const matched: Listing[] = [];
-      for (const listing of found.listings) {
+      for (const listing of listings) {
         const reason = whyNot(search, listing, now);
         if (reason === null) matched.push(listing);
         else hidden[reason] = (hidden[reason] ?? 0) + 1;
@@ -445,8 +505,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       const remembered = state.searches.get(search.id);
       const endsSoon = (listing: Listing) =>
         search.endingSoonMinutes !== null && isAuctionOnly(listing) && listing.endsAt !== null && Date.parse(listing.endsAt) - time <= search.endingSoonMinutes * minuteMs;
+      const priceUnsure = (listing: Listing) => readsOptions(search) && !priceKnown(listing);
       const entryFor = (listing: Listing, first: string): Seen => {
-        const entry: Seen = search.dropPercent === null ? { first, last: stamp } : { first, last: stamp, price: listing.price };
+        const entry: Seen = search.dropPercent === null || priceUnsure(listing) ? { first, last: stamp } : { first, last: stamp, price: listing.price };
         if (endsSoon(listing)) entry.ending = true;
         return entry;
       };
@@ -466,6 +527,8 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         }
         fresh = newer;
       }
+      const unread = (listing: Listing) => readsOptions(search) && listing.variations && listing.groupId !== undefined && listing.optionsRead !== true;
+      fresh = fresh.filter((listing) => !unread(listing));
       remembered.known = true;
       remembered.wide = !found.complete;
 
@@ -475,6 +538,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         if (seen === undefined) continue;
         seen.last = stamp;
         if (search.dropPercent === null) delete seen.price;
+        else if (priceUnsure(listing)) continue;
         else if (seen.price === undefined) seen.price = listing.price;
         else if (listing.price < seen.price && listing.price * 100 <= seen.price * (100 - search.dropPercent)) alerts.push({ listing, was: seen.price });
       }
@@ -564,6 +628,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       const named = `${ids.slice(0, 3).join(", ")}${ids.length > 3 ? ` and ${ids.length - 3} more` : ""}`;
       const which = sourceWide.includes(worst.reason) ? "its searches" : `${ids.length === 1 ? "a search" : `${ids.length} searches`} (${named})`;
       found.push({ code: "deals-source", message: `The deal watcher can't check ${which}: ${worst.message}.` });
+    }
+    for (const paused of optionsPaused.values()) {
+      if (needsAPerson.includes(paused.reason)) found.push({ code: "deals-source", message: `The deal watcher can't read listings' options: ${paused.message}.` });
     }
     if (stateProblem) found.push({ code: "deals-state", message: "The deal watcher couldn't save its state, so it may repeat or miss alerts after a restart." });
     if (memory !== null && memory.counters.calls >= limits().callsPerDay) {
@@ -669,22 +736,22 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         for (const [key, entry] of fullCache) {
           if (time - entry.at > fullFreshFor) fullCache.delete(key);
         }
-        let kept = fullCache.get(id);
+        const ref = listing.ref;
+        let kept = fullCache.get(ref);
         if (kept === undefined) {
-          let pending = reading.get(id);
+          let pending = reading.get(ref);
           if (pending === undefined) {
             const stop = blocked(search.source, time);
             if (stop !== null) return { status: stop };
-            const ref = listing.ref;
             pending = read(search.source, time, () => (source.full as NonNullable<Source["full"]>)(ref))
               .then((reply) => ("full" in reply ? reply.full : reply))
-              .finally(() => reading.delete(id));
-            reading.set(id, pending);
+              .finally(() => reading.delete(ref));
+            reading.set(ref, pending);
           }
           const outcome = await pending;
           if ("message" in outcome) return { status: "failed", ...outcome };
-          kept = fullCache.get(id) ?? { at: time, full: outcome };
-          fullCache.set(id, kept);
+          kept = fullCache.get(ref) ?? { at: time, full: outcome };
+          fullCache.set(ref, kept);
           for (const oldest of [...fullCache.keys()].slice(0, Math.max(0, fullCache.size - fullKept))) fullCache.delete(oldest);
         }
         const { listing: current, ...full } = kept.full;
@@ -694,7 +761,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
           searchId: search.id,
           searchName: search.name,
           fetchedAt: new Date(kept.at).toISOString(),
-          listing: describe(search, { ...current, id, url: listing.url, detailsMatch: listing.detailsMatch }, result.listings, firstSeen),
+          listing: describe(search, { ...current, id, url: listing.url, detailsMatch: listing.detailsMatch, ...(listing.option === undefined ? {} : { option: listing.option }) }, result.listings, firstSeen),
           full,
         };
       }

@@ -1,5 +1,5 @@
 import { conditionIds, type Buying, type Search } from "./searches.js";
-import { SourceError, cleanText, type BuyingOption, type Categories, type CategoryDetails, type DetailNames, type FailReason, type FullListing, type Listing, type SearchResult, type Source } from "./source.js";
+import { SourceError, cleanText, type BuyingOption, type Categories, type CategoryDetails, type DetailNames, type FailReason, type FullListing, type Listing, type ListingOption, type SearchResult, type Source } from "./source.js";
 
 export type EbayEnvironment = "production" | "sandbox";
 
@@ -75,6 +75,10 @@ export function fullUrl(host: string, ref: string): string {
   return `https://${host}/buy/browse/v1/item/${encodeURIComponent(ref)}`;
 }
 
+export function optionsUrl(host: string, groupId: string): string {
+  return `https://${host}/buy/browse/v1/item/get_items_by_item_group?item_group_id=${groupId}`;
+}
+
 export function detailNamesUrl(host: string, query: string, categoryId: string | null): string {
   const parts = [`q=${encodeURIComponent(query)}`];
   if (categoryId !== null) parts.push(`category_ids=${categoryId}`);
@@ -135,6 +139,13 @@ function textOrNull(raw: unknown, maxLength: number): string | null {
   return text === "" ? null : text;
 }
 
+function groupIdOf(raw: Record<string, unknown>): string | null {
+  const fromGroup = isObject(raw.primaryItemGroup) ? digits(raw.primaryItemGroup.itemGroupId) : null;
+  if (fromGroup !== null) return fromGroup;
+  const href = typeof raw.itemGroupHref === "string" ? /[?&]item_group_id=([0-9]{1,20})(?:&|$)/.exec(raw.itemGroupHref.slice(0, 400)) : null;
+  return href === null ? null : href[1];
+}
+
 export function toListing(raw: unknown, siteHost: string): Listing | null {
   if (!isObject(raw)) return null;
   const itemNumber = digits(raw.legacyItemId) ?? (typeof raw.itemId === "string" ? digits(raw.itemId.split("|")[1]) : null);
@@ -152,6 +163,8 @@ export function toListing(raw: unknown, siteHost: string): Listing | null {
   const location = isObject(raw.itemLocation) ? raw.itemLocation : {};
   const district = typeof location.postalCode === "string" ? location.postalCode.trim().split(/[ *]/)[0].toUpperCase() : "";
   const ref = typeof raw.itemId === "string" && /^v1\|[0-9]{1,20}\|[0-9]{1,20}$/.test(raw.itemId) && raw.itemId.split("|")[1] === itemNumber ? raw.itemId : null;
+  const variations = (typeof raw.itemGroupType === "string" && raw.itemGroupType !== "") || isObject(raw.primaryItemGroup);
+  const groupId = variations ? groupIdOf(raw) : null;
 
   return {
     id: itemNumber,
@@ -175,9 +188,47 @@ export function toListing(raw: unknown, siteHost: string): Listing | null {
     city: textOrNull(location.city, 40),
     postcode: /^[A-Z]{1,2}[0-9][A-Z0-9]?$/.test(district) ? district : null,
     summary: textOrNull(raw.shortDescription, 400),
-    variations: (typeof raw.itemGroupType === "string" && raw.itemGroupType !== "") || isObject(raw.primaryItemGroup),
+    variations,
     detailsMatch: null,
+    ...(groupId === null ? {} : { groupId }),
   };
+}
+
+const maxOptions = 100;
+
+export function toOptions(raw: unknown): ListingOption[] | null {
+  if (!isObject(raw) || !Array.isArray(raw.items) || raw.items.length > maxOptions) return null;
+  const read = raw.items
+    .filter(isObject)
+    .map((item) => {
+      const aspects = new Map<string, string>();
+      for (const aspect of Array.isArray(item.localizedAspects) ? item.localizedAspects.slice(0, 60) : []) {
+        const name = isObject(aspect) ? cleanText(aspect.name, 60) : "";
+        const value = isObject(aspect) ? cleanText(aspect.value, 60) : "";
+        if (name !== "" && value !== "" && !aspects.has(name)) aspects.set(name, value);
+      }
+      const availability = Array.isArray(item.estimatedAvailabilities) && isObject(item.estimatedAvailabilities[0]) ? item.estimatedAvailabilities[0] : {};
+      const status = availability.estimatedAvailabilityStatus;
+      return {
+        ref: typeof item.itemId === "string" && /^v1\|[0-9]{1,20}\|[0-9]{1,20}$/.test(item.itemId) ? item.itemId : null,
+        price: money(item.price),
+        aspects,
+        inStock: status === "IN_STOCK" || status === "LIMITED_STOCK" ? true : status === "OUT_OF_STOCK" ? false : null,
+      };
+    });
+  const names = [...new Set(read.flatMap((option) => [...option.aspects.keys()]))];
+  const showsSize = (name: string) => read.some((option) => /(?<![0-9.])[0-9]{1,4}(?:\.[0-9])? ?(gb|tb)(?![a-z0-9])/i.test(option.aspects.get(name) ?? ""));
+  const varying = names.filter((name) => new Set(read.map((option) => option.aspects.get(name) ?? "")).size > 1).sort((a, b) => Number(showsSize(b)) - Number(showsSize(a)));
+  const options: ListingOption[] = [];
+  for (const option of read) {
+    if (option.price === null) continue;
+    const text = varying
+      .filter((name) => option.aspects.has(name))
+      .map((name) => `${name}: ${option.aspects.get(name)}`)
+      .join(", ");
+    options.push({ ref: option.ref, price: option.price, text: cleanText(text, 200), inStock: option.inStock });
+  }
+  return options;
 }
 
 const entities: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", pound: "\u00A3" };
@@ -582,6 +633,16 @@ export function createEbaySource(options: EbayOptions): Source {
         return full;
       });
       return { full: reply, calls };
+    },
+
+    async options(groupId: string) {
+      if (!/^[0-9]{1,20}$/.test(groupId)) throw failure("request", " (that isn't one of eBay's item group numbers)");
+      const { reply, calls } = await counted(async (countCall) => {
+        const options = toOptions(await getPage(optionsUrl(apiHost, groupId), countCall, "gone"));
+        if (options === null) throw failure("reply");
+        return options;
+      });
+      return { options: reply, calls };
     },
 
     async detailNames(query: string, categoryId: string | null) {

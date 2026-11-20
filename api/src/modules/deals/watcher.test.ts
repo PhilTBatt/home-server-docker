@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { Notification } from "../notify/notifier.js";
 import { ebayMessages } from "./ebay.js";
 import { readSearches, type Search, type SearchList } from "./searches.js";
-import { SourceError, type DetailNames, type FailReason, type FullListing, type Listing, type SearchResult, type Source } from "./source.js";
+import { SourceError, type DetailNames, type FailReason, type FullListing, type Listing, type ListingOption, type SearchResult, type Source } from "./source.js";
 import { emptyMemory, readMemory, writeMemory, type Store } from "./store.js";
 import { createDealWatcher, inQuiet } from "./watcher.js";
 
@@ -1252,6 +1252,8 @@ function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { 
     namesReply: { categoryId: "179", categories: [], details: [{ name: "Form Factor", values: [{ value: "SFF", count: 9 }] }] } as DetailNames | SourceError | Error,
     lookupCalls: [] as string[],
     lookupReply: null as SourceError | null,
+    groups: new Map<string, ListingOption[] | SourceError>(),
+    groupCalls: [] as string[],
     ...fakeStore(options.keepSeen ?? true),
   };
   const ebay: Source = {
@@ -1266,6 +1268,12 @@ function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { 
       if (world.fullReply instanceof Error) throw world.fullReply;
       const shown = [...world.found.values()].flatMap((reply) => (Array.isArray(reply) ? reply : [])).find((entry) => entry.ref === ref);
       return { full: world.fullReply ?? fullOf(shown ?? listing(999)), calls: 1 };
+    },
+    async options(groupId) {
+      world.groupCalls.push(groupId);
+      const reply = world.groups.get(groupId) ?? [];
+      if (reply instanceof Error) throw reply;
+      return { options: reply, calls: 1 };
     },
     async detailNames(query, categoryId) {
       world.nameCalls.push([query, categoryId]);
@@ -1949,4 +1957,319 @@ test("matches can keep only some listings, counting what was kept and still plac
   const [group] = watcher.matches(at(1), 1, (kept) => kept.title.includes("i7"));
   assert.deepEqual([group.count, group.listings.map((kept) => kept.id), group.listings[0].place], [2, ["110000000002"], 2]);
   assert.equal(watcher.matches(at(1))[0].count, 3);
+});
+
+const drive = { id: "drive", name: "4TB drive", switch: "on", query: "4tb nas hard drive", mustInclude: ["4tb"], maxWithPostage: 60, guidePrice: 70, unit: "TB", readOptions: true };
+
+function sizes(group: string, ...priced: [string, number, boolean?][]): ListingOption[] {
+  return priced.map(([size, price, inStock], n) => ({ ref: `v1|${group}|${n + 1}`, price, text: `Storage Capacity: ${size}`, inStock: inStock ?? true }));
+}
+
+function grouped(n: number, group: string, overrides: Partial<Listing> = {}): Listing {
+  return listing(n, { id: `11000000000${n}`, title: `Seagate IronWolf NAS hard drive 1TB 2TB 4TB number ${n}`, price: 1500, postage: 0, variations: true, groupId: group, ref: `v1|${group}|0`, ...overrides });
+}
+
+test("with readOptions on, a listing with options is matched, alerted and shown at the price of the option that fits the search", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800], ["8 TB", 9900]));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201"]);
+  assert.equal(watcher.status().callsToday, 2);
+  const [shown] = watcher.matches(at(1))[0].listings;
+  assert.deepEqual([shown.price, shown.total, shown.option, shown.variations, shown.great, shown.perUnit], [4800, 4800, "Storage Capacity: 4 TB", true, true, { unit: "TB", amount: 4, pence: 1200 }]);
+  assert.deepEqual(shown.cautions, ["the listing has more than one option, and this is the price of Storage Capacity: 4 TB"]);
+  world.groups.set("202", sizes("202", ["2 TB", 2000], ["4 TB", 4000]));
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202")]);
+  await watcher.run(at(31));
+  assert.deepEqual(world.groupCalls, ["201", "202"]);
+  const alert = world.sent.at(-1);
+  assert.deepEqual([alert?.title, alert?.priority], ["Deal: 4TB drive", 4]);
+  assert.match(alert?.message ?? "", /£40\.00/);
+  assert.match(alert?.message ?? "", /About £10\.00 per TB \(4 TB, read from the option\)\./);
+  assert.match(alert?.message ?? "", /this is the price of Storage Capacity: 4 TB/);
+});
+
+test("with readOptions off, no item group is read and the listing keeps eBay's cheapest price", async () => {
+  const { world, watcher } = richSetup([{ ...drive, readOptions: false }]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, []);
+  const [shown] = watcher.matches(at(1))[0].listings;
+  assert.deepEqual([shown.price, shown.option, shown.perUnit], [1500, null, null]);
+});
+
+test("a listing whose options don't fit stays at eBay's price, and listings that fail other checks, or have no group number, aren't read", async () => {
+  const { world, watcher } = richSetup([{ ...drive, exclude: ["sas"] }]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500, false], ["4 TB", 4800, false]));
+  world.groups.set("202", sizes("202", ["4 TB", 9000]));
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202"), grouped(3, "203", { title: "SAS drive 4TB 1TB" }), grouped(4, "204", { price: 7000 }), listing(5, { title: "4TB drive 1TB 2TB", price: 1500, variations: true })]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201", "202"]);
+  assert.deepEqual(watcher.searches()[0].hidden, { price: 2, words: 1 });
+  assert.deepEqual(watcher.matches(at(1))[0].listings.map((shown) => [shown.id, shown.price, shown.option]), [["110000000001", 1500, null], ["v1|110000000005|0", 1500, null]]);
+});
+
+test("each check reads at most 10 item groups, and the rest are read at the next check", async () => {
+  const { world, watcher } = richSetup([drive]);
+  const many = Array.from({ length: 12 }, (_, i) => grouped(i + 1, String(300 + i)));
+  for (let i = 0; i < 12; i++) world.groups.set(String(300 + i), sizes(String(300 + i), ["4 TB", 4000 + i]));
+  world.found.set("drive", many);
+  await watcher.run(at(0));
+  assert.equal(world.groupCalls.length, 10);
+  assert.equal(watcher.status().callsToday, 11);
+  assert.deepEqual(watcher.matches(at(1))[0].listings.filter((shown) => shown.option === null).map((shown) => shown.id), ["1100000000011", "1100000000012"]);
+  await watcher.run(at(31));
+  assert.deepEqual(world.groupCalls.slice(10), ["310", "311"]);
+  assert.equal(watcher.matches(at(32))[0].listings.every((shown) => shown.option === "Storage Capacity: 4 TB"), true);
+});
+
+test("an item group is read again only after six hours or when the listing's price changes", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.groups.set("201", sizes("201", ["4 TB", 4800]));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(0));
+  await watcher.run(at(31));
+  await watcher.run(at(62));
+  assert.equal(world.groupCalls.length, 1);
+  world.found.set("drive", [grouped(1, "201", { price: 1400 })]);
+  await watcher.run(at(93));
+  assert.equal(world.groupCalls.length, 2);
+  await watcher.run(at(93 + 6 * 60 + 1));
+  assert.equal(world.groupCalls.length, 3);
+});
+
+test("a group that has gone or can't be read isn't asked for again soon, and doesn't stop the others being read", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.groups.set("201", failed("gone"));
+  world.groups.set("202", failed("reply"));
+  world.groups.set("203", sizes("203", ["4 TB", 4800]));
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202"), grouped(3, "203")]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201", "202", "203"]);
+  assert.equal(watcher.status().callsToday, 4);
+  assert.deepEqual(watcher.matches(at(1))[0].listings.map((shown) => [shown.id, shown.price, shown.option]), [["110000000001", 1500, null], ["110000000002", 1500, null], ["110000000003", 4800, "Storage Capacity: 4 TB"]]);
+  assert.deepEqual(watcher.status().problems, []);
+  await watcher.run(at(31));
+  assert.deepEqual(world.groupCalls, ["201", "202", "203"]);
+});
+
+test("a busy or refusing eBay stops options being read for a while, but not the searches, and a refusal is shown as a problem", async () => {
+  const { world, watcher } = richSetup([drive, { ...drive, id: "drive-2", name: "Second drive", readOptions: false }]);
+  world.groups.set("201", failed("busy", 1));
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202")]);
+  world.found.set("drive-2", [grouped(3, "203")]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201"]);
+  assert.deepEqual(watcher.status().problems, []);
+  await watcher.run(at(31));
+  assert.deepEqual([world.searchCalls.map((call) => call.id), world.groupCalls], [["drive", "drive-2", "drive", "drive-2"], ["201"]]);
+  world.groups.set("201", failed("access", 1));
+  await watcher.run(at(61));
+  assert.deepEqual(world.groupCalls, ["201", "201"]);
+  assert.deepEqual(watcher.status().problems.map((problem) => [problem.code, problem.message]), [["deals-source", "The deal watcher can't read listings' options: eBay says these keys can't read listings' options."]]);
+  world.groups.set("201", sizes("201", ["4 TB", 4800]));
+  await watcher.run(at(91));
+  assert.deepEqual(world.groupCalls, ["201", "201"]);
+  await watcher.run(at(122));
+  assert.deepEqual(world.groupCalls, ["201", "201", "201", "202"]);
+  assert.deepEqual(watcher.status().problems, []);
+  assert.equal(world.searchCalls.length, 10);
+});
+
+test("no item group is read once the day's calls are used", async () => {
+  const { world, watcher } = richSetup([drive], { limits: { callsPerDay: 2 } });
+  world.groups.set("201", sizes("201", ["4 TB", 4800]));
+  world.groups.set("202", sizes("202", ["4 TB", 4900]));
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202")]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201"]);
+  assert.equal(watcher.status().callsToday, 2);
+});
+
+test("a listing read at its option's price is read in full at that option, and keeps it", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(0));
+  world.fullReply = fullOf(listing(1, { price: 4700, variations: true }));
+  const reply = await watcher.full("110000000001", at(1));
+  assert.deepEqual(world.fullCalls, ["v1|201|2"]);
+  assert.equal(reply.status, "ok");
+  if (reply.status !== "ok") return;
+  assert.deepEqual([reply.listing.price, reply.listing.option, reply.listing.perUnit?.pence], [4700, "Storage Capacity: 4 TB", 1175]);
+});
+
+
+test("with hideVariations too, a listing whose option was read is kept, and one that couldn't be read stays hidden", async () => {
+  const { world, watcher } = richSetup([{ ...drive, hideVariations: true }]);
+  world.groups.set("201", sizes("201", ["4 TB", 4800]));
+  world.groups.set("202", [{ ref: "v1|202|1", price: 3000, text: "", inStock: true }]);
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202"), listing(3, { title: "4TB drive 1TB 2TB", price: 1500, variations: true })]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201", "202"]);
+  assert.deepEqual(watcher.searches()[0].hidden, { options: 2 });
+  assert.deepEqual(watcher.matches(at(1))[0].listings.map((shown) => [shown.id, shown.price, shown.option]), [["110000000001", 4800, "Storage Capacity: 4 TB"]]);
+});
+
+
+test("with readOptions, a price drop is judged only between prices of the option that fits, never against eBay's cheapest", async () => {
+  const { world, watcher } = richSetup([{ ...drive, dropPercent: 10 }]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(0));
+  world.groups.set("201", failed("down"));
+  await watcher.run(at(6 * 60 + 1));
+  assert.equal(watcher.matches(at(6 * 60 + 2))[0].listings[0].price, 1500);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
+  await watcher.run(at(7 * 60 + 2));
+  assert.equal(watcher.matches(at(7 * 60 + 3))[0].listings[0].price, 4800);
+  assert.deepEqual(world.sent.filter((sent) => sent.title.startsWith("Price drop")), []);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 3000]));
+  world.found.set("drive", [grouped(1, "201", { price: 1400 })]);
+  await watcher.run(at(7 * 60 + 33));
+  const drops = world.sent.filter((sent) => sent.title.startsWith("Price drop"));
+  assert.equal(drops.length, 1);
+  assert.match(drops[0].message, /Was £48\.00, now £30\.00/);
+});
+
+test("a listing in two searches is read in full at the option each search chose", async () => {
+  const two = { ...drive, id: "drive-2tb", name: "2TB drive", query: "2tb nas hard drive", mustInclude: ["2tb"] };
+  const { world, watcher } = richSetup([two, drive]);
+  world.groups.set("201", sizes("201", ["2 TB", 3000], ["4 TB", 4800]));
+  world.found.set("drive-2tb", [grouped(1, "201", { title: "IronWolf NAS hard drive 2TB 4TB" })]);
+  world.found.set("drive", [grouped(1, "201", { title: "IronWolf NAS hard drive 2TB 4TB" })]);
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.matches(at(1)).map((group) => group.listings[0].price), [3000, 4800]);
+  const first = await watcher.full("110000000001", at(1));
+  assert.deepEqual([first.status === "ok" && first.searchId, world.fullCalls], ["drive-2tb", ["v1|201|1"]]);
+  world.list = readSearches(JSON.stringify({ searches: [{ ...two, switch: "off" }, drive] }), ["ebay"]);
+  await watcher.run(at(31));
+  const second = await watcher.full("110000000001", at(32));
+  assert.deepEqual([second.status === "ok" && second.searchId, second.status === "ok" && second.listing.option, world.fullCalls], ["drive", "Storage Capacity: 4 TB", ["v1|201|1", "v1|201|2"]]);
+});
+
+test("a listing whose cheapest option is under the search's lowest price is still read, since the option that fits may be in range", async () => {
+  const { world, watcher } = richSetup([{ ...drive, minPrice: 25 }]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
+  world.groups.set("202", sizes("202", ["1 TB", 1000], ["4 TB", 2000]));
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202", { price: 1000 }), listing(3, { title: "4TB drive", price: 2000 })]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201", "202"]);
+  assert.deepEqual(watcher.searches()[0].hidden, { price: 2 });
+  assert.deepEqual(watcher.matches(at(1))[0].listings.map((shown) => [shown.id, shown.price]), [["110000000001", 4800]]);
+});
+
+test("with readOptions, a listing first seen before its options were read gets its price for drops from the first read", async () => {
+  const { world, watcher } = richSetup([{ ...drive, dropPercent: 10 }]);
+  world.groups.set("201", failed("down"));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(0));
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
+  await watcher.run(at(61));
+  assert.equal(watcher.matches(at(62))[0].listings[0].price, 4800);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 3000]));
+  world.found.set("drive", [grouped(1, "201", { price: 1400 })]);
+  await watcher.run(at(92));
+  assert.equal(world.sent.filter((sent) => sent.title.startsWith("Price drop")).length, 1);
+});
+
+
+test("with readOptions, a new listing with options waits for its options to be read, then is alerted at the price of the option that fits", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.found.set("drive", []);
+  await watcher.run(at(0));
+  const many = Array.from({ length: 11 }, (_, i) => grouped(i + 1, String(300 + i)));
+  for (let i = 0; i < 11; i++) world.groups.set(String(300 + i), sizes(String(300 + i), ["1 TB", 1500], ["4 TB", 6000 - i * 100]));
+  world.groups.set("310", sizes("310", ["1 TB", 1500], ["4 TB", 4000]));
+  world.found.set("drive", many);
+  await watcher.run(at(31));
+  const first = world.sent.filter((sent) => sent.title.startsWith("Deal:") || sent.title.startsWith("More deals"));
+  assert.ok(first.length > 0 && first.every((sent) => !sent.message.includes("number 11") && !/^[^\n]*\n£15\.00/.test(sent.message)), JSON.stringify(first));
+  const before = world.sent.length;
+  await watcher.run(at(62));
+  const later = world.sent.slice(before).filter((sent) => sent.title.startsWith("Deal:"));
+  assert.deepEqual(later.map((sent) => [sent.title, sent.priority]), [["Deal: 4TB drive", 4]]);
+  assert.match(later[0].message, /£40\.00/);
+});
+
+test("with readOptions, a new listing is alerted at eBay's price when its options can't be read for now, and not again once they are", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.found.set("drive", []);
+  await watcher.run(at(0));
+  world.groups.set("201", failed("busy", 1));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(31));
+  const deals = world.sent.filter((sent) => sent.title.startsWith("Deal:"));
+  assert.deepEqual(deals.map((sent) => [sent.title, sent.priority]), [["Deal: 4TB drive", undefined]]);
+  assert.match(deals[0].message, /£15\.00[\s\S]*so this may be its lowest price/);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4000]));
+  await watcher.run(at(92));
+  assert.equal(world.sent.filter((sent) => sent.title.startsWith("Deal:")).length, 1);
+  assert.equal(watcher.matches(at(93))[0].listings[0].price, 4000);
+});
+
+test("after a restart that forgot what was seen, listings with options from before aren't alerted as new once read", async () => {
+  const { world, watcher, restart } = richSetup([drive], { keepSeen: false });
+  const old = Array.from({ length: 12 }, (_, i) => grouped(i + 1, String(400 + i)));
+  for (let i = 0; i < 12; i++) world.groups.set(String(400 + i), sizes(String(400 + i), ["1 TB", 1500], ["4 TB", 4000]));
+  world.found.set("drive", old);
+  await watcher.run(at(0));
+  const sent = world.sent.length;
+  const again = restart();
+  await again.run(at(31));
+  await again.run(at(62));
+  await again.run(at(93));
+  assert.deepEqual(world.sent.slice(sent).filter((message) => message.title.startsWith("Deal:") || message.title.startsWith("More deals")), []);
+  assert.equal(again.matches(at(94))[0].listings.every((shown) => shown.option === "Storage Capacity: 4 TB"), true);
+});
+
+test("readOptions on a search that names no size reads nothing and holds nothing back", async () => {
+  const { world, watcher } = richSetup([{ ...drive, query: "ironwolf nas hard drive", mustInclude: ["ironwolf"] }]);
+  world.found.set("drive", []);
+  await watcher.run(at(0));
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4000]));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(31));
+  assert.deepEqual(world.groupCalls, []);
+  assert.deepEqual(world.sent.filter((sent) => sent.title.startsWith("Deal:")).map((sent) => sent.title), ["Deal: 4TB drive"]);
+});
+
+test("a group that times out waits an hour and doesn't keep the groups after it from being read", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.groups.set("201", failed("down"));
+  world.groups.set("202", sizes("202", ["4 TB", 4800]));
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202")]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201"]);
+  await watcher.run(at(31));
+  assert.deepEqual(world.groupCalls, ["201", "202"]);
+  await watcher.run(at(62));
+  assert.deepEqual(world.groupCalls, ["201", "202", "201"]);
+});
+
+test("trouble reading options is forgotten on Check now, and once no search reads options", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.groups.set("201", failed("access", 1));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(0));
+  assert.equal(watcher.status().problems.length, 1);
+  await watcher.run(at(5), true);
+  assert.deepEqual([watcher.status().problems.length, world.groupCalls.length], [1, 2]);
+  world.list = readSearches(JSON.stringify({ searches: [{ ...drive, readOptions: false }] }), ["ebay"]);
+  await watcher.run(at(40));
+  assert.deepEqual(watcher.status().problems, []);
+});
+
+test("with readOptions, a new listing whose options can't be read is alerted at eBay's price, with the caution", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.found.set("drive", []);
+  await watcher.run(at(0));
+  world.groups.set("201", failed("reply"));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(31));
+  const deals = world.sent.filter((sent) => sent.title.startsWith("Deal:"));
+  assert.deepEqual(deals.map((sent) => [sent.title, sent.priority]), [["Deal: 4TB drive", undefined]]);
+  assert.match(deals[0].message, /£15\.00[\s\S]*so this may be its lowest price/);
 });

@@ -81,7 +81,7 @@ function bidLine(search: Search, listing: Listing): string | null {
 function unitLine(search: Search, listing: Listing): string | null {
   const per = unitPrice(search, listing);
   if (per === null) return null;
-  return `About ${money(per.pence)} per ${per.unit} (${Number(per.amount.toFixed(2))} ${per.unit}, read from the title).`;
+  return `About ${money(per.pence)} per ${per.unit} (${Number(per.amount.toFixed(2))} ${per.unit}, read from the ${listing.variations ? "option" : "title"}).`;
 }
 
 function detailsLine(listing: Listing): string | null {

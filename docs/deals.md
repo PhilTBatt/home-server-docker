@@ -106,8 +106,9 @@ Every search needs `id`, `name`, `switch` and `query`. Everything else is option
 | `collectionMiles` | Only listings you can collect within this many miles (1 to 100) of the `postcode` at the top of the file. Can't be used with `freePostage` or `postageShown`. |
 | `freePostage` | `true` asks eBay for listings with free postage only. Can't be used with `collectionMiles`. |
 | `hideVariations` | `true` hides listings with several options (sizes, colours), because eBay shows only the cheapest option's price, which can make a 1 TB option look like a cheap 4 TB drive. They count under `options` in the search's hidden numbers. |
+| `readOptions` | `true` reads the options of each listing that has several (one eBay call each) and uses the price of the one that fits the search. Off unless you add it. See "Listings with several options" below. |
 | `guidePrice`, `guideDate`, `greatPercent` | What you'd call a fair total price, in pounds, the day you set it, and how far under it counts as a great deal (default 20). See "Guide prices" below. |
-| `unit` | `GB` or `TB`: adds a price per unit to each alert, with the size read from the title. Only sensible when the search is for one kind of thing, like RAM kits or drives. |
+| `unit` | `GB` or `TB`: adds a price per unit to each alert, with the size read from the title (or, with `readOptions`, from the option the price is for). Only sensible when the search is for one kind of thing, like RAM kits or drives. |
 | `alertsPerDay` | This search's own daily limit on notifications, on top of the overall one. The rest wait until tomorrow. |
 | `endingSoonMinutes` | For auctions: one more alert when an auction you've already been told about is this close to ending, 5 to 720 and at least `everyMinutes`. |
 
@@ -122,7 +123,7 @@ A mistyped setting name is refused, not ignored, so `"maxprice"` can't quietly r
 `quiet` is optional: `{ "from": "23:00", "to": "07:00", "allow": "great" }`. Between those times, by the clock in London, deal alerts are held and sent at the first check after. `"allow": "great"` lets great deals and ending-soon alerts through; leave it out and neither does. An ending-soon alert that was held is sent afterwards only if the auction is still inside its window. Two messages still arrive, silently: "now watching" (it only follows a change you just made) and the daily "alerts paused" notice. Check now doesn't override quiet hours.
 
 ## What's kept where
-- **In memory only:** the listings from each search's last check (and HotUKDeals' feed, kept for five minutes): title, prices, link, condition, the seller's rating and whether they're a business, the town and postcode district eBay shows, and eBay's short summary. They're gone on restart and never shown once they're more than six hours old. A listing read in full (description, item specifics, returns) is kept for half an hour, also only in memory.
+- **In memory only:** the listings from each search's last check (and HotUKDeals' feed, kept for five minutes): title, prices, link, condition, the seller's rating and whether they're a business, the town and postcode district eBay shows, and eBay's short summary. They're gone on restart and never shown once they're more than six hours old. A listing read in full (description, item specifics, returns) is kept for half an hour, also only in memory. With `readOptions`, the options eBay lists for a listing (their details, prices and stock) are kept for up to six hours, also only in memory.
 - **`deals/state.json`:** each search's fingerprint, when it started and was last checked, today's counts (overall and for each search), and which searches are snoozed. Nothing from eBay.
 - **With `DEALS_SEEN=disk` only:** the ids of the listings each search has seen (every match from its first check on, not only the ones alerted), with times, their price if the search uses `dropPercent`, and a mark once an auction's ending-soon alert has gone. Never titles, links or anything about the seller.
 - **Never, anywhere:** seller names or ids. The watcher reads a seller's feedback numbers for the `sellerMin…` checks and the alert, and nothing else about them.
@@ -158,6 +159,25 @@ Each name reads up to as many pages as the search itself did, so usually it's on
 
 If that extra question returns as many listings as the search itself, the name is probably wrong (eBay may ignore a name it doesn't know), so the search fails with a message rather than hiding everything. Hidden listings count under `details` in the search's hidden numbers.
 
+## Listings with several options
+A seller can put several sizes or colours in one listing, and eBay's search shows only the cheapest option's price: a 1 TB option can make a listing look like a cheap 4 TB drive. A search can do one of three things with them:
+- nothing (the default): they match at eBay's price, with a caution, and never count as a great deal (see "Guide prices");
+- `hideVariations`: hide them;
+- `readOptions`: read their options from eBay and use the price of the one that fits.
+
+`readOptions` only works for a search that names a size in GB or TB, in its `mustInclude` words or else its query, like the storage and RAM searches: without one, it can't tell which option you want, so it reads nothing and leaves the listing as eBay shows it. The option that fits:
+- isn't out of stock (eBay doesn't always say) and has none of the search's `exclude` words;
+- shows the size the search names: its largest size is the search's largest, and it has every size the search names (so a 16GB search doesn't take a 32GB kit of two 16GB sticks, and "16gb 512gb" needs both);
+- is the cheapest of those at or over `minPrice`, or the cheapest of them all if none is.
+
+When no option fits, the options can't be read, or the listing has more than 100 options, the listing stays at eBay's price, never counts as a great deal, and `hideVariations` decides whether it's hidden. Options never hide a listing on their own.
+
+Each search reads at most 10 listings a check, in the order eBay sends them (newest first); the rest wait for its next check. There's no daily limit of its own: each read is one call out of `callsPerDay`. A listing's options are read again after six hours, or sooner when its price changes. One whose options couldn't be read waits six hours too, or an hour if eBay didn't answer, and the next listing is read meanwhile. A listing whose cheapest option is under `minPrice` is read too, since the option that fits may cost more. If eBay says it's busy or refuses the keys, options aren't read for an hour (or as long as eBay asks), while the searches carry on, and a refusal shows as a problem on the hub page for as long as options are paused. Check now ends the pause.
+
+A new listing with several options waits to be alerted until its options are read, usually at the same check (the next one if more than 10 are waiting), so its alert gives the price that fits when there is one. If they can't be read for now (options paused, the day's calls used, or the read failed), it's alerted at eBay's price straight away, and not again once they're read. With `dropPercent`, a price drop is judged only between prices of the option that fits, never against eBay's cheapest.
+
+It was built from eBay's documentation, not from a real reply, so look at the first matches a search reads this way before trusting it.
+
 ## Guide prices
 `guidePrice` is your own number: what you'd call a fair price for the thing, postage included. Each alert then says how far under or over it the listing is, and:
 - at least `greatPercent` under (default 20): high priority, so the phone makes more of it, and it comes through quiet hours that allow great deals;
@@ -166,13 +186,13 @@ If that extra question returns as many listings as the search itself, the name i
 
 An auction's current bid isn't judged like this: a 99p opening bid isn't a great deal. Its ending-soon alert says how the bid compares, worded as a bid.
 
-A listing with more than one option isn't judged like this either: eBay shows its cheapest option's price, so a 1 TB option can look like a great deal on a 4 TB drive. Its alert still says how far under or over the guide price it is, and asks you to check the option. Under the guide price it comes at the usual priority; over it, low priority, since every option is over it too.
+A listing with more than one option isn't judged like this either: eBay shows its cheapest option's price, so a 1 TB option can look like a great deal on a 4 TB drive. Its alert still says how far under or over the guide price it is, and asks you to check the option. Under the guide price it comes at the usual priority; over it, low priority, since every option is over it too. With `readOptions`, a listing whose option that fits was found is judged at that option's price, and its alert names the option.
 
 Set `guideDate` to the day you chose the price. After 30 days the alert reminds you to check it's still right. The watcher never works a price out from eBay's listings: eBay's agreement doesn't allow using its data to suggest or model prices, so the judgement stays yours (record 0021).
 
 ## What an alert says about the seller
 - **Business seller or private seller**, when eBay says which. The seller chooses this when they register, so treat it as a hint.
-- **Check first**, when something deserves a second look: under 10 ratings, a price under half your guide price, or a listing with more than one option (the price shown may be for the cheapest).
+- **Check first**, when something deserves a second look: under 10 ratings, a price under half your guide price, or a listing with more than one option (the price shown may be for the cheapest; with `readOptions`, it names the option the price is for).
 
 Why the seller type matters, as the research for this read the sources (not legal advice):
 - Buying from a business, the Consumer Rights Act 2015 applies, and a sale made at a distance usually comes with 14 days to cancel under the Consumer Contracts Regulations 2013. https://www.legislation.gov.uk/ukpga/2015/15/section/2 and https://www.legislation.gov.uk/uksi/2013/3134/regulation/30
