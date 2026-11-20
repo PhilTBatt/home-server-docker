@@ -542,7 +542,9 @@ test("the catalogue in the repo loads beside the example list, every search off 
   const spareParts = ["motherboard", "mainboard", "board only", "psu only", "power supply only"];
   assert.ok(servers.length > 0 && servers.every((search) => spareParts.every((word) => search.exclude.includes(word))), "server searches keep spare parts out");
   const storage = fromEbay.filter((search) => search.group === "storage");
-  assert.ok(storage.length > 0 && storage.every((search) => search.hideVariations), "eBay storage searches hide listings with several options");
+  const drives = storage.filter((search) => search.id.startsWith("hdd-"));
+  assert.ok(drives.length === 4 && drives.every((search) => !search.hideVariations), "hard-drive searches keep listings with several options");
+  assert.ok(storage.length > drives.length && storage.filter((search) => !drives.includes(search)).every((search) => search.hideVariations), "SSD and NVMe searches hide listings with several options");
   const feedCalls = (24 * 60) / Math.min(...added.filter((search) => search.source === "hotukdeals").map((search) => search.everyMinutes));
   const callsADay = fromEbay.reduce((sum, search) => sum + (24 * 60) / search.everyMinutes * (1 + Object.keys(search.hideDetails ?? {}).length), feedCalls);
   assert.ok(callsADay < 1000, String(callsADay));
