@@ -123,7 +123,7 @@ A mistyped setting name is refused, not ignored, so `"maxprice"` can't quietly r
 `quiet` is optional: `{ "from": "23:00", "to": "07:00", "allow": "great" }`. Between those times, by the clock in London, deal alerts are held and sent at the first check after. `"allow": "great"` lets great deals and ending-soon alerts through; leave it out and neither does. An ending-soon alert that was held is sent afterwards only if the auction is still inside its window. Two messages still arrive, silently: "now watching" (it only follows a change you just made) and the daily "alerts paused" notice. Check now doesn't override quiet hours.
 
 ## What's kept where
-- **In memory only:** the listings from each search's last check (and HotUKDeals' feed, kept for five minutes): title, prices, link, condition, the seller's rating and whether they're a business, the town and postcode district eBay shows, and eBay's short summary. They're gone on restart and never shown once they're more than six hours old. A listing read in full (description, item specifics, returns) is kept for half an hour, also only in memory. With `readOptions`, the options eBay lists for a listing (their details, prices and stock) are kept for up to six hours, for at most 1,000 listings, also only in memory.
+- **In memory only:** the listings from each search's last check (and HotUKDeals' feed, kept for five minutes): title, prices, link, condition, the seller's rating and whether they're a business, the town and postcode district eBay shows, and eBay's short summary. They're gone on restart and never shown once they're more than six hours old. Up to three titles of the listings each rule hid, from the same check, also only in memory. A listing read in full (description, item specifics, returns) is kept for half an hour, also only in memory. With `readOptions`, the options eBay lists for a listing (their details, prices and stock) are kept for up to six hours, for at most 1,000 listings, also only in memory.
 - **`deals/state.json`:** each search's fingerprint, when it started and was last checked, today's counts (overall and for each search), and which searches are snoozed. Nothing from eBay.
 - **With `DEALS_SEEN=disk` only:** the ids of the listings each search has seen (every match from its first check on, not only the ones alerted), with times, their price if the search uses `dropPercent`, and a mark once an auction's ending-soon alert has gone. Never titles, links or anything about the seller.
 - **Never, anywhere:** seller names or ids. The watcher reads a seller's feedback numbers for the `sellerMin…` checks and the alert, and nothing else about them.
@@ -244,7 +244,7 @@ With `DEALS_AI=on`, two more MCP tools work:
 
 With `DEALS_AI=off` both reply 403 and no listing leaves the API through them. The hub page isn't affected either way.
 
-The switch covers Claude's tools, not the API as a whole. `/deals/matches` and `/deals/listing/<item number>` still answer anything that has the API token, because that's how the hub page works. A Claude Code session in this repo could run `host/hub-get.sh` against them, so `CLAUDE.md` tells it not to while the switch is off.
+The switch covers Claude's tools, not the API as a whole. `/deals/matches`, `/deals/listing/<item number>` and `/deals/searches/<id>/hidden` still answer anything that has the API token, because that's how the hub page works. A Claude Code session in this repo could run `host/hub-get.sh` against them, so `CLAUDE.md` tells it not to while the switch is off.
 
 Two skills in `.claude/skills/` use them: `pc-build` puts together the best PC for a budget, and `deal-check` compares the matches for one kind of part, or listings you name. Every session in this repo may search the web and open the maker and spec sites listed in `.claude/settings.json` without asking (record 0029); any other site still asks, and eBay's own pages are refused. For the PCs, workstations and servers the catalogue searches for, the skills read that machine's file in `docs/specs/` first: what its maker's documents say about its CPU, memory, slots, storage, power supply and networking, each fact with its source, so a fit can be checked without the makers' sites, many of whose spec pages refused automated reads in November 2026. `docs/specs/README.md` says how it was gathered, how it was checked and how far to trust it.
 
@@ -276,8 +276,9 @@ Problems go through the same alerts as everything else on the server (`/system/a
 ## Routes and tools
 All behind the API token, and all 404 with "The deal watcher is switched off" while `DEALS=off`.
 - `GET /deals/status`: last run, today's counts, where seen listings are kept, problems.
-- `GET /deals/searches`: each search and how its last check went.
-- `GET /deals/matches`: the current listings for each search, cheapest first.
+- `GET /deals/searches`: each search and how its last check went: matches, how many each rule hid, and, for a search with `readOptions`, how many listings' options gave a price that fits (`fitted`), couldn't be told (`unknown`) or weren't read yet (`unread`). `notes` says when a setting can't do anything or the guide price is over 30 days old.
+- `GET /deals/searches/<id>/hidden`: up to three titles for each reason the search's last check hid listings, to see what its rules catch. Titles only, from the last six hours, for the hub page; no MCP tool reads it.
+- `GET /deals/matches`: the current listings for each search, cheapest first, up to 50 each, or fewer with `most=<1 to 50>`.
 - `POST /deals/check`: check every switched-on search now, and say how many were checked, how many alerts went, and whether any couldn't be sent. Refused if asked twice within a minute.
 
 - `GET /deals/listing/<item number>`: one current match in full. 404 if it isn't a current match, 410 if eBay says it's gone.

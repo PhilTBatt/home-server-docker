@@ -61,10 +61,14 @@ function sellerLine(listing: Listing): string | null {
 
 const guideGoesStaleAfter = 30 * 24 * 60 * 60 * 1000;
 
+export function guideIsStale(search: Search, now: Date): boolean {
+  return search.guideDate !== null && now.getTime() - Date.parse(search.guideDate) > guideGoesStaleAfter;
+}
+
 function guideLine(search: Search, listing: Listing, now: Date): string | null {
   const under = underGuide(search, listing);
   if (under === null || search.guidePrice === null) return null;
-  const stale = search.guideDate !== null && now.getTime() - Date.parse(search.guideDate) > guideGoesStaleAfter;
+  const stale = guideIsStale(search, now);
   const guide = `your ${money(search.guidePrice)} guide price${stale ? ` (set ${search.guideDate}, so check it's still right)` : ""}`;
   if (under > 0) return `${under}% under ${guide}.`;
   return under < 0 ? `${-under}% over ${guide}.` : `Right on ${guide}.`;

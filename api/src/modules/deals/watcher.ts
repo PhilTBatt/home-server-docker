@@ -1,7 +1,7 @@
 import { londonTime } from "../notify/daily.js";
 import type { Notification } from "../notify/notifier.js";
 import type { Problem } from "../system/alerts.js";
-import { capNotification, dealNotification, endingNotification, moreNotification, watchingNotification, type Started } from "./alert.js";
+import { capNotification, dealNotification, endingNotification, guideIsStale, moreNotification, watchingNotification, type Started } from "./alert.js";
 import { cautions, chooseOption, isAuctionOnly, isGreat, priceKnown, priorityFor, readsOptions, standing, totalPrice, underGuide, unitPrice, whyNot, withOption, type UnitPrice } from "./match.js";
 import { defaultLimits, fingerprint, type Limits, type Quiet, type Search, type SearchList } from "./searches.js";
 import { SourceError, type Categories, type CategoryDetails, type DetailNames, type FullListing, type Listing, type ListingOption, type Source } from "./source.js";
@@ -55,6 +55,22 @@ export type SearchStatus = {
   alertsPerDay: number | null;
   guidePrice: number | null;
   hidden: Record<string, number> | null;
+  options: OptionCounts | null;
+  notes: string[];
+};
+
+export type OptionCounts = {
+  fitted: number;
+  unknown: number;
+  unread: number;
+};
+
+export type HiddenReply = {
+  id: string;
+  name: string;
+  checkedAt: string;
+  hidden: Record<string, number>;
+  examples: Record<string, string[]>;
 };
 
 export type MatchedListing = {
@@ -114,7 +130,8 @@ export type DealWatcher = {
   run(now: Date, force?: boolean): Promise<RunSummary>;
   problems(): Problem[];
   status(now?: Date): WatcherStatus;
-  searches(): SearchStatus[];
+  searches(now?: Date): SearchStatus[];
+  hidden(id: string, now: Date): HiddenReply | null;
   matches(now: Date, most?: number, keep?: (listing: Listing) => boolean): MatchGroup[];
   snooze(id: string, until: Date | null): Promise<boolean>;
   wake(id: string): Promise<boolean>;
@@ -130,6 +147,8 @@ type Result = {
   total: number;
   complete: boolean;
   hidden: Record<string, number>;
+  examples: Record<string, string[]>;
+  options: OptionCounts | null;
 };
 
 type Failure = {
@@ -162,6 +181,7 @@ const readsPerDay = 150;
 const optionReadsPerCheck = 10;
 const optionsKept = 1000;
 const optionCallsShare = 0.5;
+const examplesKept = 3;
 export const freshFor = 6 * hourMs;
 const needsAPerson = ["keys", "access", "request"];
 const sourceWide = ["keys", "access", "busy", "down"];
@@ -318,9 +338,10 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     return (memory?.counters.calls ?? 0) + pendingCalls >= limits().callsPerDay;
   }
 
-  async function readOptions(search: Search, source: Source, listings: Listing[], now: Date, state: Memory): Promise<Listing[]> {
+  async function readOptions(search: Search, source: Source, listings: Listing[], now: Date, state: Memory): Promise<{ listings: Listing[]; counts: OptionCounts | null }> {
     const lookUp = source.options;
-    if (!readsOptions(search) || lookUp === undefined) return listings;
+    if (!readsOptions(search) || lookUp === undefined) return { listings, counts: null };
+    const counts: OptionCounts = { fitted: 0, unknown: 0, unread: 0 };
     const time = now.getTime();
     for (const [key, entry] of optionCache) {
       if (entry.until < time) optionCache.delete(key);
@@ -361,10 +382,16 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
           for (const oldest of [...optionCache.keys()].slice(0, Math.max(0, optionCache.size - optionsKept))) optionCache.delete(oldest);
         }
       }
-      if (entry !== undefined) read.push(withOption(listing, entry.options === null ? null : chooseOption(search, entry.options)));
-      else read.push(stopped || state.counters.calls >= optionCallLimit() ? { ...listing, optionsRead: true } : listing);
+      if (entry !== undefined) {
+        const chosen = entry.options === null ? null : chooseOption(search, entry.options);
+        counts[chosen === null ? "unknown" : "fitted"] += 1;
+        read.push(withOption(listing, chosen));
+      } else {
+        counts.unread += 1;
+        read.push(stopped || state.counters.calls >= optionCallLimit() ? { ...listing, optionsRead: true } : listing);
+      }
     }
-    return read;
+    return { listings: read, counts };
   }
 
   function fail(search: Search, reason: string, message: string, now: number, retryAfter: number | null = null) {
@@ -495,16 +522,22 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       lastChecked.set(search.id, time);
       summary.checked += 1;
 
-      const listings = await readOptions(search, source, found.listings, now, state);
+      const { listings, counts } = await readOptions(search, source, found.listings, now, state);
       const hidden: Record<string, number> = {};
+      const examples: Record<string, string[]> = {};
       const matched: Listing[] = [];
       for (const listing of listings) {
         const reason = whyNot(search, listing, now);
-        if (reason === null) matched.push(listing);
-        else hidden[reason] = (hidden[reason] ?? 0) + 1;
+        if (reason === null) {
+          matched.push(listing);
+          continue;
+        }
+        hidden[reason] = (hidden[reason] ?? 0) + 1;
+        const shown = (examples[reason] ??= []);
+        if (shown.length < examplesKept) shown.push(listing.title);
       }
       matched.sort((a, b) => totalPrice(a) - totalPrice(b));
-      results.set(search.id, { checkedAt: time, listings: matched, total: found.total, complete: found.complete, hidden });
+      results.set(search.id, { checkedAt: time, listings: matched, total: found.total, complete: found.complete, hidden, examples, options: counts });
 
       const print = fingerprint(search);
       const remembered = state.searches.get(search.id);
@@ -671,8 +704,11 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       };
     },
 
-    searches() {
+    searches(now = new Date()) {
       return (list?.searches ?? []).map((search) => {
+        const notes: string[] = [];
+        if (search.readOptions && !readsOptions(search)) notes.push("readOptions does nothing here: the search names no size in GB or TB");
+        if (guideIsStale(search, now)) notes.push(`its guide price was set on ${search.guideDate}, over 30 days ago`);
         const result = results.get(search.id);
         const checked = lastChecked.get(search.id);
         return {
@@ -695,8 +731,23 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
           alertsPerDay: search.alertsPerDay,
           guidePrice: search.guidePrice,
           hidden: result === undefined ? null : { ...result.hidden },
+          options: result?.options === undefined || result.options === null ? null : { ...result.options },
+          notes,
         };
       });
+    },
+
+    hidden(id, now) {
+      const search = list?.searches.find((entry) => entry.id === id);
+      const result = results.get(id);
+      if (search === undefined || !search.on || result === undefined || now.getTime() - result.checkedAt > freshFor) return null;
+      return {
+        id,
+        name: search.name,
+        checkedAt: new Date(result.checkedAt).toISOString(),
+        hidden: { ...result.hidden },
+        examples: Object.fromEntries(Object.entries(result.examples).map(([reason, titles]) => [reason, [...titles]])),
+      };
     },
 
     matches(now, most = matchesShown, keep) {

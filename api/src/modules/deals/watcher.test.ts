@@ -1024,8 +1024,8 @@ test("searches reports each search's settings and how its last check went", asyn
   world.found.set("optiplex", listings(1, 2));
   await watcher.run(at(0));
   assert.deepEqual(watcher.searches(), [
-    { id: "optiplex", name: "OptiPlex", group: null, on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: {} },
-    { id: "ram", name: "DDR4 RAM", group: null, on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: null },
+    { id: "optiplex", name: "OptiPlex", group: null, on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: {}, options: null, notes: [] },
+    { id: "ram", name: "DDR4 RAM", group: null, on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: null, options: null, notes: [] },
   ]);
 });
 
@@ -2290,4 +2290,51 @@ test("with readOptions, a new listing whose options can't be read is alerted at 
   const deals = world.sent.filter((sent) => sent.title.startsWith("Deal:"));
   assert.deepEqual(deals.map((sent) => [sent.title, sent.priority]), [["Deal: 4TB drive", undefined]]);
   assert.match(deals[0].message, /£15\.00[\s\S]*so this may be its lowest price/);
+});
+
+test("each search keeps up to three titles for each reason it hid listings, from its last check, for six hours", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, exclude: ["micro"], maxPrice: 100 }]);
+  world.found.set("optiplex", [
+    listing(1, { title: "OptiPlex 7070 Micro one" }),
+    listing(2, { title: "OptiPlex 7070 Micro two" }),
+    listing(3, { title: "OptiPlex 7070 Micro three" }),
+    listing(4, { title: "OptiPlex 7070 Micro four" }),
+    listing(5, { title: "OptiPlex 7070 SFF dear", price: 20000 }),
+    listing(6, { title: "OptiPlex 7070 SFF fine" }),
+  ]);
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.hidden("optiplex", at(1)), {
+    id: "optiplex",
+    name: "OptiPlex",
+    checkedAt: at(0).toISOString(),
+    hidden: { words: 4, price: 1 },
+    examples: { words: ["OptiPlex 7070 Micro one", "OptiPlex 7070 Micro two", "OptiPlex 7070 Micro three"], price: ["OptiPlex 7070 SFF dear"] },
+  });
+  assert.equal(watcher.hidden("optiplex", at(6 * 60 + 1)), null);
+  assert.equal(watcher.hidden("nothing", at(1)), null);
+  const reply = watcher.hidden("optiplex", at(1));
+  reply?.examples.words.push("changed");
+  assert.equal(watcher.hidden("optiplex", at(1))?.examples.words.length, 3);
+  world.list = readSearches(JSON.stringify({ searches: [{ ...optiplex, switch: "off" }] }), ["ebay"]);
+  await watcher.run(at(5));
+  assert.equal(watcher.hidden("optiplex", at(6)), null);
+});
+
+test("a search reading options reports how many fitted, how many couldn't be told and how many wait to be read", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
+  world.groups.set("202", sizes("202", ["1 TB", 1500], ["2 TB", 2800]));
+  const many = [grouped(1, "201"), grouped(2, "202"), ...Array.from({ length: 10 }, (_, i) => grouped(i + 3, String(300 + i)))];
+  world.found.set("drive", many);
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.searches(at(1))[0].options, { fitted: 1, unknown: 9, unread: 2 });
+  assert.deepEqual(watcher.searches(at(1))[0].notes, []);
+});
+
+test("a search's notes say when readOptions can't do anything and when its guide price is over 30 days old", async () => {
+  const { watcher } = richSetup([{ ...drive, query: "ironwolf nas", mustInclude: [], guideDate: "2026-10-01" }, { ...optiplex, guidePrice: 100, guideDate: "2026-11-01" }]);
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.searches(at(1)).map((search) => search.notes), [["readOptions does nothing here: the search names no size in GB or TB", "its guide price was set on 2026-10-01, over 30 days ago"], []]);
+  assert.deepEqual(watcher.searches(new Date("2026-12-05T00:00:00Z"))[1].notes, ["its guide price was set on 2026-11-01, over 30 days ago"]);
+  assert.equal(watcher.searches(at(1))[0].options, null);
 });

@@ -149,12 +149,25 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
 
   app.get("/searches", async (_request, reply) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
-    return watcher.searches();
+    return watcher.searches(now());
   });
 
-  app.get("/matches", async (_request, reply) => {
+  app.get("/searches/:id/hidden", async (request, reply) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
-    return watcher.matches(now());
+    const id = searchId(request.params);
+    if (id === null) return reply.code(400).send({ error: "That isn't a search id" });
+    const found = watcher.hidden(id, now());
+    if (found === null) return reply.code(404).send({ error: "That isn't one of the searches, or it has nothing checked in the last six hours" });
+    return found;
+  });
+
+  app.get("/matches", async (request, reply) => {
+    if (watcher === undefined) return reply.code(404).send(switchedOff);
+    const asked = isObject(request.query) ? request.query : {};
+    const unknown = Object.keys(asked).filter((key) => key !== "most");
+    const most = asked.most === undefined ? null : typeof asked.most === "string" && /^[1-9][0-9]?$/.test(asked.most) && Number(asked.most) <= 50 ? Number(asked.most) : Number.NaN;
+    if (unknown.length > 0 || Number.isNaN(most)) return reply.code(400).send({ error: "Ask for nothing, or most=n with a whole number from 1 to 50" });
+    return most === null ? watcher.matches(now()) : watcher.matches(now(), most);
   });
 
   app.get("/listing/:id", { logLevel: "warn" }, async (request, reply) => {

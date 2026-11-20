@@ -51,7 +51,7 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_deal_searches",
-    description: "The searches the deal watcher is set up with: each one's name, query, whether it's switched on or snoozed, when it was last checked, how many listings match now, how many each rule hid, its guide price, and any problem. It never includes the listings themselves. Fails with a 404 while the deal watcher is switched off.",
+    description: "The searches the deal watcher is set up with: each one's name, query, whether it's switched on or snoozed, when it was last checked, how many listings match now, how many each rule hid, its guide price, any problem, notes on settings that can't do anything or a guide price over 30 days old, and for a search that reads options, how many listings' options gave a price that fits, couldn't be told, or weren't read yet. It never includes the listings themselves. Fails with a 404 while the deal watcher is switched off.",
     path: "/deals/searches",
   },
 ];

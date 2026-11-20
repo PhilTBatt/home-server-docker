@@ -21,7 +21,7 @@ const status: WatcherStatus = {
 };
 
 const searches: SearchStatus[] = [
-  { id: "optiplex", name: "OptiPlex", group: "whole pc", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: "2026-11-18T11:55:00.000Z", watchingSince: "2026-11-17T09:00:00.000Z", matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 1, alertsPerDay: null, guidePrice: 12000, hidden: { words: 4 } },
+  { id: "optiplex", name: "OptiPlex", group: "whole pc", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: "2026-11-18T11:55:00.000Z", watchingSince: "2026-11-17T09:00:00.000Z", matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 1, alertsPerDay: null, guidePrice: 12000, hidden: { words: 4 }, options: null, notes: [] },
 ];
 
 const matched: MatchedListing = {
@@ -74,6 +74,8 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
     runs: [] as { now: string; force: boolean }[],
     matchTimes: [] as string[],
     matchMost: [] as (number | undefined)[],
+    searchTimes: [] as string[],
+    hiddenAsked: [] as [string, string][],
     snoozes: [] as [string, string | null][],
     wakes: [] as string[],
     fulls: [] as string[],
@@ -91,7 +93,14 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
     },
     problems: () => status.problems,
     status: () => status,
-    searches: () => searches,
+    searches: (now) => {
+      seen.searchTimes.push(now === undefined ? "none" : now.toISOString());
+      return searches;
+    },
+    hidden: (id, now) => {
+      seen.hiddenAsked.push([id, now.toISOString()]);
+      return id === "optiplex" ? { id, name: "OptiPlex", checkedAt: "2026-11-18T11:55:00.000Z", hidden: { words: 4 }, examples: { words: ["Dell OptiPlex 7070 Micro"] } } : null;
+    },
     matches: (now, most) => {
       seen.matchTimes.push(now.toISOString());
       seen.matchMost.push(most);
@@ -135,6 +144,7 @@ function buildApp(watcher: DealWatcher | undefined, features = allOn, ai = false
 const routes = [
   ["GET", "/deals/status"],
   ["GET", "/deals/searches"],
+  ["GET", "/deals/searches/optiplex/hidden"],
   ["GET", "/deals/matches"],
   ["POST", "/deals/check"],
   ["GET", "/deals/listing/110000000001"],
@@ -728,4 +738,39 @@ test("every AI matches route goes through the size limit", async () => {
     assert.ok(response.body.length <= 45_000, `${url}: ${response.body.length}`);
     assert.equal(response.json().cut, url !== "/deals/ai/matches?search=search-3" || response.json().searches[0].listings.length < 50, url);
   }
+});
+
+test("searches are given the time of asking, so their notes can say a guide price is old", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const { app } = buildApp(watcher);
+  await app.inject({ method: "GET", url: "/deals/searches" });
+  assert.deepEqual(seen.searchTimes, [new Date(start).toISOString()]);
+});
+
+test("a search's hidden examples come from its last check, and an odd or unknown search is refused", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const { app } = buildApp(watcher);
+  const found = await app.inject({ method: "GET", url: "/deals/searches/optiplex/hidden" });
+  assert.equal(found.statusCode, 200);
+  assert.deepEqual(found.json(), { id: "optiplex", name: "OptiPlex", checkedAt: "2026-11-18T11:55:00.000Z", hidden: { words: 4 }, examples: { words: ["Dell OptiPlex 7070 Micro"] } });
+  assert.deepEqual(seen.hiddenAsked, [["optiplex", new Date(start).toISOString()]]);
+  const missing = await app.inject({ method: "GET", url: "/deals/searches/ram/hidden" });
+  assert.deepEqual([missing.statusCode, missing.json()], [404, { error: "That isn't one of the searches, or it has nothing checked in the last six hours" }]);
+  for (const odd of ["Bad%20Id", "a_b", "x".repeat(41), "..%2Fstate"]) {
+    const response = await app.inject({ method: "GET", url: `/deals/searches/${odd}/hidden` });
+    assert.deepEqual([response.statusCode, response.json()], [400, { error: "That isn't a search id" }], odd);
+  }
+  assert.equal(seen.hiddenAsked.length, 2);
+});
+
+test("the matches can be asked for at most a few listings a search, and anything else is refused", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const { app } = buildApp(watcher);
+  for (const url of ["/deals/matches", "/deals/matches?most=5", "/deals/matches?most=1", "/deals/matches?most=50"]) assert.equal((await app.inject({ method: "GET", url })).statusCode, 200, url);
+  assert.deepEqual(seen.matchMost, [undefined, 5, 1, 50]);
+  for (const odd of ["most=0", "most=51", "most=05", "most=2.5", "most=", "most=five", "most=5&most=6", "other=1", "most=5&x=1"]) {
+    const response = await app.inject({ method: "GET", url: `/deals/matches?${odd}` });
+    assert.deepEqual([response.statusCode, response.json()], [400, { error: "Ask for nothing, or most=n with a whole number from 1 to 50" }], odd);
+  }
+  assert.equal(seen.matchMost.length, 4);
 });

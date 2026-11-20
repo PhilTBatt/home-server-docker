@@ -117,6 +117,7 @@ const protectedRoutes = [
   ["GET", "/deals/status"],
   ["GET", "/deals/searches"],
   ["GET", "/deals/matches"],
+  ["GET", "/deals/searches/optiplex/hidden"],
   ["POST", "/deals/check"]
 ] as const;
 
@@ -309,6 +310,7 @@ function fakeDealWatcher() {
     problems: () => [],
     status: () => ({ lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], quiet: null }),
     searches: () => [],
+    hidden: () => null,
     matches: () => [],
     snooze: async () => true,
     wake: async () => true,
