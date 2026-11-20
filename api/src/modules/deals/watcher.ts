@@ -233,7 +233,7 @@ function describe(search: Search, listing: Listing, matched: Listing[], firstSee
     option: typeof listing.option === "string" ? listing.option : null,
     detailsMatch: listing.detailsMatch,
     place: matched.filter((other) => other.id !== listing.id && totalPrice(other) < total).length + 1,
-    underGuide: underGuide(search, listing),
+    underGuide: priceKnown(listing) ? underGuide(search, listing) : null,
     great: isGreat(search, listing),
     perUnit: unitPrice(search, listing),
     cautions: cautions(search, listing),

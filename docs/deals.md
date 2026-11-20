@@ -172,7 +172,7 @@ A seller can put several sizes or colours in one listing, and eBay's search show
 - shows the size the search names: its largest size is the search's largest, and it has every size the search names (so a 16GB search doesn't take a 32GB kit of two 16GB sticks, and "16gb 512gb" needs both);
 - is the cheapest of those at or over `minPrice`, or the cheapest of them all if none is.
 
-When no option fits, the options can't be read, or the listing has more than 100 options, the listing stays at eBay's price, never counts as a great deal, and `hideVariations` decides whether it's hidden. Options never hide a listing on their own.
+When no option fits, the options can't be read, or the listing has more than 100 options, the listing stays at eBay's price, never counts as a great deal, has no "under guide" figure or price per unit (on the hub page, in Best now or for Claude), and `hideVariations` decides whether it's hidden. Options never hide a listing on their own.
 
 Each search reads at most 10 listings a check, in the order eBay sends them (newest first); the rest wait for its next check. Each read is one call out of `callsPerDay`, and option reads stop for the day once half of `callsPerDay` has been used, so the searches always have the other half. A listing's options are read again after six hours, or sooner when the price eBay shows for it changes, so nothing older than six hours is shown. At most 1,000 listings' options are kept, the oldest read going first. One whose options couldn't be read waits six hours too, or an hour if eBay didn't answer, and the next listing is read meanwhile. A listing whose cheapest option is under `minPrice` is read too, since the option that fits may cost more. If eBay says it's busy or refuses the keys, options aren't read for an hour (or as long as eBay asks), while the searches carry on, and a refusal shows as a problem on the hub page for as long as options are paused. Check now ends the pause.
 
@@ -203,7 +203,7 @@ Why the seller type matters, as the research for this read the sources (not lega
 
 ## On the hub page
 The Deals section shows, from the last six hours of checks:
-- **Best now:** up to 10 matches under their search's guide price, from each search's 15 cheapest, great deals first, then the furthest under.
+- **Best now:** up to 10 matches under their search's guide price, from each search's 15 cheapest, great deals first, then the furthest under. Auctions and listings whose option price isn't known have no guide figure, so they're never in it.
 - **By part type:** one folded section for each part type (the searches' `group`), saying how many matches it has and its best price against the guide. Opened, it shows each search's five cheapest matches, and lists the searches with none. Searches with no `group` come last, under "No part type".
 - **Searches:** the switched-on searches, folded by part type: each one's matches, what its rules hid, its option reads, any problem or note, its Snooze or Wake button, and "What was hidden", which shows up to three titles for each rule that hid listings.
 

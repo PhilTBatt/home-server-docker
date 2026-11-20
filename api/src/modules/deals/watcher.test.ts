@@ -1582,11 +1582,11 @@ test("a snooze that can't be saved shows as the state problem, and clears when a
   assert.deepEqual(watcher.problems(), []);
 });
 
-test("matches says where each listing stands, how it compares with the guide price, and what to check first", async () => {
+test("matches says where each listing stands, how it compares with the guide price unless its option's price isn't known, and what to check first", async () => {
   const { world, watcher } = richSetup([{ ...ram, guidePrice: 50, unit: "GB" }]);
   world.found.set("ram", [
     listing(1, { title: "Corsair 32GB (2x16GB) DDR4", price: 3500, postage: 500, sellerType: "private", city: "Sometown", postcode: "ZZ9***", summary: "Tested", topRated: true }),
-    listing(2, { title: "Kingston 2x16GB DDR4", price: 5500, postage: null, sellerFeedback: 2, variations: true, detailsMatch: true }),
+    listing(2, { title: "Kingston 32GB DDR4", price: 5500, postage: null, sellerFeedback: 2, variations: true, detailsMatch: true }),
   ]);
   await watcher.run(at(0));
   const [group] = watcher.matches(at(1));
@@ -1597,8 +1597,8 @@ test("matches says where each listing stands, how it compares with the guide pri
     { place: 1, underGuide: 20, great: true, perUnit: { unit: "GB", amount: 32, pence: 125 }, cautions: [], sellerType: "private", city: "Sometown", postcode: "ZZ9***", summary: "Tested", topRated: true },
   );
   assert.deepEqual(
-    { place: second.place, underGuide: second.underGuide, great: second.great, cautions: second.cautions, variations: second.variations, detailsMatch: second.detailsMatch },
-    { place: 2, underGuide: -10, great: false, cautions: ["the seller has under 10 ratings", "the listing has more than one option, so this may be its lowest price", "postage isn't shown, so it may be collection only"], variations: true, detailsMatch: true },
+    { place: second.place, underGuide: second.underGuide, perUnit: second.perUnit, great: second.great, cautions: second.cautions, variations: second.variations, detailsMatch: second.detailsMatch },
+    { place: 2, underGuide: null, perUnit: null, great: false, cautions: ["the seller has under 10 ratings", "the listing has more than one option, so this may be its lowest price", "postage isn't shown, so it may be collection only"], variations: true, detailsMatch: true },
   );
 });
 
