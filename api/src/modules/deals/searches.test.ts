@@ -552,6 +552,11 @@ test("the catalogue in the repo loads beside the example list, every search off 
   const drives = storage.filter((search) => search.id.startsWith("hdd-"));
   assert.ok(drives.length === 4 && drives.every((search) => !search.hideVariations), "hard-drive searches keep listings with several options");
   assert.ok(storage.length > drives.length && storage.filter((search) => !drives.includes(search)).every((search) => search.hideVariations), "SSD and NVMe searches hide listings with several options");
+  const reading = fromEbay.filter((search) => search.readOptions).map((search) => search.id);
+  const sized = [...ram, ...storage].map((search) => search.id).filter((id) => id !== "ddr4-ecc-udimm");
+  assert.deepEqual([...reading].sort(), [...sized].sort());
+  assert.equal(reading.length, 16);
+  assert.ok(!reading.includes("ddr4-ecc-udimm"), "a RAM search that names no size doesn't read options, since it couldn't use them");
   const feedCalls = (24 * 60) / Math.min(...added.filter((search) => search.source === "hotukdeals").map((search) => search.everyMinutes));
   const callsADay = fromEbay.reduce((sum, search) => sum + (24 * 60) / search.everyMinutes * (1 + Object.keys(search.hideDetails ?? {}).length), feedCalls);
   assert.ok(callsADay < 1000, String(callsADay));
