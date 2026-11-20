@@ -2036,8 +2036,21 @@ test("an item group is read again only after six hours or when the listing's pri
   world.found.set("drive", [grouped(1, "201", { price: 1400 })]);
   await watcher.run(at(93));
   assert.equal(world.groupCalls.length, 2);
+  await watcher.run(at(93 + 5 * 60 + 30));
+  assert.equal(world.groupCalls.length, 2);
   await watcher.run(at(93 + 6 * 60 + 1));
   assert.equal(world.groupCalls.length, 3);
+});
+
+test("up to 1,000 listings' options are kept, the oldest read going first", async () => {
+  const other = { ...drive, id: "drive-2", name: "Another 4TB drive", everyMinutes: 5 };
+  const { world, watcher } = richSetup([{ ...drive, everyMinutes: 5 }, other], { limits: { callsPerDay: 5000 } });
+  world.found.set("drive", Array.from({ length: 505 }, (_, i) => grouped(i + 1, String(5000 + i))));
+  world.found.set("drive-2", Array.from({ length: 505 }, (_, i) => grouped(i + 1001, String(7000 + i))));
+  for (let check = 0; check < 51; check++) await watcher.run(at(check * 5));
+  assert.equal(world.groupCalls.length, 1010);
+  await watcher.run(at(51 * 5));
+  assert.deepEqual(world.groupCalls.slice(1010, 1020), ["5000", "5001", "5002", "5003", "5004", "5005", "5006", "5007", "5008", "5009"]);
 });
 
 test("a group that has gone or can't be read isn't asked for again soon, and doesn't stop the others being read", async () => {
@@ -2078,14 +2091,19 @@ test("a busy or refusing eBay stops options being read for a while, but not the 
   assert.equal(world.searchCalls.length, 10);
 });
 
-test("no item group is read once the day's calls are used", async () => {
-  const { world, watcher } = richSetup([drive], { limits: { callsPerDay: 2 } });
+test("no item group is read once half the day's calls are used, so the searches keep the rest", async () => {
+  const { world, watcher } = richSetup([drive], { limits: { callsPerDay: 4 } });
   world.groups.set("201", sizes("201", ["4 TB", 4800]));
   world.groups.set("202", sizes("202", ["4 TB", 4900]));
   world.found.set("drive", [grouped(1, "201"), grouped(2, "202")]);
   await watcher.run(at(0));
   assert.deepEqual(world.groupCalls, ["201"]);
   assert.equal(watcher.status().callsToday, 2);
+  world.found.set("drive", [grouped(1, "201"), grouped(2, "202"), grouped(3, "203")]);
+  await watcher.run(at(31));
+  assert.deepEqual(world.groupCalls, ["201"]);
+  assert.equal(watcher.status().callsToday, 3);
+  assert.equal(world.sent.filter((notification) => notification.title.startsWith("Deal:")).length, 1);
 });
 
 test("a listing read at its option's price is read in full at that option, and keeps it", async () => {
@@ -2120,15 +2138,15 @@ test("with readOptions, a price drop is judged only between prices of the option
   world.found.set("drive", [grouped(1, "201")]);
   await watcher.run(at(0));
   world.groups.set("201", failed("down"));
-  await watcher.run(at(6 * 60 + 1));
-  assert.equal(watcher.matches(at(6 * 60 + 2))[0].listings[0].price, 1500);
+  await watcher.run(at(24 * 60 + 1));
+  assert.equal(watcher.matches(at(24 * 60 + 2))[0].listings[0].price, 1500);
   world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
-  await watcher.run(at(7 * 60 + 2));
-  assert.equal(watcher.matches(at(7 * 60 + 3))[0].listings[0].price, 4800);
+  await watcher.run(at(25 * 60 + 2));
+  assert.equal(watcher.matches(at(25 * 60 + 3))[0].listings[0].price, 4800);
   assert.deepEqual(world.sent.filter((sent) => sent.title.startsWith("Price drop")), []);
   world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 3000]));
   world.found.set("drive", [grouped(1, "201", { price: 1400 })]);
-  await watcher.run(at(7 * 60 + 33));
+  await watcher.run(at(25 * 60 + 33));
   const drops = world.sent.filter((sent) => sent.title.startsWith("Price drop"));
   assert.equal(drops.length, 1);
   assert.match(drops[0].message, /Was £48\.00, now £30\.00/);

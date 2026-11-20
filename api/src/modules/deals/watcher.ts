@@ -160,7 +160,8 @@ const fullFreshFor = 30 * minuteMs;
 const fullKept = 100;
 const readsPerDay = 150;
 const optionReadsPerCheck = 10;
-const optionsKept = 500;
+const optionsKept = 1000;
+const optionCallsShare = 0.5;
 export const freshFor = 6 * hourMs;
 const needsAPerson = ["keys", "access", "request"];
 const sourceWide = ["keys", "access", "busy", "down"];
@@ -309,6 +310,10 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     else memory.counters.calls += calls;
   }
 
+  function optionCallLimit(): number {
+    return Math.floor(limits().callsPerDay * optionCallsShare);
+  }
+
   function outOfCalls(): boolean {
     return (memory?.counters.calls ?? 0) + pendingCalls >= limits().callsPerDay;
   }
@@ -332,7 +337,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       }
       const key = `${groupId}:${listing.price}`;
       let entry = optionCache.get(key);
-      if (entry === undefined && !stopped && asked < optionReadsPerCheck && state.counters.calls < limits().callsPerDay) {
+      if (entry === undefined && !stopped && asked < optionReadsPerCheck && state.counters.calls < optionCallLimit()) {
         asked += 1;
         try {
           const reply = await lookUp(groupId);
@@ -357,7 +362,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         }
       }
       if (entry !== undefined) read.push(withOption(listing, entry.options === null ? null : chooseOption(search, entry.options)));
-      else read.push(stopped || state.counters.calls >= limits().callsPerDay ? { ...listing, optionsRead: true } : listing);
+      else read.push(stopped || state.counters.calls >= optionCallLimit() ? { ...listing, optionsRead: true } : listing);
     }
     return read;
   }
