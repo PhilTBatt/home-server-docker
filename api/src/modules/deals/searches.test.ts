@@ -538,7 +538,7 @@ test("the catalogue in the repo loads beside the example list, every search off 
   const hiders = (search: Search) => [...search.exclude, ...search.avoid.flatMap((name) => avoidLists[name] ?? [])];
   assert.deepEqual(list.searches.filter((search) => hiders(search).some((word) => search.mustInclude.some((must) => alwaysExcluded(must, word)))).map((search) => search.id), []);
   const fromEbay = added.filter((search) => search.source === "ebay");
-  assert.ok(fromEbay.every((search) => search.guidePrice !== null && search.guideDate === "2026-11-19"));
+  assert.ok(fromEbay.every((search) => search.guidePrice !== null && ["2026-11-19", "2026-11-20"].includes(search.guideDate ?? "")));
   assert.ok(added.filter((search) => search.source === "hotukdeals").length >= 5);
   assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["ram 170083", "ram 11210"]);
   const ram = fromEbay.filter((search) => search.group === "ram");

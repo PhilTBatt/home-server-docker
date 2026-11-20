@@ -604,3 +604,49 @@ test("an exclude word always hides a mustInclude word when every title with the 
   assert.ok(!alwaysExcluded("!!", "ddr4"));
   assert.ok(!alwaysExcluded("!!", "??"));
 });
+
+test("the catalogue's B660 bundle, Quadro P620 and M.2 adapter searches keep out look-alikes and keep the real thing", async () => {
+  const folder = new URL("../../../src/modules/deals/", import.meta.url);
+  const catalogue = await readFile(new URL("catalogue.example.json", folder), "utf8");
+  const list = readSearches(JSON.stringify({ searches: [], more: ["catalogue.json"] }), ["ebay", "hotukdeals"], { "catalogue.json": catalogue });
+  const named = (id: string) => {
+    const found = list.searches.find((one) => one.id === id);
+    assert.ok(found !== undefined, id);
+    return found;
+  };
+  const reason = (id: string, title: string, price: number) => whyNot(named(id), listing({ title, price, postage: 0 }), now);
+  const added: [string, string, number, string[]][] = [
+    ["b660-bundle", "Intel i5 12400F B660 Motherboard Bundle Kit", 15000, ["timing belt", "cambelt", "water pump", "mazda", "cam belt", "timing kit"]],
+    ["quadro-p620", "NVIDIA Quadro P620 2GB", 3000, ["tab", "tablet", "galaxy", "keyboard", "stylus", "screen protector", "cover for", "case for", "sm-p620", "s6 lite"]],
+  ];
+  const adapterWords = ["enclosure", "usb", "type c", "external", "macbook", "notebook", "interposer", "wifi", "wi-fi", "a+e key", "key e", "key a", "quad", "4 x m.2", "4 port", "5 port", "6 port", "hyper m.2", "requires bifurcation", "dual nvme", "riser cable", "extension cable", "extender", "oculink", "egpu", "sff-8643", "sff-8612", "u.2", "2230 to 2280", "2242 to 2280", "not for nvme", "not nvme", "non nvme", "no nvme", "optane", "ps5"];
+  assert.deepEqual(named("m2-nvme-pcie-adapter").exclude, adapterWords);
+  added.push(["m2-nvme-pcie-adapter", "M.2 NVMe to PCIe x4 Adapter Card", 900, adapterWords]);
+  for (const [id, base, price, words] of added) {
+    for (const word of words) {
+      assert.ok(named(id).exclude.includes(word), `${id} excludes ${word}`);
+      assert.equal(reason(id, `${base} ${word}`, price), "words", `${id}: ${word}`);
+    }
+  }
+  const hidden: [string, string, number][] = [
+    ["b660-bundle", "Mazda 2 Timing Belt Kit B660-12-205 with Water Pump", 9000],
+    ["quadro-p620", "Keyboard Case for Samsung Galaxy Tab S6 Lite 2024 SM-P620", 2500],
+    ["m2-nvme-pcie-adapter", "M.2 SATA SSD to 2.5 inch SATA III Adapter Card (Not for NVMe / PCIe)", 500],
+    ["m2-nvme-pcie-adapter", "M.2 NVMe M-Key to OCuLink SFF-8612 PCIe 4.0 x4 Adapter Card for eGPU", 1200],
+    ["m2-nvme-pcie-adapter", "M.2 NVMe SSD to Type-C Adapter Card 10Gbps PCIe Aluminium Case", 900],
+    ["m2-nvme-pcie-adapter", "M.2 Key A+E to M.2 Key M NVMe SSD Adapter Card PCIe", 600],
+    ["m2-nvme-pcie-adapter", "M.2 NVMe PCIe 2230 to 2280 Extension Adapter Bracket", 400],
+  ];
+  for (const [id, title, price] of hidden) assert.equal(reason(id, title, price), "words", `${id}: ${title}`);
+  const kept: [string, string, number][] = [
+    ["b660-bundle", "Intel Core i5 12400F + MSI PRO B660M-A DDR4 Motherboard Bundle Kit", 15000],
+    ["quadro-p620", "NVIDIA Quadro P620 2GB GDDR5 Low Profile Graphics Card", 4000],
+    ["quadro-p620", "PNY Quadro P620 V2 2GB 4x mDP Low Profile with Slot Cover, fits SFF case", 4500],
+    ["m2-nvme-pcie-adapter", "M.2 NVMe SSD to PCIe 3.0 x4 Adapter Card Low Profile", 900],
+    ["m2-nvme-pcie-adapter", "StarTech PEX4M2E1 M.2 NVMe PCI-E x4 Adapter Card", 1500],
+    ["m2-nvme-pcie-adapter", "M.2 NVME to PCIe 3.0 X4 Adapter Card with Heatsink Riser Card for Computer PC", 800],
+    ["m2-nvme-pcie-adapter", "M.2 NVME SSD NGFF to PCIE 3.0 X4 Adapter PCIE M2 Riser Card Adapter", 700],
+    ["m2-nvme-pcie-adapter", "Dual M.2 Adapter NVMe PCIe x4 plus SATA M.2 Slot, No Bifurcation Required, Not for Laptop", 1400],
+  ];
+  for (const [id, title, price] of kept) assert.equal(reason(id, title, price), null, `${id}: ${title}`);
+});
