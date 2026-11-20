@@ -541,6 +541,10 @@ test("the catalogue in the repo loads beside the example list, every search off 
   const servers = fromEbay.filter((search) => search.group === "server");
   const spareParts = ["motherboard", "mainboard", "board only", "psu only", "power supply only"];
   assert.ok(servers.length > 0 && servers.every((search) => spareParts.every((word) => search.exclude.includes(word))), "server searches keep spare parts out");
+  const cards = fromEbay.filter((search) => search.group === "graphics");
+  assert.ok(cards.length >= 8 && cards.every((search) => search.exclude.includes("gaming pc") && search.exclude.includes("prebuilt")), "graphics card searches keep whole PCs out");
+  const gaming = ["rtx-3060-12gb", "rx-6600", "rx-6700-xt", "arc-b580"];
+  assert.deepEqual(cards.filter((search) => search.exclude.includes("computer") && search.exclude.includes("desktop pc")).map((search) => search.id), gaming, "only the gaming cards also leave out computer and desktop pc, since small cards are often sold for SFF desktop PCs");
   const storage = fromEbay.filter((search) => search.group === "storage");
   const drives = storage.filter((search) => search.id.startsWith("hdd-"));
   assert.ok(drives.length === 4 && drives.every((search) => !search.hideVariations), "hard-drive searches keep listings with several options");
