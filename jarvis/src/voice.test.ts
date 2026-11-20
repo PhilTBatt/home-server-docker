@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { kokoroName, kokoroRate } from "./kokoro.js";
+import { piperName } from "./piper.js";
 import type { Player } from "./player.js";
 import { MicrophonePassedIn, type SoundCard } from "./sound-card.js";
 import type { SpeechEngine } from "./speech.js";
@@ -294,21 +295,30 @@ test("if starting is called off, that comes back as it is, not as a voice-off li
 
 test("the chat's own parts are Kokoro at its rate, in the voice and at the level from the settings, with the caller's signal", () => {
   const signal = new AbortController().signal;
-  const parts = voiceParts({ kokoroVoice: "bm_fable", kokoroSpeed: 1, volume: 35 }, signal);
+  const parts = voiceParts({ voice: "kokoro", kokoroVoice: "bm_fable", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 35 }, signal);
   assert.deepEqual([parts.engine.name, parts.engine.sampleRate, parts.engine.splitsSentences], [kokoroName, kokoroRate, false]);
   assert.deepEqual([parts.voice, parts.volume], ["bm_fable", 35]);
   assert.equal(parts.signal, signal);
 });
 
+test("with JARVIS_VOICE=piper, the chat's own parts are Piper at its voice's rate, in the Piper voice from the settings and at their level, with the caller's signal", () => {
+  const signal = new AbortController().signal;
+  const parts = voiceParts({ voice: "piper", kokoroVoice: "bm_fable", kokoroSpeed: 0.85, piperVoice: "en_GB-northern_english_male-medium", volume: 35 }, signal);
+  assert.deepEqual([parts.engine.name, parts.engine.sampleRate, parts.engine.splitsSentences], [piperName, 22_050, false]);
+  assert.deepEqual([parts.voice, parts.volume], ["en_GB-northern_english_male-medium", 35]);
+  assert.equal(parts.signal, signal);
+  assert.equal(voiceParts({ voice: "piper", kokoroVoice: "bm_fable", kokoroSpeed: 1, piperVoice: "en_GB-alan-low", volume: 35 }, signal).engine.sampleRate, 16_000);
+});
+
 test("the chat's own parts look for the card in a real folder, refuse a microphone there, and say how to start Jarvis when there's nothing", async () => {
   const signal = new AbortController().signal;
   const folder = await scratch();
-  await assert.rejects(voiceParts({ kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80 }, signal, join(folder, "snd")).findCard(), { message: "No sound devices were passed in, so there's nothing to play on. Start Jarvis with bash host/jarvis.sh, which passes them in" });
+  await assert.rejects(voiceParts({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80 }, signal, join(folder, "snd")).findCard(), { message: "No sound devices were passed in, so there's nothing to play on. Start Jarvis with bash host/jarvis.sh, which passes them in" });
   await writeFile(join(folder, "controlC3"), "");
   await writeFile(join(folder, "pcmC3D0p"), "");
-  assert.deepEqual(await voiceParts({ kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80 }, signal, folder).findCard(), { number: 3, device: "plughw:3,0", speakers: "pcmC3D0p", mixer: "controlC3" });
+  assert.deepEqual(await voiceParts({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80 }, signal, folder).findCard(), { number: 3, device: "plughw:3,0", speakers: "pcmC3D0p", mixer: "controlC3" });
   await writeFile(join(folder, "pcmC3D0c"), "");
-  await assert.rejects(voiceParts({ kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80 }, signal, folder).findCard(), (error: unknown) => error instanceof MicrophonePassedIn);
+  await assert.rejects(voiceParts({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80 }, signal, folder).findCard(), (error: unknown) => error instanceof MicrophonePassedIn);
 });
 
 test("with JARVIS_VOICE off, nothing is started, looked for or printed, and the chat counts as having no voice", async () => {
@@ -318,7 +328,7 @@ test("with JARVIS_VOICE off, nothing is started, looked for or printed, and the 
     started++;
     return { on: false as const, line: "Voice: should never be seen" };
   };
-  assert.deepEqual(await voiceFor({ voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80 }, new AbortController().signal, (line) => written.push(line), start), { mode: "off", speaker: null });
+  assert.deepEqual(await voiceFor({ voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80 }, new AbortController().signal, (line) => written.push(line), start), { mode: "off", speaker: null });
   assert.deepEqual([started, written], [0, []]);
 });
 
@@ -333,7 +343,7 @@ test("with JARVIS_VOICE on, the voice is started with the settings' voice, level
     given.push(parts);
     return { on: true as const, line: "Voice: Kokoro, voice bm_fable, on sound card 4 (Master set to 35%)", speaker: { engine: parts.engine, device: "plughw:4,0", startPlayer: parts.startPlayer } };
   };
-  const chatVoice = await voiceFor({ voice: "kokoro", kokoroVoice: "bm_fable", kokoroSpeed: 1, volume: 35 }, signal, (line) => written.push(line), start, folder);
+  const chatVoice = await voiceFor({ voice: "kokoro", kokoroVoice: "bm_fable", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 35 }, signal, (line) => written.push(line), start, folder);
   assert.equal(chatVoice.mode, "kokoro");
   assert.deepEqual(chatVoice.speaker, { engine: given[0].engine, device: "plughw:4,0", startPlayer: given[0].startPlayer });
   assert.deepEqual(written, ["Voice: Kokoro, voice bm_fable, on sound card 4 (Master set to 35%)"]);
@@ -343,17 +353,30 @@ test("with JARVIS_VOICE on, the voice is started with the settings' voice, level
   assert.equal((await given[0].findCard()).number, 4);
 });
 
+test("with JARVIS_VOICE=piper, the voice is started with Piper and the Piper voice, and the chat counts as having Piper's voice", async () => {
+  const written: string[] = [];
+  const given: VoiceParts[] = [];
+  const start = async (parts: VoiceParts) => {
+    given.push(parts);
+    return { on: true as const, line: "Voice: Piper, voice en_GB-alan-medium, on sound card 4 (Master set to 35%)", speaker: { engine: parts.engine, device: "plughw:4,0", startPlayer: parts.startPlayer } };
+  };
+  const chatVoice = await voiceFor({ voice: "piper", kokoroVoice: "bm_fable", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 35 }, new AbortController().signal, (line) => written.push(line), start);
+  assert.equal(chatVoice.mode, "piper");
+  assert.deepEqual([given.length, given[0].engine.name, given[0].voice, given[0].volume], [1, "Piper", "en_GB-alan-medium", 35]);
+  assert.deepEqual(written, ["Voice: Piper, voice en_GB-alan-medium, on sound card 4 (Master set to 35%)"]);
+});
+
 test("if the voice couldn't start, its reason is still printed once and the chat counts as having no voice", async () => {
   const written: string[] = [];
   const start = async () => ({ on: false as const, line: "Voice: off, so this chat is text only. Couldn't reach Kokoro at http://kokoro:8880 (ENOTFOUND)" });
-  assert.deepEqual(await voiceFor({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80 }, new AbortController().signal, (line) => written.push(line), start), { mode: "off", speaker: null });
+  assert.deepEqual(await voiceFor({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80 }, new AbortController().signal, (line) => written.push(line), start), { mode: "off", speaker: null });
   assert.deepEqual(written, ["Voice: off, so this chat is text only. Couldn't reach Kokoro at http://kokoro:8880 (ENOTFOUND)"]);
 });
 
 test("the voice line is printed without control characters, whatever the reason in it holds", async () => {
   const written: string[] = [];
   const start = async () => ({ on: false as const, line: "Voice: off, so this chat is text only. \u001b[31mred\u0007 and\u009b gone" });
-  await voiceFor({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80 }, new AbortController().signal, (line) => written.push(line), start);
+  await voiceFor({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80 }, new AbortController().signal, (line) => written.push(line), start);
   assert.deepEqual(written, ["Voice: off, so this chat is text only. [31mred and gone"]);
 });
 
@@ -363,14 +386,14 @@ test("a microphone, or starting being called off, comes straight through to whoe
   const start = async () => {
     throw microphone;
   };
-  await assert.rejects(voiceFor({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80 }, new AbortController().signal, (line) => written.push(line), start), (error: unknown) => error === microphone);
+  await assert.rejects(voiceFor({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80 }, new AbortController().signal, (line) => written.push(line), start), (error: unknown) => error === microphone);
   assert.deepEqual(written, []);
 });
 
 test("left to itself, the chat's voice starts for real: with no sound devices in the folder it says how to start Jarvis, and the chat has no voice", async () => {
   const written: string[] = [];
   const missing = join(await scratch(), "snd");
-  assert.deepEqual(await voiceFor({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80 }, new AbortController().signal, (line) => written.push(line), undefined, missing), { mode: "off", speaker: null });
+  assert.deepEqual(await voiceFor({ voice: "kokoro", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80 }, new AbortController().signal, (line) => written.push(line), undefined, missing), { mode: "off", speaker: null });
   assert.deepEqual(written, ["Voice: off, so this chat is text only. No sound devices were passed in, so there's nothing to play on. Start Jarvis with bash host/jarvis.sh, which passes them in"]);
 });
 
@@ -399,7 +422,7 @@ test("end to end with the chat's own parts: a pretend amixer and aplay on the pa
   process.env.PATH = `${bin}:${path ?? ""}`;
   let voice: Voice;
   try {
-    voice = await startVoice(voiceParts({ kokoroVoice: "bm_fable", kokoroSpeed: 0.85, volume: 65 }, new AbortController().signal, snd));
+    voice = await startVoice(voiceParts({ voice: "kokoro", kokoroVoice: "bm_fable", kokoroSpeed: 0.85, piperVoice: "en_GB-alan-medium", volume: 65 }, new AbortController().signal, snd));
   } finally {
     process.env.PATH = path;
   }

@@ -257,6 +257,30 @@ services:
       start_period: 2m
       start_interval: 2s
 
+  piper:
+    image: rhasspy/wyoming-piper:2.5.2@sha256:7d39aafac409c2b6b09d999ed04d84c311d632e558b35baa60fad6aac722af7a
+    container_name: piper
+    profiles:
+      - piper
+    command: ["--voice", "${PIPER_VOICE:-en_GB-alan-medium}"]
+    volumes:
+      - type: bind
+        source: ./piper/voices
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+    mem_limit: 1g
+    networks:
+      - speech
+    healthcheck:
+      test: ["CMD", "/usr/src/.venv/bin/python3", "-m", "wyoming_piper.health_check"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
+
 networks:
   jarvis:
   speech:

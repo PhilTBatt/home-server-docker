@@ -1,7 +1,7 @@
 # 0020. Jarvis's first voice is Kokoro, in its own container on a network with no internet
 
 - Date: 2026-11-18
-- Status: accepted, with his answers spoken and Kokoro's logging turned down by 0023, and the speech network closed to the server itself by 0024
+- Status: accepted, with his answers spoken and Kokoro's logging turned down by 0023, the speech network closed to the server itself by 0024, and Piper added beside Kokoro by 0034
 
 ## Context
 Jarvis is going to speak. Record 0014 covers playing raw sound; something still has to turn his words into that sound. The speech model is far bigger than anything in his own container and takes a few seconds to load, and this server has 8 GB of memory, with about 2.5 GiB of it free when this was measured. Five things needed deciding: which speech engine comes first, how Jarvis talks to it, what it can reach, when it runs, and how it's pinned and limited.

@@ -165,7 +165,8 @@ const hintNames: Record<LengthHints, string> = { note: "length note", jarvis: "J
 const hubNames: Record<HubToolsMode, string> = { off: "no hub tools", on: "hub tools" };
 const actionNames: Record<HubActionsMode, string> = { off: "no hub actions", on: "hub actions" };
 const notesNames: Record<SessionNotesMode, string> = { off: "no session notes", on: "session notes" };
-const voiceNames: Record<VoiceMode, string> = { off: "no voice", kokoro: "Kokoro voice" };
+const voiceNames: Record<VoiceMode, string> = { off: "no voice", kokoro: "Kokoro voice", piper: "Piper voice" };
+const engineNames: Record<VoiceMode, string> = { off: "The speech engine", kokoro: "Kokoro", piper: "Piper" };
 const startNames: Record<SpeechStart, string> = { sentence: "whole first sentence", clause: "first clause early" };
 const stopNames: Record<SpeechStop, string> = { now: "stops at once", sentence: "finishes the sentence" };
 const bundleNames: Record<SpeechBundleMode, string> = { off: "a sentence at a time", on: "sentences bundled" };
@@ -406,7 +407,7 @@ function requestLines(groups: Group[], speech: Map<string, SpeechLine>): string[
     if (requests === 0) return [];
     const sentences = logged.reduce((sum, line) => sum + (line.requestedSentences ?? 0), 0);
     const from = logged.length < said.length ? `, from the ${logged.length} of ${said.length} answers that log it` : "";
-    return [`${group.label}: Kokoro was asked for ${plural(sentences, "sentence")} in ${plural(requests, "request")}, ${(sentences / requests).toFixed(1)} a request${from}.`];
+    return [`${group.label}: ${engineNames[group.voice]} was asked for ${plural(sentences, "sentence")} in ${plural(requests, "request")}, ${(sentences / requests).toFixed(1)} a request${from}.`];
   });
 }
 

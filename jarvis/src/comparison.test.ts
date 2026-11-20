@@ -392,8 +392,9 @@ test("answers with and without a voice are compared side by side, without first,
     ],
   );
   assert.equal(isLogLine({ ...line(), voice: "on" }), false);
-  assert.equal(isLogLine({ ...line(), voice: "piper" }), false);
+  assert.equal(isLogLine({ ...line(), voice: "wyoming" }), false);
   assert.equal(isLogLine({ ...line(), voice: null }), false);
+  assert.equal(isLogLine({ ...line(), voice: "piper" }), true);
   assert.equal(isLogLine({ ...line(), voice: "kokoro" }), true);
   assert.equal(isLogLine({ ...line(), voice: "off" }), true);
   assert.equal(isLogLine(older), true);
@@ -776,4 +777,21 @@ test("under the second speech table, each setting gets a line saying how many se
   assert.equal(compareReport({ lines: [voiced()], speech: [said()], skipped: 0 }).includes("Kokoro was asked"), false);
   const failedFirst = compareReport({ lines: [voiced()], speech: [said({ failed: 1, failedMaking: 1, failedPlaying: 0, requests: 2, requestedSentences: 2 })], skipped: 0 });
   assert.ok(failedFirst.indexOf("1 sentence failed") < failedFirst.indexOf("Kokoro was asked"));
+});
+
+test("Piper's answers are their own setting, named Piper voice, and its requests line names Piper, beside Kokoro's and the answers with no voice", () => {
+  const lines = [voiced(), voiced({ chat: "chat-2", voice: "piper" }), voiced({ chat: "chat-2", question: 2, voice: "piper" }), line({ chat: "chat-3" })];
+  const speech = [said({ requests: 2, requestedSentences: 2 }), said({ chat: "chat-2", requests: 1, requestedSentences: 3 }), said({ chat: "chat-2", question: 2, requests: 2, requestedSentences: 2 })];
+  const report = compareReport({ lines, speech, skipped: 0 });
+  assert.deepEqual(rowOf(report, ""), ["API, keep, no voice", "API, keep, Kokoro voice", "API, keep, Piper voice"]);
+  assert.deepEqual(rowOf(report, "Answers"), ["1", "1", "2"]);
+  assert.equal(report.includes("\nAPI, keep, Kokoro voice: Kokoro was asked for 2 sentences in 2 requests, 1.0 a request.\n"), true);
+  assert.equal(report.includes("\nAPI, keep, Piper voice: Piper was asked for 5 sentences in 3 requests, 1.7 a request.\n"), true);
+  const piperFirst = compareReport({ lines: [voiced({ chat: "chat-2", voice: "piper" }), line({ chat: "chat-3" }), voiced()], skipped: 0 });
+  assert.deepEqual(rowOf(piperFirst, ""), ["API, keep, no voice", "API, keep, Kokoro voice", "API, keep, Piper voice"]);
+  const piperOnly = compareReport({ lines: [voiced({ voice: "piper" })], speech: [said({ requests: 1, requestedSentences: 1 })], skipped: 0 });
+  assert.equal(piperOnly.includes("\nAPI, keep: Piper was asked for 1 sentence in 1 request, 1.0 a request.\n"), true);
+  assert.equal(piperOnly.includes("Kokoro"), false);
+  assert.equal(isLogLine({ ...voiced(), voice: "piper" }), true);
+  assert.equal(isLogLine({ ...voiced(), voice: "Piper" }), false);
 });

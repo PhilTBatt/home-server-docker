@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainDir, chatModes, defaultKokoroVoice, defaultVolume, engines, readConfig, readVolume, speechStarts, speechBundleModes, speechStops, spokenStyleModes, thinkingHistories, voiceModes } from "./config.js";
+import { brainDir, chatModes, defaultKokoroVoice, defaultPiperVoice, defaultVolume, engines, readConfig, readVolume, speechStarts, speechBundleModes, speechStops, spokenStyleModes, thinkingHistories, voiceModes } from "./config.js";
 
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -208,25 +208,27 @@ test("JARVIS_VOLUME doesn't need the API key for the sound test, and the chat's 
 });
 
 test("a wrong JARVIS_VOLUME stops the chat too, voice on or off", () => {
-  for (const voice of ["off", "kokoro"]) {
+  for (const voice of ["off", "kokoro", "piper"]) {
     assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_VOLUME: "loud" }), { message: 'JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "loud"' });
     assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_VOLUME: "101" }), { message: 'JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "101"' });
   }
 });
 
-test("the voice is off unless JARVIS_VOICE names a speech engine, and Kokoro is the only one so far", () => {
-  assert.deepEqual(voiceModes, ["off", "kokoro"]);
+test("the voice is off unless JARVIS_VOICE names a speech engine, Kokoro or Piper", () => {
+  assert.deepEqual(voiceModes, ["off", "kokoro", "piper"]);
   assert.equal(readConfig(base).voice, "off");
   assert.equal(readConfig({ ...base, JARVIS_VOICE: "" }).voice, "off");
   assert.equal(readConfig({ ...base, JARVIS_VOICE: "  " }).voice, "off");
   assert.equal(readConfig({ ...base, JARVIS_VOICE: "off" }).voice, "off");
   assert.equal(readConfig({ ...base, JARVIS_VOICE: "kokoro" }).voice, "kokoro");
   assert.equal(readConfig({ ...base, JARVIS_VOICE: " kokoro " }).voice, "kokoro");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: "piper" }).voice, "piper");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: " piper " }).voice, "piper");
 });
 
 test("anything else in JARVIS_VOICE stops Jarvis and is named", () => {
-  for (const value of ["on", "Kokoro", "KOKORO", "piper", "kokoro,piper", "yes", "true", "bm_george"]) {
-    assert.throws(() => readConfig({ ...base, JARVIS_VOICE: value }), { message: `JARVIS_VOICE must be off or kokoro, not "${value}"` });
+  for (const value of ["on", "Kokoro", "KOKORO", "Piper", "PIPER", "kokoro,piper", "wyoming", "yes", "true", "bm_george", "en_GB-alan-medium"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_VOICE: value }), { message: `JARVIS_VOICE must be off, kokoro or piper, not "${value}"` });
   }
 });
 
@@ -259,17 +261,41 @@ test("JARVIS_KOKORO_VOICE also takes Kokoro's blends of voices, with or without 
 test("a JARVIS_KOKORO_VOICE that couldn't be a voice name stops Jarvis and is named, voice on or off", () => {
   const shapes = ["bm george", "bm_george,bm_fable", '"bm_george"', "bm_george+", "+bm_george", "bm_george++bm_fable", "bm_george()", "bm_george(two)", "bm_george(2", "(2)", "bm-", "bm_george;", "bm_george\nbm_fable", "bm_géorge", `b${"m".repeat(200)}`];
   for (const value of shapes) {
-    for (const voice of ["off", "kokoro"]) {
+    for (const voice of ["off", "kokoro", "piper"]) {
       assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_KOKORO_VOICE: value }), { message: `JARVIS_KOKORO_VOICE must be one of Kokoro's voice names, like bm_george, or a blend like bm_george(2)+bm_fable(1), not "${value.trim()}"` });
     }
   }
   assert.equal(readConfig({ ...base, JARVIS_KOKORO_VOICE: `b${"m".repeat(199)}` }).kokoroVoice.length, 200);
 });
 
+test("JARVIS_PIPER_VOICE names Piper's voice, en_GB-alan-medium unless set", () => {
+  assert.equal(defaultPiperVoice, "en_GB-alan-medium");
+  assert.equal(readConfig(base).piperVoice, "en_GB-alan-medium");
+  assert.equal(readConfig({ ...base, JARVIS_PIPER_VOICE: "" }).piperVoice, "en_GB-alan-medium");
+  assert.equal(readConfig({ ...base, JARVIS_PIPER_VOICE: "   " }).piperVoice, "en_GB-alan-medium");
+  assert.equal(readConfig({ ...base, JARVIS_PIPER_VOICE: " en_GB-northern_english_male-medium " }).piperVoice, "en_GB-northern_english_male-medium");
+  assert.equal(readConfig({ ...base, JARVIS_VOICE: "piper", JARVIS_PIPER_VOICE: "en_US-lessac-high" }).piperVoice, "en_US-lessac-high");
+  for (const value of ["en_GB-alan-low", "en_GB-alan-x_low", "fil_PH-someone-medium", "en_US-libritts_r-medium", "de_DE-thorsten_emotional-medium", "en_US-l2arctic-medium"]) {
+    assert.equal(readConfig({ ...base, JARVIS_PIPER_VOICE: value }).piperVoice, value);
+  }
+});
+
+test("a JARVIS_PIPER_VOICE that isn't shaped like a Piper voice name stops Jarvis and is named, voice on or off, since it becomes a file name", () => {
+  const shapes = ["alan", "en_GB-alan", "en_GB-alan-medium.onnx", "en_GB-alan-Medium", "en_GB-alan-mid", "en_gb-alan-medium", "EN_GB-alan-medium", "en-GB-alan-medium", "en_GB-Alan-medium", "en_GB--medium", "en_GB-alan medium", "en_GB-al.an-medium", "../en_GB-alan-medium", "en_GB/alan/medium", "en_GB-alan-medium;rm", "e_GB-alan-medium", "engl_GB-alan-medium", "en_GBR-alan-medium", "pt_PT-tugão-medium", "bm_george"];
+  for (const value of shapes) {
+    for (const voice of ["off", "kokoro", "piper"]) {
+      assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_PIPER_VOICE: value }), { message: `JARVIS_PIPER_VOICE must be a Piper voice name, its language, speaker and quality, like en_GB-alan-medium, not "${value.trim()}"` }, value);
+    }
+  }
+  assert.throws(() => readConfig({ ...base, JARVIS_PIPER_VOICE: "en_GB-alan-medium\nen_GB-alan-low" }));
+});
+
 test("the voice settings are checked after the earlier ones and before JARVIS_LOG", () => {
   assert.throws(() => readConfig({ ...base, JARVIS_SESSION_NOTES: "maybe", JARVIS_VOICE: "loud" }), { message: 'JARVIS_SESSION_NOTES must be on or off, not "maybe"' });
-  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_VOICE: "loud", JARVIS_KOKORO_VOICE: "a b", JARVIS_VOLUME: "loud" }), { message: 'JARVIS_VOICE must be off or kokoro, not "loud"' });
-  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_KOKORO_VOICE: "a b", JARVIS_VOLUME: "loud" }), { message: `JARVIS_KOKORO_VOICE must be one of Kokoro's voice names, like bm_george, or a blend like bm_george(2)+bm_fable(1), not "a b"` });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_VOICE: "loud", JARVIS_KOKORO_VOICE: "a b", JARVIS_VOLUME: "loud" }), { message: 'JARVIS_VOICE must be off, kokoro or piper, not "loud"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_KOKORO_VOICE: "a b", JARVIS_KOKORO_SPEED: "fast", JARVIS_PIPER_VOICE: "alan", JARVIS_VOLUME: "loud" }), { message: `JARVIS_KOKORO_VOICE must be one of Kokoro's voice names, like bm_george, or a blend like bm_george(2)+bm_fable(1), not "a b"` });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_KOKORO_SPEED: "fast", JARVIS_PIPER_VOICE: "alan", JARVIS_VOLUME: "loud" }), { message: 'JARVIS_KOKORO_SPEED must be a number from 0.25 to 4, like 1 or 0.9, not "fast"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_PIPER_VOICE: "alan", JARVIS_VOLUME: "loud" }), { message: 'JARVIS_PIPER_VOICE must be a Piper voice name, its language, speaker and quality, like en_GB-alan-medium, not "alan"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_VOLUME: "loud" }), { message: 'JARVIS_VOLUME must be a whole number from 0 to 100, like 80, not "loud"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_VOICE: "kokoro" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
 });
@@ -284,7 +310,7 @@ test("an answer's speech starts with its whole first sentence unless JARVIS_SPEE
 });
 
 test("anything else in JARVIS_SPEECH_START stops Jarvis and is named, voice on or off", () => {
-  for (const voice of ["off", "kokoro"]) {
+  for (const voice of ["off", "kokoro", "piper"]) {
     for (const value of ["word", "Clause", "on", "sentence,clause"]) {
       assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_SPEECH_START: value }), { message: `JARVIS_SPEECH_START must be sentence or clause, not "${value}"` });
     }
@@ -308,7 +334,7 @@ test("he stops talking at once when interrupted unless JARVIS_SPEECH_STOP says s
 });
 
 test("anything else in JARVIS_SPEECH_STOP stops Jarvis and is named, voice on or off", () => {
-  for (const voice of ["off", "kokoro"]) {
+  for (const voice of ["off", "kokoro", "piper"]) {
     for (const value of ["word", "Now", "off", "clause", "now,sentence"]) {
       assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_SPEECH_STOP: value }), { message: `JARVIS_SPEECH_STOP must be now or sentence, not "${value}"` });
     }
@@ -332,7 +358,7 @@ test("JARVIS_SPEECH_BUNDLE is off unless it's set to on", () => {
 });
 
 test("anything else in JARVIS_SPEECH_BUNDLE stops Jarvis and is named, voice on or off", () => {
-  for (const voice of ["off", "kokoro"]) {
+  for (const voice of ["off", "kokoro", "piper"]) {
     for (const value of ["yes", "ON", "true", "1", "bundled"]) {
       assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_SPEECH_BUNDLE: value }), { message: `JARVIS_SPEECH_BUNDLE must be on or off, not "${value}"` });
     }
@@ -355,7 +381,7 @@ test("JARVIS_SPOKEN_STYLE is off unless it's set to on", () => {
 });
 
 test("anything else in JARVIS_SPOKEN_STYLE stops Jarvis and is named, voice on or off", () => {
-  for (const voice of ["off", "kokoro"]) {
+  for (const voice of ["off", "kokoro", "piper"]) {
     for (const value of ["yes", "ON", "true", "1", "kokoro"]) {
       assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_SPOKEN_STYLE: value }), { message: `JARVIS_SPOKEN_STYLE must be on or off, not "${value}"` });
     }
