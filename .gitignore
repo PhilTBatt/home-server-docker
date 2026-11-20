@@ -19,6 +19,7 @@ jarvis/node_modules/
 jarvis/dist/
 jarvis/data/
 piper/voices/
+whisper/models/
 ears/node_modules/
 ears/dist/
 ears/switch/

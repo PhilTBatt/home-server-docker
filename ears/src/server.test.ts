@@ -15,7 +15,7 @@ function quickRecording(): Recording {
     pid: 7,
     ended,
     stop(reason) {
-      finish({ reason, failed: false, bytes: 64000, ms: 2000 });
+      finish({ reason, failed: false, bytes: 64000, ms: 2000, sound: Uint8Array.of(1, 2) });
       return ended;
     },
   };
@@ -82,7 +82,7 @@ test("unmuted, start and stop record, and stop says how long it ran", async () =
   assert.deepEqual((await call("GET", "/state")).body.state, "recording");
   assert.deepEqual([(await call("POST", "/recording/start")).status, (await call("POST", "/recording/start")).body.error], [409, "ears is already recording"]);
   const stopped = await call("POST", "/recording/stop");
-  assert.deepEqual([stopped.status, stopped.body], [200, { seconds: 2, state: "idle", reason: null, microphone: "pretend", last: { seconds: 2, reason: "asked to stop" } }]);
+  assert.deepEqual([stopped.status, stopped.body], [200, { seconds: 2, state: "idle", reason: null, microphone: "pretend", last: { seconds: 2, reason: "asked to stop", text: null, textProblem: null } }]);
   const again = await call("POST", "/recording/stop");
   assert.deepEqual([again.status, again.body.error, again.body.state], [409, "ears isn't recording", "idle"]);
   await closed(server);

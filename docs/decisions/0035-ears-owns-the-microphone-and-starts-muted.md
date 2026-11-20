@@ -1,7 +1,7 @@
 # 0035. "Ears" owns the microphone, starts muted, and is muted from the server
 
 - Date: 2026-11-20
-- Status: accepted
+- Status: accepted, with a real microphone from a named sound card, and recordings turned into text by Whisper (0037); its health check now runs `ask.js health`, which prints only the state's word, so Docker never keeps the text (0037)
 
 ## Context
 Jarvis is going to listen. The rule since the voice plans is that Jarvis never gets a microphone: a small separate service of my own code, "ears", owns it and holds the mute. Only my push-to-talk key and, later, a wake word may start a recording. Every recording has a hard time limit. After any restart or failure ears comes back muted. It reports one state, and it never keeps or logs the sound. There's no microphone to give it yet: one is still to be bought. So this step builds ears and proves its rules with a pretend microphone, and nothing uses it yet. Five things needed deciding: what it's built from, what it records with for now, how it's muted, who can reach it, and what it does with the sound.

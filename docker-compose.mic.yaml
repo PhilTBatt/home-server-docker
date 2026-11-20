@@ -1,0 +1,7 @@
+services:
+  ears:
+    devices:
+      - /dev/snd/controlC${MIC_CARD_NUMBER:?start it with bash host/ears.sh start}:/dev/snd/controlC${MIC_CARD_NUMBER:?}:rw
+      - /dev/snd/pcmC${MIC_CARD_NUMBER:?}D0c:/dev/snd/pcmC${MIC_CARD_NUMBER:?}D0c:rw
+    group_add:
+      - "${AUDIO_GROUP_ID:?start it with bash host/ears.sh start}"

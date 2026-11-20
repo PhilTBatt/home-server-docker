@@ -7,6 +7,7 @@ COPY src ./src
 RUN npx tsc
 
 FROM node:26-alpine
+RUN apk add --no-cache alsa-utils
 WORKDIR /app
 COPY package.json ./
 COPY --from=build /app/dist ./dist

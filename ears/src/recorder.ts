@@ -7,7 +7,7 @@ export const killAfterMs = 1_000;
 
 export type Recorder = { command: string; args: string[] };
 
-export type Stopped = { reason: string; failed: boolean; bytes: number; ms: number };
+export type Stopped = { reason: string; failed: boolean; bytes: number; ms: number; sound: Uint8Array };
 
 export type Recording = { readonly pid: number | undefined; stop(reason: string): Promise<Stopped>; readonly ended: Promise<Stopped> };
 
@@ -26,6 +26,7 @@ export function startRecording(options: RecordingOptions): Recording {
   const began = now();
   const child = (options.spawn ?? spawnChild)(options.recorder.command, options.recorder.args, { stdio: ["ignore", "pipe", "pipe"], detached: true, env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin" } });
   let bytes = 0;
+  const pieces: Buffer[] = [];
   let said = "";
   let reason: string | null = null;
   let failed = false;
@@ -55,6 +56,7 @@ export function startRecording(options: RecordingOptions): Recording {
   }
 
   child.stdout?.on("data", (chunk: Buffer) => {
+    if (bytes + chunk.length <= maxBytes) pieces.push(chunk);
     bytes += chunk.length;
     if (bytes > maxBytes) void stop("more sound came than the time limit allows");
   });
@@ -69,7 +71,9 @@ export function startRecording(options: RecordingOptions): Recording {
     if (killer !== null) clearTimeout(killer);
     if (closer !== null) clearTimeout(closer);
     const told = ownEnd && said.trim() !== "" ? `${reason}: ${shortReason(said)}` : (reason ?? "the recorder ended");
-    finish({ reason: told, failed, bytes, ms: now() - began });
+    const sound = Buffer.concat(pieces);
+    pieces.length = 0;
+    finish({ reason: told, failed, bytes, ms: now() - began, sound: new Uint8Array(sound.buffer, sound.byteOffset, sound.length - (sound.length % 2)) });
   };
   child.on("error", (error) => {
     if (reason === null) {

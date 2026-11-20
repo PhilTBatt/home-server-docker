@@ -143,7 +143,7 @@ compose_file="$here/../docker-compose.yaml"
 ears=$(awk '/^  ears:$/ {on=1; next} on && /^  [a-z]/ {on=0} on && /^[a-z]/ {on=0} on' <(sed -n '/^services:$/,/^networks:$/p' "$compose_file"))
 check "ears is built from its own folder" "    build: ./ears" "$(grep '^    build:' <<< "$ears")"
 check "ears publishes no port" "0" "$(grep -c -e 'ports:' -e 'expose:' -e 'network_mode' <<< "$ears")"
-check "ears gets no devices, so no microphone yet, and no extra rights" "0" "$(grep -c -e 'devices:' -e 'privileged' -e 'cap_add' -e 'docker.sock' -e 'group_add' -e 'user:' -e 'pid:' -e 'ipc:' -e 'security_opt' -e 'extra_hosts' <<< "$ears")"
+check "in the main file ears gets no devices and no extra rights: a microphone only comes with docker-compose.mic.yaml" "0" "$(grep -c -e 'devices:' -e 'privileged' -e 'cap_add' -e 'docker.sock' -e 'group_add' -e 'user:' -e 'pid:' -e 'ipc:' -e 'security_opt' -e 'extra_hosts' <<< "$ears")"
 check "its settings and token come from its own git-ignored file" "    env_file:
       - ./ears/.env" "$(grep -A1 '^    env_file:$' <<< "$ears")"
 check "its one folder is the switch, read-only, and Docker won't make it if it's missing" "    volumes:
@@ -160,8 +160,8 @@ check "ears only starts when it's named" "    profiles:
       - ears" "$(grep -A1 '^    profiles:$' <<< "$ears")"
 check "ears never restarts by itself" "0" "$(grep -c 'restart:' <<< "$ears")"
 check "ears has a memory limit" "1" "$(grep -c '^    mem_limit: [0-9]*m$' <<< "$ears")"
-check "its healthcheck asks its own state with its own helper, which reads the token itself, so it's never on a command line" '    healthcheck:
-      test: ["CMD", "node", "/app/dist/ask.js", "state"]
+check "its healthcheck asks its own health with its own helper, which reads the token itself, so it's never on a command line, and prints only the state's word, so Docker never keeps the text" '    healthcheck:
+      test: ["CMD", "node", "/app/dist/ask.js", "health"]
       interval: 1m
       timeout: 5s
       retries: 3
@@ -176,14 +176,210 @@ check "the ears network has no way out, and the server has no address on it" "  
       com.docker.network.bridge.gateway_mode_ipv4: isolated" "$(grep -A3 '^  ears:$' <<< "$networks")"
 check "and nothing else is set on it" "0" "$(grep -A4 '^  ears:$' <<< "$networks" | tail -n +5 | grep -c '^    ')"
 others=$(awk '/^  ears:$/ {skip=1; next} skip && /^  [a-z]/ {skip=0} skip && /^[a-z]/ {skip=0} !skip' <(sed -n '/^services:$/,/^networks:$/p' "$compose_file"))
-check "nothing else is on the ears network yet" "0" "$(grep -c -e '- ears$' -e 'ears:' <<< "$others")"
+check "only Whisper joins ears on its network" "  whisper:" "$(awk '/^  [a-z]/ {name=$0; net=0} /^    networks:$/ {net=1; next} /^    [a-z]/ {net=0} net && /^      - ears$/ {print name}' <<< "$others")"
 check "the sound file doesn't put Jarvis on it" "0" "$(grep -c 'ears' "$here/../docker-compose.sound.yaml")"
 check "the switch, ears's settings and its build are git-ignored" "ears/node_modules/ ears/dist/ ears/switch/ " "$(grep '^ears/' "$here/../.gitignore" | tr '\n' ' ')"
+check "and so is Whisper's model" "whisper/models/" "$(grep '^whisper/' "$here/../.gitignore")"
 check "and .env files are too" "1" "$(grep -c '^\.env$' "$here/../.gitignore")"
 check "the image runs as node, not root" "USER node" "$(grep '^USER' "$here/../ears/Dockerfile")"
 check "the image doesn't get the test files" "1" "$(grep -c '^\*\*/\*\.test\.ts$' "$here/../ears/.dockerignore")"
-check "and needs nothing installed beyond Node itself" "0" "$(grep -c -e 'apk' -e 'apt' -e 'omit=dev' "$here/../ears/Dockerfile")"
+check "and installs only alsa-utils, for arecord and amixer, in the image it runs from, not the one it's built in" "RUN apk add --no-cache alsa-utils|10" "$(grep -e 'apk' -e 'apt' -e 'omit=dev' "$here/../ears/Dockerfile")|$(grep -n 'alsa-utils' "$here/../ears/Dockerfile" | cut -d: -f1)"
 check "ears has no packages it runs with, only the two to build and test it" "0" "$(grep -c '"dependencies"' "$here/../ears/package.json")"
+
+check "ears waits for Whisper to be healthy, which also starts it" "    depends_on:
+      whisper:
+        condition: service_healthy" "$(grep -A2 '^    depends_on:$' <<< "$ears")"
+whisper=$(awk '/^  whisper:$/ {on=1; next} on && /^  [a-z]/ {on=0} on && /^[a-z]/ {on=0} on' <(sed -n '/^services:$/,/^networks:$/p' "$compose_file"))
+check "Whisper is pinned by version and digest" "    image: rhasspy/wyoming-whisper:3.8.1@sha256:ba6fcb6056ebe237d15a325381763a80af2fc8fcedaa04f6a714a7375eb20d80" "$(grep '^    image:' <<< "$whisper")"
+check "it only starts with ears" "    profiles:
+      - ears" "$(grep -A1 '^    profiles:$' <<< "$whisper")"
+check "it runs as a user with no account on the server, not root and not mine" '    user: "10300:10300"' "$(grep '^    user:' <<< "$whisper")"
+check "and with Docker's init as its first process, so a stop reaches it" '    init: true' "$(grep '^    init:' <<< "$whisper")"
+check "it loads the model from its folder, in English, never downloading" '    command: ["--model", "/models/base-int8", "--stt-library", "faster-whisper", "--language", "en", "--local-files-only"]' "$(grep '^    command:' <<< "$whisper")"
+check "Python loads the file that quietens its transcript line, and Hugging Face's library stays offline" '    environment:
+      PYTHONPATH: /quiet
+      HF_HUB_OFFLINE: "1"' "$(grep -A2 '^    environment:$' <<< "$whisper")"
+check "its model and that file are mounted read-only, and Docker won't make them if they're missing" "    volumes:
+      - type: bind
+        source: ./whisper/models
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./whisper/sitecustomize.py
+        target: /quiet/sitecustomize.py
+        read_only: true
+        bind:
+          create_host_path: false" "$(grep -A12 '^    volumes:$' <<< "$whisper")"
+check "and it has no other" "2" "$(grep -c -e 'source:' -e '^      - [./~][^ ]*:' <<< "$whisper")"
+check "its /tmp, where it writes each recording while it works, is in memory, never on disk" "    tmpfs:
+      - /tmp" "$(grep -A1 '^    tmpfs:$' <<< "$whisper")"
+check "it publishes no port, gets no devices and no extra rights" "0" "$(grep -c -e 'ports:' -e 'expose:' -e 'network_mode' -e 'devices:' -e 'privileged' -e 'cap_add' -e 'docker.sock' -e 'group_add' -e 'pid:' -e 'ipc:' -e 'security_opt' -e 'extra_hosts' -e 'restart:' <<< "$whisper")"
+check "it has a memory limit" "1" "$(grep -c '^    mem_limit: [0-9]*[mg]$' <<< "$whisper")"
+check "it's on the ears network and no other" "    networks:
+      - ears" "$(grep -A2 '^    networks:$' <<< "$whisper" | grep -e 'networks:' -e '^      - ')"
+check "its healthcheck asks it to describe itself, with its own check" '    healthcheck:
+      test: ["CMD", "/usr/src/.venv/bin/python3", "-m", "wyoming_faster_whisper.health_check"]' "$(grep -A1 '^    healthcheck:$' <<< "$whisper")"
+check "the quietening file only lifts that one logger to warnings" 'import logging
+
+logging.getLogger("wyoming_faster_whisper.dispatch_handler").setLevel(logging.WARNING)' "$(cat "$here/../whisper/sitecustomize.py")"
+check "ears asks Whisper by the service's name on Wyoming's usual port" "export const whisperHost = \"whisper\";
+export const whisperPort = 10300;" "$(grep -e '^export const whisperHost' -e '^export const whisperPort' "$here/../ears/src/whisper.ts")"
+mic_file="$here/../docker-compose.mic.yaml"
+check "the mic file gives ears only the named card's mixer and microphone, and the audio group" 'services:
+  ears:
+    devices:
+      - /dev/snd/controlC${MIC_CARD_NUMBER:?start it with bash host/ears.sh start}:/dev/snd/controlC${MIC_CARD_NUMBER:?}:rw
+      - /dev/snd/pcmC${MIC_CARD_NUMBER:?}D0c:/dev/snd/pcmC${MIC_CARD_NUMBER:?}D0c:rw
+    group_add:
+      - "${AUDIO_GROUP_ID:?start it with bash host/ears.sh start}"' "$(cat "$mic_file")"
+check "never a speaker" "0" "$(grep -c 'D[0-9]*p' "$mic_file")"
+
+mkdir -p "$work/bin"
+cat > "$work/bin/docker" <<'FAKE'
+#!/bin/bash
+echo "docker $* | MIC_CARD_NUMBER=${MIC_CARD_NUMBER:-} AUDIO_GROUP_ID=${AUDIO_GROUP_ID:-}" >> "$DOCKER_LOG"
+exit "${DOCKER_EXIT:-0}"
+FAKE
+cat > "$work/bin/curl" <<'FAKE'
+#!/bin/bash
+echo "curl $*" >> "$CURL_LOG"
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  if [ "${args[$i]}" = -o ]; then out=${args[$((i + 1))]}; fi
+done
+url=${args[$((${#args[@]} - 1))]}
+if [ -n "${CURL_FAIL_ON:-}" ] && [[ "$url" == *"$CURL_FAIL_ON" ]]; then
+  echo "curl: (22) The requested URL returned error: 404" >&2
+  exit 22
+fi
+case "$url" in
+  */config.json) size=2020 ;;
+  */model.bin) size=79120341 ;;
+  */vocabulary.txt) size=459861 ;;
+  */tokenizer.json) size=2480466 ;;
+  *) size=1 ;;
+esac
+if [ -n "${CURL_SHORT_ON:-}" ] && [[ "$url" == *"$CURL_SHORT_ON" ]]; then size=$((size - 1)); fi
+: > "$out"
+truncate -s "$size" "$out"
+FAKE
+cat > "$work/bin/sha256sum" <<'FAKE'
+#!/bin/bash
+if [ -n "${SHA_WRONG:-}" ]; then echo "0000  $1"; else echo "ae13f74db4d23c2746863880e87f15bf780bd2ee0a8b9c7dd967b9343a227081  $1"; fi
+FAKE
+chmod +x "$work/bin/docker" "$work/bin/curl" "$work/bin/sha256sum"
+export DOCKER_LOG="$work/docker.log" CURL_LOG="$work/curl.log"
+
+with_fakes() {
+  : > "$DOCKER_LOG"
+  : > "$CURL_LOG"
+  (cd "$work/repo" && PATH="$work/bin:$PATH" bash host/ears.sh "$@" < /dev/null 2>&1)
+}
+
+model="$work/repo/whisper/models/base-int8"
+
+fresh
+output=$(with_fakes whisper-model)
+check "whisper-model downloads the model, and succeeds" "0" "$?"
+check "the four files, from their pinned versions, over HTTPS only" "curl -fsS -L --proto =https --proto-redir =https -m 600 -o whisper/models/.download.XXXXXX/config.json https://huggingface.co/rhasspy/faster-whisper-base-int8/resolve/a9667415b1b62cc5f4bab65ec7a50f2f4035f7f4/config.json
+curl -fsS -L --proto =https --proto-redir =https -m 600 -o whisper/models/.download.XXXXXX/model.bin https://huggingface.co/rhasspy/faster-whisper-base-int8/resolve/a9667415b1b62cc5f4bab65ec7a50f2f4035f7f4/model.bin
+curl -fsS -L --proto =https --proto-redir =https -m 600 -o whisper/models/.download.XXXXXX/vocabulary.txt https://huggingface.co/rhasspy/faster-whisper-base-int8/resolve/a9667415b1b62cc5f4bab65ec7a50f2f4035f7f4/vocabulary.txt
+curl -fsS -L --proto =https --proto-redir =https -m 600 -o whisper/models/.download.XXXXXX/tokenizer.json https://huggingface.co/openai/whisper-tiny/resolve/169d4a4341b33bc18d8881c4b69c2e104e1cc0af/tokenizer.json" "$(sed -E 's/\.download\.[A-Za-z0-9]{6}/.download.XXXXXX/' "$CURL_LOG")"
+check "saved together in whisper/models/base-int8" "config.json model.bin tokenizer.json vocabulary.txt" "$(ls "$model" | tr '\n' ' ' | sed 's/ $//')"
+check "readable by Whisper's own user" "755 644 644 644 644" "$(stat -c %a "$model" "$model"/* | tr '\n' ' ' | sed 's/ $//')"
+check "with nothing half-downloaded left behind" "base-int8" "$(ls -A "$work/repo/whisper/models")"
+check_has "saying where" "Saved Whisper's base-int8 model in whisper/models/base-int8." "$output"
+output=$(with_fakes whisper-model)
+check "a second time it downloads nothing and says it's already there" "0||Whisper's model is already in whisper/models/base-int8. To download it again, remove that folder first." "$?|$(cat "$CURL_LOG")|$output"
+
+for broken in "CURL_FAIL_ON=model.bin|Couldn't download model.bin from https://huggingface.co/rhasspy/faster-whisper-base-int8/resolve/a9667415b1b62cc5f4bab65ec7a50f2f4035f7f4/model.bin. Check the server can reach Hugging Face." "CURL_SHORT_ON=tokenizer.json|tokenizer.json came back as 2480465 bytes, not the 2480466 it should be, so nothing was saved." "SHA_WRONG=1|model.bin isn't the file Hugging Face lists for this model, so nothing was saved."; do
+  fresh
+  output=$(export "${broken%%|*}"; with_fakes whisper-model)
+  check "a bad download fails: ${broken%%|*}" "1" "$?"
+  check_has "saying why: ${broken%%|*}" "${broken#*|}" "$output"
+  check "and leaves nothing: ${broken%%|*}" "" "$(ls -A "$work/repo/whisper/models")"
+done
+
+fake_model() {
+  mkdir -p "$model"
+  truncate -s 2020 "$model/config.json"
+  truncate -s 79120341 "$model/model.bin"
+  truncate -s 459861 "$model/vocabulary.txt"
+  truncate -s 2480466 "$model/tokenizer.json"
+}
+
+fresh
+output=$(with_fakes start)
+check "start without Whisper's model refuses, starting nothing" "1|" "$?|$(cat "$DOCKER_LOG")"
+check_has "and says how to get it" "Whisper's model isn't in whisper/models yet. Download it once with: bash host/ears.sh whisper-model" "$output"
+
+for half in "" "tokenizer.json" "model.bin=1"; do
+  fresh
+  if [ -n "$half" ]; then
+    fake_model
+    if [[ "$half" == *=* ]]; then truncate -s "${half#*=}" "$model/${half%%=*}"; else rm "$model/$half"; fi
+  else
+    mkdir -p "$model"
+  fi
+  output=$(with_fakes start)
+  check "start with only part of the model refuses, starting nothing: '$half'" "1|" "$?|$(cat "$DOCKER_LOG")"
+  check_has "saying what to do: '$half'" "whisper/models/base-int8 isn't the whole model. Remove that folder, then run: bash host/ears.sh whisper-model" "$output"
+  output=$(with_fakes whisper-model)
+  check "whisper-model won't call part of the model done, and downloads nothing: '$half'" "1|" "$?|$(cat "$CURL_LOG")"
+  check_has "saying what to do: '$half'" "whisper/models/base-int8 is there but isn't the whole model. Remove that folder, then run this again." "$output"
+done
+
+for setting in "" "EARS_MICROPHONE=pretend" "EARS_MICROPHONE=  " "EARS_MICROPHONE=card_not"; do
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\n%s\n' "$setting" > "$work/repo/ears/.env"
+  output=$(with_fakes start)
+  check "without a card microphone ($setting), start starts ears and Whisper with no devices" "0|docker compose up -d --build --wait ears | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
+  check_has "saying so ($setting)" "Starting ears and Whisper..." "$output"
+done
+
+snd="$work/snd"
+fake_card() {
+  rm -rf "${snd:?}"
+  mkdir -p "$snd/by-path"
+  : > "$snd/controlC1"
+  : > "$snd/pcmC1D0c"
+  : > "$snd/pcmC1D0p"
+  ln -s ../controlC1 "$snd/by-path/pci-0000:04:00.6"
+  : > "$snd/controlC0"
+  ln -s ../controlC0 "$snd/by-path/pci-0000:04:00.1"
+  ln -s ../pcmC1D0c "$snd/by-path/odd"
+}
+
+fresh
+fake_card
+fake_model
+mkdir -p "$work/repo/ears"
+printf 'EARS_TOKEN=x\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=pci-0000:04:00.6\n' > "$work/repo/ears/.env"
+output=$(SOUND_DIR="$snd" with_fakes start)
+check "with the card microphone, start adds the mic file, with the card's number and its group" "0|docker compose -f docker-compose.yaml -f docker-compose.mic.yaml up -d --build --wait ears | MIC_CARD_NUMBER=1 AUDIO_GROUP_ID=$(stat -c %g "$snd/controlC1")" "$?|$(cat "$DOCKER_LOG")"
+check_has "saying which card" "Starting ears with sound card 1's microphone, and Whisper..." "$output"
+output=$(SOUND_DIR="$snd" DOCKER_EXIT=7 with_fakes start)
+check "Docker failing makes start fail" "7" "$?"
+
+for case in "|No EARS_SOUND_CARD in ears/.env. Set it to the microphone's card from ls /dev/snd/by-path, like pci-0000:04:00.6." "pci-0000:09:00.0|EARS_SOUND_CARD is pci-0000:09:00.0, which isn't in /dev/snd/by-path. ls /dev/snd/by-path lists the names." "../controlC1|EARS_SOUND_CARD is ../controlC1, which isn't in /dev/snd/by-path. ls /dev/snd/by-path lists the names." "../by-path/pci-0000:04:00.6|EARS_SOUND_CARD is ../by-path/pci-0000:04:00.6, which isn't in /dev/snd/by-path. ls /dev/snd/by-path lists the names." "pci-0000:04:00.1|Sound card 0 (pci-0000:04:00.1) has no microphone at /dev/snd/pcmC0D0c." "odd|/dev/snd/by-path/odd doesn't lead to a sound card's mixer."; do
+  fresh
+  fake_card
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=%s\n' "${case%%|*}" > "$work/repo/ears/.env"
+  output=$(SOUND_DIR="$snd" with_fakes start)
+  check "a card that can't be used stops start before Docker: '${case%%|*}'" "1|" "$?|$(cat "$DOCKER_LOG")"
+  check_has "saying why: '${case%%|*}'" "${case#*|}" "$output"
+done
+
+fresh
+output=$(with_fakes stop)
+check "stop stops ears and Whisper" "0|docker compose stop ears whisper | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
+check "start, stop and whisper-model write no switch" "no folder" "$([ -e "$work/repo/ears/switch" ] && echo folder || echo "no folder")"
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

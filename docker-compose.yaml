@@ -298,12 +298,52 @@ services:
     mem_limit: 256m
     networks:
       - ears
+    depends_on:
+      whisper:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "/app/dist/ask.js", "state"]
+      test: ["CMD", "node", "/app/dist/ask.js", "health"]
       interval: 1m
       timeout: 5s
       retries: 3
       start_period: 30s
+      start_interval: 2s
+
+  whisper:
+    image: rhasspy/wyoming-whisper:3.8.1@sha256:ba6fcb6056ebe237d15a325381763a80af2fc8fcedaa04f6a714a7375eb20d80
+    container_name: whisper
+    profiles:
+      - ears
+    user: "10300:10300"
+    init: true
+    command: ["--model", "/models/base-int8", "--stt-library", "faster-whisper", "--language", "en", "--local-files-only"]
+    environment:
+      PYTHONPATH: /quiet
+      HF_HUB_OFFLINE: "1"
+    volumes:
+      - type: bind
+        source: ./whisper/models
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./whisper/sitecustomize.py
+        target: /quiet/sitecustomize.py
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp
+    mem_limit: 2g
+    networks:
+      - ears
+    healthcheck:
+      test: ["CMD", "/usr/src/.venv/bin/python3", "-m", "wyoming_faster_whisper.health_check"]
+      interval: 1m
+      timeout: 20s
+      retries: 3
+      start_period: 2m
       start_interval: 2s
 
 networks:

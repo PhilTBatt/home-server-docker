@@ -63,6 +63,29 @@ test("a recorder sending more sound than the limit allows is stopped", { timeout
   assert.equal(alive(recording.pid), false);
 });
 
+test("the sound a recording gets is kept in memory and handed back when it ends, as whole 16-bit samples", { timeout: 10_000 }, async () => {
+  const recording = startRecording({ recorder: node("process.stdout.write(Buffer.from([1, 2, 3])); setTimeout(() => process.stdout.write(Buffer.from([4, 5])), 50); setInterval(() => {}, 1000)") });
+  await pause(300);
+  const stopped = await recording.stop("asked to stop");
+  assert.deepEqual([[...stopped.sound], stopped.bytes], [[1, 2, 3, 4], 5]);
+});
+
+test("only the sound up to the limit is kept, however much more the recorder sends", { timeout: 10_000 }, async () => {
+  const recording = startRecording({ recorder: node("setInterval(() => process.stdout.write(Buffer.alloc(1000, 7)), 5)"), limitMs: 1000, maxBytes: 4500 });
+  const stopped = await recording.ended;
+  assert.equal(stopped.reason, "more sound came than the time limit allows");
+  assert.ok(stopped.bytes > 4500, String(stopped.bytes));
+  assert.equal(stopped.sound.length, 4000);
+  assert.ok(stopped.sound.every((byte) => byte === 7));
+});
+
+test("a recorder that sends nothing hands back no sound", { timeout: 10_000 }, async () => {
+  const recording = startRecording({ recorder: node("setInterval(() => {}, 1000)") });
+  await pause(200);
+  const stopped = await recording.stop("asked to stop");
+  assert.deepEqual([stopped.sound.length, stopped.bytes], [0, 0]);
+});
+
 test("a recorder that ignores being asked to end is killed a second later", { timeout: 10_000 }, async () => {
   const recording = startRecording({ recorder: node("process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)"), killAfterMs: 300 });
   await pause(300);

@@ -42,7 +42,7 @@ async function setUp(atStart: string | null, limitMs?: number) {
   if (atStart !== null) await writeFile(switchAt, atStart);
   const lines: string[] = [];
   const start = async () => {
-    const started = await startService({ config: { token, microphone: "pretend" }, log: (line) => lines.push(line), switchAt, everyMs: 20, port: 0, host: "127.0.0.1", limitMs });
+    const started = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture" }, log: (line) => lines.push(line), switchAt, everyMs: 20, port: 0, host: "127.0.0.1", limitMs });
     services.push(started);
     return started;
   };
@@ -171,6 +171,83 @@ test("if the port is taken, starting fails and leaves nothing running", { timeou
   const taken = createServer();
   await new Promise<void>((resolve) => taken.listen(0, "127.0.0.1", resolve));
   const port = (taken.address() as AddressInfo).port;
-  await assert.rejects(startService({ config: { token, microphone: "pretend" }, log: () => {}, switchAt: "/no/such/switch", everyMs: 20, port, host: "127.0.0.1" }), { code: "EADDRINUSE" });
+  await assert.rejects(startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture" }, log: () => {}, switchAt: "/no/such/switch", everyMs: 20, port, host: "127.0.0.1" }), { code: "EADDRINUSE" });
   await new Promise((resolve) => taken.close(resolve));
+});
+
+const quietSwitch = async () => {
+  const folder = await mkdtemp(join(tmpdir(), "ears-"));
+  folders.push(folder);
+  return join(folder, "mute");
+};
+
+test("each microphone setting says what ears records from: nothing, the pretend one, or the card passed in, at the level set", { timeout: 15_000 }, async () => {
+  const switchAt = await quietSwitch();
+  const base = { log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1" };
+  const none = await startService({ ...base, config: { token, microphone: null, micLevel: 80, micControl: "Capture" } });
+  services.push(none);
+  assert.equal(none.microphone, "no microphone set");
+  const pretend = await startService({ ...base, config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture" } });
+  services.push(pretend);
+  assert.equal(pretend.microphone, "the pretend microphone");
+  const levels: [number, string, number][] = [];
+  const card = await startService({ ...base, config: { token, microphone: "card", micLevel: 65, micControl: "Mic" }, findCard: async () => ({ number: 2, device: "plughw:2,0", capture: "pcmC2D0c", mixer: "controlC2" }), setLevel: async (number, control, level) => void levels.push([number, control, level]) });
+  services.push(card);
+  assert.equal(card.microphone, "sound card 2's microphone (Mic set to 65%)");
+  assert.deepEqual(levels, [[2, "Mic", 65]]);
+  const kept = await startService({ ...base, config: { token, microphone: "card", micLevel: "keep", micControl: "Capture" }, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => assert.fail("the level was set") });
+  services.push(kept);
+  assert.equal(kept.microphone, "sound card 1's microphone (at its own level)");
+});
+
+test("with the card microphone, the card is found and its level set before anything listens, and either failing stops ears starting", { timeout: 15_000 }, async () => {
+  const switchAt = await quietSwitch();
+  const base = { log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", config: { token, microphone: "card" as const, micLevel: 80, micControl: "Capture" } };
+  await assert.rejects(startService({ ...base, findCard: async () => Promise.reject(new Error("No sound devices were passed in")) }), { message: "No sound devices were passed in" });
+  await assert.rejects(startService({ ...base, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => Promise.reject(new Error("Couldn't set Capture on sound card 1")) }), { message: "Couldn't set Capture on sound card 1" });
+});
+
+test("with the card microphone and nothing pretend given, ears records with arecord on that card", { timeout: 15_000 }, async () => {
+  const switchAt = await quietSwitch();
+  await writeFile(switchAt, "muted");
+  const folder = await mkdtemp(join(tmpdir(), "ears-bin-"));
+  folders.push(folder);
+  const argsFile = join(folder, "args");
+  await writeFile(join(folder, "arecord"), `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\nexec sleep 30\n`, { mode: 0o755 });
+  const path = process.env.PATH;
+  process.env.PATH = `${folder}:${path}`;
+  try {
+    const service = await startService({ config: { token, microphone: "card", micLevel: 80, micControl: "Capture" }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", findCard: async () => ({ number: 3, device: "plughw:3,0", capture: "pcmC3D0c", mixer: "controlC3" }), setLevel: async () => {} });
+    services.push(service);
+    await writeFile(switchAt, "unmuted 1");
+    await until(() => service.ears.view().state === "idle");
+    assert.equal(service.ears.start().ok, true);
+    await until(() => {
+      try {
+        return readFileSync(argsFile, "utf8").length > 0;
+      } catch {
+        return false;
+      }
+    });
+    assert.deepEqual(readFileSync(argsFile, "utf8").trim().split("\n"), ["-q", "-D", "plughw:3,0", "-t", "raw", "-f", "S16_LE", "-r", "16000", "-c", "1"]);
+    await service.ears.stop();
+  } finally {
+    process.env.PATH = path;
+  }
+});
+
+test("with Whisper given, a stopped recording's sound is turned into text, and the answer to the stop has it", { timeout: 15_000 }, async () => {
+  const switchAt = await quietSwitch();
+  await writeFile(switchAt, "muted");
+  const heard: number[] = [];
+  const service = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture" }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", toText: async (sound) => (heard.push(sound.length), "Hello there.") });
+  services.push(service);
+  await writeFile(switchAt, "unmuted 2");
+  await until(() => service.ears.view().state === "idle");
+  service.ears.start();
+  await pause(250);
+  const answer = await (await fetch(`http://127.0.0.1:${(service.server.address() as AddressInfo).port}/recording/stop`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json();
+  assert.equal(answer.state, "idle");
+  assert.equal(answer.last.text, "Hello there.");
+  assert.ok(heard[0] > 3000, String(heard[0]));
 });

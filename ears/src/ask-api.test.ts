@@ -1,15 +1,46 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { ask, askCommand, askUsage, questions } from "./ask-api.js";
 import { createEars } from "./ears.js";
 import { startEarsServer } from "./server.js";
+import { textLimitMs } from "./whisper.js";
 
 const token = "t".repeat(64);
 
-test("ask knows three questions: the state, start and stop", () => {
-  assert.deepEqual(Object.keys(questions), ["state", "start", "stop"]);
-  assert.equal(askUsage, "Usage: node dist/ask.js state|start|stop");
+test("ask knows four questions: the state, start, stop and health, and waits 4 seconds for an answer, or 70 for a stop, which waits for the text", () => {
+  assert.deepEqual(Object.keys(questions), ["state", "start", "stop", "health"]);
+  assert.deepEqual(Object.values(questions).map((question) => question.waitMs), [4_000, 4_000, 70_000, 4_000]);
+  assert.ok(questions.stop.waitMs > textLimitMs + 5_000);
+  assert.deepEqual(questions.health, { method: "GET", path: "/state", waitMs: 4_000 });
+  assert.equal(askUsage, "Usage: node dist/ask.js state|start|stop|health");
+});
+
+test("health prints only the status and the state's one word, never the last recording's text, since Docker keeps what a health check prints", async () => {
+  const ears = createEars({ microphone: "pretend", record: () => ({ pid: 1, ended: Promise.resolve({ reason: "x", failed: false, bytes: 2, ms: 1000, sound: Uint8Array.of(1, 2) }), stop: () => new Promise(() => {}) }), log: () => {}, toText: async () => "Turn the lights on." });
+  const server = await startEarsServer(ears, token, 0, "127.0.0.1");
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  await ears.unmute();
+  ears.start();
+  for (let wait = 0; ears.view().last?.text !== "Turn the lights on." && wait < 100; wait++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(ears.view().last?.text, "Turn the lights on.");
+  const said: string[] = [];
+  const out = (line: string) => said.push(line);
+  assert.equal(await askCommand("health", token, out, base), 0);
+  assert.equal(await askCommand("health", "wrong", out, base), 1);
+  assert.equal(await askCommand("state", token, out, base), 0);
+  assert.deepEqual(said.slice(0, 2), ["200 idle", "401 (no state)"]);
+  assert.match(said[2], /Turn the lights on/);
+  server.closeAllConnections();
+  await new Promise((resolve) => server.close(resolve));
+  const odd = createServer((_request, response) => response.end(JSON.stringify({ state: "Turn the lights on." })));
+  await new Promise<void>((resolve) => odd.listen(0, "127.0.0.1", resolve));
+  said.length = 0;
+  assert.equal(await askCommand("health", token, out, `http://127.0.0.1:${(odd.address() as AddressInfo).port}`), 0);
+  assert.deepEqual(said, ["200 (no state)"], "a state that isn't one plain word isn't printed either");
+  odd.closeAllConnections();
+  await new Promise((resolve) => odd.close(resolve));
 });
 
 test("ask sends the token and prints the status and the answer, refusals included", async () => {
