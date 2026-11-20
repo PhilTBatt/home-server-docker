@@ -519,26 +519,43 @@ function parseJson(text: string, label: string, problems: string[]): unknown {
   }
 }
 
-function readMore(raw: unknown, problems: string[]): string[] {
+type MoreFile = { name: string; on: boolean | null };
+
+function moreEntry(entry: unknown): MoreFile | null {
+  const fileName = (name: unknown): name is string => typeof name === "string" && moreFilePattern.test(name) && !notSearchFiles.includes(name);
+  if (fileName(entry)) return { name: entry, on: null };
+  if (!isObject(entry) || !fileName(entry.file)) return null;
+  if (Object.keys(entry).some((key) => key !== "file" && key !== "switch")) return null;
+  if (entry.switch === undefined) return { name: entry.file, on: null };
+  if (entry.switch !== "on" && entry.switch !== "off") return null;
+  return { name: entry.file, on: entry.switch === "on" };
+}
+
+function readMore(raw: unknown, problems: string[]): MoreFile[] {
   if (raw === undefined) return [];
-  const names = Array.isArray(raw) ? raw : [];
+  const entries = Array.isArray(raw) ? raw.map(moreEntry) : [];
+  const names = entries.map((entry) => entry?.name);
   const fine =
-    names.length > 0 &&
-    names.length <= maxMoreFiles &&
-    names.every((name) => typeof name === "string" && moreFilePattern.test(name) && !notSearchFiles.includes(name)) &&
+    entries.length > 0 &&
+    entries.length <= maxMoreFiles &&
+    entries.every((entry) => entry !== null) &&
     new Set(names).size === names.length;
   if (!fine) {
-    problems.push(`more must be a list of 1 to ${maxMoreFiles} other files in the deals folder, like ["catalogue.json"]`);
+    problems.push(`more must be a list of 1 to ${maxMoreFiles} other files in the deals folder, like ["catalogue.json"] or [{ "file": "catalogue.json", "switch": "on" }]`);
     return [];
   }
-  return names as string[];
+  return entries as MoreFile[];
 }
 
 export function moreFiles(text: string): string[] {
   try {
     const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
     const listed = isObject(parsed) && Array.isArray(parsed.more) ? parsed.more : [];
-    return listed.filter((name): name is string => typeof name === "string" && moreFilePattern.test(name) && !notSearchFiles.includes(name)).slice(0, maxMoreFiles);
+    return listed
+      .map(moreEntry)
+      .filter((entry): entry is MoreFile => entry !== null)
+      .map((entry) => entry.name)
+      .slice(0, maxMoreFiles);
   } catch {
     return [];
   }
@@ -554,11 +571,12 @@ export function readSearches(text: string, sources: string[], more: Record<strin
   const limits = readLimits(parsed.limits, problems);
   const quiet = readQuiet(parsed.quiet, problems);
   const postcode = readPostcode(parsed.postcode, problems);
-  const files = readMore(parsed.more, problems);
+  const moreList = readMore(parsed.more, problems);
+  const files = moreList.map((entry) => entry.name);
   if (!Array.isArray(parsed.searches)) fail([...problems, "searches must be a list in [ ]"]);
 
-  const lists: { label: string; raw: unknown[] }[] = [{ label: "", raw: parsed.searches }];
-  for (const file of files) {
+  const lists: { label: string; raw: unknown[]; on: boolean | null }[] = [{ label: "", raw: parsed.searches, on: null }];
+  for (const { name: file, on } of moreList) {
     const extra = more[file];
     if (typeof extra !== "string") {
       problems.push(`${file} couldn't be read from the deals folder`);
@@ -572,7 +590,7 @@ export function readSearches(text: string, sources: string[], more: Record<strin
       continue;
     }
     problems.push(...unknownSettings(content, ["searches"]).map((problem) => `${file}: ${problem}`));
-    lists.push({ label: `${file} `, raw: content.searches });
+    lists.push({ label: `${file} `, raw: content.searches, on });
   }
   const count = lists.reduce((sum, list) => sum + list.raw.length, 0);
   if (count > maxSearches) fail([...problems, `there can be ${maxSearches} searches at most, counting every file`]);
@@ -588,7 +606,7 @@ export function readSearches(text: string, sources: string[], more: Record<strin
       if (rawId !== null && seenIds.has(rawId)) own.push("its id is used by an earlier search");
       if (rawId !== null) seenIds.add(rawId);
       problems.push(...own.map((problem) => `${label}: ${problem}`));
-      if (search !== null && own.length === 0) searches.push(search);
+      if (search !== null && own.length === 0) searches.push(list.on === null ? search : { ...search, on: list.on });
     });
   }
 

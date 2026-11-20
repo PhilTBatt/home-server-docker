@@ -839,6 +839,26 @@ test("more names other files in the deals folder whose searches are read after t
   }
 });
 
+test("an extra file can be switched all on or all off from searches.json, whatever its own searches say", () => {
+  const main = JSON.stringify({ more: [{ file: "catalogue.json", switch: "on" }, { file: "extra-2.json", switch: "off" }, "extra-3.json", { file: "extra-4.json" }], searches: [smallest] });
+  const file = (...searches: unknown[]) => JSON.stringify({ searches });
+  const list = readSearches(main, sources, {
+    "catalogue.json": file({ ...smallest, id: "a", switch: "off" }, { ...smallest, id: "b" }),
+    "extra-2.json": file({ ...smallest, id: "c" }),
+    "extra-3.json": file({ ...smallest, id: "d", switch: "off" }, { ...smallest, id: "e" }),
+    "extra-4.json": file({ ...smallest, id: "f", switch: "off" }),
+  });
+  assert.deepEqual(list.searches.map((search) => [search.id, search.on]), [["optiplex", true], ["a", true], ["b", true], ["c", false], ["d", false], ["e", true], ["f", false]]);
+  assert.deepEqual(list.files, ["catalogue.json", "extra-2.json", "extra-3.json", "extra-4.json"]);
+  assert.equal(fingerprint(list.searches[1]), fingerprint(one({ ...smallest, id: "a", switch: "off" })));
+  assert.match(problemIn(JSON.stringify({ more: [{ file: "catalogue.json", switch: "on" }], searches: [] })), /catalogue.json couldn't be read/);
+  const badOwn = () => readSearches(JSON.stringify({ more: [{ file: "catalogue.json", switch: "on" }], searches: [] }), sources, { "catalogue.json": file({ ...smallest, switch: "maybe" }) });
+  assert.throws(badOwn, /catalogue.json search 1 \(optiplex\): switch must be on or off/);
+  for (const odd of [[{ file: "x.json", switch: "yes" }], [{ file: "x.json", switch: true }], [{ file: "x.json", other: 1 }], [{ switch: "on" }], [{ file: "../a.json" }], [{ file: "state.json" }], [{ file: "searches.json", switch: "on" }], ["x.json", { file: "x.json", switch: "on" }], [{}], [null], [["x.json"]]]) {
+    assert.match(problemIn(JSON.stringify({ more: odd, searches: [] })), /more must be a list of 1 to 5 other files in the deals folder, like \["catalogue.json"\] or \[\{ "file": "catalogue.json", "switch": "on" \}\]/, JSON.stringify(odd));
+  }
+});
+
 test("a problem in another file is reported with that file's name, and an id can't be used twice across files", () => {
   const main = JSON.stringify({ more: ["catalogue.json"], searches: [smallest] });
   const problem = (extra: string | null) => {
@@ -866,6 +886,9 @@ test("the extra files are read from the same folder as searches.json, and a miss
     await writeFile(join(dir, "searches.json"), JSON.stringify({ more: ["catalogue.json"], searches: [smallest] }));
     await writeFile(join(dir, "catalogue.json"), JSON.stringify({ searches: [{ ...smallest, id: "ram" }] }));
     assert.deepEqual((await loadSearches(join(dir, "searches.json"), sources)).searches.map((search) => search.id), ["optiplex", "ram"]);
+    await writeFile(join(dir, "searches.json"), JSON.stringify({ more: [{ file: "catalogue.json", switch: "on" }], searches: [smallest] }));
+    await writeFile(join(dir, "catalogue.json"), JSON.stringify({ searches: [{ ...smallest, id: "ram", switch: "off" }] }));
+    assert.deepEqual((await loadSearches(join(dir, "searches.json"), sources)).searches.map((search) => [search.id, search.on]), [["optiplex", true], ["ram", true]]);
     await rm(join(dir, "catalogue.json"));
     await assert.rejects(loadSearches(join(dir, "searches.json"), sources), /catalogue.json couldn't be read from the deals folder/);
   } finally {

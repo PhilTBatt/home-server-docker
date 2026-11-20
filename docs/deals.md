@@ -117,7 +117,7 @@ A mistyped setting name is refused, not ignored, so `"maxprice"` can't quietly r
 
 `postcode` is optional: your postcode for searches with `collectionMiles`. Its first half alone (`"LS1"`) is accepted too, but whether eBay works with only half wasn't tested, so check the first results. It's only ever sent to eBay inside those searches. Git ignores this file, so it stays on the server.
 
-`more` is optional: up to 5 other files in the `deals` folder whose searches are read after this file's, like `"more": ["catalogue.json"]`. Each holds only a `searches` list; limits, quiet hours and the postcode come from `searches.json`. Ids can't repeat across files, and a problem in one names its file.
+`more` is optional: up to 5 other files in the `deals` folder whose searches are read after this file's, like `"more": ["catalogue.json"]`. Each holds only a `searches` list; limits, quiet hours and the postcode come from `searches.json`. Ids can't repeat across files, and a problem in one names its file. Written as `{ "file": "catalogue.json", "switch": "on" }`, every search in that file is on whatever its own `switch` says (or all off, with `"off"`), so a fresh copy of the catalogue needs no editing. Each search still needs a valid `switch` of its own.
 
 `quiet` is optional: `{ "from": "23:00", "to": "07:00", "allow": "great" }`. Between those times, by the clock in London, deal alerts are held and sent at the first check after. `"allow": "great"` lets great deals and ending-soon alerts through; leave it out and neither does. An ending-soon alert that was held is sent afterwards only if the auction is still inside its window. Two messages still arrive, silently: "now watching" (it only follows a change you just made) and the daily "alerts paused" notice. Check now doesn't override quiet hours.
 
@@ -189,7 +189,7 @@ When a snooze ends, listings that appeared meanwhile alert in the usual way, che
 ## The catalogue
 `api/src/modules/deals/catalogue.example.json` holds 112 searches, every one switched off, across all the groups: 27 whole PCs, workstations and small servers, 16 CPUs, 7 motherboards and 3 CPU-and-board bundles, 8 kinds of RAM, 9 kinds of storage, 8 graphics cards, 4 power supplies, 8 cases, 3 coolers and a fan pack, network cards, storage cards, a UPS, and 12 HotUKDeals searches. With your own searches that's 150 at most, so the catalogue leaves room for 38 of yours. To use it:
 1. Copy it to `deals/catalogue.json`.
-2. Add `"more": ["catalogue.json"]` to `deals/searches.json`.
+2. Add `"more": ["catalogue.json"]` to `deals/searches.json`, and switch on the searches you want in your copy. Or add `"more": [{ "file": "catalogue.json", "switch": "on" }]` to switch them all on without touching the copy; then a newer catalogue is just a fresh copy. That switches every one on at once, without step 3's checks, and with all of them on they need more eBay calls a day than the default `callsPerDay` of 1000 (the last point under "How much to trust it").
 3. Before switching one on, check its words with `/deals/details?q=...` and its category with `/deals/categories?q=...`, and set your own guide price.
 
 How much to trust it:
