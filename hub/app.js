@@ -96,6 +96,7 @@
  * @property {number | null} [underGuide]
  * @property {{ unit: string, amount: number, pence: number } | null} [perUnit]
  * @property {boolean | null} [detailsMatch]
+ * @property {boolean} [great]
  * @property {string[]} [cautions]
  */
 
@@ -103,17 +104,29 @@
  * @typedef {object} DealSearch
  * @property {string} id
  * @property {string} name
+ * @property {string | null} group
  * @property {boolean} on
  * @property {number | null} matches
+ * @property {string | null} lastChecked
+ * @property {string | null} problem
  * @property {boolean} snoozed
  * @property {string | null} snoozedUntil
  * @property {Record<string, number> | null} hidden
+ * @property {{ fitted: number, unknown: number, unread: number } | null} [options]
+ * @property {string[]} [notes]
+ */
+
+/**
+ * @typedef {object} DealHidden
+ * @property {Record<string, number>} hidden
+ * @property {Record<string, string[]>} examples
  */
 
 /**
  * @typedef {object} DealGroup
  * @property {string} id
  * @property {string} name
+ * @property {string | null} group
  * @property {string} source
  * @property {string} checkedAt
  * @property {number} count
@@ -183,11 +196,19 @@ const sendNoteButton = /** @type {HTMLButtonElement} */ (byId("send-note"));
 const noteStatus = byId("note-status");
 const dealsSection = byId("deals");
 const dealsStatus = byId("deals-status");
+const dealsBest = byId("deals-best");
 const dealsList = byId("deals-list");
 const dealsSearches = byId("deals-searches");
 const checkDealsButton = /** @type {HTMLButtonElement} */ (byId("check-deals"));
 const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/", "https://www.hotukdeals.com/deals/"];
 /** @type {number | undefined} */ let refreshTimer;
+/** @type {Set<string>} */ const openDealSections = new Set();
+const dealsShownPerSearch = 5;
+const dealsReadPerSearch = 15;
+const dealsFreshMs = 6 * 60 * 60 * 1000;
+const bestDealsShown = 10;
+/** @type {[string, string][]} */
+const partTypes = [["whole pc", "Whole PCs"], ["server", "Servers"], ["cpu", "CPUs"], ["motherboard", "Motherboards"], ["ram", "RAM"], ["storage", "Storage"], ["graphics", "Graphics cards"], ["power supply", "Power supplies"], ["case", "Cases"], ["cooling", "Cooling"], ["network", "Network"], ["expansion", "Expansion cards"], ["ups", "UPS"], ["other", "Other"]];
 
 /**
  * @param {boolean} loggedIn
@@ -458,20 +479,109 @@ function dealItem(listing) {
 }
 
 /**
+ * @param {string | null} group
+ * @returns {string}
+ */
+function partTypeName(group) {
+  if (group === null) return "No part type";
+  return partTypes.find(([id]) => id === group)?.[1] ?? group;
+}
+
+/**
+ * @template {{ group: string | null }} Item
+ * @param {Item[]} items
+ * @returns {[string | null, Item[]][]}
+ */
+function byPartType(items) {
+  /** @type {(string | null)[]} */
+  const order = [...partTypes.map(([id]) => id), ...new Set(items.map((item) => item.group).filter((group) => group !== null && !partTypes.some(([id]) => id === group))), null];
+  return order.map((group) => /** @type {[string | null, Item[]]} */ ([group, items.filter((item) => item.group === group)])).filter(([, found]) => found.length > 0);
+}
+
+/**
+ * @param {string} key
+ * @param {string} summaryText
+ * @param {Node[]} contents
+ * @returns {HTMLDetailsElement}
+ */
+function dealSection(key, summaryText, contents) {
+  const section = document.createElement("details");
+  section.open = openDealSections.has(key);
+  section.addEventListener("toggle", () => {
+    if (section.open) openDealSections.add(key);
+    else openDealSections.delete(key);
+  });
+  const summary = document.createElement("summary");
+  summary.textContent = summaryText;
+  section.append(summary, ...contents);
+  return section;
+}
+
+/**
+ * @param {Record<string, number> | null} hidden
+ * @returns {string}
+ */
+function hiddenText(hidden) {
+  const reasons = Object.entries(hidden ?? {}).filter(([, count]) => count > 0);
+  if (reasons.length === 0) return "";
+  return `hidden: ${reasons.map(([reason, count]) => `${count} by ${reason}`).join(", ")}`;
+}
+
+/**
  * @param {DealSearch} search
  * @returns {HTMLLIElement}
  */
 function dealSearchItem(search) {
-  const hidden = Object.values(search.hidden ?? {}).reduce((sum, count) => sum + count, 0);
-  const found = search.matches === null ? "not checked yet" : `${search.matches} matching${hidden > 0 ? `, ${hidden} hidden by its rules` : ""}`;
   const until = search.snoozedUntil === null ? "until woken" : `until ${new Date(search.snoozedUntil).toLocaleString()}`;
-  const item = listItem(`${search.name}: ${search.snoozed ? `snoozed ${until}` : found}. `);
+  const parts = [search.snoozed ? `snoozed ${until}` : search.matches === null ? "not checked yet" : `${search.matches} matching`];
+  const hidden = hiddenText(search.hidden);
+  if (!search.snoozed && hidden !== "") parts.push(hidden);
+  if (search.options) parts.push(`options: ${search.options.fitted} fitted, ${search.options.unknown} couldn't tell, ${search.options.unread} not read yet`);
+  if (search.problem) parts.push(`problem: ${search.problem}`);
+  for (const note of search.notes ?? []) parts.push(`note: ${note}`);
+  const item = listItem(`${search.name}: ${parts.join("; ")}. `);
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = search.snoozed ? "Wake" : "Snooze for a day";
   button.addEventListener("click", () => snoozeDealSearch(search, button));
   item.append(button);
+  const recent = search.lastChecked !== null && Date.now() - Date.parse(search.lastChecked) <= dealsFreshMs;
+  if (!search.snoozed && hidden !== "" && recent) {
+    const show = document.createElement("button");
+    show.type = "button";
+    show.textContent = "What was hidden";
+    const examples = document.createElement("ul");
+    show.addEventListener("click", () => showHiddenExamples(search, show, examples));
+    item.append(" ", show, examples);
+  }
   return item;
+}
+
+/**
+ * @param {DealSearch} search
+ * @param {HTMLButtonElement} button
+ * @param {HTMLUListElement} examples
+ */
+async function showHiddenExamples(search, button, examples) {
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/deals/searches/${encodeURIComponent(search.id)}/hidden`);
+    if (!response.ok) {
+      /** @type {ApiError | null} */
+      const body = await response.json().catch(() => null);
+      examples.replaceChildren(listItem(`Couldn't load them: ${body?.error ?? `the API replied ${response.status}`}.`));
+      button.disabled = false;
+      return;
+    }
+    /** @type {DealHidden} */
+    const found = await response.json();
+    const reasons = Object.entries(found.examples);
+    examples.replaceChildren(...(reasons.length === 0 ? [listItem("Nothing hidden at the last check.")] : reasons.map(([reason, titles]) => listItem(`By ${reason} (${found.hidden[reason] ?? titles.length}): ${titles.join(" | ")}`))));
+    button.hidden = true;
+  } catch {
+    examples.replaceChildren(listItem("Couldn't reach the API."));
+    button.disabled = false;
+  }
 }
 
 /**
@@ -503,14 +613,65 @@ async function snoozeDealSearch(search, button) {
  * @returns {HTMLElement[]}
  */
 function dealGroup(group) {
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h4");
   const sourceName = group.source === "ebay" ? "eBay" : group.source;
   heading.textContent = `${group.name}: ${group.count} on ${sourceName}, checked ${new Date(group.checkedAt).toLocaleTimeString()}`;
-  if (group.count === 0) return [heading];
   const list = document.createElement("ul");
-  list.replaceChildren(...group.listings.map(dealItem));
-  if (group.count > group.listings.length) list.append(listItem(`And ${group.count - group.listings.length} more.`));
+  const shown = group.listings.slice(0, dealsShownPerSearch);
+  list.replaceChildren(...shown.map(dealItem));
+  if (group.count > shown.length) list.append(listItem(`And ${group.count - shown.length} more.`));
   return [heading, list];
+}
+
+/**
+ * @param {DealGroup[]} groups
+ * @returns {HTMLLIElement[]}
+ */
+function bestDeals(groups) {
+  const under = groups.flatMap((group) => group.listings.filter((listing) => typeof listing.underGuide === "number" && listing.underGuide > 0).map((listing) => ({ group, listing })));
+  under.sort((a, b) => Number(b.listing.great === true) - Number(a.listing.great === true) || (b.listing.underGuide ?? 0) - (a.listing.underGuide ?? 0));
+  if (under.length === 0) return [listItem("Nothing under its guide price right now.")];
+  return under.slice(0, bestDealsShown).map(({ group, listing }) => {
+    const item = dealItem(listing);
+    item.prepend(`${listing.great ? "Great deal, " : ""}${group.name}: `);
+    return item;
+  });
+}
+
+/**
+ * @param {DealGroup[]} groups
+ * @returns {HTMLElement[]}
+ */
+function partTypeSections(groups) {
+  return byPartType(groups).map(([type, found]) => {
+    const withMatches = found.filter((group) => group.count > 0);
+    const total = withMatches.reduce((sum, group) => sum + group.count, 0);
+    const best = Math.max(...found.flatMap((group) => group.listings.map((listing) => listing.underGuide ?? Number.NEGATIVE_INFINITY)));
+    const bestText = best > 0 ? `, best ${best}% under guide` : "";
+    const empty = found.filter((group) => group.count === 0).map((group) => group.name);
+    const contents = withMatches.flatMap(dealGroup);
+    if (empty.length > 0) {
+      const none = document.createElement("p");
+      none.textContent = `No matches: ${empty.join(", ")}.`;
+      contents.push(none);
+    }
+    return dealSection(`matches:${type}`, `${partTypeName(type)}: ${total} match${total === 1 ? "" : "es"} in ${found.length} search${found.length === 1 ? "" : "es"}${bestText}`, contents);
+  });
+}
+
+/**
+ * @param {DealSearch[]} searches
+ * @returns {HTMLElement[]}
+ */
+function searchSections(searches) {
+  const on = searches.filter((search) => search.on);
+  const sections = byPartType(on).map(([type, found]) => {
+    const list = document.createElement("ul");
+    list.replaceChildren(...found.map(dealSearchItem));
+    const trouble = found.filter((search) => search.problem || (search.notes ?? []).length > 0).length;
+    return dealSection(`searches:${type}`, `${partTypeName(type)}: ${found.length} search${found.length === 1 ? "" : "es"}${trouble > 0 ? `, ${trouble} with a problem or note` : ""}`, [list]);
+  });
+  return [dealSection("searches", `Searches: ${on.length} switched on`, sections)];
 }
 
 /**
@@ -527,27 +688,30 @@ function dealSummary(status) {
 }
 
 async function loadDeals() {
-  const [statusResponse, matchesResponse, searchesResponse] = await Promise.all([fetch("/api/deals/status"), fetch("/api/deals/matches"), fetch("/api/deals/searches")]);
+  const [statusResponse, matchesResponse, searchesResponse] = await Promise.all([fetch("/api/deals/status"), fetch(`/api/deals/matches?most=${dealsReadPerSearch}`), fetch("/api/deals/searches")]);
   if (!statusResponse.ok || !matchesResponse.ok) {
     const status = statusResponse.ok ? matchesResponse.status : statusResponse.status;
     dealsStatus.textContent = `Couldn't load the deals: the API replied ${status}.`;
+    dealsBest.replaceChildren();
     dealsList.replaceChildren();
     dealsSearches.replaceChildren();
     return;
   }
   /** @type {unknown} */
   const searches = searchesResponse.ok ? await searchesResponse.json() : [];
-  dealsSearches.replaceChildren(...(Array.isArray(searches) ? /** @type {DealSearch[]} */ (searches) : []).filter((search) => search.on).map(dealSearchItem));
+  dealsSearches.replaceChildren(...searchSections(Array.isArray(searches) ? /** @type {DealSearch[]} */ (searches) : []));
   /** @type {DealStatus} */
   const status = await statusResponse.json();
   /** @type {DealGroup[]} */
   const groups = await matchesResponse.json();
   dealsStatus.textContent = dealSummary(status);
   if (groups.length === 0) {
+    dealsBest.replaceChildren();
     dealsList.replaceChildren("Nothing checked in the last six hours.");
     return;
   }
-  dealsList.replaceChildren(...groups.flatMap(dealGroup));
+  dealsBest.replaceChildren(...bestDeals(groups));
+  dealsList.replaceChildren(...partTypeSections(groups));
 }
 
 checkDealsButton.addEventListener("click", async () => {

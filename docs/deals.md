@@ -199,6 +199,14 @@ Why the seller type matters, as the research for this read the sources (not lega
 - Buying from a private seller, the item only has to match its description. https://www.legislation.gov.uk/ukpga/1979/54/section/13
 - eBay's Money Back Guarantee covers an item that doesn't arrive, is faulty or doesn't match the listing, when you pay at eBay's checkout. Paying any part outside eBay loses it. A collected item is covered when the seller scans your collection code. https://www.ebay.co.uk/help/policies/ebay-money-back-guarantee-policy/ebay-money-back-guarantee-policy?id=4210
 
+## On the hub page
+The Deals section shows, from the last six hours of checks:
+- **Best now:** up to 10 matches under their search's guide price, from each search's 15 cheapest, great deals first, then the furthest under.
+- **By part type:** one folded section for each part type (the searches' `group`), saying how many matches it has and its best price against the guide. Opened, it shows each search's five cheapest matches, and lists the searches with none. Searches with no `group` come last, under "No part type".
+- **Searches:** the switched-on searches, folded by part type: each one's matches, what its rules hid, its option reads, any problem or note, its Snooze or Wake button, and "What was hidden", which shows up to three titles for each rule that hid listings.
+
+Sections you open stay open when the page reloads the deals (after Check now, Snooze or Wake), until the page itself is reloaded.
+
 ## Snoozing a search
 Each switched-on search has a Snooze button on the hub page, and Wake while it's snoozed. A snoozed search isn't sent to eBay at all, even by Check now, so it costs no calls. The button snoozes for a day. For another length, or until woken:
 ```

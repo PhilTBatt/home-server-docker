@@ -29,3 +29,16 @@ li {
   margin-bottom: 0.5rem;
   overflow-wrap: anywhere;
 }
+
+details {
+  margin-bottom: 0.5rem;
+}
+
+summary {
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+details details {
+  margin-left: 1rem;
+}
