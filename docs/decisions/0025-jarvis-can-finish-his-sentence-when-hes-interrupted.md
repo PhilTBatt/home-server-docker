@@ -1,7 +1,7 @@
 # 0025. Jarvis can finish his sentence when he's interrupted, and ignores an Enter pressed early
 
 - Date: 2026-11-19
-- Status: accepted
+- Status: accepted, with the whole piece finished when sentences are bundled with `JARVIS_SPEECH_BUNDLE` (0033)
 
 ## Context
 Record 0023 had a new question or an empty line stop his speech at once, and kept an Enter pressed while an answer was still being written, to act on once the prompt was back. On the server, with real timings, that went wrong. His first sound came 3.5 to 6 seconds after the question, well after the text was done, so an Enter pressed while waiting hushed him before he'd said a word. 7 of the 17 answers in the first log with the voice on had no sound, most likely for that reason. Nothing on screen said so, and Phil said it seemed like he'd stopped working. Phil couldn't choose between stopping at once and finishing the sentence, and asked for both behind a switch. ChatGPT's review of record 0023 also pointed out that the player was only ever asked politely to stop.

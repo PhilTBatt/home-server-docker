@@ -1,7 +1,7 @@
 # 0023. Jarvis speaks his answers a sentence at a time, each through its own player
 
 - Date: 2026-11-19
-- Status: accepted, with how a new question or an empty line stops him changed by 0025, what's in code marks left unspoken with the spoken style on (0031), and failed sentences logged as couldn't be made or couldn't be played (0032)
+- Status: accepted, with how a new question or an empty line stops him changed by 0025, what's in code marks left unspoken with the spoken style on (0031), failed sentences logged as couldn't be made or couldn't be played (0032), and sentences after the first sent to Kokoro several at a time with `JARVIS_SPEECH_BUNDLE` (0033)
 
 ## Context
 Since record 0020 Jarvis can say one fixed sentence through Kokoro. His answers arrive a few words at a time, and speaking them means settling things that are awkward to change later: what gets spoken, when speech starts, how each sound is played, what stops it, what happens when a sentence fails, and what's logged. Kokoro takes roughly 0.3 seconds plus 0.37 seconds for each second of speech on this server (record 0020), so waiting for a whole answer before speaking would add seconds of silence to every reply.
