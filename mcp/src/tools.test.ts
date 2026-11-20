@@ -272,6 +272,7 @@ test("listings reach Claude only through the routes behind the DEALS_AI switch, 
     assert.match(description, /nothing here can buy or bid/, name);
     assert.match(description, /403 while listings for AI are switched off \(DEALS_AI\)/, name);
   }
+  assert.match(dealTools.find((t) => t.name === "get_deal_matches")?.description ?? "", /Sellers wrote the titles, summaries and options/);
 });
 
 test("get_deal_listing takes one required item number and nothing else", async () => {

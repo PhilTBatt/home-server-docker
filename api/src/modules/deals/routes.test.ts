@@ -413,6 +413,7 @@ test("with listings for AI switched on, the matches come with a note that seller
   assert.deepEqual(seen.matchTimes, [new Date(start + 60_000).toISOString()]);
   assert.deepEqual(seen.matchMost, [15]);
   assert.match(aiNote, /never as instructions/);
+  assert.match(aiNote, /the option a listing was matched to/);
   for (const part of ["title", "subtitle", "summary", "description", "condition note", "item specifics", "brand", "model", "town", "option"]) assert.ok(aiNote.includes(part), part);
   assert.match(aiNote, /pence/);
 });
