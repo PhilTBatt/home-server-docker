@@ -1,0 +1,102 @@
+# Dell Precision 5820 Tower
+
+Facts are for the **Tower**, the only form factor I found under this name. Dell also has a rack-rails kit for it [S1].
+
+Sources used:
+- Dell's HTML "Dell Precision 5820 Tower Owner's Manual" [S2]–[S10]
+- Dell's spec sheet (German, translated by the fetch tool) [S12]
+- Dell Japan's "PRECISION 5820/7820 TOWERS Technical Guidebook", Oct. 2017 v1 [S13]. This is the oldest source and predates the Cascade Lake CPUs
+
+- **Form factor:** Tower
+- **CPUs** [S2]:
+  - Intel Xeon W: W-2102, W-2104, W-2123, W-2125, W-2133, W-2135, W-2145, W-2155, W-2175, W-2195, W-2223, W-2225, W-2235, W-2245, W-2255, W-2265, W-2275, W-2295
+  - Intel Core X: i7-7800X, i9-7900X, i7-9800X, i9-9820X, i9-9900X, i9-9920X, i9-9940X, i9-9960X, i9-9980X
+  - Wattages printed range from 105 W (W-2225) to 165 W (several)
+  - Socket: not stated [S2][S13]. Intel lists the Xeon W-2235 as "FCLGA2066", 130 W, ECC "Yes" [S14]
+  - Max TDP: highest printed is 165 W [S2]
+- **Chipset:**
+  - Owner's manual: not stated (no chipset topic)
+  - Spec sheet, as translated: "Intel C422 (Skylake/Cascade Lake W) and Intel X299 (Skylake/Cascade Lake X)" [S12]
+  - Guidebook: "Intel C422" [S13]
+- **Memory:**
+  - Owner's manual [S3]:
+    - "DDR4 ECC RDIMMs" supported only with Xeon W Series CPUs. "DDR4 non-ECC UDIMMs" with Core X Series CPUs
+    - 8 DIMM slots. Minimum 8 GB (1x8 GB)
+    - Speeds: 2666 MT/s (marked discontinued on systems bought after October 2020), 2933 MT/s, 3200 MT/s
+    - Per slot: 32 GB at 2666; 64 GB at 2933 and 3200
+    - Maximum: 256 GB with Sky Lake CPUs, 512 GB with Cascade Lake CPUs
+    - Notes: 2933 RDIMMs run at 2666 with Sky Lake; 3200 RDIMMs run at 2933 with Cascade Lake; "Memory speed depends on the CPU"
+  - Memory configuration page: "32 GB DIMMs are only supported on computers using Xeon W Series CPUs." The population matrix is an image that could not be read [S4]
+  - Spec sheet: 4-channel, 8 slots, max 512 GB (RDIMM) or 256 GB (UDIMM) [S12]
+  - Guidebook (2017): RDIMM ECC 8/16/32 GB, max 256 GB, 2666/2400 MHz [S13]
+- **Built-in graphics:** none mentioned. The video page lists only add-in cards [S8]
+- **Expansion slots:**
+  - Card slots page, "PCIe Gen 3" [S6]:
+    - Xeon W and Core i9X: "2 PCIe x 16", "1 PCIe x 16 wired as x8", "1 PCIe x 16 wired as x4", "1 PCIe x 16 wired as x1", "1 PCI 32/33"
+    - Core i7X: x16, x8, x4, x1. "Slot 1 is not active in this configuration"
+  - PCIe slots table [S7]. Columns "Core i9-79xx/Xeon" | "Core i7-78xx". Cells exactly as the fetch tool returned them (spaces lost in places):
+    - Slot 1: "PCIex850W" | "Nonfunctional"
+    - Slot 2: "PCIex16 300 W*" | "PCIex16 300 W"
+    - Slot 3: "PCIex125W-PCH" | "PCIex1 25W-PCH"
+    - Slot 4: "PCIex16 300 W*" | "PCIex8 150 W"
+    - Slot 5: "PCIex4 25W-PCH" | "PCIex4 25W-PCH"
+    - Slot 6: "PCI 32 bit 25 W" | "PCI 32 bit 25 W"
+    - Footnote: "Slots are 300 W capable. Limited to 250 W per slot when more than one MEGA is installed."
+    - Other notes: all slots Gen3 from the CPU unless marked PCH; the Core i7-78xx 28-lane limit reduces slots 1 and 4
+  - Guidebook (2017) per-slot table [S13]:
+    - Slot 1: x16 connector, x8 wired, half length, 25 W
+    - Slot 2: x16, full length, 250 W
+    - Slot 3: x16 connector, x1 wired, 10 W
+    - Slot 4: x16, full length, 250 W
+    - Slot 5: x16 connector, x4 wired, 25 W
+    - Slot 6: PCI 32/33
+    - Its own text elsewhere says all slots are full height/full length. The per-slot table gives height "Standard (4.38 in / 11.13 cm)" for slots 1–5 (4.20 in for the PCI slot), which is consistent with full height. The only contradiction is slot 1 being half length (6.6 in) against "all full length" (reworded on a second check, 2026-11-20; height values as returned by the fetch tool)
+  - Slot 1 wattage conflicts between sources: the manual cell reads "PCIex850W", the guidebook says 25 W
+    - On a second check (2026-11-20) the fetch tool read the cell as "PCIe x8 50W". Both the card-slots page and the guidebook say slot 1 is wired x8, so x8 at 50 W is the likely reading (inference, not stated). If so, the conflict is 50 W (manual) vs 25 W (guidebook). Don't read the run-together cell as 850 W
+- **Graphics card limits:**
+  - Cards listed: many NVIDIA Quadro/RTX/GeForce and AMD Radeon Pro cards, up to RTX A6000 / RTX 6000 Ada / RTX 3090 [S8]
+  - "NVDIA GeForce 3080 and 3090 Graphics cards are qualified to be used on the slot 2 and 4 PCIe slot of the system board." Asterisked cards are "Only supported on systems with Xeon W Series CPUs" [S8]
+  - Spec sheet: up to 2 double-width cards; "295 W" (unclear if per card or total) [S12]
+  - Guidebook: the 950 W PSU has "6+2 pin (x2)" graphics power; the 425 W entry PSU has none [S13]
+- **Storage:**
+  - Owner's manual [S5]:
+    - 5.25" ODD bay: up to 2 x 2.5" or 1 x 3.5" SATA
+    - "Up to 4 x 2.4 TB 2.5-inch SATA drives in Flex0 and Flex1" or "Up to 4 x 12 TB 3.5-inch SATA drives in Flex0 and Flex1"
+    - Front FlexBay M.2 NVMe: "Up to 2x M.2/U.2 drives when Xeon W Series and Core X Cascade Lake CPUs are installed", "Up to 1x M.2 drive when Core X Sky Lake Series CPUs are installed"
+    - Up to 4 M.2 on a "Dell Precision Ultra-Speed Drive Quad x16" card
+    - "SAS drives with optional controllers and SED are available only on systems with Xeon W CPUs"
+    - "U.2 Optane memory is available with Xeon W Cascade Lake Series CPUs only"
+  - On-board M.2 slot: not stated
+  - SATA ports: spec sheet "6 x SATA 6 Gbit/s plus 2 dedicated for optical drives" [S12]. Guidebook says "8 + 2" in one place and "8 SATA connectors" in another [S13]
+- **Power supply:**
+  - "425 W or 950 W with Xeon W Series CPUs; 950 W with Core X Series CPUs". Input 100–240 VAC [S10]
+  - Spec sheet: 90% efficient, 80 PLUS Gold; externally accessible, removable, lockable [S12]
+- **Networking:**
+  - Integrated: "Intel i219 Gigabit Ethernet controllers with Intel Remote Wake UP, PXE and Jumbo frames support" [S9]
+  - Optional add-in NICs: Intel i210 (Gen1 x1), Intel X550-T2 10GbE (Gen3 x4), Aquantia AQN-108 2.5/5GbE (Gen3 x4), Intel X710-T2L 10GbE (Gen3 x8). WoL is not supported on the X550-T2 and X710 [S9]
+  - Wi-Fi: the network page lists none [S9]. Spec sheet: optional Intel Dual Band Wireless AC 8265 with Bluetooth [S12]
+  - Card slots page: "the Qualcomm WCN6856-DBS Wi-Fi/Bluetooth Card be installed in PCIe Slot 5" [S6]. That implies Wi-Fi is an add-in PCIe card here, not an on-board M.2 slot. This is my reading of the note, not stated outright
+- **Upgrade notes stated by Dell:**
+  - ECC RDIMM needs a Xeon W CPU; Core X uses non-ECC UDIMM [S3]
+  - 32 GB DIMMs only with Xeon W [S4]
+  - Max RAM is 256 GB on Sky Lake and 512 GB on Cascade Lake [S3]
+  - Core i7-78xx disables slot 1 and cuts slot 4 to x8 [S7]. **Conflict:** the card-slots page says slot 1 is not active for "Core i7X" CPUs [S6], while the PCIe-slots table says this only for "Core i7-78xx" [S7]. The supported list includes an i7-9800X, and the two pages leave it unclear which slot layout it gets, so don't assume an i7-9800X keeps slot 1 (conflict marked on a second check, 2026-11-20)
+  - The 425 W PSU is not offered with Core X [S10]
+
+Sources:
+- [S1] Manuals list, Precision 5820: https://www.dell.com/support/product-details/en-us/product/precision-5820-workstation/resources/manuals
+- [S2] System specifications (Processors table): https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/system-specifications?guid=guid-cc0fbc47-6600-410a-8bbf-1793e2767549&lang=en-us
+- [S3] Memory specifications: https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/memory-specifications?guid=guid-5ee14007-db24-4d37-aecb-34dea3370abb&lang=en-us
+- [S4] Memory configuration: https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/memory-configuration?guid=guid-ce1561c8-88a9-45e3-bc3b-762cbb37e073&lang=en-us
+- [S5] Storage specifications: https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/storage-specifications?guid=guid-0a0a053b-5bb5-4bec-84d4-e149dcc7167e&lang=en-us
+- [S6] Card slots: https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/card-slots?guid=guid-641b07b1-358e-40d2-a8c2-60ab826d654e&lang=en-us
+- [S7] PCIe slots: https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/pcie-slots?guid=guid-794cceed-7e2f-4819-9361-4fe575b1b92b&lang=en-us
+- [S8] Video specifications: https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/video-specifications?guid=guid-1953ea25-a89a-4d21-a84f-d945ab6bd238&lang=en-us
+- [S9] Network specifications: https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/network-specifications?guid=guid-1b54d461-1c20-4207-a768-49bffdfac7b9&lang=en-us
+- [S10] Power specifications: https://www.dell.com/support/manuals/en-us/precision-5820-workstation/precision_5820_om_pub/power-specifications?guid=guid-b8e9f4c0-5d89-4b94-90ed-72074227aa92&lang=en-us
+- [S11] PDF of the Owner's Manual, could not open (robots_disallowed / proxy 403): https://dl.dell.com/content/manual32840811-dell-precision-5820-tower-owner-s-manual.pdf?language=en-us
+- [S12] Dell "Precision 5820 Tower Spec Sheet" (German edition, no date): https://www.delltechnologies.com/asset/de-at/products/workstations/technical-support/Precision_5820_Tower_Spec_Sheet.pdf
+- [S13] "PRECISION 5820/7820 TOWERS Technical Guidebook", Oct. 2017 v1 (Dell Japan site): https://japancatalog.dell.com/c/wp-content/uploads/Precision_5820_7820_Towers_Technical_Guidebook.pdf
+- [S14] Intel, Xeon W-2235 specifications: https://www.intel.com/content/www/us/en/products/sku/198608/intel-xeon-w-2235-processor-8-25m-cache-3-80-ghz/specifications.html
+
+Second check, 2026-11-20: 22 facts checked against the cited pages; 0 corrected; 0 couldn't be checked.

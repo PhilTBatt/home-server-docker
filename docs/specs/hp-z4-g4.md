@@ -1,0 +1,62 @@
+# HP Z4 G4
+
+- **Form factor:** a single tower. There are two platforms under the one name, Xeon W (chipset C422) and Core X-series (chipset X299), and features differ between them. **Both are given.**
+- **CPU:**
+  - "Single LGA2066 R4" socket ([QS]).
+  - Xeon W-2100 and W-2200 (W-2102 to W-2295). Core X: i9-10980XE/10940X/10920X/10900X and i7-9800X ([QS]).
+  - Highest TDP listed 168 W (W-2295). Core X tops out at 165 W ([QS]).
+  - CPU fans: a 5-wire design for CPUs of 140 W or below, and a 6-wire design above 140 W ([QS]). So a CPU upgrade across the 140 W line implies a different fan (inference).
+  - The change log says "Added Intel Xeon W-2200, Intel Core i9-10900X X-series processors". No BIOS version or board revision is stated in the pages read ([QS]).
+- **Memory:**
+  - 8 DIMM slots ([QS]).
+  - Xeon W: registered ECC DDR4 (RDIMM), max 512 GB ([QS]).
+  - Core X: unbuffered non-ECC DDR4 (UDIMM), max 256 GB. Core X does not support ECC ([QS]).
+  - Speeds: W-2295 to W-2223 run 2933, except the W-2223 itself: its processor-table row reads "2666" (the W-2225 row reads "2933") ([QS]) (corrected on a second check, 2026-11-20). Another table in the same document reportedly gives the W-2223 as 2933, so the document disagrees with itself; treat the W-2223 as 2666 unless proven otherwise. W-2145 to W-2123 run 2666. W-2104/W-2102 run 2400. Core X i9 run 2933 and the i7-9800X runs 2666 ([QS]).
+  - 64 GB RDIMMs are "W-2200 only". 32 GB nECC modules are "i9-10900X/XE only" ([QS]).
+  - **The document disagrees with itself on memory cooling** ([QS]):
+    - Memory Note 2: "Memory configurations using Xeon Skylake (W-21xx) processors and 32GB Registered DIMMs require" the Memory Cooling Solution.
+    - Other Hardware Note 1: the solution "is required for memory configurations using Xeon Processors and 32GB Registered DIMMs" (any Xeon).
+  - Channel count: not stated.
+- **Built-in graphics:** "No". A discrete card is needed for display (inference from that line) ([QS]).
+- **Expansion slots** ([QS]):
+  - Xeon W:
+    - Slot 1 x16 from the CPU.
+    - Slots 2 and 4 x4 from the chipset (open-ended).
+    - Slot 3 x16 from the CPU.
+    - Slot 5 x8 from the CPU (open-ended).
+    - Slot 0 is mechanical only.
+  - Core X: slot 3 is x16 on the i9 and i7-9800X (x16 mechanical / x8 electrical on other i7). Slot 5 is x8 on the i9 and i7-9800X (mechanical only, no data, on other i7).
+  - "Slots 1–5 accept full-height, full-length cards when the extender is used" (paraphrase).
+  - PSU graphics connectors:
+    - 465 W: none.
+    - 750 W: two 6-pin.
+    - 1000 W: four 6+2-pin (Xeon W and i9), two 6+2-pin (i7).
+  - No total graphics wattage is stated. The 1000 W PSU "includes a front fan and card guide kit for dual high-end graphics" (paraphrase).
+- **Storage:**
+  - M.2: Xeon W has two M.2 PCIe Gen3 x4 slots from the CPU; Core X has one ([QS]).
+  - **Two statements disagree on M.2 length:** the system spec lists "2260, 2280 and 22110", while the expansion table says "up to 80mm" ([QS]). M.2 SATA support: not stated.
+  - M.2 key: "Socket Type 3, Key M" ([QS]) (corrected on a second check, 2026-11-20).
+  - Z Turbo Drive Quad Pro (a PCIe card) needs the Fan and Front Card Kit and is not supported on Core i7-X ([QS]).
+  - Bays: two external 5.25" and two internal 2.5"/3.5" ([QS]).
+  - SATA: six 6 Gb/s ports, configurable as eSATA (no hot plug on eSATA). RAID 0/1/5/10. Factory RAID is Windows only, and hardware RAID is not supported on Linux ([QS]).
+- **Power supply** ([QS]):
+  - 465 W (90 %, "Xeon entry only").
+  - 750 W (90 %, "Xeon mid-range only").
+  - 1000 W (90 %). Core i7-X is listed only under this tier, so it is the only PSU for Core i7 configurations (inference, not stated).
+  - All are "90–269 VAC". Proprietary connector: not stated.
+- **Networking:**
+  - Xeon W: Intel I219-LM + I210-AT (two GbE ports), AMT/vPro ([QS]).
+  - Core X: Intel I219-V (one port). "Intel® AMT™ is not available on Intel Core X configs" ([QS]).
+  - Wi-Fi: optional PCIe cards (Intel 8265, Intel AX200). No M.2 Wi-Fi slot is mentioned ([QS]).
+- **Upgrade trip-ups the docs state:**
+  - The CPU family dictates the memory type: RDIMM ECC (Xeon W) vs UDIMM non-ECC (Core X).
+  - Slot wiring changes with the CPU.
+  - The PSU dictates the number of GPU power connectors (none on 465 W).
+  - CPUs over 140 W need the 6-wire fan.
+  - Memory cooling is needed for W-21xx with 32 GB RDIMMs (another note in the same document says any Xeon with 32 GB RDIMMs).
+  - No integrated graphics.
+
+<a id="z4-sources"></a>Sources:
+- [QS] HP QuickSpecs "HP Z4 G4 Workstation", footer "c05527757 — DA – 15954 — Worldwide — Version 27 — February 1, 2021". The copy on HP's community host: https://h30434.www3.hp.com/psg/attachments/psg/Business-PC-Workstation-POS/35555/1/Z4%20G4%20QuickSpecs%20v27.pdf
+
+Second check, 2026-11-20: 24 facts checked against the cited pages; 1 corrected; 1 couldn't be checked.
