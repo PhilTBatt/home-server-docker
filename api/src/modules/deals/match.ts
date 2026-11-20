@@ -23,6 +23,12 @@ export function hasPhrase(title: string, phrase: string): boolean {
   return plainWords(title).includes(startsWith ? wanted.trimEnd() : wanted);
 }
 
+export function alwaysExcluded(must: string, exclude: string): boolean {
+  const kept = must.trim().endsWith("*") ? plainWords(must).trimEnd() : plainWords(must);
+  const dropped = exclude.trim().endsWith("*") ? plainWords(exclude).trimEnd() : plainWords(exclude);
+  return dropped.trim() !== "" && kept.includes(dropped);
+}
+
 export function totalPrice(listing: Listing): number {
   return listing.price + (listing.postage ?? 0);
 }

@@ -2,8 +2,8 @@ import { londonTime } from "../notify/daily.js";
 import type { Notification } from "../notify/notifier.js";
 import type { Problem } from "../system/alerts.js";
 import { capNotification, dealNotification, digestNotification, endingNotification, guideIsStale, moreNotification, watchingNotification, type Started } from "./alert.js";
-import { cautions, chooseOption, isAuctionOnly, isGreat, priceKnown, priorityFor, readsOptions, standing, totalPrice, underGuide, unitPrice, whyNot, withOption, type UnitPrice } from "./match.js";
-import { defaultLimits, fingerprint, type Limits, type Quiet, type Search, type SearchList } from "./searches.js";
+import { alwaysExcluded, cautions, chooseOption, isAuctionOnly, isGreat, priceKnown, priorityFor, readsOptions, standing, totalPrice, underGuide, unitPrice, whyNot, withOption, type UnitPrice } from "./match.js";
+import { avoidLists, defaultLimits, fingerprint, type Limits, type Quiet, type Search, type SearchList } from "./searches.js";
 import { SourceError, type Categories, type CategoryDetails, type DetailNames, type FullListing, type Listing, type ListingOption, type Source } from "./source.js";
 import { emptyMemory, maxSeenPerSearch, type Memory, type Seen, type Store } from "./store.js";
 
@@ -730,6 +730,16 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       return (list?.searches ?? []).map((search) => {
         const notes: string[] = [];
         if (search.readOptions && !readsOptions(search)) notes.push("readOptions does nothing here: the search names no size in GB or TB");
+        for (const word of search.exclude) {
+          const must = search.mustInclude.find((phrase) => alwaysExcluded(phrase, word));
+          if (must !== undefined) notes.push(`nothing can match: exclude "${word}" hides every title with "${must}", which mustInclude needs`);
+        }
+        for (const name of search.avoid) {
+          for (const word of avoidLists[name] ?? []) {
+            const must = search.mustInclude.find((phrase) => alwaysExcluded(phrase, word));
+            if (must !== undefined) notes.push(`nothing can match: the ${name} avoid list's "${word}" hides every title with "${must}", which mustInclude needs`);
+          }
+        }
         if (guideIsStale(search, now)) notes.push(`its guide price was set on ${search.guideDate}, over 30 days ago`);
         const result = results.get(search.id);
         const checked = lastChecked.get(search.id);

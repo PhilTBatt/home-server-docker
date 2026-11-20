@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { alwaysExcluded } from "./match.js";
 import { avoidLists, conditionIds, defaultLimits, fingerprint, loadSearches, readSearches, type Search } from "./searches.js";
 
 const sources = ["ebay"];
@@ -534,6 +535,8 @@ test("the catalogue in the repo loads beside the example list, every search off 
   assert.ok(added.length >= 100);
   assert.ok(list.searches.length <= 120, `${list.searches.length} leaves less than 30 of the 150 for your own searches`);
   assert.ok(added.every((search) => !search.on && search.group !== null), "every catalogue search is off and grouped");
+  const hiders = (search: Search) => [...search.exclude, ...search.avoid.flatMap((name) => avoidLists[name] ?? [])];
+  assert.deepEqual(list.searches.filter((search) => hiders(search).some((word) => search.mustInclude.some((must) => alwaysExcluded(must, word)))).map((search) => search.id), []);
   const fromEbay = added.filter((search) => search.source === "ebay");
   assert.ok(fromEbay.every((search) => search.guidePrice !== null && search.guideDate === "2026-11-19"));
   assert.ok(added.filter((search) => search.source === "hotukdeals").length >= 5);

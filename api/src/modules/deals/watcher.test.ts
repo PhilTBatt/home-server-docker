@@ -2338,6 +2338,12 @@ test("a search's notes say when readOptions can't do anything and when its guide
   await watcher.run(at(0));
   assert.deepEqual(watcher.searches(at(1)).map((search) => search.notes), [["readOptions does nothing here: the search names no size in GB or TB", "its guide price was set on 2026-10-01, over 30 days ago"], []]);
   assert.deepEqual(watcher.searches(new Date("2026-12-05T00:00:00Z"))[1].notes, ["its guide price was set on 2026-11-01, over 30 days ago"]);
+  const cancelled = richSetup([{ ...ram, mustInclude: ["ddr4 ecc", "2x16gb"], exclude: ["registered", "ECC"] }, { ...optiplex, mustInclude: ["7070*"], exclude: ["7070"] }]);
+  await cancelled.watcher.run(at(0));
+  assert.deepEqual(cancelled.watcher.searches(at(1)).map((search) => search.notes), [['nothing can match: exclude "ECC" hides every title with "ddr4 ecc", which mustInclude needs'], []]);
+  const avoided = richSetup([{ ...ram, mustInclude: ["registered ecc"], avoid: ["server ram"] }]);
+  await avoided.watcher.run(at(0));
+  assert.deepEqual(avoided.watcher.searches(at(1))[0].notes, ['nothing can match: the server ram avoid list\'s "registered" hides every title with "registered ecc", which mustInclude needs']);
   assert.equal(watcher.searches(at(1))[0].options, null);
 });
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
-import { cautions, chooseOption, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot, withOption } from "./match.js";
+import { alwaysExcluded, cautions, chooseOption, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot, withOption } from "./match.js";
 import { readSearches, type Search } from "./searches.js";
 import type { Listing, ListingOption } from "./source.js";
 
@@ -587,4 +587,20 @@ test("with its option known, a listing's price per unit comes from the option, a
   assert.deepEqual([isGreat(drive, chosen), priorityFor(drive, chosen)], [true, 4]);
   assert.deepEqual(cautions(search(), chosen), ["the listing has more than one option, and this is the price of Storage Capacity: 4 TB"]);
   assert.deepEqual(cautions(search(), base), ["the listing has more than one option, so this may be its lowest price"]);
+});
+
+test("an exclude word always hides a mustInclude word when every title with the one has the other", () => {
+  assert.ok(alwaysExcluded("ddr4", "ddr4"));
+  assert.ok(alwaysExcluded("ddr4 ecc", "ECC"));
+  assert.ok(alwaysExcluded("16GB", "16 gb"));
+  assert.ok(alwaysExcluded("ddr4", "ddr*"));
+  assert.ok(alwaysExcluded("512*", "51*"));
+  assert.ok(!alwaysExcluded("512*", "512"));
+  assert.ok(!alwaysExcluded("512*", "512gb"));
+  assert.ok(!alwaysExcluded("16gb", "16gb x 2"));
+  assert.ok(!alwaysExcluded("ecc", "non ecc"));
+  assert.ok(!alwaysExcluded("ddr4", "ddr"));
+  assert.ok(!alwaysExcluded("ddr4", "!!"));
+  assert.ok(!alwaysExcluded("!!", "ddr4"));
+  assert.ok(!alwaysExcluded("!!", "??"));
 });
