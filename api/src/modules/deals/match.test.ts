@@ -422,6 +422,16 @@ test("a great deal is at least the chosen percentage under the guide price, and 
   assert.equal(priorityFor(guide, listing({ price: 15000, postage: 0, buying: ["AUCTION", "FIXED_PRICE"] })), 2);
 });
 
+test("a listing with several options is never a great deal, and over the guide price it's low priority, since its cheapest option already is", () => {
+  const guide = search({ guidePrice: 100 });
+  const options = (price: number) => listing({ price, postage: 0, variations: true });
+  assert.deepEqual([isGreat(guide, options(1000)), priorityFor(guide, options(1000))], [false, 3]);
+  assert.deepEqual([isGreat(guide, options(10000)), priorityFor(guide, options(10000))], [false, 3]);
+  assert.deepEqual([isGreat(guide, options(20000)), priorityFor(guide, options(20000))], [false, 2]);
+  assert.equal(underGuide(guide, options(1000)), 90);
+  assert.deepEqual([isGreat(guide, listing({ price: 1000, postage: 0 })), priorityFor(guide, listing({ price: 1000, postage: 0 }))], [true, 4]);
+});
+
 test("cautions name what's worth a second look, and an ordinary listing has none", () => {
   assert.deepEqual(cautions(search(), listing()), []);
   assert.deepEqual(cautions(search(), listing({ sellerFeedback: 9 })), ["the seller has under 10 ratings"]);

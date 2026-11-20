@@ -105,7 +105,7 @@ export function underGuide(search: Search, listing: Listing): number | null {
 }
 
 export function isGreat(search: Search, listing: Listing): boolean {
-  return search.guidePrice !== null && !isAuctionOnly(listing) && totalPrice(listing) * 100 <= search.guidePrice * (100 - search.greatPercent);
+  return search.guidePrice !== null && !isAuctionOnly(listing) && !listing.variations && totalPrice(listing) * 100 <= search.guidePrice * (100 - search.greatPercent);
 }
 
 export function priorityFor(search: Search, listing: Listing): 2 | 3 | 4 {

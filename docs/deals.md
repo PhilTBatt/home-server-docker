@@ -166,6 +166,8 @@ If that extra question returns as many listings as the search itself, the name i
 
 An auction's current bid isn't judged like this: a 99p opening bid isn't a great deal. Its ending-soon alert says how the bid compares, worded as a bid.
 
+A listing with more than one option isn't judged like this either: eBay shows its cheapest option's price, so a 1 TB option can look like a great deal on a 4 TB drive. Its alert still says how far under or over the guide price it is, and asks you to check the option. Under the guide price it comes at the usual priority; over it, low priority, since every option is over it too.
+
 Set `guideDate` to the day you chose the price. After 30 days the alert reminds you to check it's still right. The watcher never works a price out from eBay's listings: eBay's agreement doesn't allow using its data to suggest or model prices, so the judgement stays yours (record 0021).
 
 ## What an alert says about the seller
