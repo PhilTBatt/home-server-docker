@@ -540,7 +540,7 @@ test("the catalogue in the repo loads beside the example list, every search off 
   const fromEbay = added.filter((search) => search.source === "ebay");
   assert.ok(fromEbay.every((search) => search.guidePrice !== null && ["2026-11-19", "2026-11-20"].includes(search.guideDate ?? "")));
   assert.ok(added.filter((search) => search.source === "hotukdeals").length >= 5);
-  assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["ram 170083", "ram 11210"]);
+  assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["ram 170083", "ram 11210", "graphics 27386"]);
   const ram = fromEbay.filter((search) => search.group === "ram");
   assert.ok(ram.every((search) => search.unit === "GB" && (search.categoryId === "11210" || (search.categoryId === "170083" && search.hideDetails !== null))));
   assert.deepEqual(ram.filter((search) => search.categoryId === "11210").map((search) => search.id), ["ddr4-rdimm-32gb"]);
@@ -549,6 +549,8 @@ test("the catalogue in the repo loads beside the example list, every search off 
   assert.ok(servers.length > 0 && servers.every((search) => spareParts.every((word) => search.exclude.includes(word))), "server searches keep spare parts out");
   const cards = fromEbay.filter((search) => search.group === "graphics");
   assert.ok(cards.length >= 8 && cards.every((search) => search.exclude.includes("gaming pc") && search.exclude.includes("prebuilt")), "graphics card searches keep whole PCs out");
+  assert.ok(cards.every((search) => search.categoryId === "27386"), "graphics card searches only look in eBay's Graphics/Video Cards category");
+  assert.equal(added.find((search) => search.id === "pc-rtx-3060-12gb")?.categoryId, null, "the whole-PC search isn't limited to the cards' category");
   const gaming = ["rtx-3060-12gb", "rx-6600", "rx-6700-xt", "arc-b580"];
   assert.deepEqual(cards.filter((search) => search.exclude.includes("computer") && search.exclude.includes("desktop pc")).map((search) => search.id), gaming, "only the gaming cards also leave out computer and desktop pc, since small cards are often sold for SFF desktop PCs");
   const storage = fromEbay.filter((search) => search.group === "storage");
