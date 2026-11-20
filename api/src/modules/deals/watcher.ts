@@ -33,6 +33,7 @@ export type WatcherStatus = {
   note: string | null;
   problems: Problem[];
   quiet: { from: string; to: string; allow: "none" | "great"; now: boolean } | null;
+  digest: { at: string; sentToday: boolean; skippedToday: boolean } | null;
 };
 
 export type SearchStatus = {
@@ -707,6 +708,10 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     problems,
 
     status(now = new Date()) {
+      const digestStatus = (at: number, time: Date) => {
+        const sentToday = memory?.digested === londonTime(time).day;
+        return { at: clock(at), sentToday, skippedToday: !sentToday && londonMinutes(time) >= at + digestWindowMinutes };
+      };
       const quiet = list?.quiet ?? null;
       return {
         quiet: quiet === null ? null : { from: clock(quiet.from), to: clock(quiet.to), allow: quiet.allow, now: inQuiet(quiet, now) },
@@ -717,6 +722,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         alertsPerDay: limits().alertsPerDay,
         note,
         problems: problems(),
+        digest: list === null || list.digest === null ? null : digestStatus(list.digest, now),
       };
     },
 

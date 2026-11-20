@@ -308,7 +308,7 @@ function fakeDealWatcher() {
       return { ran: true, checked: 2, alerts: 1, failed: 0, unsent: false };
     },
     problems: () => [],
-    status: () => ({ lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], quiet: null }),
+    status: () => ({ lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], quiet: null, digest: null }),
     searches: () => [],
     hidden: () => null,
     matches: () => [],
@@ -377,7 +377,7 @@ test("the deal status says where seen listings are kept and which eBay it talks 
   const { watcher } = fakeDealWatcher();
   const app = await buildRealApp({ logger: false, config, dealWatcher: watcher });
   const response = await app.inject({ method: "GET", url: "/deals/status", headers: goodHeader });
-  assert.deepEqual(response.json(), { lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], quiet: null, seen: "memory", environment: "production", ai: false });
+  assert.deepEqual(response.json(), { lastRun: null, callsToday: 3, callsPerDay: 1000, alertsToday: 1, alertsPerDay: 60, note: null, problems: [], quiet: null, digest: null, seen: "memory", environment: "production", ai: false });
 });
 
 test("a deal watcher problem shows in /system/alerts, so it reaches the phone like any other", async () => {

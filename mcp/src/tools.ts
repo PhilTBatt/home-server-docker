@@ -46,7 +46,7 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_deal_status",
-    description: "How the deal watcher is doing: when it last ran, today's counts of calls and alerts against their limits, where it keeps seen listings, and any problems. Fails with a 404 while the deal watcher is switched off.",
+    description: "How the deal watcher is doing: when it last ran, today's counts of calls and alerts against their limits, quiet hours, when the digest goes and whether today's has, where it keeps seen listings, and any problems. Fails with a 404 while the deal watcher is switched off.",
     path: "/deals/status",
   },
   {

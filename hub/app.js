@@ -143,6 +143,7 @@
  * @property {string | null} note
  * @property {Problem[]} problems
  * @property {{ from: string, to: string, allow: string, now: boolean } | null} [quiet]
+ * @property {{ at: string, sentToday: boolean, skippedToday: boolean } | null} [digest]
  */
 
 /**
@@ -683,6 +684,7 @@ function dealSummary(status) {
   const used = `Today: ${status.callsToday} of ${status.callsPerDay} calls, ${status.alertsToday} of ${status.alertsPerDay} alerts.`;
   const parts = [ran, used, ...status.problems.map((problem) => problem.message)];
   if (status.quiet?.now) parts.push(`Quiet hours until ${status.quiet.to}: ${status.quiet.allow === "great" ? "only great deals and ending-soon alerts come through" : "alerts are held"}.`);
+  if (status.digest) parts.push(status.digest.sentToday ? `Today's digest has gone; the next is at ${status.digest.at} tomorrow.` : status.digest.skippedToday ? `Today's digest didn't go (quiet hours, or no check in its three hours); the next is at ${status.digest.at} tomorrow.` : `Digest at ${status.digest.at}.`);
   if (status.note !== null) parts.push(status.note);
   return parts.join(" ");
 }

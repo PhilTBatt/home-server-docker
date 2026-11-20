@@ -285,7 +285,7 @@ Problems go through the same alerts as everything else on the server (`/system/a
 
 ## Routes and tools
 All behind the API token, and all 404 with "The deal watcher is switched off" while `DEALS=off`.
-- `GET /deals/status`: last run, today's counts, where seen listings are kept, problems.
+- `GET /deals/status`: last run, today's counts, quiet hours, the digest's time and whether today's has gone or its three hours passed without it, where seen listings are kept, problems.
 - `GET /deals/searches`: each search and how its last check went: matches, how many each rule hid, and, for a search with `readOptions`, how many listings' options gave a price that fits (`fitted`), couldn't be told (`unknown`) or weren't read yet (`unread`). `notes` says when a setting can't do anything or the guide price is over 30 days old.
 - `GET /deals/searches/<id>/hidden`: up to three titles for each reason the search's last check hid listings, to see what its rules catch. Titles only, from the last six hours, for the hub page; no MCP tool reads it.
 - `GET /deals/matches`: the current listings for each search, cheapest first, up to 50 each, or fewer with `most=<1 to 50>`.

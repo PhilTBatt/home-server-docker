@@ -1031,14 +1031,14 @@ test("searches reports each search's settings and how its last check went", asyn
 
 test("the status starts empty and then counts the day's calls and alerts", async () => {
   const { world, watcher } = setup([optiplex], { limits: { callsPerDay: 500, alertsPerDay: 20 } });
-  assert.deepEqual(watcher.status(), { lastRun: null, callsToday: 0, callsPerDay: 1000, alertsToday: 0, alertsPerDay: 60, note: null, problems: [], quiet: null });
+  assert.deepEqual(watcher.status(), { lastRun: null, callsToday: 0, callsPerDay: 1000, alertsToday: 0, alertsPerDay: 60, note: null, problems: [], quiet: null, digest: null });
   assert.deepEqual(watcher.problems(), []);
   assert.deepEqual(watcher.searches(), []);
   assert.deepEqual(watcher.matches(at(0)), []);
   await watcher.run(at(0));
   world.found.set("optiplex", listings(1, 2));
   await watcher.run(at(30));
-  assert.deepEqual(watcher.status(), { lastRun: at(30).toISOString(), callsToday: 2, callsPerDay: 500, alertsToday: 2, alertsPerDay: 20, note: null, problems: [], quiet: null });
+  assert.deepEqual(watcher.status(), { lastRun: at(30).toISOString(), callsToday: 2, callsPerDay: 500, alertsToday: 2, alertsPerDay: 20, note: null, problems: [], quiet: null, digest: null });
 });
 
 test("a search that names a source the watcher doesn't have is reported, not run", async () => {
@@ -2445,4 +2445,18 @@ test("in summer the digest follows the clock in London, an hour ahead of UTC", a
   assert.deepEqual(digests(world.sent), []);
   await watcher.run(new Date("2026-07-15T07:00:00.000Z"));
   assert.equal(digests(world.sent).length, 1);
+});
+
+test("status gives the digest's time, whether today's has gone, and whether its three hours passed without it", async () => {
+  const { world, watcher } = richSetup([optiplex], { digest: "12:30" });
+  world.found.set("optiplex", listings(1));
+  assert.equal(watcher.status(at(0)).digest, null);
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.status(at(0)).digest, { at: "12:30", sentToday: false, skippedToday: false });
+  await watcher.run(at(30));
+  assert.deepEqual(watcher.status(at(30)).digest, { at: "12:30", sentToday: true, skippedToday: false });
+  assert.deepEqual(watcher.status(at(5 * 60)).digest, { at: "12:30", sentToday: true, skippedToday: false });
+  assert.deepEqual(watcher.status(at(24 * 60)).digest, { at: "12:30", sentToday: false, skippedToday: false });
+  assert.deepEqual(watcher.status(at(24 * 60 + 3 * 60 + 29)).digest, { at: "12:30", sentToday: false, skippedToday: false });
+  assert.deepEqual(watcher.status(at(24 * 60 + 3 * 60 + 30)).digest, { at: "12:30", sentToday: false, skippedToday: true });
 });

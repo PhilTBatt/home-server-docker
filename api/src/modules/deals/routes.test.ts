@@ -18,6 +18,7 @@ const status: WatcherStatus = {
   note: null,
   problems: [{ code: "deals-source", message: "The deal watcher can't check a search (ram): couldn't reach eBay." }],
   quiet: null,
+  digest: null,
 };
 
 const searches: SearchStatus[] = [
