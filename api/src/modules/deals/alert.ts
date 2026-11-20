@@ -1,5 +1,5 @@
 import type { Notification } from "../notify/notifier.js";
-import { cautions, guidePercent, isAuctionOnly, priorityFor, totalPrice, underGuide, unitPrice, type Standing } from "./match.js";
+import { cautions, guidePercent, isAuctionOnly, priceKnown, priorityFor, totalPrice, underGuide, unitPrice, type Standing } from "./match.js";
 import type { Search } from "./searches.js";
 import type { Listing } from "./source.js";
 
@@ -159,4 +159,41 @@ export function capNotification(alertsPerDay: number): Notification {
     message: `Today's limit of ${alertsPerDay} deal alerts is used up. Alerts start again tomorrow, with anything still unseen.`,
     tags: "zzz",
   };
+}
+
+const partTypes: [string, string][] = [["whole pc", "Whole PCs"], ["server", "Servers"], ["cpu", "CPUs"], ["motherboard", "Motherboards"], ["ram", "RAM"], ["storage", "Storage"], ["graphics", "Graphics cards"], ["power supply", "Power supplies"], ["case", "Cases"], ["cooling", "Cooling"], ["network", "Network"], ["expansion", "Expansion cards"], ["ups", "UPS"], ["other", "Other"]];
+const digestTitleLength = 45;
+
+export type DigestEntry = {
+  search: Search;
+  listings: Listing[];
+};
+
+function shortTitle(title: string): string {
+  return title.length <= digestTitleLength ? title : `${title.slice(0, digestTitleLength - 1).trimEnd()}\u2026`;
+}
+
+export function digestNotification(entries: DigestEntry[], sandbox: boolean): Notification {
+  const title = sandbox ? "Deal digest (sandbox)" : "Deal digest";
+  const groups = new Set<string | null>(entries.map((entry) => entry.search.group));
+  const order = [...partTypes.map(([id]) => id).filter((id) => groups.has(id)), ...(groups.has(null) ? [null] : [])];
+  const lines: string[] = [];
+  let total = 0;
+  for (const group of order) {
+    const label = group === null ? "No part type" : (partTypes.find(([id]) => id === group)?.[1] ?? group);
+    const found = entries.filter((entry) => entry.search.group === group).flatMap((entry) => entry.listings.filter((listing) => priceKnown(listing) && !isAuctionOnly(listing)).map((listing) => ({ search: entry.search, listing })));
+    total += found.length;
+    if (found.length === 0) continue;
+    const under = found.map((item) => ({ ...item, under: underGuide(item.search, item.listing) })).filter((item) => item.under !== null && item.under > 0);
+    under.sort((a, b) => (b.under ?? 0) - (a.under ?? 0));
+    const best = under[0];
+    if (best !== undefined) {
+      lines.push(`${label}: ${shortTitle(best.listing.title)}, ${money(totalPrice(best.listing))}, ${best.under}% under guide (${best.search.name}).`);
+      continue;
+    }
+    const cheapest = found.reduce((low, item) => (totalPrice(item.listing) < totalPrice(low.listing) ? item : low));
+    lines.push(`${label}: ${found.length} match${found.length === 1 ? "" : "es"}, none under guide. Cheapest: ${shortTitle(cheapest.listing.title)}, ${money(totalPrice(cheapest.listing))} (${cheapest.search.name}).`);
+  }
+  if (lines.length === 0) return { title, message: entries.length === 0 ? "Nothing to report: every search is snoozed, switched off or not checked in the last six hours." : "Nothing matches right now.", tags: "newspaper" };
+  return { title, message: [`${total} match${total === 1 ? "" : "es"} across ${lines.length} part type${lines.length === 1 ? "" : "s"}. The best of each:`, ...lines].join("\n"), tags: "newspaper" };
 }

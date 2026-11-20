@@ -40,7 +40,7 @@ function sample(): Memory {
 }
 
 test("an empty memory has no searches and zeroed counters", () => {
-  assert.deepEqual(emptyMemory(), { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), snoozed: new Map() });
+  assert.deepEqual(emptyMemory(), { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), snoozed: new Map(), digested: null });
   assert.notEqual(emptyMemory().searches, emptyMemory().searches);
 });
 
@@ -391,4 +391,16 @@ test("no more snoozes or counts are read than there can be searches", () => {
   const snoozes = Object.fromEntries(Array.from({ length: 160 }, (_, i) => [`s${i}`, null]));
   const memory = readMemory(JSON.stringify({ counters: { day: "2026-11-18", calls: 0, alerts: 0, capNoted: false }, searches: {}, alertsToday: many, snoozed: snoozes }), true);
   assert.deepEqual([memory?.alertsToday.size, memory?.snoozed.size], [150, 150]);
+});
+
+test("the day the digest last went is kept, and anything odd there is dropped", () => {
+  const memory = emptyMemory();
+  memory.digested = "2026-11-20";
+  const text = writeMemory(memory, false);
+  assert.equal(JSON.parse(text).digested, "2026-11-20");
+  assert.equal(readMemory(text, false)?.digested, "2026-11-20");
+  assert.equal(JSON.parse(writeMemory(emptyMemory(), false)).digested, undefined);
+  for (const odd of ["20-11-2026", "yesterday", 20261120, null, "2026-11-20T08:00:00Z"]) {
+    assert.equal(readMemory(JSON.stringify({ counters: { day: "2026-11-20", calls: 0, alerts: 0, capNoted: false }, searches: {}, digested: odd }), false)?.digested, null, JSON.stringify(odd));
+  }
 });

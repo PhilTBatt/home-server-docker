@@ -94,11 +94,13 @@ export type SearchList = {
   quiet: Quiet | null;
   postcode: string | null;
   files: string[];
+  digest: number | null;
 };
 
 export const defaultLimits: Limits = { callsPerDay: 1000, alertsPerDay: 60, alertsPerCheck: 5 };
 
 const maxFileLength = 256 * 1024;
+const latestDigest = 20 * 60 + 59;
 export const maxSearches = 150;
 const maxMoreFiles = 5;
 const moreFilePattern = /^[a-z0-9][a-z0-9-]{0,40}\.json$/;
@@ -571,10 +573,12 @@ export function readSearches(text: string, sources: string[], more: Record<strin
   if (opening.length > 0) fail(opening);
   if (!isObject(parsed)) fail(["it must start with { and hold a searches list"]);
 
-  const problems = unknownSettings(parsed, ["searches", "limits", "quiet", "postcode", "more"]);
+  const problems = unknownSettings(parsed, ["searches", "limits", "quiet", "postcode", "more", "digest"]);
   const limits = readLimits(parsed.limits, problems);
   const quiet = readQuiet(parsed.quiet, problems);
   const postcode = readPostcode(parsed.postcode, problems);
+  const digest = parsed.digest === undefined ? null : clockTime(parsed.digest);
+  if (parsed.digest !== undefined && (digest === null || digest > latestDigest)) problems.push("digest must be a time from 00:00 to 20:59, like 08:00");
   const moreList = readMore(parsed.more, problems);
   const files = moreList.map((entry) => entry.name);
   if (!Array.isArray(parsed.searches)) fail([...problems, "searches must be a list in [ ]"]);
@@ -615,7 +619,7 @@ export function readSearches(text: string, sources: string[], more: Record<strin
   }
 
   if (problems.length > 0) fail(problems);
-  return { searches, limits, quiet, postcode, files };
+  return { searches, limits, quiet, postcode, files, digest };
 }
 
 export async function loadSearches(path: string, sources: string[]): Promise<SearchList> {

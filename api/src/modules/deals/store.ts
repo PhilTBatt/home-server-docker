@@ -29,6 +29,7 @@ export type Memory = {
   counters: Counters;
   alertsToday: Map<string, number>;
   snoozed: Map<string, string | null>;
+  digested: string | null;
 };
 
 export type Store = {
@@ -43,7 +44,7 @@ const listingIdPattern = /^[A-Za-z0-9|:.-]{1,64}$/;
 const dayPattern = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
 export function emptyMemory(): Memory {
-  return { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), snoozed: new Map() };
+  return { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), snoozed: new Map(), digested: null };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -96,6 +97,7 @@ export function readMemory(text: string, keepSeen: boolean): Memory | null {
       if (searchIdPattern.test(id) && id.length <= 40 && count(value, 1_000_000) > 0) memory.alertsToday.set(id, count(value, 1_000_000));
     }
   }
+  if (typeof parsed.digested === "string" && dayPattern.test(parsed.digested)) memory.digested = parsed.digested;
   for (const [id, value] of Object.entries(isObject(parsed.snoozed) ? parsed.snoozed : {})) {
     if (memory.snoozed.size >= maxSearches) break;
     if (!searchIdPattern.test(id) || id.length > 40) continue;
@@ -124,6 +126,7 @@ export function writeMemory(memory: Memory, keepSeen: boolean): string {
   const saved: Record<string, unknown> = { counters: memory.counters, searches };
   if (memory.alertsToday.size > 0) saved.alertsToday = Object.fromEntries(memory.alertsToday);
   if (memory.snoozed.size > 0) saved.snoozed = Object.fromEntries(memory.snoozed);
+  if (memory.digested !== null) saved.digested = memory.digested;
   return JSON.stringify(saved);
 }
 

@@ -198,7 +198,7 @@ test("limits outside their ranges are refused by name", () => {
 });
 
 test("an empty list of searches is fine", () => {
-  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null, postcode: null, files: [] });
+  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null, postcode: null, files: [], digest: null });
 });
 
 test("searches keep the order they were written in", () => {
@@ -956,5 +956,16 @@ test("with hideVariations off, searches keep the fingerprints they had before it
     assert.equal(print({ ...extra, readOptions: false }, top), was, JSON.stringify(extra));
     assert.notEqual(print({ ...extra, readOptions: true }, top), was, JSON.stringify(extra));
     assert.notEqual(print({ ...extra, readOptions: true, hideVariations: true }, top), print({ ...extra, hideVariations: true }, top), JSON.stringify(extra));
+  }
+});
+
+test("the digest is a clock time no later than 20:59, and anything else is refused", () => {
+  const digest = (value: unknown) => readSearches(JSON.stringify({ searches: [], digest: value }), sources).digest;
+  assert.equal(digest("08:00"), 480);
+  assert.equal(digest("00:00"), 0);
+  assert.equal(digest("20:59"), 1259);
+  assert.equal(readSearches(listOf(), sources).digest, null);
+  for (const odd of ["21:00", "23:59", "8:00", "24:00", "08:60", "8am", "", 800, null, ["08:00"], { at: "08:00" }]) {
+    assert.match(problemIn(JSON.stringify({ searches: [], digest: odd })), /digest must be a time from 00:00 to 20:59, like 08:00/, JSON.stringify(odd));
   }
 });

@@ -1240,9 +1240,10 @@ function fullOf(shown: Listing): FullListing {
   };
 }
 
-function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { quiet?: unknown; limits?: Record<string, number>; keepSeen?: boolean } = {}) {
+function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { quiet?: unknown; limits?: Record<string, number>; keepSeen?: boolean; digest?: string } = {}) {
   const world = {
-    list: readSearches(JSON.stringify({ searches, limits: options.limits, quiet: options.quiet }), ["ebay"]),
+    list: readSearches(JSON.stringify({ searches, limits: options.limits, quiet: options.quiet, digest: options.digest }), ["ebay"]),
+    failSend: false,
     found: new Map<string, Listing[] | SourceError>(),
     sent: [] as Notification[],
     searchCalls: [] as { id: string; maxPages: number }[],
@@ -1297,6 +1298,7 @@ function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { 
       sources,
       store: world.store,
       notify: async (notification) => {
+        if (world.failSend) throw new Error("ntfy is down");
         world.sent.push(notification);
       },
     });
@@ -2337,4 +2339,110 @@ test("a search's notes say when readOptions can't do anything and when its guide
   assert.deepEqual(watcher.searches(at(1)).map((search) => search.notes), [["readOptions does nothing here: the search names no size in GB or TB", "its guide price was set on 2026-10-01, over 30 days ago"], []]);
   assert.deepEqual(watcher.searches(new Date("2026-12-05T00:00:00Z"))[1].notes, ["its guide price was set on 2026-11-01, over 30 days ago"]);
   assert.equal(watcher.searches(at(1))[0].options, null);
+});
+
+const digests = (sent: Notification[]) => sent.filter((notification) => notification.title.startsWith("Deal digest"));
+
+test("the digest goes once a day, at the first check from its time, and doesn't count as an alert", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, group: "whole pc", guidePrice: 100 }, { ...ram, group: "ram" }], { digest: "12:30" });
+  world.found.set("optiplex", [listing(1, { price: 8000, postage: 0 })]);
+  world.found.set("ram", [listing(2, { price: 4000, postage: 0 })]);
+  await watcher.run(at(0));
+  assert.deepEqual(digests(world.sent), []);
+  await watcher.run(at(30));
+  assert.equal(digests(world.sent).length, 1);
+  assert.match(digests(world.sent)[0].message, /^2 matches across 2 part types\. The best of each:\nWhole PCs: .*, £80\.00, 20% under guide \(OptiPlex\)\.\nRAM: 1 match, none under guide\. Cheapest: .*, £40\.00 \(DDR4 RAM\)\.$/);
+  assert.equal(watcher.status(at(30)).alertsToday, 0);
+  await watcher.run(at(60));
+  await watcher.run(at(200));
+  assert.equal(digests(world.sent).length, 1);
+  await watcher.run(at(24 * 60));
+  assert.equal(digests(world.sent).length, 1);
+  await watcher.run(at(24 * 60 + 30));
+  assert.equal(digests(world.sent).length, 2);
+});
+
+test("no digest is sent unless one is set", async () => {
+  const { world, watcher } = richSetup([optiplex]);
+  world.found.set("optiplex", listings(1));
+  for (const minutes of [0, 30, 60, 600, 1440]) await watcher.run(at(minutes));
+  assert.deepEqual(digests(world.sent), []);
+});
+
+test("the digest waits for quiet hours to end, and is skipped that day if they end three hours or more after its time", async () => {
+  const short = richSetup([optiplex], { digest: "12:30", quiet: { from: "12:00", to: "13:00" } });
+  short.world.found.set("optiplex", listings(1));
+  await short.watcher.run(at(0));
+  await short.watcher.run(at(30));
+  assert.deepEqual(digests(short.world.sent), []);
+  await short.watcher.run(at(60));
+  assert.equal(digests(short.world.sent).length, 1);
+  assert.equal(digests(short.world.sent)[0].priority, undefined);
+
+  const long = richSetup([optiplex], { digest: "12:30", quiet: { from: "12:00", to: "15:30" } });
+  long.world.found.set("optiplex", listings(1));
+  for (const minutes of [0, 30, 60, 120, 180, 210, 240, 300]) await long.watcher.run(at(minutes));
+  assert.deepEqual(digests(long.world.sent), []);
+});
+
+test("a digest that couldn't be sent is tried again at the next check, and one that was sent isn't sent again after a restart", async () => {
+  const { world, watcher, restart } = richSetup([optiplex], { digest: "12:30" });
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(0));
+  world.failSend = true;
+  assert.equal((await watcher.run(at(30))).unsent, true);
+  world.failSend = false;
+  await watcher.run(at(60));
+  assert.equal(digests(world.sent).length, 1);
+  assert.equal(JSON.parse(world.disk.text ?? "{}").digested, "2026-11-18");
+  const again = restart();
+  await again.run(at(90));
+  assert.equal(digests(world.sent).length, 1);
+});
+
+test("the digest leaves out snoozed searches and says so when nothing is left", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, group: "whole pc" }, { ...ram, group: "ram" }], { digest: "12:30" });
+  world.found.set("optiplex", listings(1));
+  world.found.set("ram", listings(2));
+  await watcher.run(at(0));
+  await watcher.snooze("ram", null);
+  await watcher.run(at(30));
+  assert.match(digests(world.sent)[0].message, /^1 match across 1 part type\. The best of each:\nWhole PCs: /);
+
+  const quiet = richSetup([optiplex], { digest: "12:30" });
+  quiet.world.found.set("optiplex", listings(1));
+  await quiet.watcher.run(at(0));
+  await quiet.watcher.snooze("optiplex", null);
+  await quiet.watcher.run(at(30));
+  assert.equal(digests(quiet.world.sent)[0].message, "Nothing to report: every search is snoozed, switched off or not checked in the last six hours.");
+});
+
+test("the digest leaves out a search whose last check was more than six hours ago", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, everyMinutes: 1440 }], { digest: "19:00" });
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(0));
+  await watcher.run(at(7 * 60));
+  assert.equal(digests(world.sent)[0].message, "Nothing to report: every search is snoozed, switched off or not checked in the last six hours.");
+});
+
+test("a digest at 20:59 can still go at a check just before midnight, but never after it", async () => {
+  const late = richSetup([optiplex], { digest: "20:59" });
+  late.world.found.set("optiplex", listings(1));
+  await late.watcher.run(at(0));
+  await late.watcher.run(at(11 * 60 + 55));
+  assert.equal(digests(late.world.sent).length, 1);
+
+  const night = richSetup([optiplex], { digest: "20:59", quiet: { from: "20:00", to: "00:30" } });
+  night.world.found.set("optiplex", listings(1));
+  for (const minutes of [0, 9 * 60, 11 * 60 + 55, 12 * 60 + 30, 12 * 60 + 35]) await night.watcher.run(at(minutes));
+  assert.deepEqual(digests(night.world.sent), []);
+});
+
+test("in summer the digest follows the clock in London, an hour ahead of UTC", async () => {
+  const { world, watcher } = richSetup([optiplex], { digest: "08:00" });
+  world.found.set("optiplex", listings(1));
+  await watcher.run(new Date("2026-07-15T06:58:00.000Z"));
+  assert.deepEqual(digests(world.sent), []);
+  await watcher.run(new Date("2026-07-15T07:00:00.000Z"));
+  assert.equal(digests(world.sent).length, 1);
 });

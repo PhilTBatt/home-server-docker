@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { safeLink } from "../notify/notifier.js";
-import { capNotification, dealNotification, endingNotification, money, moreNotification, priceLine, timeLeft, watchingNotification } from "./alert.js";
+import { capNotification, dealNotification, digestNotification, endingNotification, money, moreNotification, priceLine, timeLeft, watchingNotification } from "./alert.js";
 import { readSearches, type Search } from "./searches.js";
 import type { Listing } from "./source.js";
 
@@ -323,4 +323,47 @@ test("an ending-soon alert words the bid against the guide price as a bid, under
   assert.equal(line(10040), "The bid so far is 1% over your £100.00 guide price.");
   assert.equal(line(10000), "The bid so far is right on your £100.00 guide price.");
   assert.ok(!endingNotification(search({ buying: ["auction"] }), listing({ buying: ["AUCTION"] }), now, false).message.includes("guide"));
+});
+
+test("the digest gives the best match for each part type, in part type order: the furthest under its guide price, or else the cheapest", () => {
+  const ram = search({ id: "ram", name: "DDR4 RAM", group: "ram", query: "ddr4 32gb", guidePrice: 100 });
+  const ssd = search({ id: "nvme", name: "NVMe 1TB", group: "storage", query: "nvme 1tb", guidePrice: 60 });
+  const cpu = search({ id: "cpu", name: "Ryzen 5 5600", group: "cpu", query: "ryzen 5 5600" });
+  const own = search({ id: "own", name: "Own search", query: "something" });
+  const message = digestNotification(
+    [
+      { search: ram, listings: [listing({ title: "Corsair Vengeance 2x16GB DDR4 3200", price: 8000, postage: 0 }), listing({ title: "Crucial 2x16GB DDR4 3200 kit with a very long title indeed", price: 7000, postage: 500 })] },
+      { search: ssd, listings: [listing({ title: "Samsung 980 1TB", price: 7000, postage: 0 })] },
+      { search: cpu, listings: [listing({ title: "AMD Ryzen 5 5600 boxed", price: 9000, postage: 0 }), listing({ title: "AMD Ryzen 5 5600 tray", price: 8000, postage: 0 })] },
+      { search: own, listings: [listing({ title: "Something", price: 500, postage: 0 })] },
+    ],
+    false,
+  );
+  assert.deepEqual(message, {
+    title: "Deal digest",
+    tags: "newspaper",
+    message: [
+      "6 matches across 4 part types. The best of each:",
+      "CPUs: 2 matches, none under guide. Cheapest: AMD Ryzen 5 5600 tray, £80.00 (Ryzen 5 5600).",
+      "RAM: Crucial 2x16GB DDR4 3200 kit with a very lon\u2026, £75.00, 25% under guide (DDR4 RAM).",
+      "Storage: 1 match, none under guide. Cheapest: Samsung 980 1TB, £70.00 (NVMe 1TB).",
+      "No part type: 1 match, none under guide. Cheapest: Something, £5.00 (Own search).",
+    ].join("\n"),
+  });
+});
+
+test("the digest leaves out auctions and listings whose option isn't known, and says when there's nothing", () => {
+  const ram = search({ id: "ram", name: "DDR4 RAM", group: "ram", query: "ddr4 32gb", guidePrice: 100, buying: ["buy it now", "auction"] });
+  const message = digestNotification([{ search: ram, listings: [listing({ title: "Bid", price: 100, buying: ["AUCTION"] }), listing({ title: "Options", price: 200, variations: true }), listing({ title: "Fitted", price: 5000, postage: 0, variations: true, option: "Capacity: 32GB" })] }], true);
+  assert.deepEqual(message, { title: "Deal digest (sandbox)", tags: "newspaper", message: "1 match across 1 part type. The best of each:\nRAM: Fitted, £50.00, 50% under guide (DDR4 RAM)." });
+  assert.equal(digestNotification([{ search: ram, listings: [listing({ title: "Bid", buying: ["AUCTION"] })] }], false).message, "Nothing matches right now.");
+  assert.equal(digestNotification([], false).message, "Nothing to report: every search is snoozed, switched off or not checked in the last six hours.");
+});
+
+test("in the digest a match at exactly its guide price isn't under it, and part types come in the hub page's order", () => {
+  const at = search({ id: "psu", name: "550W PSU", group: "power supply", query: "550w psu", guidePrice: 50 });
+  assert.equal(digestNotification([{ search: at, listings: [listing({ title: "Corsair CX550", price: 5000, postage: 0 })] }], false).message, "1 match across 1 part type. The best of each:\nPower supplies: 1 match, none under guide. Cheapest: Corsair CX550, £50.00 (550W PSU).");
+  const one = (group: string) => ({ search: search({ id: group.replace(" ", "-"), name: group, group, query: group }), listings: [listing({ title: group, price: 1000, postage: 0 })] });
+  const lines = digestNotification(["ups", "graphics", "cpu", "server", "whole pc", "expansion", "network"].map(one), false).message.split("\n").slice(1);
+  assert.deepEqual(lines.map((line) => line.split(":")[0]), ["Whole PCs", "Servers", "CPUs", "Graphics cards", "Network", "Expansion cards", "UPS"]);
 });

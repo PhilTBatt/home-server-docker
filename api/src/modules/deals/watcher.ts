@@ -1,7 +1,7 @@
 import { londonTime } from "../notify/daily.js";
 import type { Notification } from "../notify/notifier.js";
 import type { Problem } from "../system/alerts.js";
-import { capNotification, dealNotification, endingNotification, guideIsStale, moreNotification, watchingNotification, type Started } from "./alert.js";
+import { capNotification, dealNotification, digestNotification, endingNotification, guideIsStale, moreNotification, watchingNotification, type Started } from "./alert.js";
 import { cautions, chooseOption, isAuctionOnly, isGreat, priceKnown, priorityFor, readsOptions, standing, totalPrice, underGuide, unitPrice, whyNot, withOption, type UnitPrice } from "./match.js";
 import { defaultLimits, fingerprint, type Limits, type Quiet, type Search, type SearchList } from "./searches.js";
 import { SourceError, type Categories, type CategoryDetails, type DetailNames, type FullListing, type Listing, type ListingOption, type Source } from "./source.js";
@@ -182,6 +182,7 @@ const optionReadsPerCheck = 10;
 const optionsKept = 1000;
 const optionCallsShare = 0.5;
 const examplesKept = 3;
+const digestWindowMinutes = 180;
 export const freshFor = 6 * hourMs;
 const needsAPerson = ["keys", "access", "request"];
 const sourceWide = ["keys", "access", "busy", "down"];
@@ -637,6 +638,21 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       await options.notify(inQuiet(loaded.quiet, now) ? { ...watching, priority: 2 } : watching).catch(() => {
         summary.unsent = true;
       });
+    }
+    const minutes = londonMinutes(now);
+    if (loaded.digest !== null && state.digested !== today && minutes >= loaded.digest && minutes < loaded.digest + digestWindowMinutes && !inQuiet(loaded.quiet, now)) {
+      const entries = loaded.searches.flatMap((search) => {
+        const result = results.get(search.id);
+        return search.on && !state.snoozed.has(search.id) && result !== undefined && time - result.checkedAt <= freshFor ? [{ search, listings: result.listings }] : [];
+      });
+      await options
+        .notify(digestNotification(entries, sandbox))
+        .then(() => {
+          state.digested = today;
+        })
+        .catch(() => {
+          summary.unsent = true;
+        });
     }
     await save(state);
     return summary;
