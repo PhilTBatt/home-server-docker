@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
 import { cautions, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot } from "./match.js";
 import { readSearches, type Search } from "./searches.js";
 import type { Listing } from "./source.js";
@@ -449,4 +450,22 @@ test("a listing with several options is hidden for them only when its search say
   assert.equal(whyNot(search(), listing({ variations: true }), now), null);
   assert.equal(whyNot(search({ hideVariations: true, maxPrice: 50 }), listing({ variations: true }), now), "price");
   assert.ok(hiddenReasons.includes("options"));
+});
+
+test("the catalogue's USB Wi-Fi search keeps adapters by any of its model names and drops antennas and internal cards", async () => {
+  const text = await readFile(new URL("../../../src/modules/deals/catalogue.example.json", import.meta.url), "utf8");
+  const raw = (JSON.parse(text) as { searches: Record<string, unknown>[] }).searches.find((entry) => entry.id === "usb-wifi-linux");
+  assert.ok(raw !== undefined);
+  const wifi = search({ ...raw, switch: "on" });
+  assert.deepEqual(wifi.mustInclude, []);
+  const cheap = { price: 2500, postage: 399 };
+  for (const title of ["ALFA AWUS036ACM Dual Band AC1200 USB WiFi Adapter", "Alfa Network AWUS036AXML WiFi 6E USB adapter Bluetooth", "Panda PAU0F AXE3000 USB Wi-Fi adapter", "USB WiFi 6 adapter MT7921AU Linux"]) {
+    assert.equal(whyNot(wifi, listing({ title, ...cheap }), now), null, title);
+  }
+  for (const title of ["ALFA AWUS036ACM antenna only", "Antenna for ALFA AWUS036ACM", "MT7921K PCIe WiFi 6E card", "AWUS036AXML case only", "M.2 MT7921AU wifi card"]) {
+    assert.equal(whyNot(wifi, listing({ title, ...cheap }), now), "words", title);
+  }
+  assert.equal(whyNot(wifi, listing({ title: "Alfa AWUS036AXML", price: 7500, postage: 0 }), now), null);
+  assert.equal(whyNot(wifi, listing({ title: "Alfa AWUS036AXML", price: 7501, postage: 0 }), now), "price");
+  assert.deepEqual([wifi.guidePrice, wifi.greatPercent], [3500, 50]);
 });

@@ -1699,19 +1699,20 @@
       "everyMinutes": 240
     },
     {
-      "id": "mt7921au-wifi",
-      "name": "MT7921AU USB Wi-Fi",
+      "id": "usb-wifi-linux",
+      "name": "USB Wi-Fi that Linux supports",
       "group": "network",
       "switch": "off",
-      "query": "mt7921au",
-      "minPrice": 15,
-      "maxWithPostage": 50,
+      "query": "(awus036axml, awus036acm, pau0d, pau0f, ax1672, ax9l, txe50uh, mt7921au, mt7921aun, mt7612u)",
+      "minPrice": 8,
+      "maxWithPostage": 75,
       "conditions": ["new", "opened", "used"],
-      "mustInclude": ["mt7921au"],
+      "exclude": ["antenna only", "antennas only", "aerial only", "antenna for", "antennas for", "aerial for", "replacement antenna", "cable only", "mount only", "case only", "case for", "cover for", "pcie", "pci-e", "m.2", "mt7921k", "mt7921e"],
       "avoid": ["faulty", "lots"],
       "sellerMinPercent": 97,
-      "guidePrice": 30,
+      "guidePrice": 35,
       "guideDate": "2026-11-19",
+      "greatPercent": 50,
       "everyMinutes": 240
     },
     {
