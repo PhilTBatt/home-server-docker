@@ -281,9 +281,38 @@ services:
       start_period: 1m
       start_interval: 2s
 
+  ears:
+    build: ./ears
+    container_name: ears
+    profiles:
+      - ears
+    env_file:
+      - ./ears/.env
+    volumes:
+      - type: bind
+        source: ./ears/switch
+        target: /switch
+        read_only: true
+        bind:
+          create_host_path: false
+    mem_limit: 256m
+    networks:
+      - ears
+    healthcheck:
+      test: ["CMD", "node", "/app/dist/ask.js", "state"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+
 networks:
   jarvis:
   speech:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  ears:
     internal: true
     driver_opts:
       com.docker.network.bridge.gateway_mode_ipv4: isolated

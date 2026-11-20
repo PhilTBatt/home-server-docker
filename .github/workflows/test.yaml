@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        folder: [api, mcp, jarvis]
+        folder: [api, mcp, jarvis, ears]
     defaults:
       run:
         working-directory: ${{ matrix.folder }}

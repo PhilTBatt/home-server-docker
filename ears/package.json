@@ -1,0 +1,17 @@
+{
+  "name": "home-hub-ears",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The service that owns Jarvis's microphone",
+  "scripts": {
+    "test": "tsc && node --test \"dist/**/*.test.js\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
