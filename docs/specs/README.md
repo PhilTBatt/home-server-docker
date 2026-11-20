@@ -2,6 +2,8 @@
 
 One file for each PC, workstation and small server the deal watcher's catalogue searches for, with what its maker's documents say about it: CPUs and socket, memory, built-in graphics, expansion slots and graphics card limits, storage, power supply, networking, and anything an upgrader trips on. The `pc-build` and `deal-check` skills read a machine's file to check whether used parts fit it, instead of opening the maker's site, many of whose spec pages refused automated reads in November 2026.
 
+The CPUs, motherboard chipsets and graphics cards the catalogue searches for have their own reference in [parts/](parts/README.md).
+
 ## How it was made
 - **Gathered 19 and 20 November 2026** by Claude research agents, one for each maker, from the makers' own documents: Dell's setup and specifications guides and spec sheets, HP's QuickSpecs, datasheets and service guides, HPE's QuickSpecs, Lenovo's PSREF sheets and a Fujitsu data sheet, plus Intel's processor pages for CPU sockets.
 - **Read through a web-fetch tool** that turns a page into text and answers questions about it. No PDF was read directly: this environment's proxy refused direct downloads, and some makers' hosts refused the fetch tool too, so some documents were read from copies on other sites. Each file names the host and, for HP, the document number and version.
