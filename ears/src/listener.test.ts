@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EarsState } from "./ears.js";
 import { frameBytes, frameLevel } from "./levels.js";
-import { backgroundMs, beforeMs, behindBytes, createListener, gapMs, holdMs, lateMs, noRoomYet, presenceMs, retryMs, stillSpeaking, wakeHost, wakeOff, wakePort, wakeWord, type Listener, type ListenerDeps } from "./listener.js";
+import { backgroundMs, beforeMs, behindBytes, createListener, gapMs, holdMs, lateMs, longestPieceBytes, noRoomYet, presenceMs, retryMs, stillSpeaking, wholeMsBytes, wakeHost, wakeOff, wakePort, wakeWord, type Listener, type ListenerDeps } from "./listener.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { Detector } from "./silero.js";
 import type { By, Tap } from "./tap.js";
@@ -210,16 +210,67 @@ test("sound is fed to the wake-word server between an audio-start and the next a
   await listener.close();
 });
 
-test("an odd byte at the end of a piece waits for the next, so the server only ever gets whole samples", { timeout: 5_000 }, async () => {
+test("an odd byte, and anything short of a whole millisecond, waits for the next piece, so the server only gets whole milliseconds, a second at most at a time, in order and nothing lost", { timeout: 5_000 }, async () => {
+  assert.deepEqual([wholeMsBytes, longestPieceBytes], [32, 32_000]);
   const { listener, connected, streams, detectors } = setUp();
   listener.waiting();
   await connected(1);
-  streams[0].onSound(Buffer.from([1, 2, 3]));
-  streams[0].onSound(Buffer.from([4]));
-  streams[0].onSound(Buffer.from([5]));
-  streams[0].onSound(Buffer.from([6, 7, 8]));
-  const chunks = detectors[0].sent.filter((event) => event.type === "audio-chunk").map((event) => [...(event.payload as Uint8Array)]);
-  assert.deepEqual(chunks, [[1, 2], [3, 4], [5, 6, 7, 8]]);
+  const all: number[] = [];
+  let next = 0;
+  for (const size of [3, 1, 1, 33, 61, 3_500, 70_001]) {
+    const piece = Buffer.alloc(size);
+    for (let index = 0; index < size; index++) piece[index] = (next + index) % 251;
+    next += size;
+    all.push(...piece);
+    streams[0].onSound(piece);
+  }
+  const chunks = detectors[0].sent.filter((event) => event.type === "audio-chunk").map((event) => event.payload as Uint8Array);
+  assert.equal(chunks.every((chunk) => chunk.length % 32 === 0 && chunk.length > 0 && chunk.length <= 32_000), true, chunks.map((chunk) => chunk.length).join(","));
+  const sent = chunks.flatMap((chunk) => [...chunk]);
+  assert.equal(sent.length, all.length - (all.length % 32));
+  assert.deepEqual(sent, all.slice(0, sent.length));
+  await listener.close();
+});
+
+test("what's left short of a millisecond when listening pauses isn't sent after it starts again", { timeout: 5_000 }, async () => {
+  const { listener, connected, streams, detectors } = setUp();
+  listener.waiting();
+  await connected(1);
+  streams[0].onSound(Buffer.alloc(40, 7));
+  listener.hold("a1");
+  listener.release("a1");
+  await pause(80);
+  streams[0].onSound(Buffer.alloc(32, 9));
+  const last = detectors[0].sent.at(-1);
+  assert.deepEqual([detectors[0].types().slice(-2), [...(last?.payload as Uint8Array)]], [["audio-start", "audio-chunk"], Array(32).fill(9)]);
+  await listener.close();
+});
+
+test("ears counts only the sound openWakeWord has been sent, not a leftover it's still holding, when it judges how late a detection is", { timeout: 5_000 }, async () => {
+  const { listener, connected, streams, detectors, earsState } = setUp();
+  listener.waiting();
+  await connected(1);
+  for (let piece = 0; piece < 30; piece++) streams[0].onSound(Buffer.alloc(3_200, 0));
+  streams[0].onSound(Buffer.alloc(40, 0));
+  const theirs = detectors[0].sent.filter((event) => event.type === "audio-chunk").reduce((bytes, event) => bytes + (event.payload as Uint8Array).length, 0) / 32;
+  detectors[0].say({ type: "detection", data: { name: "hey_jarvis", timestamp: theirs - lateMs + 0.1 }, payload: null });
+  await until(() => earsState.state === "recording");
+  earsState.state = "idle";
+  await listener.close();
+});
+
+test("after a long stretch of pieces that aren't whole milliseconds, openWakeWord's clock, which adds up each piece rounded down to a millisecond, still agrees with ears's, so a detection isn't taken as late", { timeout: 15_000 }, async () => {
+  const { listener, connected, streams, detectors, earsState, lines } = setUp({ settleMs: 800, startWithinMs: 5_000 });
+  listener.waiting();
+  await connected(1);
+  const piece = Buffer.alloc(3_410);
+  for (let index = 0; index < piece.length / 2; index++) piece.writeInt16LE(index % 2 === 0 ? 40 : -40, index * 2);
+  for (let sent = 0; sent < 32_000 * 60 * 15; sent += piece.length) streams[0].onSound(piece);
+  const theirs = detectors[0].sent.filter((event) => event.type === "audio-chunk").reduce((ms, event) => ms + Math.trunc(((event.payload as Uint8Array).length / 2 / 16_000) * 1_000), 0);
+  detectors[0].say({ type: "detection", data: { name: "hey_jarvis", timestamp: theirs - 100 }, payload: null });
+  await until(() => earsState.state === "recording");
+  assert.match(lines.at(-1) ?? "", /^Heard the wake word\./);
+  earsState.state = "idle";
   await listener.close();
 });
 
@@ -227,10 +278,10 @@ test("a sound the stream keeps using afterwards can't change what was sent", { t
   const { listener, connected, streams, detectors } = setUp();
   listener.waiting();
   await connected(1);
-  const piece = Buffer.from([1, 2, 3, 4]);
+  const piece = Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1));
   streams[0].onSound(piece);
   piece.fill(0);
-  assert.deepEqual([...(detectors[0].sent[2].payload as Uint8Array)], [1, 2, 3, 4]);
+  assert.deepEqual([...(detectors[0].sent[2].payload as Uint8Array)], Array.from({ length: 32 }, (_, index) => index + 1));
   await listener.close();
 });
 

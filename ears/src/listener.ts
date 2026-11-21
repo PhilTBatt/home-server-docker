@@ -15,6 +15,8 @@ export const gapMs = 500;
 export const beforeMs = 500;
 export const backgroundMs = 3_000;
 export const behindBytes = 2 * bytesPerSecond;
+export const wholeMsBytes = bytesPerSecond / 1000;
+export const longestPieceBytes = bytesPerSecond;
 export const lateMs = 2_000;
 
 const format = { rate: recordingRate, width: 2, channels: 1 };
@@ -97,6 +99,7 @@ export function createListener(deps: ListenerDeps): Listener {
   let closing: Promise<void> | null = null;
   let sentBytes = 0;
   let carry: number | null = null;
+  let unsent = new Uint8Array(0);
   let before: Uint8Array[] = [];
   let beforeBytes = 0;
   let levels: number[] = [];
@@ -122,6 +125,7 @@ export function createListener(deps: ListenerDeps): Listener {
     deps.log(`The wake word isn't working: ${text}.`);
   };
   const forget = () => {
+    unsent = new Uint8Array(0);
     frames.clear();
     before = [];
     beforeBytes = 0;
@@ -247,8 +251,13 @@ export function createListener(deps: ListenerDeps): Listener {
     }
     if (!feeding) startFeeding(connection);
     const copy = new Uint8Array(sound);
-    send(connection, "audio-chunk", copy);
-    sentBytes += copy.length;
+    const waiting = new Uint8Array(unsent.length + copy.length);
+    waiting.set(unsent);
+    waiting.set(copy, unsent.length);
+    const whole = waiting.length - (waiting.length % wholeMsBytes);
+    for (let at = 0; at < whole; at += longestPieceBytes) send(connection, "audio-chunk", waiting.slice(at, Math.min(whole, at + longestPieceBytes)));
+    unsent = waiting.slice(whole);
+    sentBytes += whole;
     before.push(copy);
     beforeBytes += copy.length;
     while (before.length > 1 && beforeBytes - before[0].length >= keepBefore) beforeBytes -= (before.shift() as Uint8Array).length;
