@@ -4,7 +4,7 @@ import type { Ears } from "./ears.js";
 
 export const earsPort = 8090;
 
-const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST" };
+const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST" };
 
 function digest(text: string): Buffer {
   return createHash("sha256").update(text).digest();
@@ -33,7 +33,7 @@ export function earsHandler(ears: Ears, token: string) {
       const started = ears.start();
       return started.ok ? send(response, 200, started.view) : send(response, 409, { error: started.error, ...ears.view() });
     }
-    const stopped = await ears.stop();
+    const stopped = await (path === "/recording/stop" ? ears.stop() : ears.cancel());
     return stopped.ok ? send(response, 200, { seconds: stopped.seconds, ...stopped.view }) : send(response, 409, { error: stopped.error, ...ears.view() });
   };
 }

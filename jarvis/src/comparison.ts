@@ -30,6 +30,13 @@ function isNumberOrNull(value: unknown): boolean {
   return value === null || (typeof value === "number" && Number.isFinite(value));
 }
 
+function isHeard(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const heard = value as Record<string, unknown>;
+  return [heard.recordedMs, heard.textMs].every((time) => typeof time === "number" && Number.isFinite(time) && time >= 0);
+}
+
 export function isLogLine(value: unknown): value is LogLine {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const line = value as Record<string, unknown>;
@@ -58,7 +65,8 @@ export function isLogLine(value: unknown): value is LogLine {
     laterNumberFields.every((field) => line[field] === undefined || isNumberOrNull(line[field])) &&
     (line.recovered === null || typeof line.recovered === "boolean") &&
     (line.spokeFirst === undefined || line.spokeFirst === null || typeof line.spokeFirst === "boolean") &&
-    (line.retried === undefined || line.retried === null || typeof line.retried === "boolean")
+    (line.retried === undefined || line.retried === null || typeof line.retried === "boolean") &&
+    isHeard(line.heard)
   );
 }
 
@@ -411,6 +419,14 @@ function requestLines(groups: Group[], speech: Map<string, SpeechLine>): string[
   });
 }
 
+function heardLine(lines: LogLine[]): string | null {
+  const spoken = lines.flatMap((line) => (line.heard === undefined ? [] : [line.heard]));
+  const recorded = summarise(spoken.map((heard) => heard.recordedMs));
+  const text = summarise(spoken.map((heard) => heard.textMs));
+  if (recorded === null || text === null) return null;
+  return `${plural(spoken.length, "question")} ${spoken.length === 1 ? "was" : "were"} asked through ears. Recording ${seconds(recorded.median)} (${seconds(recorded.max)}), and the text back after Enter ${seconds(text.median)} (${seconds(text.max)}): the median, with the slowest in brackets.`;
+}
+
 function failureLines(groups: Group[]): string[] {
   return groups.flatMap((group) => {
     const counts = new Map<string, number>();
@@ -455,6 +471,8 @@ export function compareReport({ lines, ratings = [], newChats = [], speech = [],
     const unlogged = groups.reduce((sum, group) => sum + (group.voice === "off" ? 0 : group.lines.filter((line) => line.ok && !said.has(questionKey(line))).length), 0);
     if (unlogged > 0) out.push(`${plural(unlogged, "answer")} with the voice on had no speech line in the log, so ${unlogged === 1 ? "isn't" : "aren't"} in this table: still being spoken when this ran, or the chat ended first.`);
   }
+  const heard = heardLine(lines);
+  if (heard !== null) out.push("", heard);
   const uncached = lines.filter((line) => line.ok && (line.cacheReadTokens === undefined || line.cacheWriteTokens === undefined)).length;
   if (uncached > 0) out.push("", `The cache rows leave out ${plural(uncached, "answer")} logged before cache tokens were counted.`);
   const older = lines.filter((line) => line.ok && line.largestRequestTokens === undefined).length;

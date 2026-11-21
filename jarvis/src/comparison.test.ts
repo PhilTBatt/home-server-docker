@@ -795,3 +795,21 @@ test("Piper's answers are their own setting, named Piper voice, and its requests
   assert.equal(isLogLine({ ...voiced(), voice: "piper" }), true);
   assert.equal(isLogLine({ ...voiced(), voice: "Piper" }), false);
 });
+
+test("a line's heard times are trusted only when both are whole, finite and not below zero, and older lines without them still are", () => {
+  assert.equal(isLogLine(line()), true);
+  assert.equal(isLogLine(line({ heard: { recordedMs: 2500, textMs: 1300 } })), true);
+  assert.equal(isLogLine(line({ heard: { recordedMs: 0, textMs: 0 } })), true);
+  for (const heard of [null, "2500", [2500, 1300], { recordedMs: 2500 }, { textMs: 1300 }, { recordedMs: -1, textMs: 1 }, { recordedMs: 1, textMs: Number.POSITIVE_INFINITY }, { recordedMs: "1", textMs: 1 }]) {
+    assert.equal(isLogLine({ ...line(), heard }), false, JSON.stringify(heard));
+  }
+});
+
+test("questions asked through ears get a line of their own, with how long was recorded and how long the text took after Enter, and none without them", () => {
+  const lines = [line({ heard: { recordedMs: 2000, textMs: 1000 } }), line({ question: 2, heard: { recordedMs: 4000, textMs: 3000 } }), line({ question: 3, ok: false, error: "timeout", heard: { recordedMs: 6000, textMs: 1200 } }), line({ question: 4 })];
+  const report = compareReport({ lines, skipped: 0 });
+  assert.equal(report.includes("\n3 questions were asked through ears. Recording 4.00 s (6.00 s), and the text back after Enter 1.20 s (3.00 s): the median, with the slowest in brackets.\n"), true, report);
+  const one = compareReport({ lines: [line({ heard: { recordedMs: 2500, textMs: 1300 } })], skipped: 0 });
+  assert.equal(one.includes("\n1 question was asked through ears. Recording 2.50 s (2.50 s), and the text back after Enter 1.30 s (1.30 s)"), true, one);
+  assert.equal(compareReport({ lines: [line()], skipped: 0 }).includes("through ears"), false);
+});

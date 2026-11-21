@@ -44,8 +44,8 @@ test("each action is put to Phil in plain words, with a download's hash cut shor
   assert.equal(notDoneNote, "Phil didn't say yes, so it wasn't done");
 });
 
-test("an environment gets the hub's token only with the hub's tools, and never a token it already had", () => {
-  const env = { PATH: "/usr/bin", API_TOKEN: "old-token", ANTHROPIC_API_KEY: "key" };
+test("an environment gets the hub's token only with the hub's tools, and never a token it already had, nor ears's", () => {
+  const env = { PATH: "/usr/bin", API_TOKEN: "old-token", ANTHROPIC_API_KEY: "key", EARS_TOKEN: "ears-token" };
   assert.deepEqual(withHubToken(env, hubServerFor("hub-token")), { PATH: "/usr/bin", ANTHROPIC_API_KEY: "key", API_TOKEN: "hub-token" });
   assert.deepEqual(withHubToken(env, undefined), { PATH: "/usr/bin", ANTHROPIC_API_KEY: "key" });
   assert.deepEqual(withHubToken({ PATH: "/usr/bin" }, undefined), { PATH: "/usr/bin" });

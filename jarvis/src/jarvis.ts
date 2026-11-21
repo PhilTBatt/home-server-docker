@@ -12,10 +12,12 @@ import { createBrainTools } from "./brain-tools.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, withSpokenStyle } from "./chat.js";
 import { brainDir, readConfig, type VoiceMode } from "./config.js";
+import { earsCaller } from "./ears-client.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
 import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes, withNotes } from "./session-notes.js";
+import { startTalk } from "./talk.js";
 import { voiceFor } from "./voice.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
@@ -23,6 +25,8 @@ const heard = heardLines(lines, promptWhileOpen(lines));
 let session: AgentSession | null = null;
 let hubTools: HubTools | undefined;
 const starting = new AbortController();
+const closing = new AbortController();
+lines.on("close", () => closing.abort());
 lines.on("SIGINT", () => {
   if (session === null) {
     starting.abort();
@@ -98,6 +102,8 @@ try {
   if (notes !== null) process.stdout.write(`${notesLine(notes)}\n`);
   ({ mode: voice, speaker } = await voiceFor(config, starting.signal, (line) => process.stdout.write(`${line}\n`)));
   const speaking = speaker;
+  const talk = config.earsToken === null ? undefined : startTalk({ call: earsCaller(config.earsToken) });
+  if (talk !== undefined) process.stdout.write(`${printable(await talk.check(starting.signal))}\n`);
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
@@ -114,6 +120,8 @@ try {
     describe: hub === undefined ? undefined : describeWithHub(hub.token),
     speak: speaking === null ? undefined : (after) => startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after }),
     speechStop: config.speechStop,
+    talk,
+    closing: closing.signal,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));

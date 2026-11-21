@@ -49,7 +49,7 @@ test("the token must be sent exactly, as a Bearer token", () => {
 
 test("every route needs the token, and without it nothing about ears is given away", async () => {
   const { server, call } = await serve();
-  for (const [method, path] of [["GET", "/state"], ["POST", "/recording/start"], ["POST", "/recording/stop"], ["GET", "/nothing"], ["DELETE", "/state"]]) {
+  for (const [method, path] of [["GET", "/state"], ["POST", "/recording/start"], ["POST", "/recording/stop"], ["POST", "/recording/cancel"], ["GET", "/nothing"], ["DELETE", "/state"]]) {
     for (const headers of [{}, { authorization: "Bearer wrong" }, { authorization: token }] as Record<string, string>[]) {
       const answer = await call(method, path, headers);
       assert.deepEqual([answer.status, answer.body, answer.challenge], [401, { error: "A valid token is needed" }, "Bearer"], `${method} ${path} ${JSON.stringify(headers)}`);
@@ -88,10 +88,21 @@ test("unmuted, start and stop record, and stop says how long it ran", async () =
   await closed(server);
 });
 
+test("cancel ends a recording without its text, says how long it ran, and is refused with 409 when nothing is recording", async () => {
+  const { server, ears, call } = await serve(createEars({ microphone: "pretend", record: quickRecording, log: () => {}, toText: async () => "Should never be asked for." }));
+  ears.unmute();
+  assert.equal((await call("POST", "/recording/start")).status, 200);
+  const cancelled = await call("POST", "/recording/cancel");
+  assert.deepEqual([cancelled.status, cancelled.body], [200, { seconds: 2, state: "idle", reason: null, microphone: "pretend", last: { seconds: 2, reason: "asked to cancel", text: null, textProblem: null } }]);
+  const again = await call("POST", "/recording/cancel");
+  assert.deepEqual([again.status, again.body.error, again.body.state], [409, "ears isn't recording", "idle"]);
+  await closed(server);
+});
+
 test("an unknown route is 404 and a wrong method 405 naming the right one", async () => {
   const { server, call } = await serve();
   assert.deepEqual([(await call("GET", "/")).status, (await call("GET", "/recording")).status, (await call("GET", "/state/")).status], [404, 404, 404]);
-  for (const [method, path, allowed] of [["POST", "/state", "GET"], ["GET", "/recording/start", "POST"], ["PUT", "/recording/stop", "POST"]]) {
+  for (const [method, path, allowed] of [["POST", "/state", "GET"], ["GET", "/recording/start", "POST"], ["PUT", "/recording/stop", "POST"], ["GET", "/recording/cancel", "POST"]]) {
     const answer = await call(method, path);
     assert.deepEqual([answer.status, answer.allow, answer.body.error], [405, allowed, `Use ${allowed} for ${path}`]);
   }

@@ -36,6 +36,9 @@ export type SpeechBundleMode = (typeof speechBundleModes)[number];
 export const spokenStyleModes = ["off", "on"] as const;
 export type SpokenStyleMode = (typeof spokenStyleModes)[number];
 
+export const earsModes = ["off", "push"] as const;
+export type EarsMode = (typeof earsModes)[number];
+
 export type Config = {
   apiKey: string;
   engine: Engine;
@@ -56,6 +59,8 @@ export type Config = {
   speechStop: SpeechStop;
   speechBundle: boolean;
   spokenStyle: boolean;
+  ears: EarsMode;
+  earsToken: string | null;
   log: boolean;
 };
 
@@ -157,8 +162,12 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (speechBundle !== "on" && speechBundle !== "off") throw new Error(`JARVIS_SPEECH_BUNDLE must be on or off, not "${speechBundle}"`);
   const spokenStyle = env.JARVIS_SPOKEN_STYLE?.trim() || "off";
   if (spokenStyle !== "on" && spokenStyle !== "off") throw new Error(`JARVIS_SPOKEN_STYLE must be on or off, not "${spokenStyle}"`);
+  const ears = env.JARVIS_EARS?.trim() || "off";
+  if (ears !== "off" && ears !== "push") throw new Error(`JARVIS_EARS must be off or push, not "${ears}"`);
+  const earsToken = env.EARS_TOKEN?.trim() ?? "";
+  if (ears === "push" && earsToken === "") throw new Error("JARVIS_EARS is push, but there's no EARS_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in from ears/.env");
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", ears, earsToken: ears === "push" ? earsToken : null, log: log === "on" };
 }

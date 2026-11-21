@@ -11,6 +11,7 @@ cat > "$work/bin/docker" <<'FAKE'
 #!/bin/bash
 echo "docker $* | card=${SOUND_CARD_NUMBER:-} group=${AUDIO_GROUP_ID:-} token=${API_TOKEN:-}" >> "$DOCKER_LOG"
 if [ -n "${PIPER_VOICE+set}" ]; then echo "PIPER_VOICE=$PIPER_VOICE for: docker $*" >> "$DOCKER_LOG.piper"; fi
+if [ -n "${EARS_TOKEN+set}" ]; then echo "EARS_TOKEN=$EARS_TOKEN for: docker $*" >> "$DOCKER_LOG.ears"; fi
 if [ -n "${DOCKER_FAIL:-}" ] && [[ "$*" == *"$DOCKER_FAIL"* ]]; then exit 1; fi
 if [[ "$*" == "compose ps --status running --quiet "* ]] && [[ " ${DOCKER_RUNNING:-} " == *" ${*: -1} "* ]]; then echo 0123456789ab; fi
 if [ -n "${DOCKER_INT_DURING:-}" ] && [[ "$*" == *"$DOCKER_INT_DURING"* ]]; then
@@ -87,7 +88,7 @@ check_has() {
 card=pci-0000:04:00.6
 
 fresh() {
-  rm -rf "$work/repo" "$work/snd" "$work/claude" "$work/hub-memory" "$work/docker.log" "$work/docker.log.piper" "$work/curl.log"
+  rm -rf "$work/repo" "$work/snd" "$work/claude" "$work/hub-memory" "$work/docker.log" "$work/docker.log.piper" "$work/docker.log.ears" "$work/curl.log"
   mkdir -p "$work/repo/host" "$work/repo/jarvis" "$work/repo/api" "$work/snd/by-path" "$work/claude"
   touch "$work/docker.log" "$work/curl.log"
   cp "$here/jarvis.sh" "$work/repo/host/jarvis.sh"
@@ -847,6 +848,87 @@ check "the sound file is the only place Jarvis joins the speech network" "    ne
       - speech" "$(grep -A1 '^    networks:$' "$sound_file")"
 check "and it's the only network the sound file adds" "1" "$(grep -c '^      - [a-z]*$' "$sound_file")"
 check "the sound file names networks only where Jarvis joins speech, so it changes no network's settings" "1" "$(grep -c 'networks' "$sound_file")"
+
+talk_file="$here/../docker-compose.talk.yaml"
+check "the talk file only puts Jarvis on ears's network: no devices, ports, settings or other services" "services:
+  jarvis:
+    networks:
+      - ears" "$(cat "$talk_file")"
+
+ears_on() {
+  printf 'ANTHROPIC_API_KEY=not-a-real-key\nJARVIS_LOG=off\nJARVIS_SOUND_CARD=%s\nJARVIS_VOICE=%s\nJARVIS_EARS=%s\n' "$card" "${1-off}" "${2-push}" > "$work/repo/jarvis/.env"
+  mkdir -p "$work/repo/ears"
+  printf '%s\n' "${3-EARS_TOKEN=ears-test-token}" > "$work/repo/ears/.env"
+}
+
+talk_run="docker compose -f docker-compose.yaml -f docker-compose.talk.yaml run --rm -e API_TOKEN -e EARS_TOKEN jarvis"
+talk_voice_run="docker compose -f docker-compose.yaml -f docker-compose.sound.yaml -f docker-compose.talk.yaml run --rm -e API_TOKEN -e EARS_TOKEN jarvis"
+
+fresh
+ears_on
+output=$(run)
+check "with JARVIS_EARS=push and no voice, the chat runs with the talk file added, passing both tokens by name only" "$talk_run | card= group= token=hub-test-token" "$(cat "$work/docker.log")"
+check "and ears's token from ears/.env reaches only that run" "EARS_TOKEN=ears-test-token for: $talk_run" "$(cat "$work/docker.log.ears")"
+check "the token is never on a command line" "0" "$(grep -c 'ears-test-token' "$work/docker.log")"
+
+fresh
+ears_on kokoro
+output=$(run)
+check "with JARVIS_EARS=push and a voice, the chat runs with the sound and talk files, and Kokoro is started and stopped around it as usual" \
+  "$build_line
+$ps_line
+$up_line
+$talk_voice_run | card=1 group=$(group 1) token=hub-test-token
+$stop_line" "$(cat "$work/docker.log")"
+check "and ears's token reaches only the chat" "EARS_TOKEN=ears-test-token for: $talk_voice_run" "$(cat "$work/docker.log.ears")"
+
+for setting in "off" ""; do
+  fresh
+  ears_on off "$setting"
+  run > /dev/null
+  check "with JARVIS_EARS='$setting', nothing is given ears's token or the talk file" "$plain_run|" "$(cat "$work/docker.log")|$(cat "$work/docker.log.ears" 2> /dev/null)"
+  fresh
+  ears_on kokoro "$setting"
+  run > /dev/null
+  check "with JARVIS_EARS='$setting' and a voice, nothing is given ears's token or the talk file either" "0|" "$(grep -c 'talk' "$work/docker.log")|$(cat "$work/docker.log.ears" 2> /dev/null)"
+done
+
+for line in 'EARS_TOKEN="ears-test-token"' "EARS_TOKEN=ears-test-token  # made with openssl" "export EARS_TOKEN=ears-test-token" $'EARS_TOKEN=ears-test-token\r'; do
+  fresh
+  ears_on off push "$line"
+  run > /dev/null
+  check "ears's token is read as ears reads its own settings: $(printf '%q' "$line")" "EARS_TOKEN=ears-test-token for: $talk_run" "$(cat "$work/docker.log.ears")"
+done
+
+for value in "on" "PUSH" "wake"; do
+  fresh
+  ears_on off "$value"
+  output=$(run)
+  check "JARVIS_EARS=$value is refused" "1" "$?"
+  check "and runs nothing: $value" "" "$(cat "$work/docker.log")"
+  check_has "saying what it must be: $value" "JARVIS_EARS is $value in jarvis/.env, but it must be off or push." "$output"
+done
+
+for line in "" "EARS_TOKEN=" "OTHER=x"; do
+  fresh
+  ears_on off push "$line"
+  output=$(run)
+  check "push with no ears token is refused: '$line'" "1" "$?"
+  check "and runs nothing: '$line'" "" "$(cat "$work/docker.log")"
+  check_has "saying where it looked: '$line'" "JARVIS_EARS is push, but there's no EARS_TOKEN in ears/.env. The README's ears section says how to make one." "$output"
+done
+
+fresh
+ears_on
+rm "$work/repo/ears/.env"
+output=$(run)
+check "push with no ears/.env at all is refused too" "1" "$?"
+check "and runs nothing" "" "$(cat "$work/docker.log")"
+
+fresh
+ears_on off push
+run sound-test > /dev/null
+check "the sound test never needs ears or its token" "$sound_run | card=1 group=$(group 1) token=|" "$(tail -n 1 "$work/docker.log")|$(cat "$work/docker.log.ears" 2> /dev/null)"
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

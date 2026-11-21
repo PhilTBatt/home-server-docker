@@ -16,6 +16,7 @@ export type Ears = {
   view(): EarsView;
   start(): { ok: true; view: EarsView } | Refused;
   stop(): Promise<{ ok: true; seconds: number; view: EarsView } | Refused>;
+  cancel(): Promise<{ ok: true; seconds: number; view: EarsView } | Refused>;
   mute(why: string | null): Promise<void>;
   unmute(): Promise<void>;
 };
@@ -26,8 +27,13 @@ function seconds(ms: number): number {
   return Math.round(ms / 100) / 10;
 }
 
+export function secondsText(ms: number): string {
+  const value = seconds(ms);
+  return `${value} second${value === 1 ? "" : "s"}`;
+}
+
 function stoppedLine(stopped: Stopped): string {
-  return `Recording ${stopped.failed ? "failed" : "stopped"} after ${seconds(stopped.ms)} seconds: ${stopped.reason}.`;
+  return `Recording ${stopped.failed ? "failed" : "stopped"} after ${secondsText(stopped.ms)}: ${stopped.reason}.`;
 }
 
 function problem(error: unknown): string {
@@ -45,6 +51,9 @@ function orCalledOff<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 
 export const mutedBeforeText = "it was muted before it was turned into text";
 export const flippedBeforeText = "the switch was flipped before it was turned into text, so a mute may have come and gone";
+export const cancelledBeforeText = "it was cancelled before it was turned into text";
+export const clearedByMute = "it was cleared by a mute";
+export const clearedByCancel = "it was cancelled after it was turned into text, so it was cleared";
 
 export function createEars(deps: EarsDeps): Ears {
   let state: EarsState = "muted";
@@ -53,7 +62,8 @@ export function createEars(deps: EarsDeps): Ears {
   let last: LastRecording | null = null;
   let ending: Promise<Stopped> | null = null;
   let working: { calledOff: AbortController; done: Promise<void> } | null = null;
-  let flippedWhileStopping = false;
+  let notHeardWhy: string | null = null;
+  let stopping: Promise<{ ok: true; seconds: number; view: EarsView }> | null = null;
   const now = deps.now ?? (() => performance.now());
   const view = (): EarsView => ({ state, reason, microphone: deps.microphone, last: last === null ? null : { ...last } });
   const refuse = (error: string): Refused => ({ ok: false, error });
@@ -76,7 +86,7 @@ export function createEars(deps: EarsDeps): Ears {
         const text = await orCalledOff(turn(stopped.sound, calledOff.signal), calledOff.signal);
         if (calledOff.signal.aborted) return;
         heard.text = text;
-        deps.log(`Turned into text in ${seconds(now() - began)} seconds.`);
+        deps.log(`Turned into text in ${secondsText(now() - began)}.`);
       } catch (error) {
         if (calledOff.signal.aborted) return;
         heard.textProblem = problem(error);
@@ -153,18 +163,49 @@ export function createEars(deps: EarsDeps): Ears {
       });
       return { ok: true, view: view() };
     },
-    async stop() {
+    stop() {
       const current = recording;
+      if (state !== "recording" || current === null) return Promise.resolve(refuse("ears isn't recording"));
+      recording = null;
+      notHeardWhy = null;
+      const run = (async () => {
+        const stopped = await end(current, "asked to stop");
+        const why = notHeardWhy;
+        if (why !== null && last !== null) {
+          last.textProblem = why;
+          deps.log(`Not turned into text: ${why}.`);
+        }
+        await settle(stopped, why === null);
+        return { ok: true as const, seconds: seconds(stopped.ms), view: view() };
+      })();
+      stopping = run;
+      void run.finally(() => {
+        if (stopping === run) stopping = null;
+      });
+      return run;
+    },
+    async cancel() {
+      if (state === "working") {
+        state = "idle";
+        await dropText(cancelledBeforeText);
+        return { ok: true, seconds: last?.seconds ?? 0, view: view() };
+      }
+      if (state === "idle" && last !== null && last.text !== null) {
+        last.text = null;
+        last.textProblem = clearedByCancel;
+        deps.log("Cleared the last recording's text, since it was cancelled.");
+        return { ok: true, seconds: last.seconds, view: view() };
+      }
+      const current = recording;
+      if (state === "recording" && current === null && stopping !== null) {
+        notHeardWhy ??= cancelledBeforeText;
+        const stopped = await stopping;
+        return { ok: true, seconds: stopped.seconds, view: view() };
+      }
       if (state !== "recording" || current === null) return refuse("ears isn't recording");
       recording = null;
-      flippedWhileStopping = false;
-      const stopped = await end(current, "asked to stop");
-      const heard = !flippedWhileStopping;
-      if (!heard && last !== null) {
-        last.textProblem = flippedBeforeText;
-        deps.log(`Not turned into text: ${flippedBeforeText}.`);
-      }
-      await settle(stopped, heard);
+      const stopped = await end(current, "asked to cancel");
+      await settle(stopped, false);
       return { ok: true, seconds: seconds(stopped.ms), view: view() };
     },
     async mute(why) {
@@ -174,6 +215,11 @@ export function createEars(deps: EarsDeps): Ears {
       state = "muted";
       reason = why;
       if (was !== "muted") deps.log(why === null ? "Muted." : `Muted: ${why}.`);
+      if (last !== null && last.text !== null) {
+        last.text = null;
+        last.textProblem = clearedByMute;
+        deps.log("Cleared the last recording's text, since it was muted.");
+      }
       const dropped = dropText(mutedBeforeText);
       if (current !== null) await end(current, "muted");
       else if (ending !== null) await ending;
@@ -193,7 +239,7 @@ export function createEars(deps: EarsDeps): Ears {
       }
       const current = recording;
       if (current === null) {
-        flippedWhileStopping = true;
+        notHeardWhy ??= flippedBeforeText;
         return;
       }
       recording = null;

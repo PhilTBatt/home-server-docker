@@ -3,7 +3,7 @@
 cd "$(dirname "$0")/.." || exit 1
 
 setting() {
-  sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:][[:space:]]*//p" jarvis/.env 2> /dev/null | tail -n 1 | sed -E "/^\"[^\"]*\"/{s/^\"([^\"]*)\".*$/\1/;b}; /^'[^']*'/{s/^'([^']*)'.*$/\1/;b}; s/ #.*$//; s/[[:space:]]+$//"
+  sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:][[:space:]]*//p" "${2:-jarvis/.env}" 2> /dev/null | tail -n 1 | sed -E "/^\"[^\"]*\"/{s/^\"([^\"]*)\".*$/\1/;b}; /^'[^']*'/{s/^'([^']*)'.*$/\1/;b}; s/ #.*$//; s/[[:space:]]+$//"
 }
 
 sound_card() {
@@ -115,6 +115,22 @@ if [ "$voice" = piper ]; then
   fi
 fi
 
+ears=$(setting JARVIS_EARS)
+ears=${ears:-off}
+if [ "$ears" != off ] && [ "$ears" != push ]; then
+  echo "JARVIS_EARS is $ears in jarvis/.env, but it must be off or push." >&2
+  exit 1
+fi
+
+ears_token=""
+if [ "$ears" = push ]; then
+  ears_token=$(setting EARS_TOKEN ears/.env)
+  if [ -z "$ears_token" ]; then
+    echo "JARVIS_EARS is push, but there's no EARS_TOKEN in ears/.env. The README's ears section says how to make one." >&2
+    exit 1
+  fi
+fi
+
 token=$(grep '^API_TOKEN=' api/.env | cut -d= -f2)
 if [ -z "$token" ]; then
   echo "No API_TOKEN found in api/.env." >&2
@@ -132,6 +148,9 @@ for session in docker:. brain:../hub-memory; do
 done
 
 if [ "$voice" = off ]; then
+  if [ "$ears" = push ]; then
+    API_TOKEN="$token" EARS_TOKEN="$ears_token" exec docker compose -f docker-compose.yaml -f docker-compose.talk.yaml run --rm -e API_TOKEN -e EARS_TOKEN "${mounts[@]}" jarvis
+  fi
   API_TOKEN="$token" exec docker compose run --rm -e API_TOKEN "${mounts[@]}" jarvis
 fi
 
@@ -160,5 +179,9 @@ fi
 PIPER_VOICE="$piper_name" docker compose up -d "${keep[@]}" --wait --wait-timeout 120 "$voice" || echo "$voice isn't ready, so Jarvis will say his voice is off. If the lines above don't say why, try: docker compose logs --tail 20 $voice" >&2
 trap - INT
 
-SOUND_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" API_TOKEN="$token" docker compose -f docker-compose.yaml -f docker-compose.sound.yaml run --rm -e API_TOKEN "${mounts[@]}" jarvis
+if [ "$ears" = push ]; then
+  SOUND_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" API_TOKEN="$token" EARS_TOKEN="$ears_token" docker compose -f docker-compose.yaml -f docker-compose.sound.yaml -f docker-compose.talk.yaml run --rm -e API_TOKEN -e EARS_TOKEN "${mounts[@]}" jarvis
+else
+  SOUND_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" API_TOKEN="$token" docker compose -f docker-compose.yaml -f docker-compose.sound.yaml run --rm -e API_TOKEN "${mounts[@]}" jarvis
+fi
 exit $?

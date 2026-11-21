@@ -1,7 +1,7 @@
 # 0037. Ears records from a named sound card, and Whisper turns it into text
 
 - Date: 2026-11-20
-- Status: accepted
+- Status: accepted; the laptop's built-in microphone works through card 1 (seen 20 Nov), and a mute now clears the text and a recording can be cancelled (0038)
 
 ## Context
 Record 0035 built ears with only a pretend microphone, because the one I want is still to be bought. On 20 Nov I asked to test with the laptop's own microphone now instead of waiting, and for it to work with any device, even if that means plugging a headset in. Earlier I'd said I didn't want to use the built-in one; this is for testing, and any card can be named instead. A recording also needs turning into text before Jarvis can use it, which the plan always gave to Whisper. Six things needed deciding: which microphone, how ears gets it, its level, what turns speech into text, how that keeps my words out of its logs, and which recordings it hears.

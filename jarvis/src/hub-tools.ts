@@ -102,7 +102,7 @@ export function describeWithHub(token: string): (tool: string, input: unknown, s
 }
 
 export function withHubToken(env: Record<string, string | undefined>, hub: HubServer | undefined): Record<string, string | undefined> {
-  const { API_TOKEN: _, ...rest } = env;
+  const { API_TOKEN: _, EARS_TOKEN: _ears, ...rest } = env;
   return hub === undefined ? rest : { ...rest, API_TOKEN: hub.token };
 }
 

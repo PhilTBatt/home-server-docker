@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createEars, flippedBeforeText, mutedBeforeText, startsMuted } from "./ears.js";
+import { cancelledBeforeText, clearedByCancel, clearedByMute, createEars, flippedBeforeText, mutedBeforeText, secondsText, startsMuted } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { ToText } from "./whisper.js";
 
@@ -399,9 +399,9 @@ test("a mute that lands just as the text arrives, before ears has taken it, stil
   assert.equal(lines.some((line) => line.startsWith("Turned into text")), false);
 });
 
-test("once the text is back, a mute or a new unmute leaves it alone", async () => {
+test("once the text is back, a new unmute leaves it alone, but a mute clears it, saying so", async () => {
   const whisper = pretendWhisper();
-  const { ears } = setUp("card", whisper.toText);
+  const { ears, lines } = setUp("card", whisper.toText);
   await ears.unmute();
   ears.start();
   const stopping = ears.stop();
@@ -411,7 +411,194 @@ test("once the text is back, a mute or a new unmute leaves it alone", async () =
   await ears.unmute();
   assert.deepEqual(ears.view().last, { seconds: 1.2, reason: "asked to stop", text: "Lights on.", textProblem: null });
   await ears.mute(null);
-  assert.deepEqual(ears.view(), { state: "muted", reason: null, microphone: "card", last: { seconds: 1.2, reason: "asked to stop", text: "Lights on.", textProblem: null } });
+  assert.deepEqual(ears.view(), { state: "muted", reason: null, microphone: "card", last: { seconds: 1.2, reason: "asked to stop", text: null, textProblem: clearedByMute } });
+  assert.deepEqual(lines.slice(-2), ["Muted.", "Cleared the last recording's text, since it was muted."]);
+  assert.equal(clearedByMute, "it was cleared by a mute");
+  await ears.mute("again");
+  assert.equal(lines.length, lines.lastIndexOf("Cleared the last recording's text, since it was muted.") + 1, "a second mute has nothing left to clear");
+});
+
+test("a mute with no text kept has nothing to clear, and logs only the mute", async () => {
+  const { ears, lines } = setUp("card");
+  await ears.unmute();
+  ears.start();
+  await ears.stop();
+  await ears.mute(null);
+  assert.deepEqual(ears.view().last, { seconds: 1.2, reason: "asked to stop", text: null, textProblem: null });
+  assert.equal(lines.at(-1), "Muted.");
+});
+
+test("cancelling a recording ends it without sending it to Whisper, logging why", { timeout: 5_000 }, async () => {
+  const whisper = pretendWhisper();
+  const { ears, lines, recordings } = setUp("card", whisper.toText);
+  await ears.unmute();
+  ears.start();
+  const cancelled = await ears.cancel();
+  assert.deepEqual(cancelled, { ok: true, seconds: 1.2, view: { state: "idle", reason: null, microphone: "card", last: { seconds: 1.2, reason: "asked to cancel", text: null, textProblem: null } } });
+  assert.deepEqual(recordings[0].asked, ["asked to cancel"]);
+  assert.equal(whisper.asked.length, 0);
+  assert.equal(lines.at(-1), "Recording stopped after 1.2 seconds: asked to cancel.");
+  assert.equal(ears.start().ok, true);
+});
+
+test("cancelling while it's being turned into text drops the text, even if it comes", { timeout: 5_000 }, async () => {
+  const whisper = pretendWhisper();
+  const { ears, lines } = setUp("card", whisper.toText);
+  await ears.unmute();
+  ears.start();
+  const stopping = ears.stop();
+  await tick();
+  assert.equal(ears.view().state, "working");
+  const cancelled = await ears.cancel();
+  whisper.asked[0].answer("Too late.");
+  await stopping;
+  assert.equal(whisper.asked[0].signal.aborted, true);
+  assert.deepEqual(cancelled, { ok: true, seconds: 1.2, view: { state: "idle", reason: null, microphone: "card", last: { seconds: 1.2, reason: "asked to stop", text: null, textProblem: cancelledBeforeText } } });
+  assert.deepEqual(ears.view().last, { seconds: 1.2, reason: "asked to stop", text: null, textProblem: cancelledBeforeText });
+  assert.equal(lines.at(-1), `Not turned into text: ${cancelledBeforeText}.`);
+  assert.equal(cancelledBeforeText, "it was cancelled before it was turned into text");
+});
+
+test("cancelling while a stop is still ending the recording keeps it from Whisper, and answers once the stop is done", { timeout: 5_000 }, async () => {
+  const whisper = pretendWhisper();
+  const { ears, recordings } = setUp("card", whisper.toText);
+  await ears.unmute();
+  ears.start();
+  let release: () => void = () => {};
+  recordings[0].stop = (reason) => {
+    recordings[0].asked.push(reason);
+    new Promise<void>((resolve) => (release = resolve)).then(() => recordings[0].end({ reason }));
+    return recordings[0].ended;
+  };
+  const stopping = ears.stop();
+  const cancelling = ears.cancel();
+  await ears.unmute();
+  release();
+  const [stopped, cancelled] = await Promise.all([stopping, cancelling]);
+  assert.equal(whisper.asked.length, 0);
+  const last = { seconds: 1.2, reason: "asked to stop", text: null, textProblem: cancelledBeforeText };
+  assert.deepEqual(stopped, { ok: true, seconds: 1.2, view: { state: "idle", reason: null, microphone: "card", last } });
+  assert.deepEqual(cancelled, { ok: true, seconds: 1.2, view: { state: "idle", reason: null, microphone: "card", last } });
+  assert.deepEqual(recordings[0].asked, ["asked to stop"], "the recorder is asked once, and the flip after the cancel doesn't change why");
+});
+
+test("whichever comes first while a stop is ending, a new unmute or a cancel, is the reason given", { timeout: 5_000 }, async () => {
+  for (const [first, why] of [["unmute", flippedBeforeText], ["cancel", cancelledBeforeText]] as const) {
+    const whisper = pretendWhisper();
+    const { ears, recordings } = setUp("card", whisper.toText);
+    await ears.unmute();
+    ears.start();
+    let release: () => void = () => {};
+    recordings[0].stop = (reason) => {
+      recordings[0].asked.push(reason);
+      new Promise<void>((resolve) => (release = resolve)).then(() => recordings[0].end({ reason }));
+      return recordings[0].ended;
+    };
+    const stopping = ears.stop();
+    const both = first === "unmute" ? [ears.unmute(), ears.cancel()] : [ears.cancel(), ears.unmute()];
+    release();
+    await Promise.all([stopping, ...both]);
+    assert.equal(whisper.asked.length, 0, first);
+    assert.equal(ears.view().last?.textProblem, why, first);
+  }
+});
+
+test("a cancel while a new unmute is ending a later recording isn't answered with an earlier stop", { timeout: 5_000 }, async () => {
+  const { ears, recordings } = setUp("card");
+  await ears.unmute();
+  ears.start();
+  await ears.stop();
+  ears.start();
+  let release: () => void = () => {};
+  recordings[1].stop = (reason) => {
+    recordings[1].asked.push(reason);
+    new Promise<void>((resolve) => (release = resolve)).then(() => recordings[1].end({ reason, ms: 5000 }));
+    return recordings[1].ended;
+  };
+  const flipping = ears.unmute();
+  assert.deepEqual(await ears.cancel(), { ok: false, error: "ears isn't recording" });
+  release();
+  await flipping;
+  assert.equal(ears.view().last?.seconds, 5);
+});
+
+test("cancelling once a recording has ended by itself and been turned into text clears the text, saying so", async () => {
+  const whisper = pretendWhisper();
+  const { ears, lines, recordings } = setUp("card", whisper.toText);
+  await ears.unmute();
+  ears.start();
+  recordings[0].end({ reason: "it reached the 30-second limit", ms: 30_000 });
+  await tick();
+  whisper.asked[0].answer("Words I meant to drop.");
+  await tick();
+  assert.equal(ears.view().last?.text, "Words I meant to drop.");
+  assert.deepEqual(await ears.cancel(), { ok: true, seconds: 30, view: { state: "idle", reason: null, microphone: "card", last: { seconds: 30, reason: "it reached the 30-second limit", text: null, textProblem: clearedByCancel } } });
+  assert.equal(lines.at(-1), "Cleared the last recording's text, since it was cancelled.");
+  assert.equal(clearedByCancel, "it was cancelled after it was turned into text, so it was cleared");
+  assert.deepEqual(await ears.cancel(), { ok: false, error: "ears isn't recording" }, "with nothing left to clear, a second cancel is refused");
+  assert.equal(ears.start().ok, true);
+});
+
+test("a mute or a new unmute while a cancel is ending the recording leaves nothing sent to Whisper", { timeout: 5_000 }, async () => {
+  for (const during of ["mute", "unmute"] as const) {
+    const whisper = pretendWhisper();
+    const { ears, recordings } = setUp("card", whisper.toText);
+    await ears.unmute();
+    ears.start();
+    let release: () => void = () => {};
+    recordings[0].stop = (reason) => {
+      recordings[0].asked.push(reason);
+      new Promise<void>((resolve) => (release = resolve)).then(() => recordings[0].end({ reason }));
+      return recordings[0].ended;
+    };
+    const cancelling = ears.cancel();
+    const other = during === "mute" ? ears.mute(null) : ears.unmute();
+    release();
+    await Promise.all([cancelling, other]);
+    assert.equal(whisper.asked.length, 0, during);
+    assert.equal(ears.view().state, during === "mute" ? "muted" : "idle", during);
+    assert.deepEqual(recordings[0].asked, ["asked to cancel"], during);
+  }
+});
+
+test("with nothing recording or being turned into text, cancelling is refused and nothing changes", async () => {
+  const { ears, lines } = setUp("card");
+  assert.deepEqual(await ears.cancel(), { ok: false, error: "ears isn't recording" });
+  await ears.unmute();
+  assert.deepEqual(await ears.cancel(), { ok: false, error: "ears isn't recording" });
+  ears.start();
+  await ears.stop();
+  const before = lines.length;
+  assert.deepEqual(await ears.cancel(), { ok: false, error: "ears isn't recording" });
+  assert.equal(lines.length, before);
+  assert.equal(ears.view().state, "idle");
+});
+
+test("whole seconds are said as one second or so many seconds, and tenths are kept", () => {
+  assert.equal(secondsText(1000), "1 second");
+  assert.equal(secondsText(1040), "1 second");
+  assert.equal(secondsText(1060), "1.1 seconds");
+  assert.equal(secondsText(2000), "2 seconds");
+  assert.equal(secondsText(0), "0 seconds");
+  assert.equal(secondsText(17_640), "17.6 seconds");
+});
+
+test("a recording or a text that takes a second is logged as 1 second", async () => {
+  const whisper = pretendWhisper();
+  const { ears, lines, recordings, clock } = setUp("card", whisper.toText);
+  await ears.unmute();
+  ears.start();
+  recordings[0].stop = (reason) => {
+    recordings[0].asked.push(reason);
+    recordings[0].end({ reason, ms: 1000 });
+    return recordings[0].ended;
+  };
+  const stopping = ears.stop();
+  await tick();
+  clock.at += 1000;
+  whisper.asked[0].answer("Hi.");
+  await stopping;
+  assert.deepEqual(lines.slice(-2), ["Recording stopped after 1 second: asked to stop.", "Turned into text in 1 second."]);
 });
 
 test("a recording ended by a mute, a new unmute or its recorder failing is never turned into text", async () => {
