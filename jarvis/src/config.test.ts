@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainDir, chatModes, defaultKokoroVoice, defaultPiperVoice, defaultVolume, engines, readConfig, readVolume, speechStarts, speechBundleModes, speechStops, spokenStyleModes, thinkingHistories, voiceModes } from "./config.js";
+import { brainDir, chatModes, defaultKokoroVoice, defaultPiperVoice, defaultVolume, engines, followUpSeconds, readConfig, readVolume, speechStarts, speechBundleModes, speechStops, spokenStyleModes, thinkingHistories, voiceModes } from "./config.js";
 
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, ears: "off", earsToken: null, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, ears: "off", earsToken: null, followUp: null, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, ears: "off", earsToken: null, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, ears: "off", earsToken: null, followUp: null, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -412,6 +412,27 @@ test("anything else in JARVIS_EARS stops Jarvis and is named, and push or wake w
       assert.throws(() => readConfig({ ...base, JARVIS_EARS: mode, EARS_TOKEN: token }), { message: `JARVIS_EARS is ${mode}, but there's no EARS_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in from ears/.env` });
     }
   }
+});
+
+test("JARVIS_FOLLOW_UP is off unless it's a whole number of seconds from 2 to 15, which needs JARVIS_EARS=wake", () => {
+  const wake = { ...base, JARVIS_EARS: "wake", EARS_TOKEN: "w".repeat(64) };
+  assert.deepEqual(followUpSeconds, { least: 2, most: 15 });
+  for (const value of [undefined, "", "  ", "off", " off "]) assert.equal(readConfig({ ...wake, JARVIS_FOLLOW_UP: value }).followUp, null, String(value));
+  assert.deepEqual([readConfig({ ...wake, JARVIS_FOLLOW_UP: "2" }).followUp, readConfig({ ...wake, JARVIS_FOLLOW_UP: " 5 " }).followUp, readConfig({ ...wake, JARVIS_FOLLOW_UP: "15" }).followUp], [2, 5, 15]);
+  for (const value of ["1", "16", "0", "5.5", "-5", "5s", "on", "OFF", "1e1", "05x"]) {
+    assert.throws(() => readConfig({ ...wake, JARVIS_FOLLOW_UP: value }), { message: `JARVIS_FOLLOW_UP must be off or a whole number of seconds from 2 to 15, like 5, not "${value}"` });
+  }
+  for (const ears of [{}, { JARVIS_EARS: "off" }, { JARVIS_EARS: "push", EARS_TOKEN: "e".repeat(64) }]) {
+    assert.throws(() => readConfig({ ...base, ...ears, JARVIS_FOLLOW_UP: "5" }), { message: "JARVIS_FOLLOW_UP is 5, but follow-ups come after questions asked with the wake word, so they need JARVIS_EARS=wake. Set that, or set JARVIS_FOLLOW_UP=off" });
+    assert.equal(readConfig({ ...base, ...ears, JARVIS_FOLLOW_UP: "off" }).followUp, null);
+  }
+});
+
+test("JARVIS_FOLLOW_UP is checked after JARVIS_EARS and before JARVIS_LOG", () => {
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_EARS: "word", JARVIS_FOLLOW_UP: "word" }), { message: 'JARVIS_EARS must be off, push or wake, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_EARS: "wake", JARVIS_FOLLOW_UP: "word" }), { message: "JARVIS_EARS is wake, but there's no EARS_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in from ears/.env" });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_EARS: "wake", EARS_TOKEN: "e", JARVIS_FOLLOW_UP: "word" }), { message: 'JARVIS_FOLLOW_UP must be off or a whole number of seconds from 2 to 15, like 5, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_EARS: "wake", EARS_TOKEN: "e", JARVIS_FOLLOW_UP: "5" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
 });
 
 test("JARVIS_EARS is checked after JARVIS_SPOKEN_STYLE and before JARVIS_LOG", () => {

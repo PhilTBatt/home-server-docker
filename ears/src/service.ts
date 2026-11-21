@@ -11,7 +11,7 @@ import { applyMicSettings, findMicCard, recorderArgs, recorderCommand, type MicC
 import { switchEveryMs, switchFile, watchSwitch } from "./mute.js";
 import { startRecording, type Recorder } from "./recorder.js";
 import { createDetector, loadSilero, type SileroStep } from "./silero.js";
-import { earsPort, startEarsServer, type WakeApi } from "./server.js";
+import { earsPort, startEarsServer, wakeOffError, type WakeApi } from "./server.js";
 import type { ToText } from "./whisper.js";
 import { connectWyoming } from "./wyoming-client.js";
 
@@ -107,6 +107,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
       hearing?.release(by);
       return hearing !== null;
     },
+    follow: (withinMs) => (hearing === null ? { ok: false, error: wakeOffError } : hearing.follow(withinMs, () => ears.start("follow"))),
   };
   const watch = await watchSwitch({ read: () => readFile(options.switchAt ?? switchFile, "utf8"), everyMs: options.everyMs ?? switchEveryMs, onMute: () => void ears.mute(null), onUnmute: () => void ears.unmute() });
   let server: Server;

@@ -699,6 +699,19 @@ test("a recording is a push one unless the wake word started it, and each is num
   assert.deepEqual([ears.current(), ears.lastId(), ears.view().last?.reason], [null, 2, "it went quiet for 1.5 seconds after you spoke"]);
 });
 
+test("a follow-up recording is taken by whoever asked for it from the start, so nobody needs to claim it and it isn't dropped for want of a claim", { timeout: 5_000 }, async () => {
+  const { ears, lines, asked, recordings } = setUpCounted(undefined, 30);
+  await ears.unmute();
+  ears.start("follow");
+  assert.deepEqual([asked, ears.current(), lines.at(-1)], [["follow"], { id: 1, by: "follow", claimed: true }, "Recording started to hear a follow-up."]);
+  assert.equal(ears.claim(1).ok, false);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.deepEqual([ears.view().state, ears.current()?.id], ["recording", 1]);
+  recordings[0].end({ reason: "it went quiet for 1.5 seconds after you spoke" });
+  await tick();
+  assert.deepEqual([ears.current(), ears.lastId(), ears.view().last?.reason], [null, 1, "it went quiet for 1.5 seconds after you spoke"]);
+});
+
 test("what current gives is a copy", { timeout: 5_000 }, async () => {
   const { ears } = setUpCounted();
   await ears.unmute();

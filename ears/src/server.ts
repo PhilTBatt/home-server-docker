@@ -1,12 +1,14 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { Ears } from "./ears.js";
+import type { Ears, EarsView, Refused } from "./ears.js";
 
 export const earsPort = 8090;
 
-const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST", "/wait": "GET", "/wake/claim": "POST", "/wake/hold": "POST", "/wake/release": "POST" };
+const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST", "/wait": "GET", "/wake/claim": "POST", "/wake/hold": "POST", "/wake/release": "POST", "/wake/follow": "POST" };
 
-export type WakeApi = { full(): Record<string, unknown>; wait(after: number, run: string | null, signal: AbortSignal): Promise<Record<string, unknown>>; hold(by: string): boolean; release(by: string): boolean };
+export type WakeApi = { full(): Record<string, unknown>; wait(after: number, run: string | null, signal: AbortSignal): Promise<Record<string, unknown>>; hold(by: string): boolean; release(by: string): boolean; follow(withinMs: number): { ok: true; view: EarsView; id: number } | Refused };
+
+export const followWithinMs = { least: 1_000, most: 20_000 };
 
 export const wakeOffError = "ears has the wake word off, so set EARS_WAKE=on in ears/.env and start it again with bash host/ears.sh start";
 
@@ -54,6 +56,12 @@ export function earsHandler(ears: Ears, token: string, wake?: WakeApi) {
       if (id === null) return send(response, 400, { error: "id must be a recording's number, from 1" });
       const claimed = ears.claim(id);
       return claimed.ok ? send(response, 200, wake.full()) : send(response, 409, { error: claimed.error, ...wake.full() });
+    }
+    if (wake !== undefined && path === "/wake/follow") {
+      const within = whole(query.get("within"), followWithinMs.least);
+      if (within === null || within > followWithinMs.most) return send(response, 400, { error: `within must be a whole number of milliseconds from ${followWithinMs.least} to ${followWithinMs.most}` });
+      const started = wake.follow(within);
+      return started.ok ? send(response, 200, { ...started.view, lastId: ears.lastId(), id: started.id }) : send(response, 409, { error: started.error, ...wake.full() });
     }
     if (wake !== undefined && (path === "/wake/hold" || path === "/wake/release")) {
       const by = query.get("by") ?? "";

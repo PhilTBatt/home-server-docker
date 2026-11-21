@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EarsAnswer, EarsCall } from "./ears-client.js";
-import { busyClaimMs, eager, holdEveryMs, holderId, oldEarsLine, retryMs, spokenOf, startWakeHold, waitAskMs, wakeStatus, watchWake, type WakeEvent } from "./wake.js";
+import { busyClaimMs, createFollowAsk, eager, holdEveryMs, holderId, oldEarsLine, oldFollowWhy, retryMs, spokenOf, startWakeHold, waitAskMs, wakeStatus, watchWake, type WakeEvent } from "./wake.js";
 
 function view(fields: Partial<EarsAnswer> = {}): EarsAnswer {
   return { status: 200, state: "idle", reason: null, error: null, seconds: null, last: null, version: 1, run: "aa", lastId: null, current: null, wake: { on: true, listening: true, held: false, problem: null }, ...fields };
@@ -15,7 +15,7 @@ function pretendEars(waits: Step[], claims: (EarsAnswer | Error)[] = []) {
   const asked: { method: string; path: string; ms: number }[] = [];
   const call: EarsCall = async (method, path, ms, signal) => {
     asked.push({ method, path, ms });
-    if (path.startsWith("/wake/claim")) {
+    if (path.startsWith("/wake/claim") || path.startsWith("/wake/follow")) {
       const next = claims.shift();
       if (next === undefined) throw new Error("no claim set");
       if (next instanceof Error) throw next;
@@ -177,6 +177,127 @@ test("a watcher called off while it has a wake recording it claimed cancels that
   assert.deepEqual(quiet, []);
 });
 
+test("a follow-up asked for cuts the long wait short, is started in ears with the wait asked for, and is the chat's at once, with no claim, then done like a wake", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const follow = createFollowAsk();
+  const clock = { at: 1000 };
+  let cutShort = false;
+  const ears = pretendEars(
+    [
+      view({ version: 1 }),
+      (waitSignal) =>
+        new Promise((_resolve, reject) =>
+          waitSignal?.addEventListener("abort", () => {
+            cutShort = true;
+            reject(waitSignal.reason);
+          }, { once: true }),
+        ),
+      view({ version: 2, state: "recording", current: { id: 8, by: "follow", claimed: true }, lastId: 7 }),
+      () => {
+        clock.at = 4000;
+        return Promise.resolve(view({ version: 3, state: "working", lastId: 8, last: last(null) }));
+      },
+      () => {
+        clock.at = 4800;
+        return Promise.resolve(view({ version: 4, state: "idle", lastId: 8, last: last("And tomorrow?") }));
+      },
+    ],
+    [{ status: 200, state: "recording", reason: null, error: null, seconds: null, last: null, lastId: 7, id: 8 }],
+  );
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, now: () => clock.at, follow });
+  assert.deepEqual(await take(events, 1), [{ kind: "status", line: "on: say Hey Jarvis" }]);
+  const next = events.next();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  follow.ask(5000);
+  assert.deepEqual((await next).value, { kind: "wake", id: 8, follow: true });
+  assert.equal(cutShort, true, "the wait that was going on was cut short");
+  assert.deepEqual(await take(events, 1), [{ kind: "done", id: 8, answer: view({ version: 4, state: "idle", lastId: 8, last: last("And tomorrow?") }), textMs: 800 }]);
+  assert.deepEqual(ears.asked.filter((one) => one.method === "POST").map((one) => [one.path, one.ms]), [["/wake/follow?within=5000", 4000]]);
+  assert.deepEqual(ears.asked.filter((one) => one.method === "GET").map((one) => one.path), ["/wait?after=-1", "/wait?after=1&run=aa", "/wait?after=1&run=aa", "/wait?after=2&run=aa", "/wait?after=3&run=aa"], "the wait that was cut short is asked again from the same version");
+  signal.abort();
+});
+
+test("a follow-up ears refuses, or an ears too old for them, or one that doesn't answer, is said with why, and the watcher carries on", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const follow = createFollowAsk();
+  follow.ask(5000);
+  const refused = { status: 409, state: "idle", reason: null, error: "a Jarvis chat is still speaking, so ears can't listen for a follow-up yet", seconds: null, last: null };
+  const old = { status: 404, state: null, reason: null, error: "Not found", seconds: null, last: null };
+  const ears = pretendEars([view({ version: 1 }), view({ version: 2 }), view({ version: 3 }), view({ version: 4, state: "muted" })], [refused, old, new Error("Ears didn't answer within 4 seconds")]);
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis", follow });
+  assert.deepEqual(await take(events, 1), [{ kind: "no follow-up", why: "a Jarvis chat is still speaking, so ears can't listen for a follow-up yet" }]);
+  follow.ask(5000);
+  assert.deepEqual(await take(events, 1), [{ kind: "no follow-up", why: oldFollowWhy }]);
+  assert.equal(oldFollowWhy, "this ears doesn't know follow-ups yet, so start it again with bash host/ears.sh start, which rebuilds it");
+  follow.ask(5000);
+  assert.deepEqual(await take(events, 1), [{ kind: "no follow-up", why: "Ears didn't answer within 4 seconds" }]);
+  assert.deepEqual(await take(events, 1), [{ kind: "status", line: "off while ears is muted, so unmute it on the server with bash host/ears.sh unmute" }], "it goes on waiting after each");
+  signal.abort();
+});
+
+test("when asking for a follow-up fails or is called off, a follow-up ears started anyway is cancelled by its number, and nothing else is", { timeout: 5_000 }, async () => {
+  const run = async (stray: EarsAnswer["current"], callOff: boolean) => {
+    const signal = new AbortController();
+    const follow = createFollowAsk();
+    const posts: string[] = [];
+    const call: EarsCall = async (method, path, _ms, callSignal) => {
+      if (method === "POST") posts.push(`${path} ${callSignal === undefined ? "no signal" : "signal"}`);
+      if (path.startsWith("/wake/follow")) {
+        if (callOff) signal.abort();
+        throw new Error("Ears didn't answer within 4 seconds");
+      }
+      if (path === "/wait?after=-1") return view({ version: 9, state: stray === null ? "idle" : "recording", current: stray });
+      if (path.startsWith("/recording/cancel")) return view({ version: 10 });
+      return new Promise((_resolve, reject) => callSignal?.addEventListener("abort", () => reject(callSignal.reason), { once: true }));
+    };
+    follow.ask(5000);
+    const events = watchWake({ call, signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis", follow });
+    const got = callOff ? [] : await take(events, 1);
+    if (callOff) assert.deepEqual(await events.next(), { done: true, value: undefined });
+    signal.abort();
+    return { posts, got };
+  };
+  const failed = await run({ id: 12, by: "follow", claimed: true }, false);
+  assert.deepEqual(failed.posts, ["/wake/follow?within=5000 signal", "/recording/cancel?id=12 no signal"]);
+  assert.deepEqual(failed.got, [{ kind: "no follow-up", why: "Ears didn't answer within 4 seconds" }]);
+  assert.deepEqual((await run({ id: 13, by: "wake", claimed: true }, false)).posts, ["/wake/follow?within=5000 signal"], "another chat's wake recording is left alone");
+  assert.deepEqual((await run(null, false)).posts, ["/wake/follow?within=5000 signal"]);
+  assert.deepEqual((await run({ id: 14, by: "follow", claimed: true }, true)).posts, ["/wake/follow?within=5000 signal", "/recording/cancel?id=14 no signal"], "called off while asking, it still cleans up");
+});
+
+test("a follow-up asked for while the chat already has a recording is let go without asking ears, and one is asked for only once", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const follow = createFollowAsk();
+  const ears = pretendEars(
+    [view({ version: 1, state: "recording", current: { id: 6, by: "wake", claimed: false } }), view({ version: 3, state: "recording", current: { id: 6, by: "wake", claimed: true } }), view({ version: 4, state: "idle", lastId: 6, last: last("Hi.") }), view({ version: 5 })],
+    [view({ version: 2, state: "recording", current: { id: 6, by: "wake", claimed: true } })],
+  );
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis", follow });
+  assert.deepEqual(await take(events, 1), [{ kind: "wake", id: 6 }]);
+  follow.ask(5000);
+  assert.deepEqual((await take(events, 1))[0].kind, "done");
+  assert.equal(follow.take(), null, "it was taken and let go");
+  assert.deepEqual(ears.asked.filter((one) => one.method === "POST").map((one) => one.path), ["/wake/claim?id=6"]);
+  signal.abort();
+});
+
+test("asking for a follow-up keeps only the latest, and a watcher that starts listening after it was asked hears of it at once", () => {
+  const follow = createFollowAsk();
+  assert.equal(follow.take(), null);
+  follow.ask(3000);
+  follow.ask(5000);
+  let poked = 0;
+  const unhook = follow.onAsk(() => poked++);
+  assert.equal(poked, 1);
+  assert.equal(follow.take(), 5000);
+  assert.equal(follow.take(), null);
+  follow.ask(4000);
+  assert.equal(poked, 2);
+  unhook();
+  follow.ask(4000);
+  assert.equal(poked, 2, "a watcher that stopped listening isn't poked");
+});
+
 test("a watcher whose recording is done, or lost to a restart, has nothing to cancel when it's called off, and a cancel that fails is let go", { timeout: 5_000 }, async () => {
   const signal = new AbortController();
   const posts: string[] = [];
@@ -209,9 +330,9 @@ test("a claim that loses to another chat, or fails, is left alone", { timeout: 5
   signal.abort();
 });
 
-test("push recordings and claimed ones aren't claimed", { timeout: 5_000 }, async () => {
+test("push recordings, follow-ups and claimed ones aren't claimed", { timeout: 5_000 }, async () => {
   const signal = new AbortController();
-  const ears = pretendEars([view({ version: 1, state: "recording", current: { id: 1, by: "push", claimed: false } }), view({ version: 2, state: "recording", current: { id: 2, by: "wake", claimed: true } }), view({ version: 3, state: "muted" })]);
+  const ears = pretendEars([view({ version: 1, state: "recording", current: { id: 1, by: "push", claimed: false } }), view({ version: 2, state: "recording", current: { id: 2, by: "wake", claimed: true } }), view({ version: 3, state: "recording", current: { id: 3, by: "follow", claimed: false } }), view({ version: 4, state: "muted" })]);
   const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause });
   await take(events, 2);
   assert.equal(ears.asked.filter((one) => one.method === "POST").length, 0);

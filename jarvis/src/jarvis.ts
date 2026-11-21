@@ -20,7 +20,7 @@ import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes, withNotes } from "./session-notes.js";
 import { startTalk } from "./talk.js";
 import { voiceFor } from "./voice.js";
-import { eager, spokenOf, startWakeHold, watchWake } from "./wake.js";
+import { createFollowAsk, eager, spokenOf, startWakeHold, watchWake } from "./wake.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
 const heard = heardLines(lines, promptWhileOpen(lines));
@@ -114,7 +114,9 @@ try {
   const talk = earsCall === null ? undefined : startTalk({ call: earsCall, wake: config.ears === "wake" });
   if (talk !== undefined) process.stdout.write(`${printable(await talk.check(starting.signal))}\n`);
   let chatReady = false;
-  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady }));
+  const follow = config.followUp === null ? undefined : createFollowAsk();
+  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady, follow }));
+  const followSeconds = config.followUp;
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
@@ -143,6 +145,7 @@ try {
     wake,
     ready: (yes) => (chatReady = yes),
     chime: wake === undefined || speaking === null ? undefined : chimeFor(speaking),
+    followUp: wake === undefined || follow === undefined || followSeconds === null ? undefined : { seconds: followSeconds, ask: () => follow.ask(followSeconds * 1000) },
     interrupt: () => {
       if (!process.stdout.isTTY) return;
       cursorTo(process.stdout, 0);

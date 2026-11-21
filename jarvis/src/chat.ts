@@ -8,7 +8,8 @@ import type { Prices } from "./prices.js";
 import { withPausableTimeout } from "./run.js";
 import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { seconds, type Answer } from "./timing.js";
-import type { WakeEvent } from "./wake.js";
+import type { EarsAnswer } from "./ears-client.js";
+import { spokenOf, type WakeEvent } from "./wake.js";
 
 export const chatModel = "claude-haiku-5-5";
 export const questionTimeoutMs = 120_000;
@@ -81,6 +82,18 @@ export const listeningNote = "listening for up to 30 seconds: press Enter on an 
 export const droppedNote = "dropped that recording";
 export const heardPrefix = "You said: ";
 export const wakeListeningNote = "heard Hey Jarvis, so listening: it sends when you stop talking, or press Enter on an empty line to send it now, or type anything else to drop it";
+export const noFollowHeardNote = "no follow-up heard, so say Hey Jarvis to ask again";
+export const followGapMs = 500;
+export const followUpsInARow = 5;
+export const followLimitNote = `that's ${followUpsInARow} follow-ups in a row, so say Hey Jarvis to ask again`;
+
+export function followListeningNote(seconds: number): string {
+  return `listening for a follow-up, no Hey Jarvis needed: start within ${seconds} seconds and it sends when you stop, or press Enter on an empty line to send it now, or type anything else to drop it`;
+}
+
+export function noFollowUpNote(why: string): string {
+  return `couldn't listen for a follow-up: ${why}`;
+}
 
 export function wakeStatusNote(line: string): string {
   return `wake word ${line}`;
@@ -126,6 +139,7 @@ export type ChatDeps = {
   ready?: (yes: boolean) => void;
   chime?: () => void;
   interrupt?: () => void;
+  followUp?: { seconds: number; ask(): void; gapMs?: number };
 };
 
 export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[] };
@@ -134,7 +148,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; turn: number; followTurn: number | null; followed: number };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
@@ -344,8 +358,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "ears" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "ears" | "followUp" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -532,14 +546,14 @@ async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps>
   return { ...deps, ...chat };
 }
 
-async function ask(deps: ChatDeps, state: ChatState, message: string, heard?: Heard): Promise<"go" | "stop"> {
+async function ask(deps: ChatDeps, state: ChatState, message: string, heard?: Heard): Promise<"answered" | "go" | "stop"> {
   if (overCap(deps, state.lastRequestTokens)) {
     deps.write(`  (${capNote(deps.lengthCap)})\n`);
     return "go";
   }
   await hush(deps, state);
   const outcome = await reply(deps, message, state, heard);
-  if (deps.session.stoppedReason() === null) return "go";
+  if (deps.session.stoppedReason() === null) return outcome === "answered" ? "answered" : "go";
   if (outcome !== "stopped") deps.write(`${stoppedMessage}\n`);
   return "stop";
 }
@@ -617,13 +631,39 @@ export async function* readied<T>(inputs: AsyncIterable<T>, ready?: (yes: boolea
   }
 }
 
+function openFollow(deps: ChatDeps, state: ChatState): void {
+  const follow = deps.followUp;
+  if (follow === undefined) return;
+  if (state.followed >= followUpsInARow) {
+    deps.write(`  (${followLimitNote})\n`);
+    return;
+  }
+  const turn = state.turn;
+  const speech = state.speech;
+  void (async () => {
+    if (speech !== null) await spokenOf(speech)();
+    await new Promise((resolve) => setTimeout(resolve, follow.gapMs ?? followGapMs));
+    if (state.turn !== turn) return;
+    state.followTurn = turn;
+    follow.ask();
+  })();
+}
+
+function unheard(answer: EarsAnswer): boolean {
+  return answer.status === 200 && answer.state === "idle" && answer.last !== null && answer.last.text === null && answer.last.textProblem === null;
+}
+
 async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise<"go" | "stop"> {
   if (!sent.ok) {
     deps.write(`  (${notSentNote(printable(sent.why))})\n`);
     return "go";
   }
   deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
-  return ask(deps, state, sent.heard.text, sent.heard);
+  if (sent.heard.wake === true) state.followed = 0;
+  if (sent.heard.follow === true) state.followed++;
+  const going = await ask(deps, state, sent.heard.text, sent.heard);
+  if (going === "answered" && (sent.heard.wake === true || sent.heard.follow === true)) openFollow(deps, state);
+  return going === "stop" ? "stop" : "go";
 }
 
 async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promise<"go" | "stop"> {
@@ -633,29 +673,54 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
     deps.prompt();
     return "go";
   }
+  if (event.kind === "no follow-up") {
+    if (state.followTurn !== state.turn) return "go";
+    state.followTurn = null;
+    deps.interrupt?.();
+    deps.write(`  (${noFollowUpNote(printable(event.why))})\n`);
+    deps.prompt();
+    return "go";
+  }
   if (event.kind === "wake") {
+    const follow = event.follow === true;
+    if (follow) {
+      const wanted = state.followTurn === state.turn;
+      state.followTurn = null;
+      if (!wanted) {
+        await deps.talk?.drop(undefined, event.id);
+        return "go";
+      }
+    }
+    state.turn++;
     deps.interrupt?.();
     await settle(deps, state, true);
     state.listening = true;
     state.wakeId = event.id;
-    deps.write(`  (${wakeListeningNote})\n`);
-    deps.chime?.();
+    state.following = follow;
+    deps.write(`  (${follow ? followListeningNote(deps.followUp?.seconds ?? 0) : wakeListeningNote})\n`);
+    if (!follow) deps.chime?.();
     deps.prompt();
     return "go";
   }
   if (!state.listening || state.wakeId !== event.id) return "go";
+  const follow = state.following;
   state.listening = false;
   state.wakeId = null;
   state.talkId = null;
   deps.interrupt?.();
-  const going = await heardOrNot(deps, state, heardFrom(event.answer, event.textMs, true));
+  if (follow && unheard(event.answer)) {
+    deps.write(`  (${noFollowHeardNote})\n`);
+    deps.prompt();
+    return "go";
+  }
+  const going = await heardOrNot(deps, state, heardFrom(event.answer, event.textMs, follow ? "follow" : true));
   if (going === "go") deps.prompt();
   return going;
 }
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, turn: 0, followTurn: null, followed: 0 };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
@@ -666,14 +731,16 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         continue;
       }
       const message = input.text.trim();
+      const early = message === "" && current.early?.() === true;
+      if (!early) state.turn++;
       const talking = current.talk === undefined ? null : { ...current, talk: current.talk };
       if (state.listening && talking !== null) {
-        if (message === "" && current.early?.() === true) {
+        if (early) {
           current.prompt();
           continue;
         }
         if (message === "") {
-          const wake = state.wakeId !== null;
+          const wake = state.wakeId === null ? false : state.following ? "follow" : true;
           const id = state.wakeId ?? state.talkId;
           state.listening = false;
           state.wakeId = null;
@@ -687,7 +754,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       if (exitWords.includes(message.toLowerCase())) break;
       const rating = Object.hasOwn(ratingWords, message) ? ratingWords[message] : undefined;
       if (message === "") {
-        if (current.early?.() !== true) await hush(current, state);
+        if (!early) await hush(current, state);
       } else if (newWords.includes(message.toLowerCase())) {
         await settle(current, state);
         current = await startNewChat(current, state);

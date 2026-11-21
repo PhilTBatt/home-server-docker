@@ -197,11 +197,11 @@ export function createEars(deps: EarsDeps): Ears {
       count++;
       const id = count;
       ids.set(started, id);
-      underway = { id, by, claimed: by === "push" };
+      underway = { id, by, claimed: by !== "wake" };
       recording = started;
       state = "recording";
       reason = null;
-      deps.log(by === "wake" ? "Recording started by the wake word." : "Recording started.");
+      deps.log(by === "wake" ? "Recording started by the wake word." : by === "follow" ? "Recording started to hear a follow-up." : "Recording started.");
       if (by === "wake") {
         claimTimer = setTimeout(() => {
           claimTimer = null;

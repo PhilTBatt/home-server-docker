@@ -4,7 +4,7 @@ import { heardSpeech, type Detector } from "./silero.js";
 
 export const detectorBehindMs = 1_000;
 
-export type By = "push" | "wake";
+export type By = "push" | "wake" | "follow";
 
 export type Tap = Recording & { readonly by: By; push(sound: Uint8Array): void; fail(reason: string): void };
 

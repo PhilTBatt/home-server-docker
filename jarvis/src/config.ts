@@ -61,8 +61,11 @@ export type Config = {
   spokenStyle: boolean;
   ears: EarsMode;
   earsToken: string | null;
+  followUp: number | null;
   log: boolean;
 };
+
+export const followUpSeconds = { least: 2, most: 15 };
 
 export const defaultLengthWarn = 80_000;
 
@@ -166,8 +169,12 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (ears !== "off" && ears !== "push" && ears !== "wake") throw new Error(`JARVIS_EARS must be off, push or wake, not "${ears}"`);
   const earsToken = env.EARS_TOKEN?.trim() ?? "";
   if (ears !== "off" && earsToken === "") throw new Error(`JARVIS_EARS is ${ears}, but there's no EARS_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in from ears/.env`);
+  const followText = env.JARVIS_FOLLOW_UP?.trim() || "off";
+  const followUp = followText === "off" ? null : Number(followText);
+  if (followUp !== null && (!/^[0-9]+$/.test(followText) || followUp < followUpSeconds.least || followUp > followUpSeconds.most)) throw new Error(`JARVIS_FOLLOW_UP must be off or a whole number of seconds from ${followUpSeconds.least} to ${followUpSeconds.most}, like 5, not "${followText}"`);
+  if (followUp !== null && ears !== "wake") throw new Error(`JARVIS_FOLLOW_UP is ${followUp}, but follow-ups come after questions asked with the wake word, so they need JARVIS_EARS=wake. Set that, or set JARVIS_FOLLOW_UP=off`);
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", ears, earsToken: ears === "off" ? null : earsToken, log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, log: log === "on" };
 }

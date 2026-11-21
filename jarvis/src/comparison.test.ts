@@ -826,6 +826,19 @@ test("the ears line says how many questions came through the wake word, and a wa
   for (const wake of [false, "yes", 1, null]) assert.equal(isLogLine({ ...line(), heard: { recordedMs: 1, textMs: 1, wake } }), false, JSON.stringify(wake));
 });
 
+test("the ears line counts follow-ups beside the wake word's questions, and splits by how ears ended both, and a follow that isn't exactly true makes the line untrusted", () => {
+  const asked = (question: number, recordedMs: number, how: { wake?: true; follow?: true }, ender: "loudness" | "silero") => line({ question, heard: { recordedMs, textMs: 900, ...how, ender } });
+  const report = compareReport({ lines: [line({ question: 1, heard: { recordedMs: 2000, textMs: 900 } }), asked(2, 3000, { wake: true }, "loudness"), asked(3, 2000, { follow: true }, "silero"), asked(4, 4000, { follow: true }, "silero")], skipped: 0 });
+  assert.equal(report.includes("\n4 questions were asked through ears, 1 with the wake word and 2 follow-ups. Recording"), true, report);
+  assert.equal(report.includes(" Split by how ears was set to end them: 1 wake or follow-up question on loudness, recording 3.00 s (3.00 s); 2 wake or follow-up questions on the speech detector, recording 3.00 s (4.00 s).\n"), true, report);
+  const single = compareReport({ lines: [asked(1, 3000, { follow: true }, "silero")], skipped: 0 });
+  assert.equal(single.includes("\n1 question was asked through ears, as a follow-up. Recording 3.00 s"), true, single);
+  const one = compareReport({ lines: [asked(1, 3000, { wake: true }, "silero"), asked(2, 2000, { follow: true }, "silero")], skipped: 0 });
+  assert.equal(one.includes("\n2 questions were asked through ears, 1 with the wake word and 1 follow-up. Recording"), true, one);
+  assert.equal(isLogLine(line({ heard: { recordedMs: 1, textMs: 1, follow: true, ender: "silero" } })), true);
+  for (const follow of [false, "yes", 1, null]) assert.equal(isLogLine({ ...line(), heard: { recordedMs: 1, textMs: 1, follow } }), false, JSON.stringify(follow));
+});
+
 test("wake questions are split by how ears was set to end them once both appear: loudness or the speech detector, with their recording times", () => {
   const woken = (question: number, recordedMs: number, ender?: "loudness" | "silero") => line({ question, heard: { recordedMs, textMs: 900, wake: true, ...(ender === undefined ? {} : { ender }) } });
   const both = compareReport({ lines: [woken(1, 3000, "loudness"), woken(2, 5000, "loudness"), woken(3, 2000, "silero"), woken(4, 4000)], skipped: 0 });

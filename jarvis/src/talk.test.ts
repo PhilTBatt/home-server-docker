@@ -268,6 +268,9 @@ test("sending with the wake word marks what was heard as the wake word's", async
   const plain = pretendEars({ "POST /recording/stop": [answer(200, { state: "idle", last: heardLast("Hello.") })] });
   const pushed = await startTalk({ call: plain.call }).send();
   assert.equal(pushed.ok && "wake" in pushed.heard, false);
+  const following = pretendEars({ "POST /recording/stop": [answer(200, { state: "idle", last: heardLast("Hello.") })] });
+  const followed = await startTalk({ call: following.call }).send(undefined, "follow");
+  assert.deepEqual(followed.ok && [followed.heard.follow, "wake" in followed.heard], [true, false]);
 });
 
 test("a wake question keeps what ended its recording, as ears said it, and a push one never has it", () => {
@@ -279,4 +282,11 @@ test("a wake question keeps what ended its recording, as ears said it, and a pus
   assert.deepEqual(pushed.ok && pushed.heard, { text: "Hi.", recordedMs: 2500, textMs: 10 });
   const plain = heardFrom(answer(200, { last: heardLast("Hi.") }), 10, true);
   assert.deepEqual(plain.ok && plain.heard, { text: "Hi.", recordedMs: 2500, textMs: 10, wake: true });
+});
+
+test("a follow-up is marked as one, not as the wake word's, and keeps what ended its recording too", () => {
+  const sent = heardFrom(answer(200, { last: { ...heardLast("And tomorrow?"), ender: "silero" } }), 10, "follow");
+  assert.deepEqual(sent.ok && sent.heard, { text: "And tomorrow?", recordedMs: 2500, textMs: 10, follow: true, ender: "silero" });
+  const plain = heardFrom(answer(200, { last: heardLast("And tomorrow?") }), 10, "follow");
+  assert.deepEqual(plain.ok && plain.heard, { text: "And tomorrow?", recordedMs: 2500, textMs: 10, follow: true });
 });

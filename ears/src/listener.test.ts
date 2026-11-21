@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EarsState } from "./ears.js";
 import { frameBytes, frameLevel } from "./levels.js";
-import { backgroundMs, beforeMs, behindBytes, createListener, gapMs, holdMs, lateMs, presenceMs, retryMs, wakeHost, wakeOff, wakePort, wakeWord, type Listener, type ListenerDeps } from "./listener.js";
+import { backgroundMs, beforeMs, behindBytes, createListener, gapMs, holdMs, lateMs, noRoomYet, presenceMs, retryMs, stillSpeaking, wakeHost, wakeOff, wakePort, wakeWord, type Listener, type ListenerDeps } from "./listener.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { Detector } from "./silero.js";
-import type { By } from "./tap.js";
+import type { By, Tap } from "./tap.js";
 import type { WyomingEvent } from "./wyoming.js";
 import type { WyomingConnection } from "./wyoming-client.js";
 
@@ -492,6 +492,86 @@ test("a speech detector that fails is logged once, and that recording ends on lo
   await until(() => ends.length === 1);
   assert.deepEqual(ends, ["it went quiet for 0.2 seconds after you spoke"]);
   assert.deepEqual(lines.filter((line) => line.startsWith("The speech detector")), ["The speech detector failed (model broke), so this recording ends on loudness instead."]);
+  await listener.close();
+});
+
+test("a follow-up recording is judged like a wake-word one against the room from the last wake word, with no settling time and its own wait for speech", { timeout: 5_000 }, async () => {
+  const { listener, connected, streams, detectors, earsState, sound } = setUp({ settleMs: 800, startWithinMs: 5_000 });
+  const follow = (withinMs: number): Tap => {
+    let made: Tap | null = null;
+    const result = listener.follow(withinMs, () => {
+      earsState.state = "recording";
+      made = listener.tap("follow");
+      return { ok: true as const, id: 1 };
+    });
+    assert.deepEqual(result, { ok: true, id: 1 });
+    return made as unknown as Tap;
+  };
+  listener.waiting();
+  await connected(1);
+  for (let frame = 0; frame < 5; frame++) streams[0].onSound(sound(400));
+  detectors[0].detect();
+  await until(() => earsState.state === "recording");
+  streams[0].onSound(sound(9000, 10));
+  streams[0].onSound(sound(10, 3));
+  await until(() => listener.view().listening === false && earsState.state === "recording");
+  earsState.state = "idle";
+  streams[0].onSound(sound(3000, 5));
+  assert.equal(listener.view().listening, true);
+  const heard = follow(300);
+  streams[0].onSound(sound(1300, 1));
+  streams[0].onSound(sound(10, 2));
+  const stopped = await heard.ended;
+  assert.deepEqual([stopped.reason, stopped.unheard], ["it went quiet for 0.2 seconds after you spoke", undefined], "speech straight away counts, with no settling time, and against the room before the wake word rather than the loud stretch since");
+  earsState.state = "idle";
+  const quiet = follow(300);
+  streams[0].onSound(sound(1000, 3));
+  const dropped = await quiet.ended;
+  assert.deepEqual([dropped.reason, dropped.unheard, dropped.ender], ["nothing loud enough to be speech came within 0.3 seconds, so it wasn't sent to Whisper", true, "loudness"], "1000 is under three times the room of 400 heard before the wake word, and the wait is the one asked for");
+  earsState.state = "idle";
+  await listener.close();
+});
+
+test("a follow-up is refused for ears's own reason when it isn't idle, while any chat holds the wake word, or before ears has heard the room, starting nothing, and allowed once it's let go", { timeout: 5_000 }, async () => {
+  const { listener, connected, streams, sound, earsState } = setUp();
+  listener.waiting();
+  await connected(1);
+  earsState.state = "muted";
+  assert.deepEqual(listener.follow(5_000, () => ({ ok: false as const, error: "ears is muted" })), { ok: false, error: "ears is muted" }, "when ears isn't idle, its own reason comes first");
+  earsState.state = "idle";
+  let asked = 0;
+  assert.deepEqual(listener.follow(5_000, () => (asked++, { ok: true as const, id: 1 })), { ok: false, error: noRoomYet });
+  assert.equal(noRoomYet, "ears hasn't heard the room yet, so it couldn't tell speech from it");
+  streams[0].onSound(sound(50));
+  listener.hold("a1");
+  assert.deepEqual(listener.follow(5_000, () => (asked++, { ok: true as const, id: 1 })), { ok: false, error: stillSpeaking });
+  assert.equal(asked, 0);
+  listener.release("a1");
+  await pause(80);
+  streams[0].onSound(sound(50));
+  assert.deepEqual(listener.follow(5_000, () => (asked++, { ok: true as const, id: 2 })), { ok: true, id: 2 });
+  assert.equal(stillSpeaking, "a Jarvis chat is still speaking, so ears can't listen for a follow-up yet");
+  await listener.close();
+});
+
+test("a follow-up before any wake word measures the room from what's been heard since listening began, and with the speech detector is judged by a fresh one", { timeout: 5_000 }, async () => {
+  let made = 0;
+  const detector = (): Detector => {
+    made++;
+    return { frame: async (sound) => (new DataView(sound.buffer, sound.byteOffset, sound.length).getInt16(0, true) === 77 ? [0.9] : [0.1]) };
+  };
+  const { listener, connected, streams, earsState, sound } = setUp({ detector });
+  listener.waiting();
+  await connected(1);
+  for (let frame = 0; frame < 5; frame++) streams[0].onSound(sound(500));
+  let following: Tap | null = null;
+  assert.equal(listener.follow(1_000, () => ((earsState.state = "recording"), (following = listener.tap("follow")), { ok: true as const, id: 3 })).ok, true);
+  const tap = following as unknown as Tap;
+  streams[0].onSound(sound(77, 2));
+  streams[0].onSound(sound(9000, 2));
+  const stopped = await tap.ended;
+  assert.deepEqual([stopped.reason, stopped.ender, made], ["the speech detector heard no speech for 0.2 seconds after you spoke", "silero", 1]);
+  earsState.state = "idle";
   await listener.close();
 });
 

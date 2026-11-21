@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { movedOn } from "./ears.js";
+import { wakeOffError } from "./server.js";
 import { pretendMic, startService, type Service } from "./service.js";
 import { createEventReader, encodeEvent } from "./wyoming.js";
 import { connectWyoming } from "./wyoming-client.js";
@@ -427,6 +428,54 @@ test("with EARS_WAKE_END=silero, a wake-word recording is judged by the speech d
   await keepWaiting.catch(() => {});
 });
 
+test("with the wake word on, a chat can ask for a follow-up: refused while a chat holds the wake word, and otherwise a recording it has already taken, dropped unheard if no speech comes in time", { timeout: 20_000 }, async (t) => {
+  const stand = await standInWakeServer();
+  t.after(() => stand.close());
+  const switchAt = await quietSwitch();
+  const lines: string[] = [];
+  const turned: number[] = [];
+  const service = await startService({
+    config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: true, wakeEnd: "loudness" },
+    log: (line) => lines.push(line),
+    switchAt,
+    everyMs: 20,
+    port: 0,
+    host: "127.0.0.1",
+    toText: async (sound) => (turned.push(sound.length), "And tomorrow?"),
+    wake: { connect: stand.connect, settleMs: 0, presenceMs: 200 },
+  });
+  services.push(service);
+  const base = `http://127.0.0.1:${(service.server.address() as AddressInfo).port}`;
+  const call = async (method: string, path: string) => {
+    const response = await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}` } });
+    return { status: response.status, body: await response.json() };
+  };
+  await writeFile(switchAt, "unmuted 1\n");
+  await until(() => service.ears.view().state === "idle");
+  const keepWaiting = (async () => {
+    for (let round = 0; round < 40; round++) await call("GET", "/wait?after=1000000");
+  })();
+  await until(() => stand.heard.bytes > 6400, 5000);
+  await call("POST", "/wake/hold?by=aa");
+  const refused = await call("POST", "/wake/follow?within=1000");
+  assert.deepEqual([refused.status, refused.body.error, service.ears.view().state], [409, "a Jarvis chat is still speaking, so ears can't listen for a follow-up yet", "idle"]);
+  await call("POST", "/wake/release?by=aa");
+  await pause(800);
+  const began = performance.now();
+  const started = await call("POST", "/wake/follow?within=1000");
+  const id = started.body.id;
+  assert.deepEqual([started.status, started.body.state, service.ears.current(), recorders().length], [200, "recording", { id, by: "follow", claimed: true }, 1]);
+  assert.equal(lines.at(-1), "Recording started to hear a follow-up.");
+  assert.ok((await until(() => service.ears.view().state === "idle", 5000)) < 5000);
+  assert.ok(performance.now() - began >= 950, "it waits the second asked for, though no chat claims it");
+  const quiet = await call("GET", "/wait?after=0");
+  assert.deepEqual([quiet.body.lastId, quiet.body.last.reason, quiet.body.last.text, quiet.body.last.textProblem, quiet.body.last.ender, turned], [id, "nothing loud enough to be speech came within 1 second, so it wasn't sent to Whisper", null, null, "loudness", []]);
+  await writeFile(switchAt, "muted\n");
+  await until(() => recorders().length === 0);
+  await service.close();
+  await keepWaiting.catch(() => {});
+});
+
 test("with no chat waiting, the microphone closes a moment later, and with the wake word off nothing opens and holds are refused", { timeout: 20_000 }, async (t) => {
   const stand = await standInWakeServer();
   t.after(() => stand.close());
@@ -449,6 +498,8 @@ test("with no chat waiting, the microphone closes a moment later, and with the w
   const view = await (await fetch(`${offBase}/wait?after=100`, { headers: { authorization: `Bearer ${token}` } })).json();
   assert.deepEqual(view.wake, { on: false, listening: false, held: false, problem: null });
   assert.equal((await fetch(`${offBase}/wake/hold?by=aa`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).status, 409);
+  const follow = await fetch(`${offBase}/wake/follow?within=5000`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+  assert.deepEqual([follow.status, (await follow.json()).error, off.ears.view().state], [409, wakeOffError, "idle"]);
   assert.deepEqual(recorders(), []);
   await off.close();
 });

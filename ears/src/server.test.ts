@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { createEars, type Ears } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
-import { earsPort, startEarsServer, tokenMatches, wakeOffError, type WakeApi } from "./server.js";
+import { earsPort, followWithinMs, startEarsServer, tokenMatches, wakeOffError, type WakeApi } from "./server.js";
 
 const token = "t".repeat(64);
 
@@ -148,6 +148,7 @@ function wakeApi(ears: Ears, on = true) {
     },
     hold: (by) => (calls.push(`hold ${by}`), on),
     release: (by) => (calls.push(`release ${by}`), on),
+    follow: (withinMs) => (calls.push(`follow ${withinMs}`), on ? ears.start("follow") : { ok: false, error: wakeOffError }),
   };
   return { api, calls, waits, bump: () => (version++, release()) };
 }
@@ -166,13 +167,13 @@ async function serveWake(on = true) {
 
 test("without the wake word's routes, they don't exist", async () => {
   const { server, call } = await serve();
-  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold"], ["POST", "/wake/release"]]) assert.equal((await call(method, path)).status, 404, path);
+  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold"], ["POST", "/wake/release"], ["POST", "/wake/follow?within=5000"]]) assert.equal((await call(method, path)).status, 404, path);
   await closed(server);
 });
 
 test("the wake word's routes need the token too", async () => {
   const { server, base } = await serveWake();
-  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold?by=aa"], ["POST", "/wake/release?by=aa"]]) {
+  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold?by=aa"], ["POST", "/wake/release?by=aa"], ["POST", "/wake/follow?within=5000"]]) {
     const response = await fetch(`${base}${path}`, { method });
     assert.equal(response.status, 401, path);
     await response.body?.cancel();
@@ -237,6 +238,34 @@ test("claiming takes a wake-word recording by its number, with 409 if it isn't w
   assert.deepEqual([(await call("GET", "/wake/claim?id=1")).allow], ["POST"]);
   await ears.stop();
   await closed(server);
+});
+
+test("a follow-up starts a recording already taken by whoever asked, with its number, and a wait for speech from 1 to 20 seconds", async () => {
+  assert.deepEqual(followWithinMs, { least: 1_000, most: 20_000 });
+  const on = await serveWake();
+  await on.ears.unmute();
+  const started = await on.call("POST", "/wake/follow?within=5000");
+  assert.deepEqual([started.status, started.body.state, started.body.id, started.body.lastId, on.ears.current()], [200, "recording", on.ears.current()?.id, null, { id: on.ears.current()?.id, by: "follow", claimed: true }]);
+  assert.deepEqual(on.wake.calls, ["follow 5000"]);
+  const again = await on.call("POST", "/wake/follow?within=5000");
+  assert.deepEqual([again.status, again.body.error, again.body.version], [409, "ears is already recording", 3]);
+  await on.ears.cancel();
+  for (const within of ["", "999", "20001", "5s", "-5000", "5000.5"]) {
+    const answer = await on.call("POST", `/wake/follow?within=${within}`);
+    assert.deepEqual([answer.status, answer.body], [400, { error: "within must be a whole number of milliseconds from 1000 to 20000" }], within);
+  }
+  assert.equal((await on.call("POST", "/wake/follow")).status, 400);
+  for (const within of ["1000", "20000"]) {
+    assert.equal((await on.call("POST", `/wake/follow?within=${within}`)).status, 200, within);
+    await on.ears.cancel();
+  }
+  assert.equal((await on.call("GET", "/wake/follow?within=5000")).allow, "POST");
+  await closed(on.server);
+  const off = await serveWake(false);
+  await off.ears.unmute();
+  const refused = await off.call("POST", "/wake/follow?within=5000");
+  assert.deepEqual([refused.status, refused.body.error, off.ears.view().state], [409, wakeOffError, "idle"]);
+  await closed(off.server);
 });
 
 test("hold and release pass on who holds, and with the wake word off they're refused saying how to turn it on", async () => {

@@ -55,8 +55,12 @@ export type Listener = {
   waiting(): () => void;
   hold(by: string): void;
   release(by: string): void;
+  follow<T>(withinMs: number, start: () => T): T | { ok: false; error: string };
   close(): Promise<void>;
 };
+
+export const stillSpeaking = "a Jarvis chat is still speaking, so ears can't listen for a follow-up yet";
+export const noRoomYet = "ears hasn't heard the room yet, so it couldn't tell speech from it";
 
 function reasonOf(error: unknown): string {
   const text = (error instanceof Error ? error.message : String(error)).replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/ {2,}/g, " ").trim();
@@ -97,6 +101,8 @@ export function createListener(deps: ListenerDeps): Listener {
   let beforeBytes = 0;
   let levels: number[] = [];
   let pendingWake: { before: Uint8Array; background: number } | null = null;
+  let pendingFollow: { withinMs: number; background: number } | null = null;
+  let lastBackground: number | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
 
@@ -168,6 +174,7 @@ export function createListener(deps: ListenerDeps): Listener {
     const background = backgroundLevel(levels);
     const sound = joined(before);
     deps.log(`Heard the wake word. The room's background is ${background}, so speech is anything above ${speakingLevel(background)}.`);
+    lastBackground = background;
     pendingWake = { before: sound, background };
     const started = deps.ears().start("wake");
     pendingWake = null;
@@ -317,8 +324,9 @@ export function createListener(deps: ListenerDeps): Listener {
   return {
     view: () => ({ on: true, listening: feeding, held: held(), problem }),
     tap(by) {
-      const wake = by === "wake" ? pendingWake : null;
-      const timings = { settleMs: deps.settleMs, startWithinMs: deps.startWithinMs, quietForMs: deps.quietForMs };
+      const follow = by === "follow" ? pendingFollow : null;
+      const wake = by === "wake" ? pendingWake : follow === null ? null : { before: undefined, background: follow.background };
+      const timings = follow === null ? { settleMs: deps.settleMs, startWithinMs: deps.startWithinMs, quietForMs: deps.quietForMs } : { settleMs: 0, startWithinMs: follow.withinMs, quietForMs: deps.quietForMs };
       const detector = deps.detector;
       const started = startTap({
         by,
@@ -367,6 +375,18 @@ export function createListener(deps: ListenerDeps): Listener {
       holds.delete(by);
       if (was && !held()) gapUntil = now() + (deps.gapMs ?? gapMs);
       update();
+    },
+    follow(withinMs, start) {
+      if (deps.ears().state() !== "idle") return start();
+      if (held()) return { ok: false, error: stillSpeaking };
+      const background = lastBackground ?? (levels.length === 0 ? null : backgroundLevel(levels));
+      if (background === null) return { ok: false, error: noRoomYet };
+      pendingFollow = { withinMs, background };
+      try {
+        return start();
+      } finally {
+        pendingFollow = null;
+      }
     },
     async close() {
       closed = true;

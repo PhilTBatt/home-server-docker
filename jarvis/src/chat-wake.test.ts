@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import { logLine, type LogContext, type Outcome } from "./answer-log.js";
 import type { AnswerSpeech } from "./answer-speech.js";
-import { chatInputs, droppedNote, heardPrefix, listeningNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
+import { chatInputs, droppedNote, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
 import type { EarsAnswer } from "./ears-client.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Heard, Sent, Talk } from "./talk.js";
@@ -68,7 +68,7 @@ function fakeSession(scripts: Record<string, Script>, events: string[]): AgentSe
 const typedHeard: Heard = { text: "Turn the lights on.", recordedMs: 2500, textMs: 1300 };
 
 function fakeTalk(events: string[], sends: Sent[] = []) {
-  const sent: { signal: AbortSignal | undefined; wake: boolean | undefined }[] = [];
+  const sent: { signal: AbortSignal | undefined; wake: boolean | "follow" | undefined }[] = [];
   const named: string[] = [];
   const talk: Talk = {
     check: async () => "Ears: ready",
@@ -80,7 +80,7 @@ function fakeTalk(events: string[], sends: Sent[] = []) {
       events.push("talk send");
       sent.push({ signal, wake });
       named.push(`send ${id}`);
-      return sends.shift() ?? { ok: true, heard: wake === true ? { ...typedHeard, wake: true } : typedHeard };
+      return sends.shift() ?? { ok: true, heard: wake === true ? { ...typedHeard, wake: true } : wake === "follow" ? { ...typedHeard, follow: true } : typedHeard };
     },
     drop: async (_signal, id) => {
       events.push("talk drop");
@@ -112,7 +112,7 @@ function fakeSpeech(log: string[]): AnswerSpeech {
   };
 }
 
-function wakeChat(scripts: Record<string, Script>, sends: Sent[] = []) {
+function wakeChat(scripts: Record<string, Script>, sends: Sent[] = [], extra: Partial<ChatDeps> = {}) {
   const events: string[] = [];
   const lines = channel<string>();
   const wake = channel<WakeEvent>();
@@ -136,6 +136,7 @@ function wakeChat(scripts: Record<string, Script>, sends: Sent[] = []) {
     wake: wake.items,
     chime: () => void events.push("chime"),
     interrupt: () => void events.push("interrupt"),
+    ...extra,
   };
   const running = runChat(deps);
   return { lines, wake, events, output: () => output, recorded, sent: made.sent, named: made.named, closing, running, deps };
@@ -419,4 +420,287 @@ test("a wake that takes over a /talk recording is the one dropped when something
   chat.lines.close();
   await chat.running;
   assert.deepEqual(chat.named, ["drop 7"]);
+});
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function heldSpeech() {
+  let over = false;
+  let finish = () => {};
+  const done = new Promise<void>((resolve) => (finish = () => ((over = true), resolve())));
+  const plain = fakeSpeech([]);
+  const speech: AnswerSpeech = { ...plain, stop: () => void (over || plain.stop()), done: () => done };
+  return { speech, finish };
+}
+
+function followChat(scripts: Record<string, Script>, gapMs = 0, extra: Partial<ChatDeps> = {}) {
+  const chat = wakeChat(scripts, [], extra);
+  const asks: string[] = [];
+  chat.deps.followUp = { seconds: 5, ask: () => void asks.push("ask"), gapMs };
+  return { ...chat, asks };
+}
+
+const unheardDone = (id: number) => earsDone(null, { lastId: id, last: { seconds: 5, reason: "nothing loud enough to be speech came within 5 seconds, so it wasn't sent to Whisper", text: null, textProblem: null } });
+
+test("once the answer to a wake question has been spoken and a short gap has passed, a follow-up is asked for, and ears starting one shows its note with no chime", { timeout: 5_000 }, async () => {
+  assert.equal(followGapMs, 500);
+  const chat = followChat({ "What's the time?": said("Ten past nine.") }, 80);
+  const held = heldSpeech();
+  chat.deps.speak = () => held.speech;
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(120);
+  assert.deepEqual(chat.asks, [], "not while he's still speaking");
+  held.finish();
+  await pause(20);
+  assert.deepEqual(chat.asks, [], "nor straight after");
+  await pause(120);
+  assert.deepEqual(chat.asks, ["ask"]);
+  chat.wake.push({ kind: "wake", id: 5, follow: true });
+  await settled();
+  assert.ok(chat.output().endsWith(`You:   (${followListeningNote(5)})\nYou: `), chat.output());
+  assert.equal(followListeningNote(5), "listening for a follow-up, no Hey Jarvis needed: start within 5 seconds and it sends when you stop, or press Enter on an empty line to send it now, or type anything else to drop it");
+  assert.deepEqual(chat.events.filter((event) => event === "chime"), ["chime"], "only the wake word chimes");
+  chat.lines.close();
+  await chat.running;
+});
+
+test("what's heard in a follow-up is shown as said, asked, logged as a follow-up, and opens the next one", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "What's the time?": said("Ten past nine."), "And tomorrow?": said("Nine again.") });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  chat.wake.push({ kind: "wake", id: 5, follow: true });
+  await settled();
+  chat.wake.push({ kind: "done", id: 5, answer: earsDone("And tomorrow?", { last: { seconds: 2, reason: "the speech detector heard no speech for 1.5 seconds after you spoke", text: "And tomorrow?", textProblem: null, ender: "silero" } }), textMs: 700 });
+  await pause(20);
+  assert.ok(chat.output().includes(`${heardPrefix}And tomorrow?\nJarvis: Nine again.`), chat.output());
+  assert.deepEqual(chat.recorded.map((outcome) => outcome.heard), [{ text: "What's the time?", recordedMs: 3400, textMs: 900, wake: true }, { text: "And tomorrow?", recordedMs: 2000, textMs: 700, follow: true, ender: "silero" }]);
+  assert.deepEqual(chat.asks, ["ask", "ask"]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("a follow-up that hears no speech in time says so quietly, sends nothing and opens no other, while one that fails says why", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "What's the time?": said("Ten past nine.") });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  chat.wake.push({ kind: "wake", id: 5, follow: true });
+  await settled();
+  chat.wake.push({ kind: "done", id: 5, answer: unheardDone(5), textMs: 1 });
+  await pause(20);
+  assert.ok(chat.output().endsWith(`You:   (${noFollowHeardNote})\nYou: `), chat.output());
+  assert.equal(noFollowHeardNote, "no follow-up heard, so say Hey Jarvis to ask again");
+  assert.deepEqual([chat.asks, chat.events.filter((event) => event.startsWith("ask"))], [["ask"], ["ask What's the time?"]]);
+  chat.wake.push({ kind: "wake", id: 6 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 6, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  chat.wake.push({ kind: "wake", id: 7, follow: true });
+  await settled();
+  chat.wake.push({ kind: "done", id: 7, answer: earsDone(null, { state: "muted", lastId: 7, last: { seconds: 1, reason: "muted", text: null, textProblem: null } }), textMs: 1 });
+  await settled();
+  assert.ok(chat.output().includes(`(${notSentNote("ears was muted, so the recording was dropped")})`), chat.output());
+  chat.lines.close();
+  await chat.running;
+});
+
+test("anything typed before the follow-up is asked for calls it off, and a follow-up ears starts after he typed is dropped by its number, with no note", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "What's the time?": said("Ten past nine."), thanks: said("Any time.") }, 60);
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await settled();
+  chat.lines.push("thanks");
+  await pause(120);
+  assert.deepEqual(chat.asks, [], "the typed question came first, and it wasn't spoken, so no follow-up");
+  const late = followChat({ "What's the time?": said("Ten past nine."), thanks: said("Any time.") });
+  late.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  late.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  assert.deepEqual(late.asks, ["ask"]);
+  late.lines.push("thanks");
+  await settled();
+  late.wake.push({ kind: "wake", id: 5, follow: true });
+  await settled();
+  assert.deepEqual(late.named, ["drop 5"]);
+  assert.equal(late.output().includes(followListeningNote(5)), false);
+  chat.lines.close();
+  late.lines.close();
+  await Promise.all([chat.running, late.running]);
+});
+
+test("a follow-up ears refused is said while it still matters, and not once something else has happened", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "What's the time?": said("Ten past nine."), thanks: said("Any time.") });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  chat.wake.push({ kind: "no follow-up", why: "a Jarvis chat is still speaking, so ears can't listen for a follow-up yet" });
+  await settled();
+  assert.ok(chat.output().endsWith(`You:   (${noFollowUpNote("a Jarvis chat is still speaking, so ears can't listen for a follow-up yet")})\nYou: `), chat.output());
+  chat.wake.push({ kind: "no follow-up", why: "once more" });
+  await settled();
+  assert.equal(chat.output().includes("once more"), false, "said once for each ask");
+  chat.wake.push({ kind: "wake", id: 6 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 6, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  chat.lines.push("thanks");
+  await settled();
+  chat.wake.push({ kind: "no follow-up", why: "too late" });
+  await settled();
+  assert.equal(chat.output().includes("too late"), false);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("typed questions and /talk ones open no follow-up, and Enter on a follow-up sends it as one", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "What's the time?": said("Ten past nine."), "Turn the lights on.": said("Done.") });
+  chat.lines.push("What's the time?");
+  await settled();
+  chat.lines.push("/talk");
+  await settled();
+  chat.lines.push("");
+  await pause(20);
+  assert.deepEqual(chat.asks, []);
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  chat.wake.push({ kind: "wake", id: 5, follow: true });
+  await settled();
+  chat.lines.push("");
+  await pause(20);
+  assert.deepEqual(chat.sent.at(-1), { signal: chat.closing, wake: "follow" });
+  assert.deepEqual(chat.recorded.at(-1)?.heard, { ...typedHeard, follow: true });
+  assert.deepEqual(chat.named.at(-1), "send 5");
+  assert.deepEqual(chat.asks, ["ask", "ask"]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("without follow-ups, a follow-up's events from ears are passed over safely, and one ears started is dropped", { timeout: 5_000 }, async () => {
+  const chat = wakeChat({ "What's the time?": said("Ten past nine.") });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  chat.wake.push({ kind: "no follow-up", why: "stray" });
+  chat.wake.push({ kind: "wake", id: 9, follow: true });
+  await settled();
+  assert.equal(chat.output().includes("stray") || chat.output().includes("follow-up, no Hey"), false, chat.output());
+  assert.deepEqual(chat.named, ["drop 9"]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("a question asked as a follow-up is logged with follow true and what ended it, never the words", () => {
+  const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
+  const answer = { text: "Nine again.", firstWordsMs: 400, totalMs: 900 };
+  const spoken: Heard = { text: "And tomorrow?", recordedMs: 2000.2, textMs: 700.4, follow: true, ender: "silero" };
+  const line = logLine(context, "c", 2, new Date("2026-11-21T20:00:00Z"), { answer, heard: spoken });
+  assert.deepEqual(line.heard, { recordedMs: 2000, textMs: 700, follow: true, ender: "silero" });
+  assert.equal(JSON.stringify(line).includes("tomorrow"), false);
+});
+
+test("after 5 follow-ups in a row no other is asked for, saying so, until the wake word starts again", { timeout: 5_000 }, async () => {
+  assert.equal(followUpsInARow, 5);
+  assert.equal(followLimitNote, "that's 5 follow-ups in a row, so say Hey Jarvis to ask again");
+  const chat = followChat({ "What's the time?": said("Ten past nine."), "And?": said("Yes.") });
+  chat.wake.push({ kind: "wake", id: 1 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 1, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  for (let id = 2; id <= 6; id++) {
+    chat.wake.push({ kind: "wake", id, follow: true });
+    await settled();
+    chat.wake.push({ kind: "done", id, answer: earsDone("And?"), textMs: 900 });
+    await pause(20);
+  }
+  assert.equal(chat.asks.length, 5, "one after the wake question and one after each of the first four follow-ups");
+  assert.ok(chat.output().endsWith(`  (${followLimitNote})\nYou: `), chat.output());
+  chat.wake.push({ kind: "wake", id: 7 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 7, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  assert.equal(chat.asks.length, 6);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("a wake word before the follow-up is asked for calls it off, and an answer that stops the session asks for none", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "What's the time?": said("Ten past nine.") }, 60);
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await settled();
+  chat.wake.push({ kind: "wake", id: 5 });
+  await pause(120);
+  assert.deepEqual(chat.asks, []);
+  chat.lines.close();
+  await chat.running;
+  const events: string[] = [];
+  const lines = channel<string>();
+  const wake = channel<WakeEvent>();
+  let stopped: string | null = null;
+  const asks: string[] = [];
+  const session: AgentSession = {
+    ask: async () => {
+      stopped = "The agent stopped";
+      return { text: "Bye.", firstWordsMs: 1, totalMs: 2 };
+    },
+    readyMs: () => null,
+    costUsd: () => 0,
+    stoppedReason: () => stopped,
+    close() {
+      stopped ??= closedMessage;
+    },
+  };
+  const running = runChat({ lines: lines.items, session, write: () => {}, prompt: () => {}, questionTimeoutMs: 1000, talk: fakeTalk(events).talk, wake: wake.items, followUp: { seconds: 5, ask: () => void asks.push("ask"), gapMs: 0 } });
+  wake.push({ kind: "wake", id: 1 });
+  await settled();
+  wake.push({ kind: "done", id: 1, answer: earsDone("Goodbye."), textMs: 1 });
+  await running;
+  await pause(20);
+  assert.deepEqual(asks, []);
+});
+
+test("an answer that failed, or a question over the length cap, opens no follow-up", { timeout: 5_000 }, async () => {
+  const chat = followChat({});
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the weather?"), textMs: 900 });
+  await pause(20);
+  assert.ok(chat.output().includes("What's the weather?"), chat.output());
+  assert.deepEqual(chat.asks, []);
+  const capped = followChat({ "What's the time?": said("Ten past nine.") }, 0, { lengthCap: 1, knownSize: 5 });
+  capped.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  capped.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  assert.deepEqual(capped.events.filter((event) => event.startsWith("ask")), []);
+  assert.deepEqual(capped.asks, []);
+  chat.lines.close();
+  capped.lines.close();
+  await Promise.all([chat.running, capped.running]);
+});
+
+test("an Enter left over from while he was answering doesn't call a follow-up off, since the chat ignores it", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "What's the time?": said("Ten past nine.") }, 60);
+  chat.deps.early = () => true;
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await settled();
+  chat.lines.push("");
+  await pause(120);
+  assert.deepEqual(chat.asks, ["ask"]);
+  chat.lines.close();
+  await chat.running;
 });

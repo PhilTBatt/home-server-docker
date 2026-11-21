@@ -4,14 +4,14 @@ export const talkWord = "/talk";
 export const unmuteHint = "unmute it on the server with bash host/ears.sh unmute";
 export const talkPollMs = 250;
 
-export type Heard = { text: string; recordedMs: number; textMs: number; wake?: true; ender?: Ender };
+export type Heard = { text: string; recordedMs: number; textMs: number; wake?: true; follow?: true; ender?: Ender };
 export type Started = { ok: true; id?: number | null } | { ok: false; why: string };
 export type Sent = { ok: true; heard: Heard } | { ok: false; why: string };
 
 export type Talk = {
   check(signal?: AbortSignal): Promise<string>;
   start(signal?: AbortSignal): Promise<Started>;
-  send(signal?: AbortSignal, wake?: boolean, id?: number | null): Promise<Sent>;
+  send(signal?: AbortSignal, wake?: boolean | "follow", id?: number | null): Promise<Sent>;
   drop(signal?: AbortSignal, id?: number | null): Promise<string | null>;
 };
 
@@ -52,13 +52,13 @@ function named(path: string, id: number | null | undefined): string {
   return id === null || id === undefined ? path : `${path}?id=${id}`;
 }
 
-export function heardFrom(answer: EarsAnswer, textMs: number, wake = false, id: number | null = null): Sent {
+export function heardFrom(answer: EarsAnswer, textMs: number, wake: boolean | "follow" = false, id: number | null = null): Sent {
   if (answer.status !== 200) return { ok: false, why: refusal(answer) };
   const known = id !== null && answer.lastId !== undefined;
   if (known && answer.lastId !== id) return { ok: false, why: movedOnWhy };
   const text = answer.last?.text ?? null;
   if (answer.state === "working" || (answer.state === "recording" && !known) || text === null || text.trim() === "") return { ok: false, why: whyNoText(answer) };
-  return { ok: true, heard: { text: text.trim(), recordedMs: Math.round((answer.last?.seconds ?? 0) * 1000), textMs, ...(wake ? { wake: true as const } : {}), ...(wake && answer.last?.ender !== undefined ? { ender: answer.last.ender } : {}) } };
+  return { ok: true, heard: { text: text.trim(), recordedMs: Math.round((answer.last?.seconds ?? 0) * 1000), textMs, ...(wake === true ? { wake: true as const } : wake === "follow" ? { follow: true as const } : {}), ...(wake !== false && answer.last?.ender !== undefined ? { ender: answer.last.ender } : {}) } };
 }
 
 export function startTalk(deps: TalkDeps): Talk {

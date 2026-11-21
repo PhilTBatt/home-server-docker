@@ -7,9 +7,40 @@ export const retryMs = 2_000;
 export const holdEveryMs = 5_000;
 export const busyClaimMs = 1_000;
 
-export type WakeEvent = { kind: "wake"; id: number } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string };
+export type WakeEvent = { kind: "wake"; id: number; follow?: true } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string };
 
 export const oldEarsLine = "off: this ears doesn't know the wake word yet, so start it again with bash host/ears.sh start, which rebuilds it";
+export const oldFollowWhy = "this ears doesn't know follow-ups yet, so start it again with bash host/ears.sh start, which rebuilds it";
+
+export type FollowAsk = { ask(withinMs: number): void; take(): number | null; onAsk(poke: () => void): () => void };
+
+export function createFollowAsk(): FollowAsk {
+  let asked: number | null = null;
+  let poke: (() => void) | null = null;
+  return {
+    ask(withinMs) {
+      asked = withinMs;
+      poke?.();
+    },
+    take() {
+      const was = asked;
+      asked = null;
+      return was;
+    },
+    onAsk(given) {
+      poke = given;
+      if (asked !== null) given();
+      return () => {
+        if (poke === given) poke = null;
+      };
+    },
+  };
+}
+
+function followRefusal(answer: EarsAnswer): string {
+  if (answer.status === 404) return oldFollowWhy;
+  return answer.error ?? `ears answered ${answer.status}`;
+}
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -25,7 +56,14 @@ export function wakeStatus(answer: EarsAnswer): string {
   return "on: say Hey Jarvis";
 }
 
-export type WatchDeps = { call: EarsCall; signal: AbortSignal; first?: string | null; now?: () => number; wait?: (ms: number, signal: AbortSignal) => Promise<void>; retryMs?: number; busy?: () => boolean; busyClaimMs?: number };
+async function dropStrayFollow(call: EarsCall): Promise<void> {
+  try {
+    const now = await call("GET", "/wait?after=-1", earsQuickMs);
+    if (now.current?.by === "follow") await call("POST", `/recording/cancel?id=${now.current.id}`, earsQuickMs);
+  } catch {}
+}
+
+export type WatchDeps = { call: EarsCall; signal: AbortSignal; first?: string | null; now?: () => number; wait?: (ms: number, signal: AbortSignal) => Promise<void>; retryMs?: number; busy?: () => boolean; busyClaimMs?: number; follow?: FollowAsk };
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -49,12 +87,34 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
   let taken: { id: number; endedAt: number | null } | null = null;
   try {
     while (!deps.signal.aborted) {
+      const within = deps.follow?.take() ?? null;
+      if (within !== null && taken === null) {
+        let started: EarsAnswer;
+        try {
+          started = await deps.call("POST", `/wake/follow?within=${within}`, earsQuickMs, deps.signal);
+        } catch (error) {
+          await dropStrayFollow(deps.call);
+          if (deps.signal.aborted) return;
+          started = { status: 0, state: null, reason: null, error: reasonOf(error), seconds: null, last: null };
+        }
+        if (started.status === 200 && typeof started.id === "number") {
+          taken = { id: started.id, endedAt: null };
+          yield { kind: "wake", id: started.id, follow: true };
+        } else {
+          yield { kind: "no follow-up", why: followRefusal(started) };
+        }
+      }
+      const nudge = new AbortController();
+      const unhook = deps.follow?.onAsk(() => nudge.abort()) ?? (() => {});
       let answer: EarsAnswer;
       try {
-        answer = await deps.call("GET", `/wait?after=${after}${run === null ? "" : `&run=${encodeURIComponent(run)}`}`, waitAskMs, deps.signal);
+        answer = await deps.call("GET", `/wait?after=${after}${run === null ? "" : `&run=${encodeURIComponent(run)}`}`, waitAskMs, deps.follow === undefined ? deps.signal : AbortSignal.any([deps.signal, nudge.signal]));
       } catch (error) {
         if (deps.signal.aborted) return;
+        if (nudge.signal.aborted) continue;
         answer = { status: 0, state: null, reason: null, error: reasonOf(error), seconds: null, last: null };
+      } finally {
+        unhook();
       }
       const line = answer.status === 0 ? `off: ${answer.error ?? "ears didn't answer"}` : wakeStatus(answer);
       if (line !== status) {
