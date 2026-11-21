@@ -15,6 +15,7 @@ export type SearchMemory = {
   wide: boolean;
   known: boolean;
   seen: Map<string, Seen>;
+  matched?: string;
 };
 
 export type Counters = {
@@ -28,6 +29,7 @@ export type Memory = {
   searches: Map<string, SearchMemory>;
   counters: Counters;
   alertsToday: Map<string, number>;
+  callsToday: Map<string, number>;
   snoozed: Map<string, string | null>;
   digested: string | null;
 };
@@ -44,7 +46,7 @@ const listingIdPattern = /^[A-Za-z0-9|:.-]{1,64}$/;
 const dayPattern = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
 export function emptyMemory(): Memory {
-  return { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), snoozed: new Map(), digested: null };
+  return { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), callsToday: new Map(), snoozed: new Map(), digested: null };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -96,6 +98,10 @@ export function readMemory(text: string, keepSeen: boolean): Memory | null {
       if (memory.alertsToday.size >= maxSearches) break;
       if (searchIdPattern.test(id) && id.length <= 40 && count(value, 1_000_000) > 0) memory.alertsToday.set(id, count(value, 1_000_000));
     }
+    for (const [id, value] of Object.entries(isObject(parsed.callsToday) ? parsed.callsToday : {})) {
+      if (memory.callsToday.size >= maxSearches) break;
+      if (searchIdPattern.test(id) && id.length <= 40 && count(value, 1_000_000) > 0) memory.callsToday.set(id, count(value, 1_000_000));
+    }
   }
   if (typeof parsed.digested === "string" && dayPattern.test(parsed.digested)) memory.digested = parsed.digested;
   for (const [id, value] of Object.entries(isObject(parsed.snoozed) ? parsed.snoozed : {})) {
@@ -111,7 +117,8 @@ export function readMemory(text: string, keepSeen: boolean): Memory | null {
     const checked = time(value.checked);
     if (typeof value.criteria !== "string" || !/^[0-9a-f]{16}$/.test(value.criteria) || since === null || checked === null) continue;
     const known = keepSeen && isObject(value.seen);
-    memory.searches.set(id, { criteria: value.criteria, since, checked, wide: value.wide === true, known, seen: known ? readSeen(value.seen) : new Map() });
+    const matched = time(value.matched);
+    memory.searches.set(id, { criteria: value.criteria, since, checked, wide: value.wide === true, known, seen: known ? readSeen(value.seen) : new Map(), ...(matched === null ? {} : { matched }) });
   }
   return memory;
 }
@@ -120,11 +127,13 @@ export function writeMemory(memory: Memory, keepSeen: boolean): string {
   const searches: Record<string, unknown> = {};
   for (const [id, search] of memory.searches) {
     const saved: Record<string, unknown> = { criteria: search.criteria, since: search.since, checked: search.checked, wide: search.wide };
+    if (search.matched !== undefined) saved.matched = search.matched;
     if (keepSeen && search.known) saved.seen = Object.fromEntries(search.seen);
     searches[id] = saved;
   }
   const saved: Record<string, unknown> = { counters: memory.counters, searches };
   if (memory.alertsToday.size > 0) saved.alertsToday = Object.fromEntries(memory.alertsToday);
+  if (memory.callsToday.size > 0) saved.callsToday = Object.fromEntries(memory.callsToday);
   if (memory.snoozed.size > 0) saved.snoozed = Object.fromEntries(memory.snoozed);
   if (memory.digested !== null) saved.digested = memory.digested;
   return JSON.stringify(saved);

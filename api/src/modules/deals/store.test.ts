@@ -40,7 +40,7 @@ function sample(): Memory {
 }
 
 test("an empty memory has no searches and zeroed counters", () => {
-  assert.deepEqual(emptyMemory(), { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), snoozed: new Map(), digested: null });
+  assert.deepEqual(emptyMemory(), { searches: new Map(), counters: { day: "", calls: 0, alerts: 0, capNoted: false }, alertsToday: new Map(), callsToday: new Map(), snoozed: new Map(), digested: null });
   assert.notEqual(emptyMemory().searches, emptyMemory().searches);
 });
 
@@ -384,6 +384,40 @@ test("odd snoozes, counts and marks in the state file are dropped, not trusted",
   const noDay = readMemory(JSON.stringify({ counters: { day: "yesterday" }, searches: {}, alertsToday: { optiplex: 3 }, snoozed: { optiplex: null } }), true);
   assert.deepEqual([noDay?.alertsToday.size, noDay?.snoozed.size], [0, 1]);
   assert.deepEqual(readMemory(JSON.stringify({ counters: {}, searches: {}, alertsToday: [1, 2], snoozed: "all" }), true), emptyMemory());
+});
+
+test("each search's calls today and the time of its last match come back as saved, in either mode", () => {
+  const memory = sample();
+  memory.callsToday.set("optiplex", 12);
+  memory.callsToday.set("ram", 3);
+  const optiplex = memory.searches.get("optiplex");
+  assert.ok(optiplex !== undefined);
+  optiplex.matched = t2;
+  for (const keepSeen of [true, false]) {
+    const back = readMemory(writeMemory(memory, keepSeen), keepSeen);
+    assert.deepEqual(back?.callsToday, new Map([["optiplex", 12], ["ram", 3]]));
+    assert.equal(back?.searches.get("optiplex")?.matched, t2);
+    assert.equal(back !== null && back.searches.get("ram") !== undefined && "matched" in (back.searches.get("ram") ?? {}), false);
+  }
+  const text = writeMemory(memory, false);
+  assert.ok(text.includes(`"matched":"${t2}"`));
+  assert.ok(text.includes('"callsToday":{"optiplex":12,"ram":3}'));
+});
+
+test("odd calls today and odd last-match times are dropped, and calls today need the day", () => {
+  const text = JSON.stringify({
+    counters: { day: "2026-11-18", calls: 1, alerts: 1, capNoted: false },
+    searches: { optiplex: { ...goodSearch, matched: "yesterday" }, ram: { ...goodSearch, matched: 5 }, ssd: { ...goodSearch, matched: t1 } },
+    callsToday: { "optiplex": 7, "Bad Id": 2, "ram": -1, "zero": 0, "half": 1.5, "text": "7", "huge": 2_000_000 },
+  });
+  const memory = readMemory(text, true);
+  assert.deepEqual(memory?.callsToday, new Map([["optiplex", 7]]));
+  assert.deepEqual([memory?.searches.get("optiplex")?.matched, memory?.searches.get("ram")?.matched, memory?.searches.get("ssd")?.matched], [undefined, undefined, t1]);
+  const noDay = readMemory(JSON.stringify({ counters: { day: "yesterday" }, searches: {}, callsToday: { optiplex: 3 } }), true);
+  assert.equal(noDay?.callsToday.size, 0);
+  assert.deepEqual(readMemory(JSON.stringify({ counters: { day: "2026-11-18", calls: 0, alerts: 0, capNoted: false }, searches: {}, callsToday: [1, 2] }), true)?.callsToday, new Map());
+  const many = Object.fromEntries(Array.from({ length: 160 }, (_, i) => [`s${i}`, 1]));
+  assert.equal(readMemory(JSON.stringify({ counters: { day: "2026-11-18", calls: 0, alerts: 0, capNoted: false }, searches: {}, callsToday: many }), true)?.callsToday.size, 150);
 });
 
 test("no more snoozes or counts are read than there can be searches", () => {

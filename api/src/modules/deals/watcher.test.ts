@@ -783,7 +783,7 @@ test("in memory-only mode nothing from a listing is ever written to the state, w
   for (const fragment of ["1100000000", "v1|", "UNIQUE-TITLE-WORDS", "ebay.co.uk", "8000", "10000", "seen", "price", "Dell"]) {
     assert.ok(!text.includes(fragment), `${fragment} in ${text}`);
   }
-  assert.deepEqual(Object.keys(JSON.parse(text).searches.optiplex).sort(), ["checked", "criteria", "since", "wide"]);
+  assert.deepEqual(Object.keys(JSON.parse(text).searches.optiplex).sort(), ["checked", "criteria", "matched", "since", "wide"]);
 });
 
 test("in disk mode the state holds listing ids, times and at most a price, never titles, links or seller numbers", async () => {
@@ -1024,8 +1024,8 @@ test("searches reports each search's settings and how its last check went", asyn
   world.found.set("optiplex", listings(1, 2));
   await watcher.run(at(0));
   assert.deepEqual(watcher.searches(), [
-    { id: "optiplex", name: "OptiPlex", group: null, on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: {}, options: null, notes: [] },
-    { id: "ram", name: "DDR4 RAM", group: null, on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: null, options: null, notes: [] },
+    { id: "optiplex", name: "OptiPlex", group: null, on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: {}, options: null, notes: [] , callsToday: 1, health: [] },
+    { id: "ram", name: "DDR4 RAM", group: null, on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: null, options: null, notes: [] , callsToday: 0, health: [] },
   ]);
 });
 
@@ -2465,4 +2465,133 @@ test("status gives the digest's time, whether today's has gone, and whether its 
   assert.deepEqual(watcher.status(at(24 * 60)).digest, { at: "12:30", sentToday: false, skippedToday: false });
   assert.deepEqual(watcher.status(at(24 * 60 + 3 * 60 + 29)).digest, { at: "12:30", sentToday: false, skippedToday: false });
   assert.deepEqual(watcher.status(at(24 * 60 + 3 * 60 + 30)).digest, { at: "12:30", sentToday: false, skippedToday: true });
+});
+
+test("a search eBay has more listings for than it reads gets a health note saying so", async () => {
+  const { world, watcher } = setup();
+  world.found.set("optiplex", { listings: listings(1, 2, 3), total: 1110, complete: false, calls: 3 });
+  await watcher.run(at(0));
+  const [search] = watcher.searches(at(1));
+  assert.deepEqual(search.health, [{ kind: "incomplete", text: "eBay has 1,110 listings for it with its filters, but only the newest 3 are read, so older ones can be missed. A category or narrower words would bring eBay's count down." }]);
+  assert.equal(search.callsToday, 3);
+  world.found.set("optiplex", { listings: listings(1, 2, 3), total: 3, complete: true });
+  await watcher.run(at(31));
+  assert.deepEqual(watcher.searches(at(32))[0].health, []);
+});
+
+function junkAndReal(junk: number, real: number, priced = 0): Listing[] {
+  return [
+    ...Array.from({ length: junk }, (_, n) => listing(1000 + n, { title: `Galaxy Tab S6 Lite keyboard case number ${n}` })),
+    ...Array.from({ length: real }, (_, n) => listing(2000 + n)),
+    ...Array.from({ length: priced }, (_, n) => listing(3000 + n, { price: 999_999 })),
+  ];
+}
+
+test("a search whose titles or item details hide at least half of 200 or more listings read gets a health note", async () => {
+  const search = { ...optiplex, mustInclude: ["optiplex"], maxPrice: 5000 };
+  const cases: [Listing[], string | null][] = [
+    [junkAndReal(552, 48), "552 of the 600 listings eBay sent were hidden by their titles or item details, and every 200 read costs a call. A category or narrower words would keep them out before eBay counts."],
+    [junkAndReal(100, 100), "100 of the 200 listings eBay sent were hidden by their titles or item details, and every 200 read costs a call. A category or narrower words would keep them out before eBay counts."],
+    [junkAndReal(99, 101), null],
+    [junkAndReal(199, 0), null],
+    [junkAndReal(99, 1, 100), null],
+  ];
+  for (const [found, text] of cases) {
+    const { world, watcher } = setup([search]);
+    world.found.set("optiplex", found);
+    await watcher.run(at(0));
+    const health = watcher.searches(at(1))[0].health.filter((note) => note.kind === "mostlyHidden");
+    assert.deepEqual(health, text === null ? [] : [{ kind: "mostlyHidden", text }], String(found.length));
+  }
+});
+
+test("an eBay search that found nothing gets a health note, and a feed that found nothing doesn't", async () => {
+  const { world, watcher } = setup();
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.searches(at(1))[0].health, [{ kind: "nothingFound", text: "eBay found nothing with its filters at the last check. Its cuts show which filter cuts most." }]);
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(31));
+  assert.deepEqual(watcher.searches(at(32))[0].health, []);
+
+  const feed = createDealWatcher({
+    loadSearches: async () => listOf([{ ...optiplex, source: "other" }]),
+    sources: { other: { noCalls: true, search: async () => ({ listings: [], total: 0, complete: true, calls: 0, skipped: 0 }) } },
+    store: fakeStore(true).store,
+    notify: async () => undefined,
+  });
+  await feed.run(at(0));
+  assert.deepEqual(feed.searches(at(1))[0].health, []);
+  assert.equal(feed.searches(at(1))[0].callsToday, 0);
+});
+
+test("a search with no match for seven days gets a health note naming the day it last matched", async () => {
+  const { world, watcher } = setup();
+  await watcher.run(at(0));
+  const kinds = (minutes: number) => watcher.searches(at(minutes))[0].health.map((note) => note.kind);
+  assert.deepEqual(kinds(7 * 1440 - 1), ["nothingFound"]);
+  assert.deepEqual(watcher.searches(at(7 * 1440))[0].health.at(-1), { kind: "noMatch", text: "No match since it started watching on 2026-11-18, over 7 days ago." });
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(8 * 1440));
+  assert.deepEqual(kinds(8 * 1440 + 1), []);
+  world.found.set("optiplex", []);
+  await watcher.run(at(8 * 1440 + 30));
+  assert.deepEqual(kinds(15 * 1440 - 1), ["nothingFound"]);
+  assert.deepEqual(watcher.searches(at(15 * 1440))[0].health.at(-1), { kind: "noMatch", text: "No match since 2026-11-26, over 7 days ago." });
+});
+
+test("the last match is remembered across a restart, in memory-only mode too, and kept when the same search starts again after a long gap", async () => {
+  for (const gap of [60, 3 * 1440]) {
+    const { world, watcher, restart } = setup([optiplex], { keepSeen: false });
+    world.found.set("optiplex", listings(1));
+    await watcher.run(at(0));
+    assert.ok((world.disk.text ?? "").includes(`"matched":"${at(0).toISOString()}"`));
+    const again = restart();
+    world.found.set("optiplex", []);
+    await again.run(at(gap));
+    assert.deepEqual(again.searches(at(7 * 1440)).flatMap((search) => search.health).at(-1), { kind: "noMatch", text: "No match since 2026-11-18, over 7 days ago." }, String(gap));
+  }
+});
+
+test("a search whose words change starts its last match afresh", async () => {
+  const { world, watcher } = setup();
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(0));
+  world.list = listOf([{ ...optiplex, query: "optiplex 7080 sff" }]);
+  world.found.set("optiplex", []);
+  await watcher.run(at(60));
+  assert.deepEqual(watcher.searches(at(7 * 1440 - 1)).flatMap((search) => search.health).map((note) => note.kind), ["nothingFound"]);
+  assert.deepEqual(watcher.searches(at(7 * 1440 + 60)).flatMap((search) => search.health).at(-1), { kind: "noMatch", text: "No match since it started watching on 2026-11-18, over 7 days ago." });
+});
+
+test("each search's calls today count its searches, option reads and failed calls, start again each day and go with the search", async () => {
+  const { world, watcher } = richSetup([drive, { ...optiplex, everyMinutes: 30 }]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800]));
+  world.found.set("drive", [grouped(1, "201")]);
+  const broken = new SourceError("down", ebayMessages.down);
+  broken.calls = 2;
+  world.found.set("optiplex", broken);
+  await watcher.run(at(0));
+  const calls = (minutes: number) => Object.fromEntries(watcher.searches(at(minutes)).map((search) => [search.id, search.callsToday]));
+  assert.deepEqual(calls(1), { drive: 2, optiplex: 2 });
+  assert.equal(watcher.status().callsToday, 4);
+  world.found.set("optiplex", [listing(1)]);
+  await watcher.run(at(31));
+  assert.deepEqual(calls(32), { drive: 3, optiplex: 3 });
+  await watcher.run(at(1440));
+  assert.deepEqual(calls(1441), { drive: 2, optiplex: 1 });
+  world.list = readSearches(JSON.stringify({ searches: [drive] }), ["ebay"]);
+  await watcher.run(at(1500));
+  assert.deepEqual(calls(1501), { drive: 3 });
+  assert.ok(!(world.disk.text ?? "").includes('"optiplex"'));
+});
+
+test("a snoozed search has no health notes, so a snooze doesn't build up a week of no match", async () => {
+  const { world, watcher } = setup();
+  world.found.set("optiplex", { listings: listings(1), total: 900, complete: false });
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.searches(at(1))[0].health.map((note) => note.kind), ["incomplete"]);
+  await watcher.snooze("optiplex", null);
+  assert.deepEqual(watcher.searches(at(8 * 1440))[0].health, []);
+  await watcher.wake("optiplex");
+  assert.deepEqual(watcher.searches(at(8 * 1440 + 1))[0].health.map((note) => note.kind), ["incomplete", "noMatch"]);
 });

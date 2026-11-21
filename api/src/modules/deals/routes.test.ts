@@ -22,7 +22,7 @@ const status: WatcherStatus = {
 };
 
 const searches: SearchStatus[] = [
-  { id: "optiplex", name: "OptiPlex", group: "whole pc", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: "2026-11-18T11:55:00.000Z", watchingSince: "2026-11-17T09:00:00.000Z", matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 1, alertsPerDay: null, guidePrice: 12000, hidden: { words: 4 }, options: null, notes: [] },
+  { id: "optiplex", name: "OptiPlex", group: "whole pc", on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: "2026-11-18T11:55:00.000Z", watchingSince: "2026-11-17T09:00:00.000Z", matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 1, alertsPerDay: null, guidePrice: 12000, hidden: { words: 4 }, options: null, notes: [], callsToday: 0, health: [] },
 ];
 
 const matched: MatchedListing = {

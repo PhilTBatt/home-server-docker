@@ -126,7 +126,7 @@ A mistyped setting name is refused, not ignored, so `"maxprice"` can't quietly r
 
 ## What's kept where
 - **In memory only:** the listings from each search's last check (and HotUKDeals' feed, kept for five minutes): title, prices, link, condition, the seller's rating and whether they're a business, the town and postcode district eBay shows, and eBay's short summary. They're gone on restart and never shown once they're more than six hours old. Up to three titles of the listings each rule hid, from the same check, also only in memory. A listing read in full (description, item specifics, returns) is kept for half an hour, also only in memory. With `readOptions`, the options eBay lists for a listing (their details, prices and stock) are kept for up to six hours, for at most 1,000 listings, also only in memory.
-- **`deals/state.json`:** each search's fingerprint, when it started and was last checked, today's counts (overall and for each search), which searches are snoozed, and the day the digest last went. Nothing from eBay.
+- **`deals/state.json`:** each search's fingerprint, when it started, was last checked and last had a match, today's counts (overall, and each search's alerts and calls), which searches are snoozed, and the day the digest last went. Nothing from eBay.
 - **With `DEALS_SEEN=disk` only:** the ids of the listings each search has seen (every match from its first check on, not only the ones alerted), with times, their price if the search uses `dropPercent`, and a mark once an auction's ending-soon alert has gone. Never titles, links or anything about the seller.
 - **Never, anywhere:** seller names or ids. The watcher reads a seller's feedback numbers for the `sellerMin…` checks and the alert, and nothing else about them.
 - **Claude Code's transcripts, while `DEALS_AI=on`:** Claude Code saves every tool reply in its session files under `~/.claude/projects/` and keeps them for `cleanupPeriodDays` (30 days unless set, 1 at least). So listings Claude read are on disk there, outside this repo, until those files are cleaned up. That sits uneasily with "not persisting eBay data". Setting `cleanupPeriodDays` to 1 in `~/.claude/settings.json` shortens it; switching `DEALS_AI` off stops it.
@@ -283,10 +283,19 @@ Problems go through the same alerts as everything else on the server (`/system/a
 - The state file couldn't be saved.
 - The day's call limit is used up.
 
+## Search health
+Problems are things that stop the watcher. A search can also run without failing and still be badly set: it reads only part of what eBay has, or spends calls on junk, or never finds anything. Each search in `GET /deals/searches` has `health`, a list of notes with a `kind` and a `text`, worked out from its last check (none while it's snoozed):
+- `incomplete`: eBay counted more listings than the watcher reads (600, the newest), so an older match can be missed.
+- `mostlyHidden`: of 200 or more listings read, at least half were hidden by their titles (`words`, `avoid`) or item details. Every 200 listings read is one call.
+- `nothingFound`: eBay found nothing with the search's filters (eBay searches only: a HotUKDeals search often finds nothing among the newest posts, and that's normal).
+- `noMatch`: nothing has matched for 7 days, counting from the last match or, if there's never been one, from when the search started watching. The time of the last match is kept in `state.json` (a time, nothing from eBay), and it's forgotten when the search's settings change.
+
+`callsToday` is how many eBay calls the search has used since midnight UK time: its checks, and its option reads with `readOptions`. It's kept in `state.json` and starts again each day.
+
 ## Routes and tools
 All behind the API token, and all 404 with "The deal watcher is switched off" while `DEALS=off`.
 - `GET /deals/status`: last run, today's counts, quiet hours, the digest's time and whether today's has gone or its three hours passed without it, where seen listings are kept, problems.
-- `GET /deals/searches`: each search and how its last check went: matches, how many each rule hid, and, for a search with `readOptions`, how many listings' options gave a price that fits (`fitted`), couldn't be told (`unknown`) or weren't read yet (`unread`). `notes` says when a setting can't do anything (like `readOptions` on a search with no size, or an `exclude` word, or a word in one of its `avoid` lists, that every title with one of the `mustInclude` words has, so nothing can match) or the guide price is over 30 days old.
+- `GET /deals/searches`: each search and how its last check went: matches, how many each rule hid, and, for a search with `readOptions`, how many listings' options gave a price that fits (`fitted`), couldn't be told (`unknown`) or weren't read yet (`unread`). `notes` says when a setting can't do anything (like `readOptions` on a search with no size, or an `exclude` word, or a word in one of its `avoid` lists, that every title with one of the `mustInclude` words has, so nothing can match) or the guide price is over 30 days old. `health` and `callsToday` are under "Search health".
 - `GET /deals/searches/<id>/hidden`: up to three titles for each reason the search's last check hid listings, to see what its rules catch. Titles only, from the last six hours, for the hub page; no MCP tool reads it.
 - `GET /deals/matches`: the current listings for each search, cheapest first, up to 50 each, or fewer with `most=<1 to 50>`.
 - `POST /deals/check`: check every switched-on search now, and say how many were checked, how many alerts went, and whether any couldn't be sent. Refused if asked twice within a minute.

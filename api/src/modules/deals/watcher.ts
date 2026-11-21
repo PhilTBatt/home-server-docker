@@ -58,6 +58,13 @@ export type SearchStatus = {
   hidden: Record<string, number> | null;
   options: OptionCounts | null;
   notes: string[];
+  callsToday: number;
+  health: HealthNote[];
+};
+
+export type HealthNote = {
+  kind: "incomplete" | "mostlyHidden" | "nothingFound" | "noMatch";
+  text: string;
 };
 
 export type OptionCounts = {
@@ -145,6 +152,7 @@ export type DealWatcher = {
 type Result = {
   checkedAt: number;
   listings: Listing[];
+  read: number;
   total: number;
   complete: boolean;
   hidden: Record<string, number>;
@@ -184,6 +192,8 @@ const optionsKept = 1000;
 const optionCallsShare = 0.5;
 const examplesKept = 3;
 const digestWindowMinutes = 180;
+const noMatchDays = 7;
+const manyRead = 200;
 export const freshFor = 6 * hourMs;
 const needsAPerson = ["keys", "access", "request"];
 const sourceWide = ["keys", "access", "busy", "down"];
@@ -200,6 +210,10 @@ export function inQuiet(quiet: Quiet | null, now: Date): boolean {
   if (quiet === null) return false;
   const minutes = londonMinutes(now);
   return quiet.from < quiet.to ? minutes >= quiet.from && minutes < quiet.to : minutes >= quiet.from || minutes < quiet.to;
+}
+
+function grouped(count: number): string {
+  return count.toLocaleString("en-GB");
 }
 
 function clock(minutes: number): string {
@@ -412,6 +426,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       if (state.counters.day === today) return;
       state.counters = { day: today, calls: 0, alerts: 0, capNoted: false };
       state.alertsToday.clear();
+      state.callsToday.clear();
     };
     lastRun = time;
     if (memory !== null) newDay(memory);
@@ -440,6 +455,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     }
     for (const id of [...state.alertsToday.keys()]) {
       if (!listed.has(id)) state.alertsToday.delete(id);
+    }
+    for (const id of [...state.callsToday.keys()]) {
+      if (!listed.has(id)) state.callsToday.delete(id);
     }
     for (const id of state.snoozed.keys()) failures.delete(id);
     for (const [id, remembered] of state.searches) {
@@ -487,6 +505,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       return true;
     };
 
+    const charge = (id: string, calls: number) => {
+      if (calls > 0) state.callsToday.set(id, (state.callsToday.get(id) ?? 0) + calls);
+    };
     const started: Started[] = [];
     for (const search of loaded.searches) {
       if (!search.on || state.snoozed.has(search.id) || !(force || isDue(search, time))) continue;
@@ -507,6 +528,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       } catch (error) {
         if (error instanceof SourceError) {
           state.counters.calls += error.calls;
+          charge(search.id, error.calls);
           fail(search, error.reason, error.message, time, error.retryAfterMs);
         } else {
           fail(search, "stopped", "the check stopped unexpectedly", time);
@@ -515,6 +537,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         continue;
       }
       state.counters.calls += found.calls;
+      charge(search.id, found.calls);
       if (found.listings.length === 0 && found.skipped > 0) {
         fail(search, "reply", "none of the listings it sent could be read", time);
         summary.failed += 1;
@@ -524,7 +547,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       lastChecked.set(search.id, time);
       summary.checked += 1;
 
+      const beforeOptions = state.counters.calls;
       const { listings, counts } = await readOptions(search, source, found.listings, now, state);
+      charge(search.id, state.counters.calls - beforeOptions);
       const hidden: Record<string, number> = {};
       const examples: Record<string, string[]> = {};
       const matched: Listing[] = [];
@@ -539,7 +564,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         if (shown.length < examplesKept) shown.push(listing.title);
       }
       matched.sort((a, b) => totalPrice(a) - totalPrice(b));
-      results.set(search.id, { checkedAt: time, listings: matched, total: found.total, complete: found.complete, hidden, examples, options: counts });
+      results.set(search.id, { checkedAt: time, listings: matched, read: listings.length, total: found.total, complete: found.complete, hidden, examples, options: counts });
 
       const print = fingerprint(search);
       const remembered = state.searches.get(search.id);
@@ -553,11 +578,13 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       };
       if (remembered === undefined || remembered.criteria !== print || (!remembered.known && time - Date.parse(remembered.checked) > resumeWithin)) {
         const seen = new Map(matched.map((listing) => [listing.id, entryFor(listing, stamp)]));
-        state.searches.set(search.id, { criteria: print, since: stamp, checked: stamp, wide: !found.complete, known: true, seen });
+        const lastMatch = matched.length > 0 ? stamp : remembered?.criteria === print ? remembered.matched : undefined;
+        state.searches.set(search.id, { criteria: print, since: stamp, checked: stamp, wide: !found.complete, known: true, seen, ...(lastMatch === undefined ? {} : { matched: lastMatch }) });
         started.push({ name: search.name, count: matched.length, cheapest: matched.length > 0 ? totalPrice(matched[0]) : null });
         continue;
       }
 
+      if (matched.length > 0) remembered.matched = stamp;
       let fresh = matched.filter((listing) => !remembered.seen.has(listing.id));
       const cutoff = !remembered.known ? Date.parse(remembered.checked) : !found.complete || remembered.wide ? Date.parse(remembered.since) : null;
       if (cutoff !== null) {
@@ -672,6 +699,33 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     return true;
   }
 
+  function healthOf(search: Search, now: number): HealthNote[] {
+    const notes: HealthNote[] = [];
+    const result = results.get(search.id);
+    if (!search.on || result === undefined || memory?.snoozed.has(search.id) === true) return notes;
+    if (!result.complete) {
+      notes.push({ kind: "incomplete", text: `eBay has ${grouped(result.total)} listings for it with its filters, but only the newest ${grouped(result.read)} are read, so older ones can be missed. A category or narrower words would bring eBay's count down.` });
+    }
+    const junk = (result.hidden.words ?? 0) + (result.hidden.avoid ?? 0) + (result.hidden.details ?? 0);
+    if (result.read >= manyRead && junk * 2 >= result.read) {
+      notes.push({ kind: "mostlyHidden", text: `${grouped(junk)} of the ${grouped(result.read)} listings eBay sent were hidden by their titles or item details, and every 200 read costs a call. A category or narrower words would keep them out before eBay counts.` });
+    }
+    if (options.sources[search.source]?.noCalls !== true && result.total === 0) {
+      notes.push({ kind: "nothingFound", text: "eBay found nothing with its filters at the last check. Its cuts show which filter cuts most." });
+    }
+    const remembered = memory?.searches.get(search.id);
+    if (remembered !== undefined) {
+      const since = Date.parse(remembered.since);
+      const last = remembered.matched === undefined ? null : Date.parse(remembered.matched);
+      const quietFor = now - (last ?? since);
+      if (quietFor >= noMatchDays * 24 * hourMs) {
+        const day = londonTime(new Date(last ?? since)).day;
+        notes.push({ kind: "noMatch", text: last === null ? `No match since it started watching on ${day}, over ${noMatchDays} days ago.` : `No match since ${day}, over ${noMatchDays} days ago.` });
+      }
+    }
+    return notes;
+  }
+
   function problems(): Problem[] {
     const found: Problem[] = [];
     if (listProblem !== null) found.push({ code: "deals-list", message: `The deal watcher's search list has a problem: ${listProblem}.` });
@@ -765,6 +819,8 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
           hidden: result === undefined ? null : { ...result.hidden },
           options: result?.options === undefined || result.options === null ? null : { ...result.options },
           notes,
+          callsToday: memory?.callsToday.get(search.id) ?? 0,
+          health: healthOf(search, now.getTime()),
         };
       });
     },
