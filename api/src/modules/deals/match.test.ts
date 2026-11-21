@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
-import { alwaysExcluded, ruleChecks, cautions, chooseOption, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot, withOption } from "./match.js";
+import { alwaysExcluded, ruleChecks, offEbaySign, cautions, chooseOption, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot, withOption } from "./match.js";
 import { readSearches, type Search } from "./searches.js";
 import type { Listing, ListingOption } from "./source.js";
 
@@ -723,4 +723,33 @@ test("whyNot is always the first rule ruleChecks names, or nothing when it names
       assert.equal(whyNot(wanted, found, now), ruleChecks(wanted, found, now)[0]?.rule ?? null);
     }
   }
+});
+
+test("a title, summary or description that mentions paying or talking outside eBay gets a caution naming the words, not the seller's text", () => {
+  const caution = (sign: string) => `it mentions ${sign}, a sign of paying or talking outside eBay, which loses eBay's Money Back Guarantee`;
+  assert.deepEqual(cautions(search(), listing({ title: "Fractal Meshify C case, CASH ON COLLECTION only" })), [caution('"cash on collection"')]);
+  assert.deepEqual(cautions(search(), listing({ summary: "Pay by bank transfer for a discount" })), [caution('"bank transfer"')]);
+  assert.deepEqual(cautions(search(), listing(), "Message me on WhatsApp before buying"), [caution('"whatsapp"')]);
+  assert.deepEqual(cautions(search(), listing(), "Ring 07700 900 123 for a better price"), [caution("a phone number")]);
+  assert.deepEqual(cautions(search(), listing(), "Ring +44 7700900123"), [caution("a phone number")]);
+  assert.deepEqual(cautions(search(), listing({ title: "Cash only", summary: "bank transfer" }), "whatsapp"), [caution('"cash only"')]);
+  assert.deepEqual(cautions(search(), listing(), "PayPal F&F saves the fees"), [caution('"paypal f f"')]);
+  const fine = [
+    "Dell OptiPlex 7070 SFF, collection or posted",
+    "Paid through eBay only",
+    "Model 07700 9001 23x",
+    "Cashmere jumper",
+    "Callme-branded case",
+    "16GB DDR4 3200 1.35V 288-pin",
+    "Serial 0770090012345",
+    "Message me on eBay with any questions",
+    "Contact me on eBay messages",
+    "Email me via eBay",
+    "Call me if the courier can't find you",
+    "Bought off eBay last year",
+    "Built for friends and family, barely used",
+    "Text me through eBay for a combined postage price",
+  ];
+  for (const text of fine) assert.equal(offEbaySign(text), null, text);
+  assert.deepEqual(cautions(search(), listing(), null), []);
 });

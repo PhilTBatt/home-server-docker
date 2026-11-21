@@ -292,7 +292,7 @@ function clock(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
-function describe(search: Search, listing: Listing, matched: Listing[], firstSeen: string | null): MatchedListing {
+function describe(search: Search, listing: Listing, matched: Listing[], firstSeen: string | null, description: string | null = null): MatchedListing {
   const total = totalPrice(listing);
   return {
     id: listing.id,
@@ -322,7 +322,7 @@ function describe(search: Search, listing: Listing, matched: Listing[], firstSee
     underGuide: priceKnown(listing) ? underGuide(search, listing) : null,
     great: isGreat(search, listing),
     perUnit: unitPrice(search, listing),
-    cautions: cautions(search, listing),
+    cautions: cautions(search, listing, description),
   };
 }
 
@@ -1087,7 +1087,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
           searchId: search.id,
           searchName: search.name,
           fetchedAt: new Date(kept.at).toISOString(),
-          listing: describe(search, { ...current, id, url: listing.url, detailsMatch: listing.detailsMatch, ...(listing.option === undefined ? {} : { option: listing.option }) }, result.listings, firstSeen),
+          listing: describe(search, { ...current, id, url: listing.url, detailsMatch: listing.detailsMatch, ...(listing.option === undefined ? {} : { option: listing.option }) }, result.listings, firstSeen, full.description),
           full,
         };
       }

@@ -382,3 +382,8 @@ test("in the digest a match at exactly its guide price isn't under it, and part 
   const lines = digestNotification(["ups", "graphics", "cpu", "server", "whole pc", "expansion", "network"].map(one), false).message.split("\n").slice(1);
   assert.deepEqual(lines.map((line) => line.split(":")[0]), ["Whole PCs", "Servers", "CPUs", "Graphics cards", "Network", "Expansion cards", "UPS"]);
 });
+
+test("a deal alert asks to check first when the title mentions paying outside eBay", () => {
+  const message = dealNotification(search(), listing({ title: "Fractal Meshify C case, cash on collection" }), null, null, now, false).message;
+  assert.match(message, /Check first: it mentions "cash on collection", a sign of paying or talking outside eBay, which loses eBay's Money Back Guarantee\./);
+});

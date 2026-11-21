@@ -3059,3 +3059,14 @@ test("a full read that finds the fitting option sold out leaves the listing in, 
   assert.deepEqual(world.groupCalls, ["201", "201"]);
   assert.equal(watcher.matches(at(61))[0].listings[0].price, 5200);
 });
+
+test("a listing read in full gets the off-eBay caution from its description too", async () => {
+  const { world, watcher } = richSetup();
+  const shown = listing(1, { id: "110000000001", ref: "v1|110000000001|0" });
+  world.found.set("optiplex", [shown]);
+  await watcher.run(at(0));
+  assert.deepEqual(watcher.matches(at(1))[0].listings[0].cautions, []);
+  world.fullReply = { ...fullOf(shown), description: "Cash on collection, no time wasters." };
+  const read = await watcher.full("110000000001", at(2));
+  assert.deepEqual(read.status === "ok" ? read.listing.cautions : null, ["it mentions \"cash on collection\", a sign of paying or talking outside eBay, which loses eBay's Money Back Guarantee"]);
+});

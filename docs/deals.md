@@ -197,7 +197,7 @@ Set `guideDate` to the day you chose the price. After 30 days the alert reminds 
 
 ## What an alert says about the seller
 - **Business seller or private seller**, when eBay says which. The seller chooses this when they register, so treat it as a hint.
-- **Check first**, when something deserves a second look: under 10 ratings, a price under half your guide price, or a listing with more than one option (the price shown may be for the cheapest; with `readOptions`, it names the option the price is for).
+- **Check first**, when something deserves a second look: under 10 ratings, a price under half your guide price, a listing with more than one option (the price shown may be for the cheapest; with `readOptions`, it names the option the price is for), or a title or eBay summary that mentions paying or talking outside eBay, like "cash on collection", "bank transfer", WhatsApp or a mobile number (the alert names the words from the watcher's own list, never the seller's text). Reading a listing in full checks its description for the same signs.
 
 Why the seller type matters, as the research for this read the sources (not legal advice):
 - Buying from a business, the Consumer Rights Act 2015 applies, and a sale made at a distance usually comes with 14 days to cancel under the Consumer Contracts Regulations 2013. https://www.legislation.gov.uk/ukpga/2015/15/section/2 and https://www.legislation.gov.uk/uksi/2013/3134/regulation/30

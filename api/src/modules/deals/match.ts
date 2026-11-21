@@ -166,8 +166,30 @@ export function priorityFor(search: Search, listing: Listing): 2 | 3 | 4 {
   return totalPrice(listing) > search.guidePrice ? 2 : 3;
 }
 
-export function cautions(search: Search, listing: Listing): string[] {
+const offEbayPhrases = [
+  "cash on collection",
+  "cash only",
+  "cash on pick up",
+  "cash on pickup",
+  "bank transfer",
+  "paypal friends",
+  "paypal f f",
+  "whatsapp",
+  "pay outside",
+  "payment outside",
+];
+const phoneNumber = /(?<![0-9])(?:\+44 ?7|07)[0-9]{3} ?[0-9]{3} ?[0-9]{3}(?![0-9])/;
+
+export function offEbaySign(text: string): string | null {
+  const phrase = offEbayPhrases.find((wanted) => hasPhrase(text, wanted));
+  if (phrase !== undefined) return `"${phrase}"`;
+  return phoneNumber.test(text) ? "a phone number" : null;
+}
+
+export function cautions(search: Search, listing: Listing, description: string | null = null): string[] {
   const found: string[] = [];
+  const sign = [listing.title, listing.summary ?? "", description ?? ""].map(offEbaySign).find((found) => found !== null);
+  if (sign !== undefined && sign !== null) found.push(`it mentions ${sign}, a sign of paying or talking outside eBay, which loses eBay's Money Back Guarantee`);
   if (listing.sellerFeedback !== null && listing.sellerFeedback < 10) found.push("the seller has under 10 ratings");
   if (search.guidePrice !== null && !isAuctionOnly(listing) && totalPrice(listing) * 2 < search.guidePrice) found.push("it's under half your guide price");
   if (listing.variations) found.push(typeof listing.option === "string" ? `the listing has more than one option, and this is the price of ${listing.option}` : "the listing has more than one option, so this may be its lowest price");
