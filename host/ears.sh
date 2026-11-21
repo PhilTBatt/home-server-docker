@@ -98,16 +98,17 @@ if [ "$1" = mic-test ]; then
     fi
   fi
   echo "When it's done, it plays the recording back on sound card $speakers's speakers."
-  export EARS_MIC_LEVEL EARS_MIC_CONTROL EARS_MIC_BOOST EARS_MIC_BOOST_CONTROL EARS_WAKE_END EARS_MIC_TEST_WAIT
+  export EARS_MIC_LEVEL EARS_MIC_CONTROL EARS_MIC_BOOST EARS_MIC_BOOST_CONTROL EARS_WAKE_END EARS_WAKE_PAUSE EARS_MIC_TEST_WAIT
   EARS_MIC_LEVEL=$(setting EARS_MIC_LEVEL)
   EARS_MIC_CONTROL=$(setting EARS_MIC_CONTROL)
   EARS_MIC_BOOST=$(setting EARS_MIC_BOOST)
   EARS_MIC_BOOST_CONTROL=$(setting EARS_MIC_BOOST_CONTROL)
   EARS_WAKE_END=$(setting EARS_WAKE_END)
+  EARS_WAKE_PAUSE=$(setting EARS_WAKE_PAUSE)
   EARS_MIC_TEST_WAIT=$((10#$wait_for))
   interrupted=
   trap 'interrupted=1' INT
-  docker run "${hardened[@]}" --group-add "$group" --device "/dev/snd/controlC$number:/dev/snd/controlC$number:rw" --device "/dev/snd/pcmC${number}D0c:/dev/snd/pcmC${number}D0c:rw" -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_WAKE_END -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | play_back
+  docker run "${hardened[@]}" --group-add "$group" --device "/dev/snd/controlC$number:/dev/snd/controlC$number:rw" --device "/dev/snd/pcmC${number}D0c:/dev/snd/pcmC${number}D0c:rw" -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_WAKE_END -e EARS_WAKE_PAUSE -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | play_back
   codes=("${PIPESTATUS[@]}")
   if [ -n "$interrupted" ]; then
     trap - INT

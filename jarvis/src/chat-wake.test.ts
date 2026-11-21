@@ -600,12 +600,12 @@ test("without follow-ups, a follow-up's events from ears are passed over safely,
   await chat.running;
 });
 
-test("a question asked as a follow-up is logged with follow true and what ended it, never the words", () => {
+test("a question asked as a follow-up is logged with follow true, how it was set to end and its pause, never the words", () => {
   const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
   const answer = { text: "Nine again.", firstWordsMs: 400, totalMs: 900 };
-  const spoken: Heard = { text: "And tomorrow?", recordedMs: 2000.2, textMs: 700.4, follow: true, ender: "silero" };
+  const spoken: Heard = { text: "And tomorrow?", recordedMs: 2000.2, textMs: 700.4, follow: true, ender: "silero", pauseMs: 2500 };
   const line = logLine(context, "c", 2, new Date("2026-11-21T20:00:00Z"), { answer, heard: spoken });
-  assert.deepEqual(line.heard, { recordedMs: 2000, textMs: 700, follow: true, ender: "silero" });
+  assert.deepEqual(line.heard, { recordedMs: 2000, textMs: 700, follow: true, ender: "silero", pauseMs: 2500 });
   assert.equal(JSON.stringify(line).includes("tomorrow"), false);
 });
 

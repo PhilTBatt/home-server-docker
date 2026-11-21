@@ -981,10 +981,11 @@ test("a recording's last says how it was set to end when the recording says so, 
   await ears.unmute();
   ears.start("wake");
   ears.claim(1);
-  recordings[0].end({ reason: "the speech detector heard no speech for 1.5 seconds after you spoke", ender: "silero" });
+  recordings[0].end({ reason: "the speech detector heard no speech for 1.5 seconds after you spoke", ender: "silero", pauseMs: 1500 });
   await until(() => ears.view().state === "idle");
-  assert.deepEqual(ears.view().last, { seconds: 1.2, reason: "the speech detector heard no speech for 1.5 seconds after you spoke", text: null, textProblem: null, ender: "silero" });
+  assert.deepEqual(ears.view().last, { seconds: 1.2, reason: "the speech detector heard no speech for 1.5 seconds after you spoke", text: null, textProblem: null, ender: "silero", pauseMs: 1500 });
   ears.start();
   await ears.stop();
   assert.equal(ears.view().last !== null && "ender" in ears.view().last!, false);
+  assert.equal(ears.view().last !== null && "pauseMs" in ears.view().last!, false);
 });

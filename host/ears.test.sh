@@ -508,7 +508,7 @@ if [ "$1 $2" = "build -q" ]; then
   exit 0
 fi
 if [ "$1" = run ] && [[ " $* " == *" home-hub-ears "* ]]; then
-  echo "recorder: docker $* | EARS_MIC_LEVEL=${EARS_MIC_LEVEL-unset} EARS_MIC_CONTROL=${EARS_MIC_CONTROL-unset} EARS_MIC_BOOST=${EARS_MIC_BOOST-unset} EARS_MIC_BOOST_CONTROL=${EARS_MIC_BOOST_CONTROL-unset} EARS_WAKE_END=${EARS_WAKE_END-unset} EARS_MIC_TEST_WAIT=${EARS_MIC_TEST_WAIT-unset} EARS_TOKEN=${EARS_TOKEN-unset}" >> "$MIC_LOG"
+  echo "recorder: docker $* | EARS_MIC_LEVEL=${EARS_MIC_LEVEL-unset} EARS_MIC_CONTROL=${EARS_MIC_CONTROL-unset} EARS_MIC_BOOST=${EARS_MIC_BOOST-unset} EARS_MIC_BOOST_CONTROL=${EARS_MIC_BOOST_CONTROL-unset} EARS_WAKE_END=${EARS_WAKE_END-unset} EARS_WAKE_PAUSE=${EARS_WAKE_PAUSE-unset} EARS_MIC_TEST_WAIT=${EARS_MIC_TEST_WAIT-unset} EARS_TOKEN=${EARS_TOKEN-unset}" >> "$MIC_LOG"
   echo "The room's background is 41, so speech is anything above 300." >&2
   if [ -n "${FAKE_RECORDER_FAIL:-}" ]; then echo "$FAKE_RECORDER_FAIL" >&2; exit 1; fi
   if [ -n "${FAKE_RECORDER_SILENT:-}" ]; then exit 0; fi
@@ -615,7 +615,7 @@ check "mic-test in a terminal records, then plays back, and succeeds" "0" "$mic_
 check "it builds both images, then looks whether ears is running just before it records, then runs the recorder with only the microphone and its mixer, then the player with only the speakers and the mixer" "docker build -q -t home-hub-ears ears
 docker build -q -t home-hub-jarvis jarvis
 docker compose ps --status running --quiet ears
-recorder: $hardened --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_WAKE_END -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | EARS_MIC_LEVEL= EARS_MIC_CONTROL= EARS_MIC_BOOST= EARS_MIC_BOOST_CONTROL= EARS_WAKE_END= EARS_MIC_TEST_WAIT=0 EARS_TOKEN=unset
+recorder: $hardened --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_WAKE_END -e EARS_WAKE_PAUSE -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | EARS_MIC_LEVEL= EARS_MIC_CONTROL= EARS_MIC_BOOST= EARS_MIC_BOOST_CONTROL= EARS_WAKE_END= EARS_WAKE_PAUSE= EARS_MIC_TEST_WAIT=0 EARS_TOKEN=unset
 player: $hardened -i --user node --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0p:/dev/snd/pcmC1D0p:rw home-hub-jarvis sh -c amixer -q -c 1 sset Master 80% unmute && exec aplay -q -t raw -f S16_LE -r 16000 -c 1 -D plughw:1,0" "$(cat "$MIC_LOG")"
 check "the player gets exactly the sound after the line that says it follows, byte for byte, with no line of its own" "same" "$(cmp -s "$SOUND" "$PLAYED" && echo same || echo different)"
 check "the recorder never gets a speaker, and the player never gets a microphone" "0 0" "$(grep '^recorder:' "$MIC_LOG" | grep -c 'D0p') $(grep '^player:' "$MIC_LOG" | grep -c 'D0c')"
@@ -627,10 +627,10 @@ check "saying where it'll play it back before it records, so nothing it prints c
 check_has "and that it's done" "Done. Run it again from somewhere else to compare." "$mic_output"
 
 mic_setup
-printf 'EARS_TOKEN=a-secret-token\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=usb-0000:00:14.0-1\nEARS_MIC_LEVEL=100\nEARS_MIC_CONTROL=Mic\nEARS_MIC_BOOST=2\nEARS_MIC_BOOST_CONTROL="Mic Boost"\nEARS_WAKE_END=silero\n' > "$work/repo/ears/.env"
+printf 'EARS_TOKEN=a-secret-token\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=usb-0000:00:14.0-1\nEARS_MIC_LEVEL=100\nEARS_MIC_CONTROL=Mic\nEARS_MIC_BOOST=2\nEARS_MIC_BOOST_CONTROL="Mic Boost"\nEARS_WAKE_END=silero\nEARS_WAKE_PAUSE=2.5\n' > "$work/repo/ears/.env"
 printf 'JARVIS_SOUND_CARD=pci-0000:04:00.6\nJARVIS_VOLUME=55\n' > "$work/repo/jarvis/.env"
 mic_test mic-test 07
-check "a USB microphone on its own card is recorded from that card, with ears's four microphone settings and the wait passed by name, and played on the speakers' card at Jarvis's volume" "0|recorder: $hardened --group-add $(stat -c %g "$snd/controlC2") --device /dev/snd/controlC2:/dev/snd/controlC2:rw --device /dev/snd/pcmC2D0c:/dev/snd/pcmC2D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_WAKE_END -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | EARS_MIC_LEVEL=100 EARS_MIC_CONTROL=Mic EARS_MIC_BOOST=2 EARS_MIC_BOOST_CONTROL=Mic Boost EARS_WAKE_END=silero EARS_MIC_TEST_WAIT=7 EARS_TOKEN=unset|player: $hardened -i --user node --group-add $(stat -c %g "$snd/controlC1") --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0p:/dev/snd/pcmC1D0p:rw home-hub-jarvis sh -c amixer -q -c 1 sset Master 55% unmute && exec aplay -q -t raw -f S16_LE -r 16000 -c 1 -D plughw:1,0" "$mic_status|$(grep '^recorder:' "$MIC_LOG")|$(grep '^player:' "$MIC_LOG")"
+check "a USB microphone on its own card is recorded from that card, with ears's microphone settings, how a wake recording ends and the wait passed by name, and played on the speakers' card at Jarvis's volume" "0|recorder: $hardened --group-add $(stat -c %g "$snd/controlC2") --device /dev/snd/controlC2:/dev/snd/controlC2:rw --device /dev/snd/pcmC2D0c:/dev/snd/pcmC2D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_WAKE_END -e EARS_WAKE_PAUSE -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | EARS_MIC_LEVEL=100 EARS_MIC_CONTROL=Mic EARS_MIC_BOOST=2 EARS_MIC_BOOST_CONTROL=Mic Boost EARS_WAKE_END=silero EARS_WAKE_PAUSE=2.5 EARS_MIC_TEST_WAIT=7 EARS_TOKEN=unset|player: $hardened -i --user node --group-add $(stat -c %g "$snd/controlC1") --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0p:/dev/snd/pcmC1D0p:rw home-hub-jarvis sh -c amixer -q -c 1 sset Master 55% unmute && exec aplay -q -t raw -f S16_LE -r 16000 -c 1 -D plughw:1,0" "$mic_status|$(grep '^recorder:' "$MIC_LOG")|$(grep '^player:' "$MIC_LOG")"
 
 for case in "0|0% mute" "007|7% unmute" "100|100% unmute" "|80% unmute"; do
   mic_setup

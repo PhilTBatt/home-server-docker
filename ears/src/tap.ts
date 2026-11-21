@@ -10,7 +10,7 @@ export type Tap = Recording & { readonly by: By; push(sound: Uint8Array): void; 
 
 export type Judged = { detector: Detector; end: SpeechEnd; fallback: (level: number) => boolean; failed?: (why: string) => void };
 
-export type TapOptions = { by: By; limitMs?: number; maxBytes?: number; before?: Uint8Array; quiet?: QuietEnd | null; judged?: Judged | null; ender?: Ender; now?: () => number };
+export type TapOptions = { by: By; limitMs?: number; maxBytes?: number; before?: Uint8Array; quiet?: QuietEnd | null; judged?: Judged | null; ender?: Ender; pauseMs?: number; now?: () => number };
 
 function reasonOf(error: unknown): string {
   const text = (error instanceof Error ? error.message : String(error)).replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/ {2,}/g, " ").trim();
@@ -47,7 +47,7 @@ export function startTap(options: TapOptions): Tap {
       at += piece.length;
     }
     pieces.length = 0;
-    over = { reason, failed, bytes, ms: now() - began, sound: sound.subarray(0, sound.length - (sound.length % 2)), ...(unheard ? { unheard: true as const } : {}), ...(options.ender === undefined ? {} : { ender: options.ender }) };
+    over = { reason, failed, bytes, ms: now() - began, sound: sound.subarray(0, sound.length - (sound.length % 2)), ...(unheard ? { unheard: true as const } : {}), ...(options.ender === undefined ? {} : { ender: options.ender }), ...(options.pauseMs === undefined ? {} : { pauseMs: options.pauseMs }) };
     finish(over);
     return ended;
   }

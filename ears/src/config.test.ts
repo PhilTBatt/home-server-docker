@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, microphones, mostBoostSteps, readConfig, readMicSettings, readWakeEnd, shortestToken } from "./config.js";
+import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, microphones, mostBoostSteps, readConfig, readMicSettings, readWakeEnd, readWakePause, shortestToken, wakePauses } from "./config.js";
 
 const token = "t".repeat(64);
 
-const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness" };
+const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500 };
 
 test("reads the token, and with no microphone set there's nothing to record from", () => {
   assert.deepEqual(readConfig({ EARS_TOKEN: token }), { token, microphone: null, ...usual });
@@ -94,6 +94,17 @@ test("EARS_WAKE is checked after the microphone and its level", () => {
   assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "real", EARS_WAKE: "maybe" }), { message: /^EARS_MICROPHONE must be/ });
   assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_MIC_LEVEL: "loud", EARS_WAKE: "maybe" }), { message: /^EARS_MIC_LEVEL must be/ });
   assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_MIC_BOOST: "loud", EARS_WAKE: "maybe" }), { message: /^EARS_MIC_BOOST must be/ });
+});
+
+test("a wake recording ends after 1.5 seconds without speech unless EARS_WAKE_PAUSE says 1 to 5 seconds, to a tenth, and anything else stops ears, saying what it must be", () => {
+  assert.deepEqual(wakePauses, { least: 1, most: 5, usual: 1.5 });
+  for (const [value, ms] of [[undefined, 1500], ["", 1500], [" ", 1500], ["1", 1000], ["1.0", 1000], [" 2.5 ", 2500], ["3", 3000], ["4.9", 4900], ["5", 5000], ["5.0", 5000]] as const) {
+    assert.equal(readConfig({ EARS_TOKEN: token, EARS_WAKE_PAUSE: value }).wakePauseMs, ms, String(value));
+    assert.equal(readWakePause(value), ms, String(value));
+  }
+  for (const value of ["0.9", "0", "5.1", "6", "10", "1.25", "2.", ".5", "-2", "2s", "two", "2,5", "1e0", "0x2"]) {
+    assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_WAKE_PAUSE: value }), { message: `EARS_WAKE_PAUSE must be a number of seconds from 1 to 5, with at most one decimal place, like 1.5 or 2.5, not "${value}"` }, value);
+  }
 });
 
 test("a wake recording ends on loudness unless EARS_WAKE_END says silero, and anything else stops ears, saying what it must be", () => {

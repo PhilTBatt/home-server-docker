@@ -187,6 +187,14 @@ test("the report says the room's level in the same words as ears's log, then the
   ]);
 });
 
+test("the pause advice goes by EARS_WAKE_PAUSE when it's set, in the report and the detector's view", () => {
+  assert.equal(describeMic(report({ longestPauseMs: 2_000 }), usual, 2_500)[2], "Your longest pause while talking was 2 seconds. Ears ends a wake-word recording after 2.5 seconds of quiet.");
+  assert.equal(describeMic(report({ longestPauseMs: 2_500 }), usual, 2_500)[2], "Your longest pause while talking was 2.5 seconds. Ears ends a wake-word recording after 2.5 seconds of quiet, so it would have ended one during that pause.");
+  const view = { speechMs: 2_000, longestPauseMs: 2_000, speech: [true] };
+  assert.equal(describeDetector(view, report({}), [true], 2_500)[0], "The speech detector heard speech for 2 seconds, and your longest pause while talking was 2 seconds.");
+  assert.equal(describeDetector(view, report({}), [true], 2_000)[0], "The speech detector heard speech for 2 seconds, and your longest pause while talking was 2 seconds, so it would have ended a wake-word recording during that pause.");
+});
+
 test("a pause as long as ears waits for says it would have ended a wake-word recording there", () => {
   assert.equal(describeMic(report({ longestPauseMs: 1_500 }), usual)[2], "Your longest pause while talking was 1.5 seconds. Ears ends a wake-word recording after 1.5 seconds of quiet, so it would have ended one during that pause.");
   assert.equal(describeMic(report({ longestPauseMs: 1_400 }), usual)[2], "Your longest pause while talking was 1.4 seconds. Ears ends a wake-word recording after 1.5 seconds of quiet.");
@@ -296,6 +304,7 @@ test("a bad setting, a bad wait, no card, or a level that can't be set stops it 
     [{ env: { EARS_MIC_LEVEL: "loud" } }, `The check didn't start: EARS_MIC_LEVEL must be a whole number from 0 to 100, or keep to leave the card's own level, not "loud".`],
     [{ env: { EARS_MIC_BOOST: "max" } }, `The check didn't start: EARS_MIC_BOOST must be a whole number of steps from 0 to 10, or keep to leave the card's own boost, not "max".`],
     [{ env: { EARS_MIC_TEST_WAIT: "90" } }, `The check didn't start: the wait must be a whole number of seconds from 0 to 60, not "90".`],
+    [{ env: { EARS_WAKE_PAUSE: "9" } }, `The check didn't start: EARS_WAKE_PAUSE must be a number of seconds from 1 to 5, with at most one decimal place, like 1.5 or 2.5, not "9".`],
     [{ findCard: async () => Promise.reject(new Error("No sound devices were passed in")) }, "The check didn't start: No sound devices were passed in."],
     [{ setLevel: async () => Promise.reject(new Error("Couldn't set Capture on sound card 3")) }, "The check didn't start: Couldn't set Capture on sound card 3."],
     [{ env: { EARS_MIC_BOOST: "1" }, setBoost: async () => Promise.reject(new Error("Couldn't set Internal Mic Boost on sound card 3")) }, "The check didn't start: Couldn't set Internal Mic Boost on sound card 3."],
@@ -405,8 +414,9 @@ test("with EARS_WAKE_END=silero the check loads the detector and adds its view a
 });
 
 test("without the detector chosen nothing loads, and a detector that won't load or run is said after the report, the sound still sent", { timeout: 15_000 }, async () => {
-  const off = harness({ env: { EARS_WAKE_END: "loudness" }, loadSilero: async () => assert.fail("it loaded") });
+  const off = harness({ env: { EARS_WAKE_END: "loudness", EARS_WAKE_PAUSE: "4" }, loadSilero: async () => assert.fail("it loaded") });
   assert.equal(await runMicTest(off.deps), 0);
+  assert.equal(off.said.filter((line) => line.endsWith("Ears ends a wake-word recording after 4 seconds of quiet.")).length, 1, "the run reads EARS_WAKE_PAUSE");
   assert.equal(off.said.some((line) => line.includes("speech detector")), false);
   const broken = harness({ env: { EARS_WAKE_END: "silero" }, loadSilero: async () => Promise.reject(new Error("no model")) });
   assert.equal(await runMicTest(broken.deps), 0);

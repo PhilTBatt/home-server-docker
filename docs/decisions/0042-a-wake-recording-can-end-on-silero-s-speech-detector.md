@@ -1,7 +1,7 @@
 # 0042. A wake recording can end on Silero's speech detector
 
 - Date: 2026-11-21
-- Status: accepted
+- Status: accepted; the 1.5 seconds without speech that ends a recording can be set from 1 to 5 seconds with `EARS_WAKE_PAUSE` (see 0039's Status line)
 
 ## Context
 A recording after "Hey Jarvis" ends once it's been quiet for 1.5 seconds after I speak (record 0039). Quiet means under three times the room's level. Anything loud enough keeps it going, even if it isn't a voice: a fan that changes speed, music, the kettle, a door. A quiet voice from across the room can drop under the line and end it early. A voice-activity detector judges whether sound is speech at all. The voice plan named Silero's for this step. I hadn't tried the loudness check yet, so the need isn't proven, and I wanted both ways behind a switch to compare, as with the other choices.

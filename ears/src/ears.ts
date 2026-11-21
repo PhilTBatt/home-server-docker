@@ -6,7 +6,7 @@ import type { ToText } from "./whisper.js";
 
 export type EarsState = "muted" | "idle" | "recording" | "working" | "failed";
 
-export type LastRecording = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender };
+export type LastRecording = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender; pauseMs?: number };
 
 export type EarsView = { state: EarsState; reason: string | null; microphone: Microphone | null; last: LastRecording | null };
 
@@ -92,7 +92,7 @@ export function createEars(deps: EarsDeps): Ears {
     return lastId === id ? refuse(thatOneEnded) : { ok: false, error: movedOn, gone: true };
   };
   const finished = (stopped: Stopped, of: Recording) => {
-    last = { seconds: seconds(stopped.ms), reason: stopped.reason, text: null, textProblem: null, ...(stopped.ender === undefined ? {} : { ender: stopped.ender }) };
+    last = { seconds: seconds(stopped.ms), reason: stopped.reason, text: null, textProblem: null, ...(stopped.ender === undefined ? {} : { ender: stopped.ender }), ...(stopped.pauseMs === undefined ? {} : { pauseMs: stopped.pauseMs }) };
     lastId = ids.get(of) ?? null;
     if (underway !== null && underway.id === lastId) underway = null;
     if (claimTimer !== null && underway === null) {

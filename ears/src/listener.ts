@@ -1,5 +1,5 @@
 import type { EarsState } from "./ears.js";
-import { backgroundLevel, createFrames, createQuietEnd, createSpeechEnd, frameMs, speakingLevel } from "./levels.js";
+import { backgroundLevel, createFrames, createQuietEnd, createSpeechEnd, frameMs, quietForMs, speakingLevel } from "./levels.js";
 import { bytesPerSecond, recordingRate, type Recording } from "./recorder.js";
 import type { Detector } from "./silero.js";
 import { startTap, type By, type Tap } from "./tap.js";
@@ -342,6 +342,7 @@ export function createListener(deps: ListenerDeps): Listener {
                 failed: (why) => deps.log(`The speech detector failed (${why}), so this recording ends on loudness instead.`),
               },
         ender: wake === null ? undefined : detector === undefined ? "loudness" : "silero",
+        pauseMs: wake === null ? undefined : (deps.quietForMs ?? quietForMs),
         limitMs: deps.limitMs,
         now,
       });

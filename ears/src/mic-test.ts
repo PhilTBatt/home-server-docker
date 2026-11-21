@@ -1,5 +1,5 @@
 import type { Writable } from "node:stream";
-import { mostBoostSteps, readMicSettings, readWakeEnd, type MicSettings } from "./config.js";
+import { mostBoostSteps, readMicSettings, readWakeEnd, readWakePause, type MicSettings } from "./config.js";
 import { backgroundLevel, frameBytes, frameLevel, frameMs, quietForMs, speakingLevel, speakingTimes } from "./levels.js";
 import { applyMicSettings, findMicCard, recorderArgs, recorderCommand, type MicCard, type MicSetters } from "./mic-card.js";
 import { bytesPerSecond, startRecording, type Recorder } from "./recorder.js";
@@ -86,12 +86,12 @@ export function verdict(report: MicReport, settings: MicSettings): string {
   return "Clear: your voice is well above the room, so ears can tell when you've finished.";
 }
 
-export function describeMic(report: MicReport, settings: MicSettings): string[] {
+export function describeMic(report: MicReport, settings: MicSettings, pauseMs = quietForMs): string[] {
   const lines = [`The room's background is ${report.room}, so speech is anything above ${report.line}.`];
   if (report.speechMs === 0) lines.push(`Nothing was loud enough to count as speech: the loudest moment was ${report.loudest}.`);
   else {
     lines.push(`You were above that for ${secondsOf(report.speechMs)}, typically at ${report.typical} (${Math.round((report.typical / report.line) * 10) / 10} times the line) and at most ${report.loudest}.`);
-    lines.push(`Your longest pause while talking was ${secondsOf(report.longestPauseMs)}. Ears ends a wake-word recording after ${secondsOf(quietForMs)} of quiet${report.longestPauseMs >= quietForMs ? ", so it would have ended one during that pause" : ""}.`);
+    lines.push(`Your longest pause while talking was ${secondsOf(report.longestPauseMs)}. Ears ends a wake-word recording after ${secondsOf(pauseMs)} of quiet${report.longestPauseMs >= pauseMs ? ", so it would have ended one during that pause" : ""}.`);
   }
   lines.push(report.clipped === 0 ? "Nothing clipped." : `${report.clipped} sample${report.clipped === 1 ? "" : "s"} hit the 16-bit limit (clipped), which distorts what Whisper hears.`);
   lines.push(verdict(report, settings));
@@ -116,11 +116,11 @@ export async function detectorView(sound: Uint8Array, step: SileroStep): Promise
   return { speechMs: speech.filter((yes) => yes).length * frameMs, longestPauseMs: longestPauseOf(speech), speech };
 }
 
-export function describeDetector(view: DetectorView, report: MicReport, loud: readonly boolean[]): string[] {
+export function describeDetector(view: DetectorView, report: MicReport, loud: readonly boolean[], pauseMs = quietForMs): string[] {
   const lines =
     view.speechMs === 0
       ? ["The speech detector heard no speech at all, so with EARS_WAKE_END=silero a wake-word recording from there would be dropped."]
-      : [`The speech detector heard speech for ${secondsOf(view.speechMs)}, and your longest pause while talking was ${secondsOf(view.longestPauseMs)}${view.longestPauseMs >= quietForMs ? ", so it would have ended a wake-word recording during that pause" : ""}.`];
+      : [`The speech detector heard speech for ${secondsOf(view.speechMs)}, and your longest pause while talking was ${secondsOf(view.longestPauseMs)}${view.longestPauseMs >= pauseMs ? ", so it would have ended a wake-word recording during that pause" : ""}.`];
   return [...lines, `Each mark is half a second, # where each heard you (loudness above ${report.line}):`, `  loudness         ${strip(loud)}`, `  speech detector  ${strip(view.speech)}`];
 }
 
@@ -158,8 +158,10 @@ export async function runMicTest(deps: MicTestDeps): Promise<number> {
   let card: MicCard;
   let level: string;
   let silero: Promise<SileroStep> | null = null;
+  let pauseMs: number;
   try {
     settings = readMicSettings(deps.env);
+    pauseMs = readWakePause(deps.env.EARS_WAKE_PAUSE);
     wait = readWait(deps.env.EARS_MIC_TEST_WAIT);
     if (readWakeEnd(deps.env.EARS_WAKE_END) === "silero") {
       silero = (deps.loadSilero ?? (() => loadSilero()))();
@@ -183,12 +185,12 @@ export async function runMicTest(deps: MicTestDeps): Promise<number> {
     return 1;
   }
   const report = measure(stopped.sound);
-  for (const line of describeMic(report, settings)) deps.say(line);
+  for (const line of describeMic(report, settings, pauseMs)) deps.say(line);
   if (silero !== null) {
     try {
       const view = await detectorView(stopped.sound, await silero);
       const loud = measuredFrames(stopped.sound).map((frame) => frameLevel(frame) > report.line);
-      for (const line of describeDetector(view, report, loud)) deps.say(line);
+      for (const line of describeDetector(view, report, loud, pauseMs)) deps.say(line);
     } catch (error) {
       deps.say(`The speech detector couldn't run: ${messageOf(error)}.`);
     }

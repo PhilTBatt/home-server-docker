@@ -1,7 +1,7 @@
 # 0043. After a spoken answer, Jarvis can listen for a follow-up without the wake word
 
 - Date: 2026-11-21
-- Status: accepted
+- Status: accepted; the 1.5 seconds without speech that ends a recording can be set from 1 to 5 seconds with `EARS_WAKE_PAUSE` (see 0039's Status line)
 
 ## Context
 The wake word works (records 0039 and 0042), but saying "Hey Jarvis" before every question gets tiresome in a back-and-forth. Until now only two things could start a recording: `/talk` and the wake word, and never the AI. The voice plan left room for one more, if it was wanted: listening straight after a spoken answer, for a few seconds, started by Jarvis's own code and never by the AI, behind a switch. I asked for it.

@@ -8,7 +8,7 @@ export const killAfterMs = 1_000;
 
 export type Recorder = { command: string; args: string[] };
 
-export type Stopped = { reason: string; failed: boolean; bytes: number; ms: number; sound: Uint8Array; unheard?: true; ender?: Ender };
+export type Stopped = { reason: string; failed: boolean; bytes: number; ms: number; sound: Uint8Array; unheard?: true; ender?: Ender; pauseMs?: number };
 
 export type Recording = { readonly pid: number | undefined; stop(reason: string): Promise<Stopped>; readonly ended: Promise<Stopped> };
 

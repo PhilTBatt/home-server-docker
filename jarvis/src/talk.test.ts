@@ -284,6 +284,15 @@ test("a wake question keeps what ended its recording, as ears said it, and a pus
   assert.deepEqual(plain.ok && plain.heard, { text: "Hi.", recordedMs: 2500, textMs: 10, wake: true });
 });
 
+test("a wake or follow-up question keeps the pause its recording was set to end on, and a push one never has it", () => {
+  const woken = heardFrom(answer(200, { last: { ...heardLast("Hi."), ender: "silero", pauseMs: 2500 } }), 10, true);
+  assert.deepEqual(woken.ok && woken.heard, { text: "Hi.", recordedMs: 2500, textMs: 10, wake: true, ender: "silero", pauseMs: 2500 });
+  const followed = heardFrom(answer(200, { last: { ...heardLast("Hi."), ender: "silero", pauseMs: 2500 } }), 10, "follow");
+  assert.equal(followed.ok && followed.heard.pauseMs, 2500);
+  const pushed = heardFrom(answer(200, { last: { ...heardLast("Hi."), pauseMs: 2500 } }), 10, false);
+  assert.deepEqual(pushed.ok && pushed.heard, { text: "Hi.", recordedMs: 2500, textMs: 10 });
+});
+
 test("a follow-up is marked as one, not as the wake word's, and keeps what ended its recording too", () => {
   const sent = heardFrom(answer(200, { last: { ...heardLast("And tomorrow?"), ender: "silero" } }), 10, "follow");
   assert.deepEqual(sent.ok && sent.heard, { text: "And tomorrow?", recordedMs: 2500, textMs: 10, follow: true, ender: "silero" });

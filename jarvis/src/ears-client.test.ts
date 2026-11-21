@@ -129,6 +129,8 @@ test("a wait's answer brings the version, which run of ears it was, the last rec
   assert.deepEqual([zero.version, zero.run, zero.lastId, zero.current, zero.wake], [0, "a", null, null, null]);
   assert.equal("version" in readEarsAnswer(200, { state: "idle" }), false, "a plain state answer has none of them");
   assert.deepEqual(readEarsAnswer(200, { version: 1, current: { id: 9, by: "follow", claimed: true } }).current, { id: 9, by: "follow", claimed: true }, "a follow-up recording is read too");
+  assert.equal(readEarsAnswer(200, { last: { seconds: 1, reason: "x", text: "Hi.", textProblem: null, pauseMs: 2500 } }).last?.pauseMs, 2500, "the pause a recording was set to end on is read");
+  for (const pauseMs of [0, -1, 1.5, "2500", null, 2 ** 60]) assert.equal(readEarsAnswer(200, { last: { seconds: 1, reason: "x", text: "Hi.", textProblem: null, pauseMs } }).last !== null && "pauseMs" in readEarsAnswer(200, { last: { seconds: 1, reason: "x", text: "Hi.", textProblem: null, pauseMs } }).last!, false, String(pauseMs));
 });
 
 test("wake fields that aren't the shape ears sends are read as nothing, and a problem is tidied", () => {

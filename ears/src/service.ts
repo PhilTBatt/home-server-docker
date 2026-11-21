@@ -78,6 +78,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
   if (options.config.wake) {
     listener = createListener({
       ...tuning,
+      quietForMs: tuning.quietForMs ?? options.config.wakePauseMs,
       ears: () => ({ state: () => ears.view().state, start: (by) => ears.start(by), fail: (why) => ears.fail(why) }),
       stream: (onSound) => startRecording({ recorder, limitMs: null, keep: false, onSound }),
       connect: tuning.connect ?? ((signal) => connectWyoming({ host: wakeHost, port: wakePort, signal })),

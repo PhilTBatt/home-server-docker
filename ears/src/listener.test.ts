@@ -409,7 +409,7 @@ test("a wake-word recording ends itself once it's quiet after speech, and a push
   streams[0].onSound(sound(10, 20));
   await pause(20);
   assert.equal(ends.length, 1);
-  await push.stop("asked to stop");
+  assert.equal((await push.stop("asked to stop")).pauseMs, undefined, "a push recording isn't ended by a pause, so it carries none");
   earsState.state = "idle";
   await listener.close();
 });
@@ -451,13 +451,32 @@ test("with the speech detector, a wake-word recording is judged by it, not by lo
   await listener.close();
 });
 
+test("with no pause given, a wake-word recording carries ears's usual 1.5 seconds", { timeout: 5_000 }, async () => {
+  const { listener, connected, streams, detectors, earsState, sound } = setUp({ quietForMs: undefined });
+  const made: Tap[] = [];
+  const original = listener.tap.bind(listener);
+  listener.tap = (by) => {
+    const tap = original(by);
+    made.push(tap);
+    return tap;
+  };
+  listener.waiting();
+  await connected(1);
+  streams[0].onSound(sound(20, 3));
+  detectors[0].detect();
+  await until(() => made.length === 1);
+  assert.equal((await made[0].stop("asked to stop")).pauseMs, 1500);
+  earsState.state = "idle";
+  await listener.close();
+});
+
 test("without the speech detector a wake-word recording ends on loudness and says so", { timeout: 5_000 }, async () => {
   const { listener, connected, streams, detectors, earsState, sound } = setUp();
   const ends: string[] = [];
   const original = listener.tap.bind(listener);
   listener.tap = (by) => {
     const made = original(by);
-    void made.ended.then((stopped) => ends.push(stopped.ender ?? "none"));
+    void made.ended.then((stopped) => ends.push(`${stopped.ender ?? "none"}, ${stopped.pauseMs ?? "no pause"}`));
     return made;
   };
   listener.waiting();
@@ -468,7 +487,7 @@ test("without the speech detector a wake-word recording ends on loudness and say
   streams[0].onSound(sound(3000, 2));
   streams[0].onSound(sound(10, 3));
   await until(() => ends.length === 1);
-  assert.deepEqual(ends, ["loudness"]);
+  assert.deepEqual(ends, ["loudness, 200"], "it carries the pause it was ended by, as well as how");
   await listener.close();
 });
 
@@ -570,7 +589,7 @@ test("a follow-up before any wake word measures the room from what's been heard 
   streams[0].onSound(sound(77, 2));
   streams[0].onSound(sound(9000, 2));
   const stopped = await tap.ended;
-  assert.deepEqual([stopped.reason, stopped.ender, made], ["the speech detector heard no speech for 0.2 seconds after you spoke", "silero", 1]);
+  assert.deepEqual([stopped.reason, stopped.ender, stopped.pauseMs, made], ["the speech detector heard no speech for 0.2 seconds after you spoke", "silero", 200, 1]);
   earsState.state = "idle";
   await listener.close();
 });
