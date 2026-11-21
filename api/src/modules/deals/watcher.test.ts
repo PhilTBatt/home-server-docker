@@ -2618,3 +2618,136 @@ test("with digestHealth on, the digest names the switched-on searches that need 
     assert.deepEqual(look, digestHealth === "on" ? ["Needs a look: OptiPlex (mostly hides junk); Empty search (no match for a week)."] : [], String(digestHealth));
   }
 });
+
+test("a search's cuts are read from its source as one lookup, for switched-off searches too, and an unknown search is said so", async () => {
+  const asked: string[] = [];
+  const cuts = { asWatched: 5, without: [{ filter: "buy it now only", total: 52, by: [] }], wordsAlone: { total: 4409, categoryId: "27386", categories: [] } };
+  const { world } = setup();
+  const watcher = createDealWatcher({
+    loadSearches: async () => listOf([optiplex, { ...ram, switch: "off" }]),
+    sources: {
+      ebay: {
+        search: async () => ({ listings: [], total: 0, complete: true, calls: 1, skipped: 0 }),
+        cuts: async (search) => {
+          asked.push(search.id);
+          return { cuts, calls: 7 };
+        },
+      },
+    },
+    store: world.store,
+    notify: async () => undefined,
+  });
+  assert.deepEqual(await watcher.cuts("optiplex", at(0)), { status: "unknown" });
+  await watcher.run(at(0));
+  assert.deepEqual(await watcher.cuts("optiplex", at(1)), { status: "ok", value: { id: "optiplex", name: "OptiPlex", query: "optiplex 7070 sff", ...cuts } });
+  assert.deepEqual(await watcher.cuts("ram", at(2)), { status: "ok", value: { id: "ram", name: "DDR4 RAM", query: "ddr4 2x16gb", ...cuts } });
+  assert.deepEqual(await watcher.cuts("nope", at(3)), { status: "unknown" });
+  assert.deepEqual(asked, ["optiplex", "ram"]);
+  assert.equal(watcher.status().callsToday, 15);
+  assert.equal(watcher.searches(at(4)).find((search) => search.id === "optiplex")?.callsToday, 1);
+});
+
+test("a search's cuts are refused when its source can't count them, when today's reads are used up, or while eBay asks for a wait", async () => {
+  const { world, watcher } = setup([optiplex, { ...optiplex, id: "other-one", source: "other" }]);
+  await watcher.run(at(0));
+  assert.deepEqual(await watcher.cuts("other-one", at(1)), { status: "unsupported" });
+
+  let reply: Error | null = failed("busy", 3);
+  const counting = createDealWatcher({
+    loadSearches: async () => listOf([optiplex], { callsPerDay: 5000 }),
+    sources: {
+      ebay: {
+        search: async () => ({ listings: [], total: 0, complete: true, calls: 1, skipped: 0 }),
+        cuts: async () => {
+          if (reply !== null) throw reply;
+          return { cuts: { asWatched: 0, without: [], wordsAlone: { total: 0, categoryId: null, categories: [] } }, calls: 2 };
+        },
+      },
+    },
+    store: world.store,
+    notify: async () => undefined,
+  });
+  await counting.run(at(0));
+  assert.deepEqual(await counting.cuts("optiplex", at(1)), { status: "failed", message: ebayMessages.busy });
+  assert.deepEqual(await counting.cuts("optiplex", at(2)), { status: "waiting" });
+  reply = null;
+  let ok = 0;
+  for (let n = 0; n < 200; n++) {
+    const result = await counting.cuts("optiplex", at(120 + n));
+    if (result.status === "ok") ok += 1;
+    else {
+      assert.deepEqual(result, { status: "limit" });
+      break;
+    }
+  }
+  assert.equal(ok, 149);
+});
+
+test("cuts use at most a quarter of the day's eBay calls, and only start with enough calls left for the most a cuts lookup can take", async () => {
+  const { world } = setup();
+  let calls = 9;
+  let searchCalls = 1;
+  const build = (callsPerDay: number) =>
+    createDealWatcher({
+      loadSearches: async () => listOf([optiplex], { callsPerDay }),
+      sources: {
+        ebay: {
+          search: async () => ({ listings: [], total: 0, complete: true, calls: searchCalls, skipped: 0 }),
+          cuts: async () => ({ cuts: { asWatched: 0, without: [], wordsAlone: { total: 0, categoryId: null, categories: [] } }, calls }),
+        },
+      },
+      store: world.store,
+      notify: async () => undefined,
+    });
+  const shared = build(100);
+  await shared.run(at(0));
+  const statuses: string[] = [];
+  for (let n = 0; n < 4; n++) statuses.push((await shared.cuts("optiplex", at(1 + n))).status);
+  assert.deepEqual(statuses, ["ok", "ok", "limit", "limit"]);
+  calls = 3;
+  const next = await shared.cuts("optiplex", at(24 * 60 + 1));
+  assert.equal(next.status, "ok");
+
+  const tight = build(30);
+  await tight.run(at(0));
+  calls = 9;
+  assert.equal((await tight.cuts("optiplex", at(1))).status, "limit");
+
+  searchCalls = 92;
+  const busy = build(100);
+  await busy.run(at(2 * 24 * 60));
+  assert.equal((await busy.cuts("optiplex", at(2 * 24 * 60 + 1))).status, "limit");
+  searchCalls = 91;
+  const roomy = build(100);
+  await roomy.run(at(3 * 24 * 60));
+  assert.equal((await roomy.cuts("optiplex", at(3 * 24 * 60 + 1))).status, "ok");
+});
+
+test("cuts count only their own calls towards their share, not a check that runs while they wait", async () => {
+  const { world } = setup();
+  let checkDuring = true;
+  let built: ReturnType<typeof createDealWatcher> | null = null;
+  const watcher = createDealWatcher({
+    loadSearches: async () => listOf([optiplex], { callsPerDay: 100 }),
+    sources: {
+      ebay: {
+        search: async () => ({ listings: [], total: 0, complete: true, calls: 10, skipped: 0 }),
+        cuts: async () => {
+          if (checkDuring && built !== null) {
+            checkDuring = false;
+            await built.run(at(60), true);
+          }
+          return { cuts: { asWatched: 0, without: [], wordsAlone: { total: 0, categoryId: null, categories: [] } }, calls: 9 };
+        },
+      },
+    },
+    store: world.store,
+    notify: async () => undefined,
+  });
+  built = watcher;
+  await watcher.run(at(0));
+  assert.equal((await watcher.cuts("optiplex", at(1))).status, "ok");
+  assert.equal(watcher.status().callsToday, 29);
+  assert.equal((await watcher.cuts("optiplex", at(2))).status, "ok");
+  assert.equal((await watcher.cuts("optiplex", at(3))).status, "limit");
+});

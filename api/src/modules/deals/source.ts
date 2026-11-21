@@ -97,6 +97,18 @@ export type CategoryDetails = {
   details: { name: string; required: boolean; freeText: boolean; values: string[]; moreValues: number }[];
 };
 
+export type Cut = {
+  filter: string;
+  total: number;
+  by: { name: string; count: number }[];
+};
+
+export type Cuts = {
+  asWatched: number;
+  without: Cut[];
+  wordsAlone: { total: number; categoryId: string | null; categories: { id: string; name: string; count: number }[] };
+};
+
 export type Source = {
   noCalls?: boolean;
   search(search: Search, maxPages: number): Promise<SearchResult>;
@@ -105,6 +117,7 @@ export type Source = {
   detailNames?(query: string, categoryId: string | null): Promise<{ names: DetailNames; calls: number }>;
   categories?(query: string): Promise<{ categories: Categories; calls: number }>;
   categoryDetails?(categoryId: string): Promise<{ details: CategoryDetails; calls: number }>;
+  cuts?(search: Search): Promise<{ cuts: Cuts; calls: number }>;
 };
 
 const unseenCharacters = /[\u00AD\u061C\u115F\u1160\u200B-\u200F\u202A-\u202E\u2060-\u2069\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;

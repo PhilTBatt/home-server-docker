@@ -4,7 +4,7 @@ import Fastify from "fastify";
 import type { Features } from "../../config.js";
 import { aiNote, deals, fitted } from "./routes.js";
 import type { Categories, CategoryDetails, Listing } from "./source.js";
-import type { DealWatcher, FullReply, LookupReply, MatchGroup, MatchedListing, NamesReply, RunSummary, SearchStatus, WatcherStatus } from "./watcher.js";
+import type { DealWatcher, FullReply, LookupReply, MatchGroup, MatchedListing, NamesReply, RunSummary, SearchCuts, SearchStatus, WatcherStatus } from "./watcher.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true };
 const start = Date.parse("2026-11-18T12:00:00.000Z");
@@ -70,6 +70,18 @@ const groups: MatchGroup[] = [
   { id: "ram", name: "DDR4 RAM", group: "ram", source: "ebay", checkedAt: "2026-11-18T11:50:00.000Z", count: 0, guidePrice: null, listings: [] },
 ];
 
+const cutsValue: SearchCuts = {
+  id: "optiplex",
+  name: "OptiPlex",
+  query: "optiplex 7070 sff",
+  asWatched: 5,
+  without: [
+    { filter: "buy it now only", total: 52, by: [{ name: "auction", count: 40 }, { name: "buy it now", count: 12 }] },
+    { filter: "items in the UK", total: 9, by: [] },
+  ],
+  wordsAlone: { total: 4409, categoryId: "27386", categories: [{ id: "27386", name: "Graphics/Video Cards", count: 117 }] },
+};
+
 function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, failed: 0, unsent: true }) {
   const seen = {
     runs: [] as { now: string; force: boolean }[],
@@ -87,6 +99,7 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
     lookups: [] as string[][],
     categoriesReply: { status: "ok", value: { categories: [{ id: "170083", name: "Memory (RAM)", path: "Computers > Components > Memory (RAM)" }] } } as LookupReply<Categories>,
     categoryReply: { status: "ok", value: { categoryId: "170083", details: [{ name: "Form Factor", required: false, freeText: true, values: ["DIMM", "SO-DIMM"], moreValues: 0 }] } } as LookupReply<CategoryDetails>,
+    cutsReply: { status: "ok", value: cutsValue } as LookupReply<SearchCuts> | { status: "unknown" } | { status: "unsupported" },
   };
   const watcher: DealWatcher = {
     run: async (now, force = false) => {
@@ -133,6 +146,10 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
       seen.lookups.push(["details", source, categoryId]);
       return seen.categoryReply;
     },
+    cuts: async (id) => {
+      seen.lookups.push(["cuts", id]);
+      return seen.cutsReply;
+    },
   };
   return { watcher, seen };
 }
@@ -168,6 +185,7 @@ const routes = [
   ["GET", "/deals/details?q=optiplex"],
   ["GET", "/deals/categories?q=ddr4"],
   ["GET", "/deals/categories/170083/details"],
+  ["GET", "/deals/searches/optiplex/cuts"],
   ["POST", "/deals/searches/optiplex/snooze"],
   ["POST", "/deals/searches/optiplex/wake"],
 ] as const;
@@ -822,4 +840,40 @@ test("a lookup that has to wait reaches eBay only after its wait, ten seconds af
   clock.time = start + 3_000;
   await app.inject({ method: "GET", url: "/deals/details?q=ddr5" });
   assert.deepEqual(seen.nameTimes, [new Date(start).toISOString(), new Date(start + 10_000).toISOString()]);
+});
+
+test("a search's cuts are counted for a known search id, waiting their turn with the other lookups", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const { app, clock, waits } = buildApp(watcher);
+  const found = await app.inject({ method: "GET", url: "/deals/searches/optiplex/cuts" });
+  assert.deepEqual([found.statusCode, found.json()], [200, cutsValue]);
+  clock.time = start + 4_000;
+  assert.equal((await app.inject({ method: "GET", url: "/deals/categories?q=ram" })).statusCode, 200);
+  assert.deepEqual(waits, [6_000]);
+  for (const id of ["Optiplex", "a b", "-x", "x".repeat(41)]) {
+    const response = await app.inject({ method: "GET", url: `/deals/searches/${encodeURIComponent(id)}/cuts` });
+    assert.deepEqual([response.statusCode, response.json()], [400, { error: "That isn't a search id" }], id);
+  }
+  const unknown = await app.inject({ method: "GET", url: "/deals/searches/nope/cuts" });
+  assert.deepEqual([unknown.statusCode, unknown.json()], [404, { error: "That isn't one of the searches" }]);
+  assert.deepEqual(waits, [6_000]);
+  assert.deepEqual(seen.lookups, [["cuts", "optiplex"], ["categories", "ebay", "ram"]]);
+});
+
+test("a search's cuts that are refused, waiting, out of reads or gone say which", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const { app, clock } = buildApp(watcher);
+  const cases: [LookupReply<SearchCuts> | { status: "unknown" } | { status: "unsupported" }, number, string][] = [
+    [{ status: "limit" }, 429, "Today's share of eBay calls for cuts, or today's eBay calls or reads, are used up"],
+    [{ status: "unsupported" }, 400, "That search's source can't show what each filter cuts"],
+    [{ status: "waiting" }, 429, "eBay asked the watcher to wait, so nothing is being read for now"],
+    [{ status: "failed", message: "couldn't reach eBay" }, 502, "Couldn't count what each filter cuts: couldn't reach eBay"],
+    [{ status: "unknown" }, 404, "That isn't one of the searches"],
+  ];
+  for (const [reply, code, error] of cases) {
+    clock.time += 60_000;
+    seen.cutsReply = reply;
+    const response = await app.inject({ method: "GET", url: "/deals/searches/optiplex/cuts" });
+    assert.deepEqual([response.statusCode, response.json()], [code, { error }]);
+  }
 });

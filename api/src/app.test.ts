@@ -318,6 +318,7 @@ function fakeDealWatcher() {
     detailNames: async () => ({ status: "limit" }),
     categories: async () => ({ status: "limit" }),
     categoryDetails: async () => ({ status: "limit" }),
+    cuts: async () => ({ status: "limit" }),
   };
   return { watcher, runs };
 }

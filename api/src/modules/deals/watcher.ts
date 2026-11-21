@@ -4,7 +4,7 @@ import type { Problem } from "../system/alerts.js";
 import { capNotification, dealNotification, digestNotification, endingNotification, guideIsStale, moreNotification, watchingNotification, type Started } from "./alert.js";
 import { alwaysExcluded, cautions, chooseOption, isAuctionOnly, isGreat, priceKnown, priorityFor, readsOptions, standing, totalPrice, underGuide, unitPrice, whyNot, withOption, type UnitPrice } from "./match.js";
 import { avoidLists, defaultLimits, fingerprint, type Limits, type Quiet, type Search, type SearchList } from "./searches.js";
-import { SourceError, type Categories, type CategoryDetails, type DetailNames, type FullListing, type Listing, type ListingOption, type Source } from "./source.js";
+import { SourceError, type Categories, type CategoryDetails, type Cuts, type DetailNames, type FullListing, type Listing, type ListingOption, type Source } from "./source.js";
 import { emptyMemory, maxSeenPerSearch, type Memory, type Seen, type Store } from "./store.js";
 
 export type WatcherOptions = {
@@ -134,6 +134,8 @@ export type NamesReply = { status: "ok"; names: DetailNames } | { status: "limit
 
 export type LookupReply<Value> = { status: "ok"; value: Value } | { status: "limit" } | { status: "waiting" } | { status: "failed"; message: string };
 
+export type SearchCuts = Cuts & { id: string; name: string; query: string };
+
 export type DealWatcher = {
   run(now: Date, force?: boolean): Promise<RunSummary>;
   problems(): Problem[];
@@ -147,6 +149,7 @@ export type DealWatcher = {
   detailNames(source: string, query: string, categoryId: string | null, now?: Date): Promise<NamesReply>;
   categories(source: string, query: string, now?: Date): Promise<LookupReply<Categories>>;
   categoryDetails(source: string, categoryId: string, now?: Date): Promise<LookupReply<CategoryDetails>>;
+  cuts(id: string, now?: Date): Promise<LookupReply<SearchCuts> | { status: "unknown" } | { status: "unsupported" }>;
 };
 
 type Result = {
@@ -194,6 +197,8 @@ const examplesKept = 3;
 const digestWindowMinutes = 180;
 const noMatchDays = 7;
 const manyRead = 200;
+const cutsCallsShare = 0.25;
+const cutsCallsMost = 9;
 export const freshFor = 6 * hourMs;
 const needsAPerson = ["keys", "access", "request"];
 const sourceWide = ["keys", "access", "busy", "down"];
@@ -266,6 +271,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
   const optionCache = new Map<string, { until: number; options: ListingOption[] | null }>();
   const optionsPaused = new Map<string, { until: number; reason: string; message: string }>();
   let reads = { day: "", count: 0 };
+  let cutCalls = { day: "", count: 0 };
   let loading: Promise<Memory> | null = null;
   let pendingCalls = 0;
   let saving: Promise<void> = Promise.resolve();
@@ -935,6 +941,32 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       if (stop !== null) return { status: stop };
       const outcome = await read(sourceName, now.getTime(), () => lookUp(query));
       return "categories" in outcome ? { status: "ok", value: outcome.categories } : { status: "failed", message: outcome.message };
+    },
+
+    async cuts(id, now = new Date()) {
+      const search = list?.searches.find((entry) => entry.id === id);
+      if (search === undefined) return { status: "unknown" };
+      const lookUp = options.sources[search.source]?.cuts;
+      if (lookUp === undefined) return { status: "unsupported" };
+      const stop = blocked(search.source, now.getTime());
+      if (stop !== null) return { status: stop };
+      const today = londonTime(now).day;
+      if (cutCalls.day !== today) cutCalls = { day: today, count: 0 };
+      const callsBefore = (memory?.counters.calls ?? 0) + pendingCalls;
+      if (cutCalls.count + cutsCallsMost > Math.floor(limits().callsPerDay * cutsCallsShare) || callsBefore + cutsCallsMost > limits().callsPerDay) return { status: "limit" };
+      let used = 0;
+      const outcome = await read(search.source, now.getTime(), async () => {
+        try {
+          const reply = await lookUp(search);
+          used = reply.calls;
+          return reply;
+        } catch (error) {
+          if (error instanceof SourceError) used = error.calls;
+          throw error;
+        }
+      });
+      cutCalls.count += Math.max(used, 1);
+      return "cuts" in outcome ? { status: "ok", value: { id: search.id, name: search.name, query: search.query, ...outcome.cuts } } : { status: "failed", message: outcome.message };
     },
 
     async categoryDetails(sourceName, categoryId, now = new Date()) {

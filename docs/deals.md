@@ -294,10 +294,20 @@ Problems are things that stop the watcher. A search can also run without failing
 
 `callsToday` is how many eBay calls the search has used since midnight UK time: its checks, and its option reads with `readOptions`. It's kept in `state.json` and starts again each day.
 
+## What each filter cuts
+`GET /deals/searches/<id>/cuts` asks eBay how many listings the search finds as it's set (`asWatched`), then again with each of its eBay filters dropped in turn (`without`): buy it now only, items in the UK (dropped, it's anywhere that posts to the UK), the price range, the conditions, the category, the item details of a search with `detailsMode: "only"`, and the seller and postage filters together. eBay only filters item details within a category, so for such a search dropping the category drops its item details too, and that line says so. Each line keeps every other filter, so the biggest jump shows which filter cuts most. Dropping buy it now only, or the conditions, also gives eBay's own breakdown (`by`), like how many are auctions or seller refurbished. `wordsAlone` is the search's words with no filters at all, with eBay's main category and its counts by category, the same as `/deals/details` gives.
+
+It works for switched-off searches too, so a catalogue search can be checked before it goes on. It's a lookup: one eBay call per line plus two (nine at most), counted as one of the day's 150 full reads, and it waits its turn with the other lookups. Cuts may use a quarter of the day's `callsPerDay` at most, and one only starts with nine calls left, so they can't crowd out the checks; past that it's refused until the next day. With `callsPerDay` under 36 a quarter is under nine calls, so cuts are always refused. The share is counted in memory, so a restart starts it again. It gives counts only, no listings, so it's fine while `DEALS_AI=off`.
+
+```
+bash host/hub-get.sh /deals/searches/rtx-3060-12gb/cuts
+```
+
 ## Routes and tools
 All behind the API token, and all 404 with "The deal watcher is switched off" while `DEALS=off`.
 - `GET /deals/status`: last run, today's counts, quiet hours, the digest's time and whether today's has gone or its three hours passed without it, where seen listings are kept, problems.
 - `GET /deals/searches`: each search and how its last check went: matches, how many each rule hid, and, for a search with `readOptions`, how many listings' options gave a price that fits (`fitted`), couldn't be told (`unknown`) or weren't read yet (`unread`). `notes` says when a setting can't do anything (like `readOptions` on a search with no size, or an `exclude` word, or a word in one of its `avoid` lists, that every title with one of the `mustInclude` words has, so nothing can match) or the guide price is over 30 days old. `health` and `callsToday` are under "Search health".
+- `GET /deals/searches/<id>/cuts`: how many listings eBay has for the search, and with each of its filters dropped (see "What each filter cuts").
 - `GET /deals/searches/<id>/hidden`: up to three titles for each reason the search's last check hid listings, to see what its rules catch. Titles only, from the last six hours, for the hub page; no MCP tool reads it.
 - `GET /deals/matches`: the current listings for each search, cheapest first, up to 50 each, or fewer with `most=<1 to 50>`.
 - `POST /deals/check`: check every switched-on search now, and say how many were checked, how many alerts went, and whether any couldn't be sent. Refused if asked twice within a minute.

@@ -1,5 +1,5 @@
 import { conditionIds, type Buying, type Search } from "./searches.js";
-import { SourceError, cleanText, type BuyingOption, type Categories, type CategoryDetails, type DetailNames, type FailReason, type FullListing, type Listing, type ListingOption, type SearchResult, type Source } from "./source.js";
+import { SourceError, cleanText, type BuyingOption, type Categories, type CategoryDetails, type Cut, type Cuts, type DetailNames, type FailReason, type FullListing, type Listing, type ListingOption, type SearchResult, type Source } from "./source.js";
 
 export type EbayEnvironment = "production" | "sandbox";
 
@@ -44,7 +44,7 @@ function pounds(pence: number): string {
   return (pence / 100).toFixed(2);
 }
 
-export function searchUrl(host: string, search: Search, offset: number, withDetails = false, aspects: Record<string, string[]> | null = withDetails ? search.details : null): string {
+function searchParts(search: Search, withDetails: boolean, aspects: Record<string, string[]> | null): string[] {
   const filters: string[] = [];
   const highest = [search.maxPrice, search.maxWithPostage].filter((limit) => limit !== null);
   const max = highest.length > 0 ? Math.min(...highest) : null;
@@ -67,8 +67,71 @@ export function searchUrl(host: string, search: Search, offset: number, withDeta
     parts.push(`aspect_filter=${encodeURIComponent(`categoryId:${search.categoryId},${wanted.join(",")}`)}`);
   }
   if (search.autoCorrect) parts.push("auto_correct=KEYWORD");
-  parts.push("fieldgroups=MATCHING_ITEMS,EXTENDED", "sort=newlyListed", `limit=${pageSize}`, `offset=${offset}`);
+  return parts;
+}
+
+export function searchUrl(host: string, search: Search, offset: number, withDetails = false, aspects: Record<string, string[]> | null = withDetails ? search.details : null): string {
+  const parts = [...searchParts(search, withDetails, aspects), "fieldgroups=MATCHING_ITEMS,EXTENDED", "sort=newlyListed", `limit=${pageSize}`, `offset=${offset}`];
   return `https://${host}/buy/browse/v1/item_summary/search?${parts.join("&")}`;
+}
+
+export type CutStep = {
+  filter: string;
+  change: Partial<Search>;
+  refine: "BUYING_OPTION_REFINEMENTS" | "CONDITION_REFINEMENTS" | null;
+};
+
+export function cutSteps(search: Search): CutStep[] {
+  const steps: CutStep[] = [];
+  if (search.buying.length === 1) steps.push({ filter: `${search.buying[0]} only`, change: { buying: ["buy it now", "auction"] }, refine: "BUYING_OPTION_REFINEMENTS" });
+  if (search.ukOnly) steps.push({ filter: "items in the UK", change: { ukOnly: false }, refine: null });
+  const highest = [search.maxPrice, search.maxWithPostage].filter((limit) => limit !== null);
+  const max = highest.length > 0 ? Math.min(...highest) : null;
+  if (search.minPrice !== null || max !== null) {
+    const range = search.minPrice === null ? `up to £${pounds(max ?? 0)}` : max === null ? `from £${pounds(search.minPrice)}` : `£${pounds(search.minPrice)} to £${pounds(max)}`;
+    steps.push({ filter: `price ${range}`, change: { minPrice: null, maxPrice: null, maxWithPostage: null }, refine: null });
+  }
+  if (search.conditions.length > 0) steps.push({ filter: `condition ${search.conditions.join(", ")}`, change: { conditions: [] }, refine: "CONDITION_REFINEMENTS" });
+  const detailsOnly = search.details !== null && search.detailsMode === "only";
+  if (search.categoryId !== null) steps.push({ filter: detailsOnly ? `category ${search.categoryId} and item details` : `category ${search.categoryId}`, change: { categoryId: null }, refine: null });
+  if (detailsOnly) steps.push({ filter: "item details", change: { details: null }, refine: null });
+  const others = [
+    ...(search.sellerType === null ? [] : [`${search.sellerType} sellers`]),
+    ...(search.returnsOnly ? ["returns accepted"] : []),
+    ...(search.freePostage ? ["free postage"] : []),
+    ...(search.collection === null ? [] : [`collection within ${search.collection.miles} miles`]),
+  ];
+  if (others.length > 0) steps.push({ filter: others.join(", "), change: { sellerType: null, returnsOnly: false, freePostage: false, collection: null }, refine: null });
+  return steps;
+}
+
+export function countUrl(host: string, search: Search, refine: CutStep["refine"]): string {
+  const withDetails = search.details !== null && search.detailsMode === "only";
+  const parts = [...searchParts(search, withDetails, withDetails ? search.details : null), `fieldgroups=${refine === null ? "MATCHING_ITEMS" : `MATCHING_ITEMS,${refine}`}`, "limit=1"];
+  return `https://${host}/buy/browse/v1/item_summary/search?${parts.join("&")}`;
+}
+
+export function wordsUrl(host: string, query: string): string {
+  return `https://${host}/buy/browse/v1/item_summary/search?q=${encodeURIComponent(query)}&fieldgroups=CATEGORY_REFINEMENTS&limit=1`;
+}
+
+const buyingWords: Record<string, string> = { FIXED_PRICE: "buy it now", AUCTION: "auction", BEST_OFFER: "best offer", CLASSIFIED_AD: "classified ad" };
+
+export function toCut(raw: unknown, filter: string, refine: CutStep["refine"]): Cut | null {
+  if (!isObject(raw)) return null;
+  const total = countOf(raw.total);
+  if (total === null) return null;
+  const refinement = isObject(raw.refinement) ? raw.refinement : {};
+  const field = refine === "BUYING_OPTION_REFINEMENTS" ? refinement.buyingOptionDistributions : refine === "CONDITION_REFINEMENTS" ? refinement.conditionDistributions : null;
+  const by: Cut["by"] = [];
+  for (const entry of Array.isArray(field) ? field.slice(0, 20) : []) {
+    if (!isObject(entry)) continue;
+    const name = refine === "BUYING_OPTION_REFINEMENTS" ? (typeof entry.buyingOption === "string" ? (buyingWords[entry.buyingOption] ?? "") : "") : cleanText(entry.condition, 40);
+    const count = countOf(entry.matchCount);
+    if (name !== "" && count !== null) by.push({ name, count });
+  }
+  by.sort((a, b) => b.count - a.count);
+  return { filter, total, by };
 }
 
 export function fullUrl(host: string, ref: string): string {
@@ -661,6 +724,26 @@ export function createEbaySource(options: EbayOptions): Source {
         return found;
       });
       return { categories: reply, calls };
+    },
+
+    async cuts(search: Search) {
+      const { reply, calls } = await counted(async (countCall) => {
+        const watched = toCut(await getPage(countUrl(apiHost, search, null), countCall), "", null);
+        if (watched === null) throw failure("reply");
+        const without: Cut[] = [];
+        for (const step of cutSteps(search)) {
+          const cut = toCut(await getPage(countUrl(apiHost, { ...search, ...step.change }, step.refine), countCall), step.filter, step.refine);
+          if (cut === null) throw failure("reply");
+          without.push(cut);
+        }
+        const body = await getPage(wordsUrl(apiHost, search.query), countCall);
+        const total = isObject(body) ? countOf(body.total) : null;
+        const names = toDetailNames(body);
+        if (total === null || names === null) throw failure("reply");
+        const cuts: Cuts = { asWatched: watched.total, without, wordsAlone: { total, categoryId: names.categoryId, categories: names.categories } };
+        return cuts;
+      });
+      return { cuts: reply, calls };
     },
 
     async categoryDetails(categoryId: string) {

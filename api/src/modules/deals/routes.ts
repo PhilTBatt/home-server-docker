@@ -241,6 +241,21 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     return reply.code(502).send({ error: `Couldn't suggest categories: ${result.message}` });
   });
 
+  app.get("/searches/:id/cuts", async (request, reply) => {
+    if (watcher === undefined) return reply.code(404).send(switchedOff);
+    const id = searchId(request.params);
+    if (id === null) return reply.code(400).send({ error: "That isn't a search id" });
+    if (!watcher.searches(now()).some((search) => search.id === id)) return reply.code(404).send({ error: "That isn't one of the searches" });
+    if (!(await lookupTurn())) return reply.code(429).send(lookupWait);
+    const result = await watcher.cuts(id, now());
+    if (result.status === "ok") return result.value;
+    if (result.status === "unknown") return reply.code(404).send({ error: "That isn't one of the searches" });
+    if (result.status === "unsupported") return reply.code(400).send({ error: "That search's source can't show what each filter cuts" });
+    if (result.status === "limit") return reply.code(429).send({ error: "Today's share of eBay calls for cuts, or today's eBay calls or reads, are used up" });
+    if (result.status === "waiting") return reply.code(429).send(waiting);
+    return reply.code(502).send({ error: `Couldn't count what each filter cuts: ${result.message}` });
+  });
+
   app.get("/categories/:id/details", async (request, reply) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
     const id = isObject(request.params) ? request.params.id : null;

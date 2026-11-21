@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { categoriesUrl, categoryDetailsUrl, createEbaySource, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, optionsUrl, pageSize, plainText, retryAfterMs, searchUrl, toCategories, toCategoryDetails, toDetailNames, toFull, toListing, toOptions, treeIdUrl } from "./ebay.js";
+import { categoriesUrl, categoryDetailsUrl, countUrl, createEbaySource, cutSteps, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, optionsUrl, pageSize, plainText, retryAfterMs, searchUrl, toCategories, toCategoryDetails, toCut, toDetailNames, toFull, toListing, toOptions, treeIdUrl, wordsUrl } from "./ebay.js";
 import { readSearches, type Search } from "./searches.js";
 import { SourceError, cleanText, type FailReason } from "./source.js";
 
@@ -1661,4 +1661,121 @@ test("an item group that has gone, a refusal and a reply that can't be read each
   fakeEbay(() => Response.json({ errors: [{ errorId: 11013 }] }, { status: 400 }));
   const refused = await failure(source().options!("226543210987"));
   assert.deepEqual([refused.reason, refused.message], ["request", `${ebayMessages.request} (eBay error 11013)`]);
+});
+
+test("a plain search's cuts drop buy it now only, then the UK, one at a time", () => {
+  assert.deepEqual(cutSteps(search()), [
+    { filter: "buy it now only", change: { buying: ["buy it now", "auction"] }, refine: "BUYING_OPTION_REFINEMENTS" },
+    { filter: "items in the UK", change: { ukOnly: false }, refine: null },
+  ]);
+  assert.deepEqual(cutSteps(search({ buying: ["auction"], ukOnly: false }))[0], { filter: "auction only", change: { buying: ["buy it now", "auction"] }, refine: "BUYING_OPTION_REFINEMENTS" });
+  assert.deepEqual(cutSteps(search({ buying: ["buy it now", "auction"], ukOnly: false })), []);
+});
+
+test("every filter a search sets has its own cut, named in plain words, with the price as eBay is asked for it", () => {
+  const full = search({
+    minPrice: 140,
+    maxPrice: 400,
+    maxWithPostage: 330,
+    conditions: ["new", "opened", "used"],
+    sellerType: "business",
+    returnsOnly: true,
+    freePostage: true,
+    ...withDetails,
+    detailsMode: "only",
+  });
+  assert.deepEqual(
+    cutSteps(full).map((step) => [step.filter, step.refine]),
+    [
+      ["buy it now only", "BUYING_OPTION_REFINEMENTS"],
+      ["items in the UK", null],
+      ["price £140.00 to £330.00", null],
+      ["condition new, opened, used", "CONDITION_REFINEMENTS"],
+      ["category 179 and item details", null],
+      ["item details", null],
+      ["business sellers, returns accepted, free postage", null],
+    ],
+  );
+  assert.equal(cutSteps(search({ maxWithPostage: 60 })).find((step) => step.filter.startsWith("price"))?.filter, "price up to £60.00");
+  assert.equal(cutSteps(search({ minPrice: 5 })).find((step) => step.filter.startsWith("price"))?.filter, "price from £5.00");
+  const collecting = readSearches(JSON.stringify({ postcode: "ZZ9 9ZZ", searches: [{ id: "optiplex", name: "OptiPlex", switch: "on", query: "optiplex 7070 sff", collectionMiles: 10 }] }), ["ebay"]).searches[0];
+  assert.deepEqual(cutSteps(collecting).at(-1), { filter: "collection within 10 miles", change: { sellerType: null, returnsOnly: false, freePostage: false, collection: null }, refine: null });
+});
+
+test("a cut's count asks eBay for one listing with the search's filters, and a refinement when it wants a breakdown", () => {
+  const plain = new URL(countUrl(apiHost, search({ categoryId: 27386 }), null));
+  assert.equal(plain.origin + plain.pathname, searchPath);
+  assert.deepEqual([plain.searchParams.get("q"), plain.searchParams.get("category_ids"), plain.searchParams.get("limit"), plain.searchParams.get("fieldgroups")], ["optiplex 7070 sff", "27386", "1", "MATCHING_ITEMS"]);
+  assert.equal(plain.searchParams.get("filter"), filterOf(searchUrl(apiHost, search({ categoryId: 27386 }), 0)));
+  assert.equal(plain.searchParams.has("sort") || plain.searchParams.has("offset"), false);
+  assert.equal(new URL(countUrl(apiHost, search(), "CONDITION_REFINEMENTS")).searchParams.get("fieldgroups"), "MATCHING_ITEMS,CONDITION_REFINEMENTS");
+  const only = new URL(countUrl(apiHost, search({ ...withDetails, detailsMode: "only" }), null));
+  assert.equal(only.searchParams.get("aspect_filter"), "categoryId:179,Form Factor:{SFF|Small Form Factor},RAM Size:{16 GB}");
+  assert.equal(new URL(countUrl(apiHost, search({ ...withDetails, detailsMode: "prefer" }), null)).searchParams.has("aspect_filter"), false);
+  const words = new URL(wordsUrl(apiHost, "quadro p620 & more"));
+  assert.deepEqual([...words.searchParams.keys()].sort(), ["fieldgroups", "limit", "q"]);
+  assert.deepEqual([words.searchParams.get("q"), words.searchParams.get("fieldgroups"), words.searchParams.get("limit")], ["quadro p620 & more", "CATEGORY_REFINEMENTS", "1"]);
+});
+
+test("a cut reads eBay's total and, when asked, its breakdown by buying option or condition, biggest first", () => {
+  const reply = {
+    total: 52,
+    refinement: {
+      buyingOptionDistributions: [{ buyingOption: "FIXED_PRICE", matchCount: 12 }, { buyingOption: "AUCTION", matchCount: 40 }, { buyingOption: "SOMETHING_NEW", matchCount: 3 }, { buyingOption: "BEST_OFFER", matchCount: "7" }, "odd"],
+      conditionDistributions: [{ condition: "Used", conditionId: "3000", matchCount: 3 }, { condition: "Seller refurbished\u0000", conditionId: "2500", matchCount: 25 }, { condition: "", matchCount: 9 }],
+    },
+  };
+  assert.deepEqual(toCut(reply, "buy it now only", "BUYING_OPTION_REFINEMENTS"), { filter: "buy it now only", total: 52, by: [{ name: "auction", count: 40 }, { name: "buy it now", count: 12 }] });
+  assert.deepEqual(toCut(reply, "condition used", "CONDITION_REFINEMENTS"), { filter: "condition used", total: 52, by: [{ name: "Seller refurbished", count: 25 }, { name: "Used", count: 3 }] });
+  assert.deepEqual(toCut(reply, "price", null), { filter: "price", total: 52, by: [] });
+  assert.deepEqual(toCut({ total: 0 }, "price", "CONDITION_REFINEMENTS"), { filter: "price", total: 0, by: [] });
+  for (const odd of [null, [], "52", { total: -1 }, { total: "52" }, {}]) assert.equal(toCut(odd, "x", null), null, JSON.stringify(odd));
+  const many = { total: 9, refinement: { conditionDistributions: Array.from({ length: 30 }, (_, n) => ({ condition: `Condition ${n}`, matchCount: n })) } };
+  assert.equal(toCut(many, "x", "CONDITION_REFINEMENTS")?.by.length, 20);
+});
+
+test("a search's cuts ask eBay once as watched, once for each filter dropped, and once for its words alone", async () => {
+  const totals: Record<string, number> = { "": 5, "buy it now only": 52, "items in the UK": 9, "price £140.00 to £330.00": 60, "condition new, opened, used": 20, "category 27386": 6 };
+  const wanted = search({ minPrice: 140, maxWithPostage: 330, conditions: ["new", "opened", "used"], categoryId: 27386 });
+  const steps = ["", ...cutSteps(wanted).map((step) => step.filter)];
+  const calls = fakeEbay((call, n) => {
+    const url = new URL(call.url);
+    if (n === steps.length + 1) {
+      assert.equal(url.searchParams.get("fieldgroups"), "CATEGORY_REFINEMENTS");
+      return Response.json({ total: 4409, refinement: { dominantCategoryId: "27386", categoryDistributions: [{ categoryId: "171957", categoryName: "Desktops & All-in-Ones", matchCount: 4291 }, { categoryId: "27386", categoryName: "Graphics/Video Cards", matchCount: 117 }] } });
+    }
+    const step = steps[n - 1];
+    return Response.json({ total: totals[step], refinement: step === "buy it now only" ? { buyingOptionDistributions: [{ buyingOption: "AUCTION", matchCount: 40 }] } : {} });
+  });
+  const { cuts, calls: used } = await source().cuts!(wanted);
+  assert.equal(used, steps.length + 1);
+  assert.equal(searchCalls(calls).length, steps.length + 1);
+  assert.equal(mintCalls(calls).length, 1);
+  assert.deepEqual(cuts, {
+    asWatched: 5,
+    without: [
+      { filter: "buy it now only", total: 52, by: [{ name: "auction", count: 40 }] },
+      { filter: "items in the UK", total: 9, by: [] },
+      { filter: "price £140.00 to £330.00", total: 60, by: [] },
+      { filter: "condition new, opened, used", total: 20, by: [] },
+      { filter: "category 27386", total: 6, by: [] },
+    ],
+    wordsAlone: { total: 4409, categoryId: "27386", categories: [{ id: "171957", name: "Desktops & All-in-Ones", count: 4291 }, { id: "27386", name: "Graphics/Video Cards", count: 117 }] },
+  });
+  const asked = searchCalls(calls).map((call) => new URL(call.url));
+  assert.match(asked[1].searchParams.get("filter") ?? "", /buyingOptions:\{FIXED_PRICE\|AUCTION\}/);
+  assert.match(asked[2].searchParams.get("filter") ?? "", /deliveryCountry:GB/);
+  assert.doesNotMatch(asked[3].searchParams.get("filter") ?? "", /price/);
+  assert.doesNotMatch(asked[4].searchParams.get("filter") ?? "", /conditionIds/);
+  assert.equal(asked[5].searchParams.has("category_ids"), false);
+  for (const url of asked.slice(1, 5)) assert.equal(url.searchParams.get("category_ids"), "27386");
+});
+
+test("a cuts reply eBay sends without a count fails as unreadable, counting the calls made", async () => {
+  fakeEbay((_call, n) => (n === 2 ? Response.json({ itemSummaries: [] }) : Response.json({ total: 3 })));
+  const error = await failure(source().cuts!(search()));
+  assert.deepEqual([error.reason, error.calls], ["reply", 2]);
+  fakeEbay((_call, n) => (n === 3 ? Response.json({ total: 3, refinement: "odd" }) : n === 4 ? Response.json({ refinement: {} }) : Response.json({ total: 3 })));
+  const words = await failure(source().cuts!(search()));
+  assert.deepEqual([words.reason, words.calls], ["reply", 4]);
 });
