@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createQuietEnd, frameBytes } from "./levels.js";
-import { startTap } from "./tap.js";
+import { createQuietEnd, createSpeechEnd, frameBytes } from "./levels.js";
+import type { Detector } from "./silero.js";
+import { detectorBehindMs, startTap } from "./tap.js";
 
 function loud(level: number, frames = 1): Uint8Array {
   const sound = new Uint8Array(frameBytes * frames);
@@ -119,4 +120,154 @@ test("a tap hands back whole samples only", { timeout: 5_000 }, async () => {
   tap.push(Uint8Array.of(2, 3, 4, 5));
   const stopped = await tap.stop("asked to stop");
   assert.deepEqual([...stopped.sound], [1, 2, 3, 4]);
+});
+
+function pretendDetector(chances: (frame: Uint8Array) => number[] | Promise<number[]>) {
+  const judged: number[] = [];
+  const detector: Detector = {
+    async frame(sound) {
+      judged.push(new DataView(sound.buffer, sound.byteOffset, sound.length).getInt16(0, true));
+      return chances(sound);
+    },
+  };
+  return { detector, judged };
+}
+
+const speechIn = (frame: Uint8Array) => (Math.abs(new DataView(frame.buffer, frame.byteOffset, frame.length).getInt16(0, true)) >= 1000 ? [0.9] : [0.1]);
+
+test("a wake tap with the speech detector ends when it hears no speech for long enough after you spoke, keeping the sound, and says so", { timeout: 5_000 }, async () => {
+  const { detector, judged } = pretendDetector(speechIn);
+  const tap = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 300 }), fallback: () => assert.fail("it fell back") }, ender: "silero" });
+  tap.push(loud(1000, 2));
+  tap.push(loud(5, 3));
+  const stopped = await tap.ended;
+  assert.deepEqual([stopped.reason, stopped.unheard, stopped.ender, stopped.sound.length], ["the speech detector heard no speech for 0.3 seconds after you spoke", undefined, "silero", frameBytes * 5]);
+  assert.deepEqual(judged, [1000, 1000, 5, 5, 5]);
+});
+
+test("the speech detector judges loud sound that isn't speech as quiet, so a fan or the kettle doesn't keep a recording going", { timeout: 5_000 }, async () => {
+  const { detector } = pretendDetector(() => [0.05]);
+  const tap = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, startWithinMs: 300 }), fallback: () => true }, ender: "silero" });
+  tap.push(loud(8000, 3));
+  const stopped = await tap.ended;
+  assert.deepEqual([stopped.reason, stopped.unheard], ["the speech detector heard no speech within 0.3 seconds, so it wasn't sent to Whisper", true]);
+});
+
+test("frames are judged one at a time in order even when the detector is slow, and nothing judged after the tap ends counts", { timeout: 5_000 }, async () => {
+  let release: () => void = () => {};
+  let calls = 0;
+  const { detector, judged } = pretendDetector(async (frame) => {
+    calls++;
+    if (calls === 1) await new Promise<void>((resolve) => (release = resolve));
+    return speechIn(frame);
+  });
+  const tap = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 100 }), fallback: () => false }, ender: "silero" });
+  tap.push(loud(1000));
+  tap.push(loud(5, 2));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(judged, [1000]);
+  const stopped = await tap.stop("asked to stop");
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(stopped.reason, "asked to stop");
+  assert.deepEqual(judged, [1000]);
+});
+
+test("a detector that fails says why once, isn't asked again, and the rest of that recording ends on loudness", { timeout: 5_000 }, async () => {
+  const said: string[] = [];
+  const levels: number[] = [];
+  let calls = 0;
+  const detector: Detector = {
+    async frame() {
+      calls++;
+      throw new Error("the model\nbroke");
+    },
+  };
+  const tap = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 300 }), fallback: (level) => (levels.push(level), level > 300), failed: (why) => void said.push(why) }, ender: "silero" });
+  tap.push(loud(1000, 2));
+  tap.push(loud(5, 2));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  tap.push(loud(5));
+  const stopped = await tap.ended;
+  assert.deepEqual([stopped.reason, stopped.ender], ["it went quiet for 0.3 seconds after you spoke", "silero"]);
+  assert.deepEqual([calls, said, levels], [1, ["the model broke"], [1000, 1000, 5, 5, 5]]);
+});
+
+test("a detector whose oldest waiting frame has waited more than a second is given up on, saying so once, and the frames waiting for it and the rest are judged on loudness, in order, until it ends", { timeout: 5_000 }, async () => {
+  assert.equal(detectorBehindMs, 1_000);
+  const clock = { at: 0 };
+  const said: string[] = [];
+  const levels: number[] = [];
+  const { detector, judged } = pretendDetector(() => new Promise<number[]>(() => {}));
+  const tap = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 300 }), fallback: (level) => (levels.push(level), level > 300), failed: (why) => void said.push(why) }, ender: "silero", now: () => clock.at });
+  clock.at = 5_000;
+  tap.push(loud(1000, 2));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  clock.at = 6_000;
+  tap.push(loud(5, 2));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual([said, levels, judged], [[], [], [1000]], "a second behind is still waited for, timed from when the frame came");
+  clock.at = 6_001;
+  tap.push(loud(5, 3));
+  tap.push(loud(7));
+  assert.deepEqual(said, ["it fell more than 1 second behind"]);
+  assert.deepEqual(levels, [1000, 1000, 5, 5, 5], "nothing is judged after the end");
+  const stopped = await tap.ended;
+  assert.deepEqual([stopped.reason, stopped.unheard, stopped.ender], ["it went quiet for 0.3 seconds after you spoke", undefined, "silero"]);
+  assert.deepEqual(judged, [1000]);
+});
+
+test("an answer the detector gives after it was given up on is ignored", { timeout: 5_000 }, async () => {
+  const answers: ((chances: number[]) => void)[] = [];
+  const detector: Detector = { frame: () => new Promise<number[]>((resolve) => answers.push(resolve)) };
+  const levels: number[] = [];
+  const clock = { at: 0 };
+  const tap = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 1_000 }), fallback: (level) => (levels.push(level), level > 300) }, ender: "silero", now: () => clock.at });
+  tap.push(loud(1000, 2));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  clock.at = 1_001;
+  tap.push(loud(5, 9));
+  assert.deepEqual([answers.length, levels.length], [1, 11]);
+  answers[0]([0.1]);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  let ended = false;
+  void tap.ended.then(() => (ended = true));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(ended, false, "the late answer didn't count as a tenth of quiet");
+  tap.push(loud(5));
+  assert.equal((await tap.ended).reason, "it went quiet for 1 second after you spoke");
+  assert.equal(levels.length, 12);
+});
+
+test("more than a second of sound arriving at once is still judged by the detector, since none of it has waited", { timeout: 5_000 }, async () => {
+  const said: string[] = [];
+  const { detector, judged } = pretendDetector(speechIn);
+  const tap = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 300 }), fallback: () => assert.fail("it fell back"), failed: (why) => void said.push(why) }, ender: "silero", now: () => 0 });
+  tap.push(loud(1000, 12));
+  tap.push(loud(5, 3));
+  const stopped = await tap.ended;
+  assert.deepEqual([stopped.reason, said, judged.length], ["the speech detector heard no speech for 0.3 seconds after you spoke", [], 15]);
+});
+
+test("a detector that's slow but keeps within a second is waited for, and never given up on", { timeout: 5_000 }, async () => {
+  const said: string[] = [];
+  const { detector, judged } = pretendDetector(async (frame) => (await new Promise((resolve) => setTimeout(resolve, 5)), speechIn(frame)));
+  const tap = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 300 }), fallback: () => assert.fail("it fell back"), failed: (why) => void said.push(why) }, ender: "silero" });
+  tap.push(loud(1000, 2));
+  tap.push(loud(5, 8));
+  const stopped = await tap.ended;
+  assert.deepEqual([stopped.reason, said], ["the speech detector heard no speech for 0.3 seconds after you spoke", []]);
+  assert.deepEqual(judged, [1000, 1000, 5, 5, 5]);
+});
+
+test("a wake tap names how it was set to end, however it ended, a push tap names nothing, and the detector isn't asked when there's only the loudness check", { timeout: 5_000 }, async () => {
+  const loudness = startTap({ by: "wake", quiet: createQuietEnd({ speakingAbove: 300, settleMs: 0, quietForMs: 100 }), ender: "loudness" });
+  loudness.push(loud(1000));
+  loudness.push(loud(0));
+  assert.equal((await loudness.ended).ender, "loudness");
+  const { detector } = pretendDetector(() => [0.9]);
+  const sent = startTap({ by: "wake", judged: { detector, end: createSpeechEnd({ by: "silero" }), fallback: () => true }, ender: "silero" });
+  assert.deepEqual([(await sent.stop("asked to stop")).ender, (await startTap({ by: "wake", quiet: null, ender: "loudness" }).stop("asked to stop")).ender], ["silero", "loudness"]);
+  const push = startTap({ by: "push" });
+  assert.equal("ender" in (await push.stop("asked to stop")), false);
 });

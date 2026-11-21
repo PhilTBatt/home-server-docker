@@ -825,3 +825,14 @@ test("the ears line says how many questions came through the wake word, and a wa
   assert.equal(isLogLine(line({ heard: { recordedMs: 1, textMs: 1, wake: true } })), true);
   for (const wake of [false, "yes", 1, null]) assert.equal(isLogLine({ ...line(), heard: { recordedMs: 1, textMs: 1, wake } }), false, JSON.stringify(wake));
 });
+
+test("wake questions are split by how ears was set to end them once both appear: loudness or the speech detector, with their recording times", () => {
+  const woken = (question: number, recordedMs: number, ender?: "loudness" | "silero") => line({ question, heard: { recordedMs, textMs: 900, wake: true, ...(ender === undefined ? {} : { ender }) } });
+  const both = compareReport({ lines: [woken(1, 3000, "loudness"), woken(2, 5000, "loudness"), woken(3, 2000, "silero"), woken(4, 4000)], skipped: 0 });
+  assert.equal(both.includes(" Split by how ears was set to end them: 2 wake questions on loudness, recording 4.00 s (5.00 s); 1 wake question on the speech detector, recording 2.00 s (2.00 s).\n"), true, both);
+  const one = compareReport({ lines: [woken(1, 3000, "silero"), woken(2, 5000, "silero")], skipped: 0 });
+  assert.equal(one.includes("Split by"), false, one);
+  assert.equal(isLogLine(line({ heard: { recordedMs: 1, textMs: 1, wake: true, ender: "silero" } })), true);
+  assert.equal(isLogLine(line({ heard: { recordedMs: 1, textMs: 1, wake: true, ender: "loudness" } })), true);
+  for (const ender of ["Silero", "vad", 1, null, true]) assert.equal(isLogLine({ ...line(), heard: { recordedMs: 1, textMs: 1, wake: true, ender } }), false, JSON.stringify(ender));
+});

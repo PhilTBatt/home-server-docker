@@ -10,6 +10,9 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "dependencies": {
+    "onnxruntime-node": "^1.31.1"
+  },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2"

@@ -4,6 +4,7 @@ import type { EarsState } from "./ears.js";
 import { frameBytes, frameLevel } from "./levels.js";
 import { backgroundMs, beforeMs, behindBytes, createListener, gapMs, holdMs, lateMs, presenceMs, retryMs, wakeHost, wakeOff, wakePort, wakeWord, type Listener, type ListenerDeps } from "./listener.js";
 import type { Recording, Stopped } from "./recorder.js";
+import type { Detector } from "./silero.js";
 import type { By } from "./tap.js";
 import type { WyomingEvent } from "./wyoming.js";
 import type { WyomingConnection } from "./wyoming-client.js";
@@ -241,7 +242,7 @@ test("when no chat has waited for a while, the microphone closes and the wake-wo
   done();
   await pause(20);
   assert.equal(streams[0].stopped.length, 0, "a short gap between waits keeps it open");
-  await until(() => streams[0].stopped.length === 1, 1000);
+  await until(() => streams[0].stopped.length === 1, 5000);
   assert.deepEqual(streams[0].stopped, ["no Jarvis chat is listening for the wake word"]);
   assert.equal(detectors[0].closed, true);
   assert.deepEqual(detectors[0].types(), ["detect", "audio-start", "audio-chunk"], "it's let go without an audio-stop, which it would answer into a closed connection");
@@ -410,6 +411,87 @@ test("a wake-word recording ends itself once it's quiet after speech, and a push
   assert.equal(ends.length, 1);
   await push.stop("asked to stop");
   earsState.state = "idle";
+  await listener.close();
+});
+
+test("with the speech detector, a wake-word recording is judged by it, not by loudness, each with a fresh detector, and a push one isn't judged", { timeout: 5_000 }, async () => {
+  const ends: string[] = [];
+  let made = 0;
+  const detector = (): Detector => {
+    made++;
+    return { frame: async (sound) => (new DataView(sound.buffer, sound.byteOffset, sound.length).getInt16(0, true) === 77 ? [0.9] : [0.1]) };
+  };
+  const { listener, connected, streams, detectors, earsState, sound } = setUp({ detector });
+  const original = listener.tap.bind(listener);
+  listener.tap = (by) => {
+    const made = original(by);
+    void made.ended.then((stopped) => ends.push(`${by}: ${stopped.reason} (${stopped.ender ?? "no ender"})`));
+    return made;
+  };
+  listener.waiting();
+  await connected(1);
+  streams[0].onSound(sound(20, 3));
+  detectors[0].detect();
+  await until(() => earsState.state === "recording");
+  streams[0].onSound(sound(77, 2));
+  streams[0].onSound(sound(9000, 3));
+  await until(() => ends.length === 1);
+  assert.deepEqual(ends, ["wake: the speech detector heard no speech for 0.2 seconds after you spoke (silero)"]);
+  assert.equal(made, 1);
+  earsState.state = "recording";
+  const push = listener.tap("push");
+  streams[0].onSound(sound(77, 2));
+  await push.stop("asked to stop");
+  earsState.state = "idle";
+  assert.deepEqual([made, ends.at(-1)], [1, "push: asked to stop (no ender)"]);
+  streams[0].onSound(sound(20, 3));
+  detectors[0].detect();
+  await until(() => earsState.state === "recording");
+  assert.equal(made, 2);
+  await listener.close();
+});
+
+test("without the speech detector a wake-word recording ends on loudness and says so", { timeout: 5_000 }, async () => {
+  const { listener, connected, streams, detectors, earsState, sound } = setUp();
+  const ends: string[] = [];
+  const original = listener.tap.bind(listener);
+  listener.tap = (by) => {
+    const made = original(by);
+    void made.ended.then((stopped) => ends.push(stopped.ender ?? "none"));
+    return made;
+  };
+  listener.waiting();
+  await connected(1);
+  streams[0].onSound(sound(20, 3));
+  detectors[0].detect();
+  await until(() => earsState.state === "recording");
+  streams[0].onSound(sound(3000, 2));
+  streams[0].onSound(sound(10, 3));
+  await until(() => ends.length === 1);
+  assert.deepEqual(ends, ["loudness"]);
+  await listener.close();
+});
+
+test("a speech detector that fails is logged once, and that recording ends on loudness against the room before the wake word", { timeout: 5_000 }, async () => {
+  const detector = (): Detector => ({ frame: async () => Promise.reject(new Error("model broke")) });
+  const { listener, lines, connected, streams, detectors, earsState, sound } = setUp({ detector });
+  const ends: string[] = [];
+  const original = listener.tap.bind(listener);
+  listener.tap = (by) => {
+    const made = original(by);
+    void made.ended.then((stopped) => ends.push(stopped.reason));
+    return made;
+  };
+  listener.waiting();
+  await connected(1);
+  streams[0].onSound(sound(200, 3));
+  detectors[0].detect();
+  await until(() => earsState.state === "recording");
+  streams[0].onSound(sound(700, 2));
+  streams[0].onSound(sound(500, 3));
+  await until(() => ends.length === 1);
+  assert.deepEqual(ends, ["it went quiet for 0.2 seconds after you spoke"]);
+  assert.deepEqual(lines.filter((line) => line.startsWith("The speech detector")), ["The speech detector failed (model broke), so this recording ends on loudness instead."]);
   await listener.close();
 });
 

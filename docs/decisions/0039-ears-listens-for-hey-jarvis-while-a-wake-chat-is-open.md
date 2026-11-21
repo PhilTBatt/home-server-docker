@@ -1,7 +1,7 @@
 # 0039. Ears listens for "Hey Jarvis" while a chat that wants it is open
 
 - Date: 2026-11-20
-- Status: accepted; a wake while `/talk` is still recording does nothing, and only one after a `/talk` recording has ended takes over; a hold also silences a recording that's already running; and a busy chat waits a second before it takes a wake (0040)
+- Status: accepted; a wake while `/talk` is still recording does nothing, and only one after a `/talk` recording has ended takes over; a hold also silences a recording that's already running; and a busy chat waits a second before it takes a wake (0040); with `EARS_WAKE_END=silero` a wake recording ends when Silero's speech detector hears no speech, instead of when it goes quiet (0042)
 
 ## Context
 Push-to-talk works (record 0038), and the wake word was always going to follow it. openWakeWord has a ready-made "hey jarvis" model, and `rhasspy/wyoming-openwakeword` serves it over Wyoming, which ears already speaks to Whisper. Ears can't start Jarvis, because that would need Docker access, which no container gets. So the wake word has to reach a chat that's already open, and I keep Jarvis's chats open in tmux. He mustn't be listening while he talks (rule R11), because the microphone and his speakers are on the same card. The TV faces my bed and desk, so false wakes have to be countable. Several things needed deciding: the engine, how the microphone is shared, when ears listens at all, how the wake reaches the chat, how a spoken command ends, how he stops listening while he talks, and the cue that he's heard.

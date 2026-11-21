@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, microphones, mostBoostSteps, readConfig, readMicSettings, shortestToken } from "./config.js";
+import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, microphones, mostBoostSteps, readConfig, readMicSettings, readWakeEnd, shortestToken } from "./config.js";
 
 const token = "t".repeat(64);
 
-const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false };
+const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness" };
 
 test("reads the token, and with no microphone set there's nothing to record from", () => {
   assert.deepEqual(readConfig({ EARS_TOKEN: token }), { token, microphone: null, ...usual });
@@ -94,4 +94,14 @@ test("EARS_WAKE is checked after the microphone and its level", () => {
   assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "real", EARS_WAKE: "maybe" }), { message: /^EARS_MICROPHONE must be/ });
   assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_MIC_LEVEL: "loud", EARS_WAKE: "maybe" }), { message: /^EARS_MIC_LEVEL must be/ });
   assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_MIC_BOOST: "loud", EARS_WAKE: "maybe" }), { message: /^EARS_MIC_BOOST must be/ });
+});
+
+test("a wake recording ends on loudness unless EARS_WAKE_END says silero, and anything else stops ears, saying what it must be", () => {
+  for (const [value, end] of [[undefined, "loudness"], ["", "loudness"], [" ", "loudness"], ["loudness", "loudness"], [" silero ", "silero"]] as const) {
+    assert.equal(readConfig({ EARS_TOKEN: token, EARS_WAKE_END: value }).wakeEnd, end, String(value));
+    assert.equal(readWakeEnd(value), end, String(value));
+  }
+  for (const value of ["Silero", "vad", "detector", "on", "loud"]) {
+    assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_WAKE_END: value }), { message: `EARS_WAKE_END must be loudness or silero, not "${value}"` }, value);
+  }
 });

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, SessionNotesMode, SpeechBundleMode, SpeechStart, SpeechStop, SpokenStyleMode, ThinkingHistory, VoiceMode } from "./config.js";
+import type { Ender } from "./ears-client.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
@@ -7,7 +8,7 @@ export const answerLogFile = fileURLToPath(new URL("../data/answers.jsonl", impo
 export const loggingNote = "Logging: each answer's numbers, never its words, go to data/answers.jsonl. Type + or - after an answer to rate it.";
 export const logVersion = 1;
 
-export type HeardTimes = { recordedMs: number; textMs: number; wake?: true };
+export type HeardTimes = { recordedMs: number; textMs: number; wake?: true; ender?: Ender };
 export type Outcome = ({ answer: Answer } | { error: string }) & { heard?: HeardTimes };
 
 export type Rating = "good" | "bad";
@@ -183,7 +184,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     refusedTools: stats === null ? null : stats.refusedTools.length,
     spokeFirst: stats?.spokeFirst ?? null,
     retried: stats?.retried ?? null,
-    ...(outcome.heard === undefined ? {} : { heard: { recordedMs: Math.round(outcome.heard.recordedMs), textMs: Math.round(outcome.heard.textMs), ...(outcome.heard.wake === true ? { wake: true as const } : {}) } }),
+    ...(outcome.heard === undefined ? {} : { heard: { recordedMs: Math.round(outcome.heard.recordedMs), textMs: Math.round(outcome.heard.textMs), ...(outcome.heard.wake === true ? { wake: true as const } : {}), ...(outcome.heard.ender === undefined ? {} : { ender: outcome.heard.ender }) } }),
   };
 }
 

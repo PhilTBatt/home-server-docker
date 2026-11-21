@@ -2,7 +2,9 @@ export const earsUrl = "http://ears:8090";
 export const earsQuickMs = 4_000;
 export const earsStopMs = 70_000;
 
-export type EarsLast = { seconds: number; reason: string; text: string | null; textProblem: string | null };
+export type Ender = "loudness" | "silero";
+
+export type EarsLast = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender };
 export type EarsCurrent = { id: number; by: "push" | "wake"; claimed: boolean };
 export type EarsWake = { on: boolean; listening: boolean; held: boolean; problem: string | null };
 export type EarsAnswer = { status: number; state: string | null; reason: string | null; error: string | null; seconds: number | null; last: EarsLast | null; id?: number | null; version?: number | null; run?: string | null; lastId?: number | null; current?: EarsCurrent | null; wake?: EarsWake | null };
@@ -23,7 +25,7 @@ function lastOf(value: unknown): EarsLast | null {
   if (typeof last.seconds !== "number" || !Number.isFinite(last.seconds) || last.seconds < 0 || typeof last.reason !== "string") return null;
   if (last.text !== null && typeof last.text !== "string") return null;
   if (last.textProblem !== null && typeof last.textProblem !== "string") return null;
-  return { seconds: last.seconds, reason: tidy(last.reason), text: last.text, textProblem: last.textProblem === null ? null : tidy(last.textProblem) };
+  return { seconds: last.seconds, reason: tidy(last.reason), text: last.text, textProblem: last.textProblem === null ? null : tidy(last.textProblem), ...(last.ender === "loudness" || last.ender === "silero" ? { ender: last.ender } : {}) };
 }
 
 function count(value: unknown, least: number): number | null {

@@ -1,3 +1,5 @@
+import { enders, type Ender } from "./levels.js";
+
 export const microphones = ["pretend", "card"] as const;
 export type Microphone = (typeof microphones)[number];
 
@@ -5,7 +7,7 @@ export type MicLevel = number | "keep";
 
 export type MicSettings = { micLevel: MicLevel; micControl: string; micBoost: MicLevel; micBoostControl: string };
 
-export type Config = { token: string; microphone: Microphone | null; wake: boolean } & MicSettings;
+export type Config = { token: string; microphone: Microphone | null; wake: boolean; wakeEnd: Ender } & MicSettings;
 
 export const shortestToken = 32;
 export const defaultMicLevel = 80;
@@ -44,6 +46,13 @@ export function readMicSettings(env: Record<string, string | undefined>): MicSet
   };
 }
 
+export function readWakeEnd(value: string | undefined): Ender {
+  const end = value?.trim() ?? "";
+  if (end === "") return "loudness";
+  if ((enders as readonly string[]).includes(end)) return end as Ender;
+  throw new Error(`EARS_WAKE_END must be loudness or silero, not "${end}"`);
+}
+
 function readWake(value: string | undefined, microphone: Microphone | null): boolean {
   const wake = value?.trim() ?? "";
   if (wake === "" || wake === "off") return false;
@@ -60,5 +69,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (microphone !== "" && !(microphones as readonly string[]).includes(microphone)) throw new Error(`EARS_MICROPHONE must be pretend or card, or left out until a microphone is set up, not "${microphone}"`);
   const mic = microphone === "" ? null : (microphone as Microphone);
   const settings = readMicSettings(env);
-  return { token, microphone: mic, micLevel: settings.micLevel, micControl: settings.micControl, micBoost: settings.micBoost, micBoostControl: settings.micBoostControl, wake: readWake(env.EARS_WAKE, mic) };
+  return { token, microphone: mic, micLevel: settings.micLevel, micControl: settings.micControl, micBoost: settings.micBoost, micBoostControl: settings.micBoostControl, wake: readWake(env.EARS_WAKE, mic), wakeEnd: readWakeEnd(env.EARS_WAKE_END) };
 }

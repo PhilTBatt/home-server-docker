@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { backgroundLevel, createFrames, createQuietEnd, frameBytes, frameLevel, frameMs, quietestShare, quietForMs, settleMs, speakingAtLeast, speakingLevel, speakingTimes, startWithinMs } from "./levels.js";
+import { backgroundLevel, createCutter, createFrames, createQuietEnd, createSpeechEnd, enders, frameBytes, frameLevel, frameMs, quietestShare, quietForMs, settleMs, speakingAtLeast, speakingLevel, speakingTimes, startWithinMs } from "./levels.js";
 
 function samples(values: number[]): Uint8Array {
   const sound = new Uint8Array(values.length * 2);
@@ -109,4 +109,45 @@ test("with no speech at all it ends after 5 seconds, and each setting can be cha
   assert.deepEqual(run(createQuietEnd({ speakingAbove: 300, startWithinMs: 1000 }), Array(80).fill(10)), silent(1000, "1 second"));
   assert.deepEqual(run(createQuietEnd({ speakingAbove: 300, settleMs: 0, quietForMs: 1000 }), [400, ...Array(20).fill(0)]), spoke(1100, "1 second"));
   assert.deepEqual(run(createQuietEnd({ speakingAbove: 300, settleMs: 300 }), [0, 0, 0, 400, ...Array(20).fill(0)]), spoke(1900));
+});
+
+test("whole frames are cut from sound however it arrives, the rest waiting for the next piece, and each frame is its own copy of the bytes", () => {
+  const cutter = createCutter(4);
+  assert.deepEqual(cutter.push(samples([1])).map((frame) => [...frame]), []);
+  const frames = cutter.push(samples([2, 3, 4, 5]));
+  assert.deepEqual(frames.map((frame) => [...frame]), [[1, 0, 2, 0], [3, 0, 4, 0]]);
+  const source = samples([6, 7]);
+  const later = cutter.push(source);
+  source.fill(9);
+  assert.deepEqual(later.map((frame) => [...frame]), [[5, 0, 6, 0]]);
+  cutter.clear();
+  assert.deepEqual(cutter.push(samples([8, 9])).map((frame) => [...frame]), [[8, 0, 9, 0]]);
+});
+
+test("a wake recording ends on loudness, or on Silero's speech detector", () => {
+  assert.deepEqual(enders, ["loudness", "silero"]);
+});
+
+function runSpeech(end: ReturnType<typeof createSpeechEnd>, speech: boolean[]) {
+  for (const [index, yes] of speech.entries()) {
+    const ended = end.push(yes);
+    if (ended !== null) return { at: (index + 1) * frameMs, why: ended.reason, spoke: ended.spoke };
+  }
+  return { at: null, why: null };
+}
+
+test("the speech detector's ending works on speech or not, with the same timings as loudness, and says it was the detector", () => {
+  const speech = [...Array(10).fill(false), ...Array(12).fill(true), ...Array(16).fill(false)];
+  assert.deepEqual(runSpeech(createSpeechEnd({ by: "silero" }), speech), { at: 3700, why: "the speech detector heard no speech for 1.5 seconds after you spoke", spoke: true });
+  const switched = createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 100, startWithinMs: 100 });
+  assert.deepEqual([switched.push(true, "loudness"), switched.push(false, "loudness")], [null, { reason: "it went quiet for 0.1 seconds after you spoke", spoke: true }]);
+  assert.deepEqual(createSpeechEnd({ by: "silero", startWithinMs: 100 }).push(false, "loudness"), { reason: "nothing loud enough to be speech came within 0.1 seconds, so it wasn't sent to Whisper", spoke: false });
+  assert.deepEqual(runSpeech(createSpeechEnd({ by: "silero" }), Array(60).fill(false)), { at: 5000, why: "the speech detector heard no speech within 5 seconds, so it wasn't sent to Whisper", spoke: false });
+  assert.deepEqual(runSpeech(createSpeechEnd({ by: "silero" }), [...Array(8).fill(true), ...Array(60).fill(false)]), { at: 5000, why: "the speech detector heard no speech within 5 seconds, so it wasn't sent to Whisper", spoke: false });
+  assert.deepEqual(runSpeech(createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 300, startWithinMs: 1000 }), [true, false, false, false]), { at: 400, why: "the speech detector heard no speech for 0.3 seconds after you spoke", spoke: true });
+});
+
+test("the speech end without a detector named words it as loudness, as the loudness check always has", () => {
+  assert.deepEqual(runSpeech(createSpeechEnd(), [...Array(9).fill(false), true, ...Array(15).fill(false)]), { at: 2500, why: "it went quiet for 1.5 seconds after you spoke", spoke: true });
+  assert.deepEqual(runSpeech(createSpeechEnd({ by: "loudness", startWithinMs: 2000 }), Array(30).fill(false)), { at: 2000, why: "nothing loud enough to be speech came within 2 seconds, so it wasn't sent to Whisper", spoke: false });
 });

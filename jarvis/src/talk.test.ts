@@ -269,3 +269,14 @@ test("sending with the wake word marks what was heard as the wake word's", async
   const pushed = await startTalk({ call: plain.call }).send();
   assert.equal(pushed.ok && "wake" in pushed.heard, false);
 });
+
+test("a wake question keeps what ended its recording, as ears said it, and a push one never has it", () => {
+  for (const ender of ["loudness", "silero"] as const) {
+    const sent = heardFrom(answer(200, { last: { ...heardLast("Hi."), ender } }), 10, true);
+    assert.deepEqual(sent.ok && sent.heard, { text: "Hi.", recordedMs: 2500, textMs: 10, wake: true, ender });
+  }
+  const pushed = heardFrom(answer(200, { last: { ...heardLast("Hi."), ender: "silero" } }), 10, false);
+  assert.deepEqual(pushed.ok && pushed.heard, { text: "Hi.", recordedMs: 2500, textMs: 10 });
+  const plain = heardFrom(answer(200, { last: heardLast("Hi.") }), 10, true);
+  assert.deepEqual(plain.ok && plain.heard, { text: "Hi.", recordedMs: 2500, textMs: 10, wake: true });
+});

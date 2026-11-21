@@ -962,3 +962,16 @@ test("naming the recording reaches it while it's being stopped, while Whisper wo
   assert.equal((await ears.cancel(3)).ok, true);
   assert.deepEqual([ears.view().last?.text, ears.view().last?.textProblem], [null, clearedByCancel]);
 });
+
+test("a recording's last says how it was set to end when the recording says so, and nothing when it doesn't", { timeout: 5_000 }, async () => {
+  const { ears, recordings } = setUpCounted();
+  await ears.unmute();
+  ears.start("wake");
+  ears.claim(1);
+  recordings[0].end({ reason: "the speech detector heard no speech for 1.5 seconds after you spoke", ender: "silero" });
+  await until(() => ears.view().state === "idle");
+  assert.deepEqual(ears.view().last, { seconds: 1.2, reason: "the speech detector heard no speech for 1.5 seconds after you spoke", text: null, textProblem: null, ender: "silero" });
+  ears.start();
+  await ears.stop();
+  assert.equal(ears.view().last !== null && "ender" in ears.view().last!, false);
+});

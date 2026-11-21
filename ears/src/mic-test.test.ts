@@ -5,7 +5,8 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { MicSettings } from "./config.js";
-import { busyLine, describeMic, longestWait, louder, measure, micTestMs, quietTimes, readWait, roomUntilMs, runMicTest, secondsOf, sendSound, skipMs, softer, soundFollows, verdict, type MicReport, type MicTestDeps } from "./mic-test.js";
+import { busyLine, describeDetector, describeMic, detectorView, longestPauseOf, longestWait, louder, markMs, measure, measuredFrames, micTestMs, quietTimes, readWait, roomUntilMs, runMicTest, secondsOf, sendSound, skipMs, softer, soundFollows, strip, verdict, type MicReport, type MicTestDeps } from "./mic-test.js";
+import type { SileroStep } from "./silero.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const usual: MicSettings = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost" };
@@ -326,4 +327,81 @@ test("run as a program, it reads its settings from the environment, writes what 
   assert.equal(code, 1);
   assert.equal(out, "");
   assert.equal(err, `The check didn't start: EARS_MIC_LEVEL must be a whole number from 0 to 100, or keep to leave the card's own level, not "loud".\n`);
+});
+
+test("the strip shows half a second a mark, # where any frame in it was speech", () => {
+  assert.equal(markMs, 500);
+  assert.equal(strip([]), "");
+  assert.equal(strip([false, false, false, false, false]), ".");
+  assert.equal(strip([false, false, true, false, false, false, false]), "#.");
+  assert.equal(strip([...Array(10).fill(false), true]), "..#");
+});
+
+test("the longest pause is the longest run of non-speech between two frames of speech, never counting before the first or after the last", () => {
+  assert.equal(longestPauseOf([]), 0);
+  assert.equal(longestPauseOf([false, false, true, false, false]), 0);
+  assert.equal(longestPauseOf([true, false, false, true, false, true, false, false, false]), 200);
+});
+
+test("the frames measured are whole tenths of a second after the first 0.3 seconds", () => {
+  const frames = measuredFrames(new Uint8Array(3200 * 5 + 100));
+  assert.deepEqual(frames.map((frame) => frame.length), [3200, 3200]);
+});
+
+const loudStep = (): SileroStep => async (input, state) => ({ probability: input.slice(64).some((value) => Math.abs(value) > 0.03) ? 0.9 : 0.05, state });
+
+test("the detector's view judges the same frames, saying how long it heard speech and the longest pause", async () => {
+  const sound = joined(settle, steady(0, 1_000), steady(2_000, 500), steady(0, 300), steady(2_000, 400), steady(0, 1_000));
+  const view = await detectorView(sound, loudStep());
+  assert.equal(view.speech.length, measuredFrames(sound).length);
+  assert.equal(view.speechMs >= 900 && view.speechMs <= 1_100, true, String(view.speechMs));
+  assert.equal(view.longestPauseMs >= 200 && view.longestPauseMs <= 300, true, String(view.longestPauseMs));
+});
+
+test("the detector's lines say how long it heard speech, or that it heard none and what that means, then both views side by side", () => {
+  const view = { speechMs: 2_000, longestPauseMs: 400, speech: [false, true, true, true, true, true, false, false, false, false] };
+  const loud = [false, true, true, false, false, false, false, false, false, false];
+  assert.deepEqual(describeDetector(view, report({ line: 450 }), loud), [
+    "The speech detector heard speech for 2 seconds, and your longest pause while talking was 0.4 seconds.",
+    "Each mark is half a second, # where each heard you (loudness above 450):",
+    "  loudness         #.",
+    "  speech detector  ##",
+  ]);
+  assert.equal(describeDetector({ ...view, longestPauseMs: 1_500 }, report({}), loud)[0], "The speech detector heard speech for 2 seconds, and your longest pause while talking was 1.5 seconds, so it would have ended a wake-word recording during that pause.");
+  assert.equal(describeDetector({ speechMs: 0, longestPauseMs: 0, speech: [false] }, report({}), [false])[0], "The speech detector heard no speech at all, so with EARS_WAKE_END=silero a wake-word recording from there would be dropped.");
+});
+
+test("with EARS_WAKE_END=silero the check loads the detector and adds its view after the report, and the sound is still sent", { timeout: 15_000 }, async () => {
+  let loads = 0;
+  const run = harness({ env: { EARS_WAKE_END: "silero" }, loadSilero: async () => (loads++, loudStep()) });
+  assert.equal(await runMicTest(run.deps), 0);
+  assert.equal(loads, 1);
+  const report = describeMic(measure(run.sent[0]), usual);
+  assert.deepEqual(run.said.slice(1, 1 + report.length), report);
+  assert.match(run.said[1 + report.length], /^The speech detector heard speech for /);
+  assert.equal(run.said.length, 1 + report.length + 4);
+  assert.equal(run.said[1 + report.length + 2], "  loudness         ##");
+  assert.equal(run.sent.length, 1);
+  const atLine = harness({ env: { EARS_WAKE_END: "silero" }, loadSilero: async () => loudStep(), recorder: pretend(speaking.replace("? 2000 : -2000", "? 300 : -300")) });
+  assert.equal(await runMicTest(atLine.deps), 0);
+  assert.equal(atLine.said.find((line) => line.startsWith("  loudness")), "  loudness         ..", "a frame exactly at the line isn't loud, as in the report");
+});
+
+test("without the detector chosen nothing loads, and a detector that won't load or run is said after the report, the sound still sent", { timeout: 15_000 }, async () => {
+  const off = harness({ env: { EARS_WAKE_END: "loudness" }, loadSilero: async () => assert.fail("it loaded") });
+  assert.equal(await runMicTest(off.deps), 0);
+  assert.equal(off.said.some((line) => line.includes("speech detector")), false);
+  const broken = harness({ env: { EARS_WAKE_END: "silero" }, loadSilero: async () => Promise.reject(new Error("no model")) });
+  assert.equal(await runMicTest(broken.deps), 0);
+  assert.equal(broken.said.at(-1), "The speech detector couldn't run: no model.");
+  assert.equal(broken.sent.length, 1);
+  const failing = harness({ env: { EARS_WAKE_END: "silero" }, loadSilero: async () => async () => Promise.reject(new Error("model broke")) });
+  assert.equal(await runMicTest(failing.deps), 0);
+  assert.equal(failing.said.at(-1), "The speech detector couldn't run: model broke.");
+});
+
+test("an EARS_WAKE_END that isn't loudness or silero stops the check before it records", { timeout: 15_000 }, async () => {
+  const run = harness({ env: { EARS_WAKE_END: "vad" }, recorder: () => assert.fail("it recorded") });
+  assert.equal(await runMicTest(run.deps), 1);
+  assert.deepEqual(run.said, [`The check didn't start: EARS_WAKE_END must be loudness or silero, not "vad".`]);
 });

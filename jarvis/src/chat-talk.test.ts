@@ -113,6 +113,8 @@ test("a typed question is logged with no heard times, a spoken one with them, an
   assert.deepEqual(spoken.heard, { recordedMs: 2500, textMs: 1300 });
   assert.deepEqual(logLine(context, "c", 1, at, { error: "The agent stopped", heard }).heard, { recordedMs: 2500, textMs: 1300 });
   assert.equal(JSON.stringify(spoken).includes("lights"), false);
+  assert.deepEqual(logLine(context, "c", 1, at, { answer, heard: { ...heard, wake: true, ender: "silero" } }).heard, { recordedMs: 2500, textMs: 1300, wake: true, ender: "silero" });
+  assert.deepEqual(logLine(context, "c", 1, at, { answer, heard: { ...heard, wake: true } }).heard, { recordedMs: 2500, textMs: 1300, wake: true });
 });
 
 test("anything typed while listening drops the recording first, then is taken as usual", async () => {

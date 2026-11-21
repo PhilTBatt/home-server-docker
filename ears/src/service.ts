@@ -10,6 +10,7 @@ import { createListener, wakeHost, wakeOff, wakePort, type Listener, type Listen
 import { applyMicSettings, findMicCard, recorderArgs, recorderCommand, type MicCard } from "./mic-card.js";
 import { switchEveryMs, switchFile, watchSwitch } from "./mute.js";
 import { startRecording, type Recorder } from "./recorder.js";
+import { createDetector, loadSilero, type SileroStep } from "./silero.js";
 import { earsPort, startEarsServer, type WakeApi } from "./server.js";
 import type { ToText } from "./whisper.js";
 import { connectWyoming } from "./wyoming-client.js";
@@ -29,6 +30,7 @@ export type ServiceOptions = {
   findCard?: () => Promise<MicCard>;
   setLevel?: (card: number, control: string, level: number) => Promise<void>;
   setBoost?: (card: number, control: string, steps: number) => Promise<void>;
+  loadSilero?: () => Promise<SileroStep>;
   wake?: Partial<Pick<ListenerDeps, "connect" | "presenceMs" | "holdMs" | "gapMs" | "retryMs" | "settleMs" | "startWithinMs" | "quietForMs">> & { claimMs?: number; waitMs?: number };
 };
 
@@ -45,6 +47,15 @@ async function chooseRecorder(options: ServiceOptions): Promise<{ recorder: Reco
 
 export async function startService(options: ServiceOptions): Promise<Service> {
   const { recorder, microphone } = await chooseRecorder(options);
+  let step: SileroStep | null = null;
+  if (options.config.wake && options.config.wakeEnd === "silero") {
+    try {
+      step = await (options.loadSilero ?? (() => loadSilero()))();
+    } catch (error) {
+      throw new Error(`the speech detector couldn't load: ${error instanceof Error ? error.message : String(error)}. Set EARS_WAKE_END=loudness to go back to the loudness check`);
+    }
+  }
+  const silero = step;
   const tuning = options.wake ?? {};
   let changes: Changes | null = null;
   let listener: Listener | null = null;
@@ -70,6 +81,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
       ears: () => ({ state: () => ears.view().state, start: (by) => ears.start(by), fail: (why) => ears.fail(why) }),
       stream: (onSound) => startRecording({ recorder, limitMs: null, keep: false, onSound }),
       connect: tuning.connect ?? ((signal) => connectWyoming({ host: wakeHost, port: wakePort, signal })),
+      detector: silero === null ? undefined : () => createDetector(silero),
       log: options.log,
       changed: () => seen.check(),
       limitMs: options.limitMs,

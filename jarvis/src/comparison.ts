@@ -35,6 +35,7 @@ function isHeard(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const heard = value as Record<string, unknown>;
   if (heard.wake !== undefined && heard.wake !== true) return false;
+  if (heard.ender !== undefined && heard.ender !== "loudness" && heard.ender !== "silero") return false;
   return [heard.recordedMs, heard.textMs].every((time) => typeof time === "number" && Number.isFinite(time) && time >= 0);
 }
 
@@ -420,6 +421,11 @@ function requestLines(groups: Group[], speech: Map<string, SpeechLine>): string[
   });
 }
 
+const enderNames = [
+  ["loudness", "on loudness"],
+  ["silero", "on the speech detector"],
+] as const;
+
 function heardLine(lines: LogLine[]): string | null {
   const spoken = lines.flatMap((line) => (line.heard === undefined ? [] : [line.heard]));
   const recorded = summarise(spoken.map((heard) => heard.recordedMs));
@@ -427,7 +433,13 @@ function heardLine(lines: LogLine[]): string | null {
   if (recorded === null || text === null) return null;
   const woken = spoken.filter((heard) => heard.wake === true).length;
   const how = woken === 0 ? "" : spoken.length === 1 ? ", with the wake word" : `, ${woken === spoken.length ? "all" : woken} of them with the wake word`;
-  return `${plural(spoken.length, "question")} ${spoken.length === 1 ? "was" : "were"} asked through ears${how}. Recording ${seconds(recorded.median)} (${seconds(recorded.max)}), and the text back once it ended ${seconds(text.median)} (${seconds(text.max)}): the median, with the slowest in brackets.`;
+  const line = `${plural(spoken.length, "question")} ${spoken.length === 1 ? "was" : "were"} asked through ears${how}. Recording ${seconds(recorded.median)} (${seconds(recorded.max)}), and the text back once it ended ${seconds(text.median)} (${seconds(text.max)}): the median, with the slowest in brackets.`;
+  const ended = enderNames.flatMap(([ender, name]) => {
+    const these = spoken.filter((heard) => heard.ender === ender);
+    const times = summarise(these.map((heard) => heard.recordedMs));
+    return times === null ? [] : [`${plural(these.length, "wake question")} ${name}, recording ${seconds(times.median)} (${seconds(times.max)})`];
+  });
+  return ended.length < 2 ? line : `${line} Split by how ears was set to end them: ${ended.join("; ")}.`;
 }
 
 function failureLines(groups: Group[]): string[] {

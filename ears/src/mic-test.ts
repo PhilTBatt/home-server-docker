@@ -1,8 +1,9 @@
 import type { Writable } from "node:stream";
-import { mostBoostSteps, readMicSettings, type MicSettings } from "./config.js";
+import { mostBoostSteps, readMicSettings, readWakeEnd, type MicSettings } from "./config.js";
 import { backgroundLevel, frameBytes, frameLevel, frameMs, quietForMs, speakingLevel } from "./levels.js";
 import { applyMicSettings, findMicCard, recorderArgs, recorderCommand, type MicCard, type MicSetters } from "./mic-card.js";
 import { bytesPerSecond, startRecording, type Recorder } from "./recorder.js";
+import { createDetector, heardSpeech, loadSilero, type SileroStep } from "./silero.js";
 
 export const micTestMs = 10_000;
 export const longestWait = 60;
@@ -13,17 +14,27 @@ export const soundFollows = "sound follows";
 
 export type MicReport = { ms: number; room: number; line: number; speechMs: number; typical: number; loudest: number; longestPauseMs: number; clipped: number };
 
+export function measuredFrames(sound: Uint8Array): Uint8Array[] {
+  const frames: Uint8Array[] = [];
+  for (let at = (skipMs / frameMs) * frameBytes; at + frameBytes <= sound.length; at += frameBytes) frames.push(sound.subarray(at, at + frameBytes));
+  return frames;
+}
+
+export function longestPauseOf(speech: readonly boolean[]): number {
+  const heard = speech.flatMap((yes, index) => (yes ? [index] : []));
+  let longest = 0;
+  for (let index = 1; index < heard.length; index++) longest = Math.max(longest, heard[index] - heard[index - 1] - 1);
+  return longest * frameMs;
+}
+
 export function measure(sound: Uint8Array): MicReport {
   const whole = sound.length - (sound.length % 2);
   const from = (skipMs / frameMs) * frameBytes;
-  const levels: number[] = [];
-  for (let at = from; at + frameBytes <= whole; at += frameBytes) levels.push(frameLevel(sound.subarray(at, at + frameBytes)));
+  const levels = measuredFrames(sound).map(frameLevel);
   const room = backgroundLevel(levels.slice(0, (roomUntilMs - skipMs) / frameMs));
   const line = speakingLevel(room);
   const loud = levels.flatMap((level, index) => (level > line ? [index] : []));
   const spoken = loud.map((index) => levels[index]).sort((a, b) => a - b);
-  let longestPause = 0;
-  for (let index = 1; index < loud.length; index++) longestPause = Math.max(longestPause, loud[index] - loud[index - 1] - 1);
   const view = new DataView(sound.buffer, sound.byteOffset, whole);
   let clipped = 0;
   for (let at = from; at < whole; at += 2) {
@@ -37,7 +48,7 @@ export function measure(sound: Uint8Array): MicReport {
     speechMs: loud.length * frameMs,
     typical: spoken.length === 0 ? 0 : spoken[Math.floor((spoken.length - 1) / 2)],
     loudest: levels.reduce((most, level) => Math.max(most, level), 0),
-    longestPauseMs: longestPause * frameMs,
+    longestPauseMs: longestPauseOf(levels.map((level) => level > line)),
     clipped,
   };
 }
@@ -81,6 +92,32 @@ export function describeMic(report: MicReport, settings: MicSettings): string[] 
   return lines;
 }
 
+export const markMs = 500;
+
+export function strip(speech: readonly boolean[]): string {
+  const per = markMs / frameMs;
+  let marks = "";
+  for (let at = 0; at < speech.length; at += per) marks += speech.slice(at, at + per).some((yes) => yes) ? "#" : ".";
+  return marks;
+}
+
+export type DetectorView = { speechMs: number; longestPauseMs: number; speech: boolean[] };
+
+export async function detectorView(sound: Uint8Array, step: SileroStep): Promise<DetectorView> {
+  const detector = createDetector(step);
+  const speech: boolean[] = [];
+  for (const frame of measuredFrames(sound)) speech.push(heardSpeech(await detector.frame(frame)));
+  return { speechMs: speech.filter((yes) => yes).length * frameMs, longestPauseMs: longestPauseOf(speech), speech };
+}
+
+export function describeDetector(view: DetectorView, report: MicReport, loud: readonly boolean[]): string[] {
+  const lines =
+    view.speechMs === 0
+      ? ["The speech detector heard no speech at all, so with EARS_WAKE_END=silero a wake-word recording from there would be dropped."]
+      : [`The speech detector heard speech for ${secondsOf(view.speechMs)}, and your longest pause while talking was ${secondsOf(view.longestPauseMs)}${view.longestPauseMs >= quietForMs ? ", so it would have ended a wake-word recording during that pause" : ""}.`];
+  return [...lines, `Each mark is half a second, # where each heard you (loudness above ${report.line}):`, `  loudness         ${strip(loud)}`, `  speech detector  ${strip(view.speech)}`];
+}
+
 export function readWait(value: string | undefined): number {
   const wait = value?.trim() ?? "";
   if (wait === "") return 0;
@@ -96,6 +133,7 @@ export function sendSound(out: Writable): (sound: Uint8Array) => Promise<void> {
 
 export type MicTestDeps = MicSetters & {
   env: Record<string, string | undefined>;
+  loadSilero?: () => Promise<SileroStep>;
   say: (line: string) => void;
   send: (sound: Uint8Array) => Promise<void>;
   findCard?: () => Promise<MicCard>;
@@ -113,9 +151,14 @@ export async function runMicTest(deps: MicTestDeps): Promise<number> {
   let wait: number;
   let card: MicCard;
   let level: string;
+  let silero: Promise<SileroStep> | null = null;
   try {
     settings = readMicSettings(deps.env);
     wait = readWait(deps.env.EARS_MIC_TEST_WAIT);
+    if (readWakeEnd(deps.env.EARS_WAKE_END) === "silero") {
+      silero = (deps.loadSilero ?? (() => loadSilero()))();
+      silero.catch(() => {});
+    }
     card = await (deps.findCard ?? (() => findMicCard()))();
     level = await applyMicSettings(card.number, settings, deps);
   } catch (error) {
@@ -133,7 +176,17 @@ export async function runMicTest(deps: MicTestDeps): Promise<number> {
     deps.say(/busy/i.test(stopped.reason) ? busyLine : `The recording didn't work: ${stopped.reason}.`);
     return 1;
   }
-  for (const line of describeMic(measure(stopped.sound), settings)) deps.say(line);
+  const report = measure(stopped.sound);
+  for (const line of describeMic(report, settings)) deps.say(line);
+  if (silero !== null) {
+    try {
+      const view = await detectorView(stopped.sound, await silero);
+      const loud = measuredFrames(stopped.sound).map((frame) => frameLevel(frame) > report.line);
+      for (const line of describeDetector(view, report, loud)) deps.say(line);
+    } catch (error) {
+      deps.say(`The speech detector couldn't run: ${messageOf(error)}.`);
+    }
+  }
   await deps.send(stopped.sound);
   return 0;
 }

@@ -1,7 +1,7 @@
 # 0041. A microphone check records and plays back in two containers joined by a pipe
 
 - Date: 2026-11-21
-- Status: accepted
+- Status: accepted; with `EARS_WAKE_END=silero` it also shows what Silero's speech detector heard, beside the loudness check (0042)
 
 ## Context
 I checked the laptop's microphone by hand: a throwaway container with all of `/dev/snd`, `arecord` for a few seconds, then `aplay`. It was clear close up and too quiet from across the room. That check tells me how it sounds, but not whether ears can tell my voice from the room, which is what the wake word relies on to know I've finished (record 0039). I wanted a check I can run again from anywhere, for this microphone or any I buy later, that plays the recording back and prints the numbers ears works with. Three rules shape it: Jarvis never gets a microphone, ears never gets speakers (record 0035), and sound is never written to disk.

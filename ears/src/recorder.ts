@@ -1,4 +1,5 @@
 import { spawn as spawnChild } from "node:child_process";
+import type { Ender } from "./levels.js";
 
 export const recordingLimitMs = 30_000;
 export const recordingRate = 16_000;
@@ -7,7 +8,7 @@ export const killAfterMs = 1_000;
 
 export type Recorder = { command: string; args: string[] };
 
-export type Stopped = { reason: string; failed: boolean; bytes: number; ms: number; sound: Uint8Array; unheard?: true };
+export type Stopped = { reason: string; failed: boolean; bytes: number; ms: number; sound: Uint8Array; unheard?: true; ender?: Ender };
 
 export type Recording = { readonly pid: number | undefined; stop(reason: string): Promise<Stopped>; readonly ended: Promise<Stopped> };
 

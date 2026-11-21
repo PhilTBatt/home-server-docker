@@ -148,3 +148,10 @@ test("an answer outside the wake word's wait keeps the recording's number and th
   assert.deepEqual(readEarsAnswer(200, { state: "idle", reason: null, last: null }), { status: 200, state: "idle", reason: null, error: null, seconds: null, last: null });
   assert.deepEqual(readEarsAnswer(200, { state: "recording", reason: null, last: null, id: 1_795_000_000_124, lastId: 1_795_000_000_123 }), { status: 200, state: "recording", reason: null, error: null, seconds: null, last: null, lastId: 1_795_000_000_123, id: 1_795_000_000_124 });
 });
+
+test("a last recording keeps what ended it when that's loudness or silero, and drops anything else", () => {
+  const last = { seconds: 2, reason: "x", text: null, textProblem: null };
+  assert.deepEqual(readEarsAnswer(200, { state: "idle", last: { ...last, ender: "silero" } }).last, { ...last, ender: "silero" });
+  assert.deepEqual(readEarsAnswer(200, { state: "idle", last: { ...last, ender: "loudness" } }).last, { ...last, ender: "loudness" });
+  for (const ender of ["Silero", 1, null, "vad"]) assert.deepEqual(readEarsAnswer(200, { state: "idle", last: { ...last, ender } }).last, last, JSON.stringify(ender));
+});

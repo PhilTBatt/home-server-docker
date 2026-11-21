@@ -1,6 +1,7 @@
 import type { EarsState } from "./ears.js";
-import { backgroundLevel, createFrames, createQuietEnd, frameMs, speakingLevel } from "./levels.js";
+import { backgroundLevel, createFrames, createQuietEnd, createSpeechEnd, frameMs, speakingLevel } from "./levels.js";
 import { bytesPerSecond, recordingRate, type Recording } from "./recorder.js";
+import type { Detector } from "./silero.js";
 import { startTap, type By, type Tap } from "./tap.js";
 import type { WyomingConnection } from "./wyoming-client.js";
 
@@ -44,6 +45,7 @@ export type ListenerDeps = {
   startWithinMs?: number;
   quietForMs?: number;
   limitMs?: number;
+  detector?: () => Detector;
 };
 
 export type Listener = {
@@ -316,7 +318,25 @@ export function createListener(deps: ListenerDeps): Listener {
     view: () => ({ on: true, listening: feeding, held: held(), problem }),
     tap(by) {
       const wake = by === "wake" ? pendingWake : null;
-      const started = startTap({ by, before: wake?.before, quiet: wake === null ? null : createQuietEnd({ speakingAbove: speakingLevel(wake.background), settleMs: deps.settleMs, startWithinMs: deps.startWithinMs, quietForMs: deps.quietForMs }), limitMs: deps.limitMs, now });
+      const timings = { settleMs: deps.settleMs, startWithinMs: deps.startWithinMs, quietForMs: deps.quietForMs };
+      const detector = deps.detector;
+      const started = startTap({
+        by,
+        before: wake?.before,
+        quiet: wake === null || detector !== undefined ? null : createQuietEnd({ speakingAbove: speakingLevel(wake.background), ...timings }),
+        judged:
+          wake === null || detector === undefined
+            ? null
+            : {
+                detector: detector(),
+                end: createSpeechEnd({ by: "silero", ...timings }),
+                fallback: (level) => level > speakingLevel(wake.background),
+                failed: (why) => deps.log(`The speech detector failed (${why}), so this recording ends on loudness instead.`),
+              },
+        ender: wake === null ? undefined : detector === undefined ? "loudness" : "silero",
+        limitMs: deps.limitMs,
+        now,
+      });
       tap = started;
       void started.ended.then(() => {
         if (tap === started) tap = null;
