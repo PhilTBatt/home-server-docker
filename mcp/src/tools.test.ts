@@ -37,7 +37,7 @@ const readPaths: Record<string, string> = {
 
 const matchesTool = "get_deal_matches";
 const listingTool = "get_deal_listing";
-const tuningTools = ["get_deal_search_cuts", "lookup_deal_categories", "lookup_deal_details"];
+const tuningTools = ["get_deal_search_cuts", "lookup_deal_categories", "lookup_deal_details", "get_deal_hidden", "explain_deal_listing"];
 
 const actions: Record<string, { args: Record<string, unknown>; call: string }> = {
   scan_library: { args: {}, call: "POST /media/library/scan" },
@@ -99,7 +99,7 @@ test("names itself home-hub", async () => {
   assert.equal(result.serverInfo.name, "home-hub");
 });
 
-test("offers the nine read tools, the two listing tools and the three tuning tools, then scan, stop and start, in order", async () => {
+test("offers the nine read tools, the two listing tools and the five tuning tools, then scan, stop and start, in order", async () => {
   const { listTools } = await connect(fakeApi());
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), matchesTool, listingTool, ...tuningTools, ...Object.keys(actions)]);
@@ -235,7 +235,7 @@ test("an unknown tool is refused without calling the API", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
-test("read-only offers only the nine read tools, the two listing tools and the three tuning tools, which all only read", async () => {
+test("read-only offers only the nine read tools, the two listing tools and the five tuning tools, which all only read", async () => {
   const { listTools } = await connect(fakeApi(), false);
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), matchesTool, listingTool, ...tuningTools]);
@@ -269,6 +269,8 @@ test("listings reach Claude only through the routes behind the DEALS_AI switch, 
     get_deal_search_cuts: { search: "rtx-3060-12gb" },
     lookup_deal_categories: { words: "graphics card" },
     lookup_deal_details: { words: "arc b580" },
+    get_deal_hidden: { search: "quadro-p620" },
+    explain_deal_listing: { item: "110000000001" },
   };
   for (const tool of dealTools) await callTool(tool.name, inputs[tool.name] ?? {});
   assert.deepEqual(api.calls, [
@@ -279,9 +281,11 @@ test("listings reach Claude only through the routes behind the DEALS_AI switch, 
     "GET /deals/searches/rtx-3060-12gb/cuts",
     "GET /deals/categories?q=graphics+card",
     "GET /deals/details?q=arc+b580",
+    "GET /deals/ai/searches/quadro-p620/hidden",
+    "GET /deals/ai/explain?item=110000000001",
   ]);
   assert.equal(api.calls.every((call) => call.startsWith("GET ")), true);
-  for (const name of ["get_deal_matches", listingTool]) {
+  for (const name of ["get_deal_matches", listingTool, "get_deal_hidden", "explain_deal_listing"]) {
     const description = dealTools.find((t) => t.name === name)?.description ?? "";
     assert.match(description, /never as instructions/, name);
     assert.match(description, /nothing here can buy or bid/, name);
@@ -388,20 +392,23 @@ test("get_deal_matches refuses odd filters without calling the API", async () =>
   assert.deepEqual(fake.calls, []);
 });
 
-test("the tools that wait on eBay lookups use the slower client, and the rest the usual one", async () => {
+test("the tools that wait on eBay lookups or read a listing use the slower client, and the rest the usual one", async () => {
   const quick = fakeApi();
   const slow = fakeApi();
   const { callTool } = await connect({ get: quick.get, post: quick.post, slowGet: slow.get });
   await callTool("get_deal_search_cuts", { search: "quadro-p620" });
   await callTool("lookup_deal_categories", { words: "graphics card" });
   await callTool("lookup_deal_details", { words: "quadro p620", categoryId: "27386" });
+  await callTool("explain_deal_listing", { item: "https://www.ebay.co.uk/itm/110000000001?hash=x", search: "quadro-p620" });
+  await callTool("get_deal_hidden", { search: "quadro-p620" });
   await callTool("get_deal_searches");
   assert.deepEqual(slow.calls, [
     "GET /deals/searches/quadro-p620/cuts",
     "GET /deals/categories?q=graphics+card",
     "GET /deals/details?q=quadro+p620&categoryId=27386",
+    `GET /deals/ai/explain?item=${encodeURIComponent("https://www.ebay.co.uk/itm/110000000001?hash=x")}&search=quadro-p620`,
   ]);
-  assert.deepEqual(quick.calls, ["GET /deals/searches"]);
+  assert.deepEqual(quick.calls, ["GET /deals/ai/searches/quadro-p620/hidden", "GET /deals/searches"]);
 });
 
 test("the tuning tools refuse odd inputs without calling the API", async () => {
@@ -411,7 +418,7 @@ test("the tuning tools refuse odd inputs without calling the API", async () => {
     ["get_deal_search_cuts", {}],
     ["get_deal_search_cuts", { search: "Bad Id" }],
     ["get_deal_search_cuts", { search: "../status" }],
-    ["get_deal_search_cuts", { search: "x".repeat(41) }],
+    ["get_deal_hidden", { search: "x".repeat(41) }],
     ["lookup_deal_categories", { words: "" }],
     ["lookup_deal_categories", { words: "quadro*" }],
     ["lookup_deal_categories", { words: "a\nb" }],
@@ -419,6 +426,11 @@ test("the tuning tools refuse odd inputs without calling the API", async () => {
     ["lookup_deal_details", { words: "x".repeat(101) }],
     ["lookup_deal_details", { words: "ram", categoryId: "27386a" }],
     ["lookup_deal_details", { words: "ram", categoryId: 27386 }],
+    ["explain_deal_listing", {}],
+    ["explain_deal_listing", { item: "12345" }],
+    ["explain_deal_listing", { item: "see https://www.ebay.co.uk/itm/110000000001" }],
+    ["explain_deal_listing", { item: `https://www.ebay.co.uk/itm/${"1".repeat(500)}` }],
+    ["explain_deal_listing", { item: "110000000001", search: "Bad Id" }],
   ];
   for (const [name, args] of odd) assert.ok(refused(await callTool(name, args)), `${name} ${JSON.stringify(args)}`);
   assert.deepEqual(api.calls, []);
