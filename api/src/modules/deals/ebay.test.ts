@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { categoriesUrl, categoryDetailsUrl, countUrl, createEbaySource, cutSteps, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, optionsUrl, pageSize, plainText, retryAfterMs, searchUrl, toCategories, toCategoryDetails, toCut, toDetailNames, toFull, toListing, toOptions, treeIdUrl, wordsUrl } from "./ebay.js";
+import { categoriesUrl, categoryDetailsUrl, categoryIdsOf, countUrl, createEbaySource, cutSteps, detailNamesUrl, ebayMessages, fullUrl, isApiAddress, legacyUrl, optionsUrl, pageSize, plainText, retryAfterMs, searchUrl, toCategories, toCategoryDetails, toCut, toDetailNames, toFull, toListing, toOptions, treeIdUrl, wordsUrl } from "./ebay.js";
 import { readSearches, type Search } from "./searches.js";
 import { SourceError, cleanText, type FailReason } from "./source.js";
 
@@ -1778,4 +1778,61 @@ test("a cuts reply eBay sends without a count fails as unreadable, counting the 
   fakeEbay((_call, n) => (n === 3 ? Response.json({ total: 3, refinement: "odd" }) : n === 4 ? Response.json({ refinement: {} }) : Response.json({ total: 3 })));
   const words = await failure(source().cuts!(search()));
   assert.deepEqual([words.reason, words.calls], ["reply", 4]);
+});
+
+test("any listing is read by its item number, with the ids of eBay's categories it sits in", async () => {
+  const calls = fakeEbay(() => Response.json(fullItem({ categoryId: "27386", categoryIdPath: "58058|175673|27386" })));
+  const { item: read, calls: used } = await source().item!("110000000001");
+  assert.equal(used, 1);
+  const asked = calls.filter((call) => call.url !== tokenUrl);
+  assert.deepEqual(asked.map((call) => call.url), ["https://api.ebay.com/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=110000000001"]);
+  assert.equal(asked[0].headers.get("X-EBAY-C-MARKETPLACE-ID"), "EBAY_GB");
+  assert.deepEqual(read.categoryIds, ["58058", "175673", "27386"]);
+  assert.equal(read.options, null);
+  assert.deepEqual([read.full.listing.id, read.full.listing.title, read.full.listing.price, read.full.listing.variations], ["110000000001", "Dell OptiPlex 7070 SFF number 1", 9500, false]);
+  assert.equal(read.full.returns?.accepted, true);
+  assert.equal(legacyUrl(apiHost, "123"), "https://api.ebay.com/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=123");
+});
+
+test("a listing with options is read through its item group, at its cheapest option in stock", async () => {
+  const group = { items: [option(1, [["Storage Capacity", "1 TB"]], "15.00", "OUT_OF_STOCK"), option(2, [["Storage Capacity", "4 TB"]], "48.00"), option(3, [["Storage Capacity", "2 TB"]], "20.00")].map((entry) => ({ ...entry, legacyItemId: "226543210987", categoryIdPath: "58058|175669|56083" })) };
+  const calls = fakeEbay((_call, n) => (n === 1 ? Response.json({ errors: [{ errorId: 11006, message: "The legacy Id is invalid." }] }, { status: 400 }) : Response.json(group)));
+  const { item: read, calls: used } = await source().item!("226543210987");
+  assert.equal(used, 2);
+  assert.deepEqual(calls.filter((call) => call.url !== tokenUrl).map((call) => call.url), [
+    "https://api.ebay.com/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=226543210987",
+    "https://api.ebay.com/buy/browse/v1/item/get_items_by_item_group?item_group_id=226543210987",
+  ]);
+  assert.deepEqual([read.full.listing.id, read.full.listing.url, read.full.listing.price, read.full.listing.variations, read.full.listing.groupId], ["226543210987", "https://www.ebay.co.uk/itm/226543210987", 2000, true, "226543210987"]);
+  assert.deepEqual(read.categoryIds, ["58058", "175669", "56083"]);
+  assert.deepEqual(read.options?.map((entry) => [entry.price, entry.inStock]), [[1500, false], [4800, true], [2000, true]]);
+  fakeEbay((_call, n) => (n === 1 ? Response.json({ errors: [{ errorId: 11006 }] }, { status: 400 }) : Response.json({ items: [option(1, [["Size", "1 TB"]], "15.00", "OUT_OF_STOCK")].map((entry) => ({ ...entry, legacyItemId: "226543210987" })) })));
+  assert.equal((await source().item!("226543210987")).item.full.listing.price, 1500);
+});
+
+test("a listing read by number that's gone, refused, unreadable or not a number says which, counting its calls", async () => {
+  fakeEbay(() => new Response("", { status: 404 }));
+  assert.deepEqual(await failure(source().item!("110000000001")).then((error) => [error.reason, error.calls]), ["gone", 1]);
+  fakeEbay(() => Response.json({ errors: [{ errorId: 11003 }] }, { status: 400 }));
+  assert.deepEqual(await failure(source().item!("110000000001")).then((error) => [error.reason, error.calls]), ["gone", 1]);
+  fakeEbay(() => Response.json({ errors: [{ errorId: 12345 }] }, { status: 400 }));
+  const refused = await failure(source().item!("110000000001"));
+  assert.deepEqual([refused.reason, refused.message], ["request", "eBay refused the search (eBay error 12345)"]);
+  fakeEbay(() => Response.json({ title: "no number" }));
+  assert.equal((await failure(source().item!("110000000001"))).reason, "reply");
+  fakeEbay((_call, n) => (n === 1 ? Response.json({ errors: [{ errorId: 11006 }] }, { status: 400 }) : new Response("", { status: 404 })));
+  assert.deepEqual(await failure(source().item!("110000000001")).then((error) => [error.reason, error.calls]), ["gone", 2]);
+  fakeEbay((_call, n) => (n === 1 ? Response.json({ errors: [{ errorId: 11006 }] }, { status: 400 }) : Response.json({ items: [] })));
+  assert.equal((await failure(source().item!("110000000001"))).reason, "reply");
+  const calls = fakeEbay(() => Response.json(fullItem()));
+  for (const odd of ["", "12a", "1".repeat(21), "../1", "1 2"]) assert.equal((await failure(source().item!(odd))).reason, "request", odd);
+  assert.equal(calls.length, 0);
+});
+
+test("a listing's category ids come from eBay's path, or its leaf alone, and nothing odd gets through", () => {
+  assert.deepEqual(categoryIdsOf({ categoryIdPath: "58058|175673|27386", categoryId: "27386" }), ["58058", "175673", "27386"]);
+  assert.deepEqual(categoryIdsOf({ categoryId: "27386" }), ["27386"]);
+  assert.deepEqual(categoryIdsOf({ categoryIdPath: "58058|abc|27386|12345678901" }), ["58058", "27386"]);
+  assert.deepEqual(categoryIdsOf({ categoryIdPath: Array.from({ length: 15 }, (_, n) => String(n + 1)).join("|") }).length, 10);
+  for (const odd of [null, "58058", [], {}, { categoryId: 27386 }, { categoryIdPath: 5 }]) assert.deepEqual(categoryIdsOf(odd), [], JSON.stringify(odd));
 });

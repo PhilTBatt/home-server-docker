@@ -97,6 +97,12 @@ export type CategoryDetails = {
   details: { name: string; required: boolean; freeText: boolean; values: string[]; moreValues: number }[];
 };
 
+export type ItemRead = {
+  full: FullListing;
+  categoryIds: string[];
+  options: ListingOption[] | null;
+};
+
 export type Cut = {
   filter: string;
   total: number;
@@ -118,6 +124,7 @@ export type Source = {
   categories?(query: string): Promise<{ categories: Categories; calls: number }>;
   categoryDetails?(categoryId: string): Promise<{ details: CategoryDetails; calls: number }>;
   cuts?(search: Search): Promise<{ cuts: Cuts; calls: number }>;
+  item?(itemNumber: string): Promise<{ item: ItemRead; calls: number }>;
 };
 
 const unseenCharacters = /[\u00AD\u061C\u115F\u1160\u200B-\u200F\u202A-\u202E\u2060-\u2069\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;

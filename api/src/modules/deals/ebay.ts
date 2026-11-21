@@ -1,5 +1,5 @@
 import { conditionIds, type Buying, type Search } from "./searches.js";
-import { SourceError, cleanText, type BuyingOption, type Categories, type CategoryDetails, type Cut, type Cuts, type DetailNames, type FailReason, type FullListing, type Listing, type ListingOption, type SearchResult, type Source } from "./source.js";
+import { SourceError, cleanText, type BuyingOption, type Categories, type CategoryDetails, type Cut, type Cuts, type DetailNames, type ItemRead, type FailReason, type FullListing, type Listing, type ListingOption, type SearchResult, type Source } from "./source.js";
 
 export type EbayEnvironment = "production" | "sandbox";
 
@@ -136,6 +136,26 @@ export function toCut(raw: unknown, filter: string, refine: CutStep["refine"]): 
 
 export function fullUrl(host: string, ref: string): string {
   return `https://${host}/buy/browse/v1/item/${encodeURIComponent(ref)}`;
+}
+
+export function legacyUrl(host: string, itemNumber: string): string {
+  return `https://${host}/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${itemNumber}`;
+}
+
+export function categoryIdsOf(raw: unknown): string[] {
+  if (!isObject(raw)) return [];
+  if (typeof raw.categoryIdPath !== "string") {
+    const leaf = digits(raw.categoryId);
+    return leaf === null || leaf.length > 10 ? [] : [leaf];
+  }
+  return raw.categoryIdPath
+    .slice(0, 200)
+    .split("|")
+    .slice(0, 10)
+    .flatMap((part) => {
+      const id = digits(part);
+      return id === null || id.length > 10 ? [] : [id];
+    });
 }
 
 export function optionsUrl(host: string, groupId: string): string {
@@ -724,6 +744,33 @@ export function createEbaySource(options: EbayOptions): Source {
         return found;
       });
       return { categories: reply, calls };
+    },
+
+    async item(itemNumber: string) {
+      if (!/^[0-9]{1,20}$/.test(itemNumber)) throw failure("request", " (that isn't an eBay item number)");
+      const { reply, calls } = await counted(async (countCall): Promise<ItemRead> => {
+        let body: unknown;
+        try {
+          body = await getPage(legacyUrl(apiHost, itemNumber), countCall, "gone");
+        } catch (error) {
+          if (error instanceof SourceError && error.message.endsWith("(eBay error 11003)")) throw failure("gone");
+          if (!(error instanceof SourceError && error.message.endsWith("(eBay error 11006)"))) throw error;
+          const group = await getPage(optionsUrl(apiHost, itemNumber), countCall, "gone");
+          const first = isObject(group) && Array.isArray(group.items) ? group.items[0] : undefined;
+          const full = toFull(first, siteHost);
+          const options = toOptions(group);
+          if (full === null || options === null) throw failure("reply");
+          const inStock = options.filter((option) => option.inStock !== false);
+          const prices = (inStock.length > 0 ? inStock : options).map((option) => option.price);
+          const price = prices.length > 0 ? Math.min(...prices) : full.listing.price;
+          const listing = { ...full.listing, id: itemNumber, url: `https://${siteHost}/itm/${itemNumber}`, price, variations: true, groupId: itemNumber };
+          return { full: { ...full, listing }, categoryIds: categoryIdsOf(first), options };
+        }
+        const full = toFull(body, siteHost);
+        if (full === null) throw failure("reply");
+        return { full, categoryIds: categoryIdsOf(body), options: null };
+      });
+      return { item: reply, calls };
     },
 
     async cuts(search: Search) {
