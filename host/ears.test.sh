@@ -223,7 +223,7 @@ check "and it has no other" "2" "$(grep -c -e 'source:' -e '^      - [./~][^ ]*:
 check "its /tmp, where it writes each recording while it works, is in memory, never on disk" "    tmpfs:
       - /tmp" "$(grep -A1 '^    tmpfs:$' <<< "$whisper")"
 check "it publishes no port, gets no devices and no extra rights" "0" "$(grep -c -e 'ports:' -e 'expose:' -e 'network_mode' -e 'devices:' -e 'privileged' -e 'cap_add' -e 'docker.sock' -e 'group_add' -e 'pid:' -e 'ipc:' -e 'security_opt' -e 'extra_hosts' -e 'restart:' <<< "$whisper")"
-check "it has a memory limit" "1" "$(grep -c '^    mem_limit: [0-9]*[mg]$' <<< "$whisper")"
+check "it has a 1 GiB memory limit, twice what it was measured using" "    mem_limit: 1g" "$(grep '^    mem_limit:' <<< "$whisper")"
 check "it's on the ears network and no other" "    networks:
       - ears" "$(grep -A2 '^    networks:$' <<< "$whisper" | grep -e 'networks:' -e '^      - ')"
 check "its healthcheck asks it to describe itself, with its own check" '    healthcheck:

@@ -106,7 +106,7 @@ export function createListener(deps: ListenerDeps): Listener {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
 
-  const present = () => waits > 0 || now() - lastWaitEnd < (deps.presenceMs ?? presenceMs);
+  const present = (at = now()) => waits > 0 || at < lastWaitEnd + (deps.presenceMs ?? presenceMs);
   const heldUntil = () => {
     const at = now();
     for (const [by, until] of holds) if (until <= at) holds.delete(by);
@@ -294,19 +294,20 @@ export function createListener(deps: ListenerDeps): Listener {
     });
     return done;
   };
-  const schedule = () => {
+  const schedule = (at = now()) => {
     if (timer !== null) clearTimeout(timer);
     timer = null;
     if (closed) return;
-    const at = now();
     const times = [heldUntil(), gapUntil, waits === 0 ? lastWaitEnd + (deps.presenceMs ?? presenceMs) : -Infinity, detector === null && connecting === null ? retryAt : -Infinity].filter((time) => time > at && Number.isFinite(time));
     if (times.length === 0) return;
     timer = setTimeout(update, Math.max(1, Math.ceil(Math.min(...times) - at)));
   };
   function update() {
     if (closed) return;
+    const at = now();
     const state = deps.ears().state();
-    const wanted = present() && live(state);
+    const here = present(at);
+    const wanted = here && live(state);
     if (!wanted) {
       connecting?.abort();
       connecting = null;
@@ -314,10 +315,10 @@ export function createListener(deps: ListenerDeps): Listener {
     }
     const hearing = wanted && detector !== null;
     if ((tap !== null || hearing) && stream === null && closing === null) openStream();
-    if (tap === null && !hearing && stream !== null) void closeStream(!live(state) ? `ears is ${state}` : !present() ? "no Jarvis chat is listening for the wake word" : "the wake-word server can't be used");
+    if (tap === null && !hearing && stream !== null) void closeStream(!live(state) ? `ears is ${state}` : !here ? "no Jarvis chat is listening for the wake word" : "the wake-word server can't be used");
     if (wanted && detector === null && connecting === null && now() >= retryAt) void connectDetector();
     if (feeding && !canFeed()) stopFeeding();
-    schedule();
+    schedule(at);
     deps.changed();
   }
 

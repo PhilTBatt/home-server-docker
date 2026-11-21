@@ -250,6 +250,27 @@ test("when no chat has waited for a while, the microphone closes and the wake-wo
   await listener.close();
 });
 
+test("a timer that fires a moment before the chat's grace runs out still closes the microphone, rather than leaving it open with no chat waiting", { timeout: 5_000 }, async () => {
+  let clock = 1_000;
+  let first: number | null = null;
+  const now = () => {
+    if (first === null) return clock;
+    const value = first;
+    first = null;
+    return value;
+  };
+  const { listener, connected, streams, sound } = setUp({ now });
+  const done = listener.waiting();
+  await connected(1);
+  streams[0].onSound(sound(100));
+  done();
+  first = 1_059.99;
+  clock = 1_060.01;
+  await until(() => streams[0].stopped.length === 1, 1_000);
+  assert.deepEqual(streams[0].stopped, ["no Jarvis chat is listening for the wake word"]);
+  await listener.close();
+});
+
 test("while one wait goes on, the microphone stays open however long it lasts", { timeout: 5_000 }, async () => {
   const { listener, connected, streams, detectors } = setUp();
   const done = listener.waiting();
