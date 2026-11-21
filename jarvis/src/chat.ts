@@ -123,6 +123,7 @@ export type ChatDeps = {
   talk?: Talk;
   closing?: AbortSignal;
   wake?: AsyncIterable<WakeEvent>;
+  ready?: (yes: boolean) => void;
   chime?: () => void;
   interrupt?: () => void;
 };
@@ -133,7 +134,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
@@ -552,13 +553,16 @@ async function startListening(deps: ChatDeps & { talk: Talk }, state: ChatState)
   }
   state.listening = true;
   state.wakeId = null;
+  state.talkId = started.id ?? null;
   deps.write(`  (${listeningNote})\n`);
 }
 
 async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState): Promise<void> {
+  const id = state.wakeId ?? state.talkId;
   state.listening = false;
   state.wakeId = null;
-  const why = await deps.talk.drop();
+  state.talkId = null;
+  const why = await deps.talk.drop(undefined, id);
   deps.write(`  (${why === null ? droppedNote : notDroppedNote(printable(why))})\n`);
 }
 
@@ -600,6 +604,19 @@ export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIt
   }
 }
 
+export async function* readied<T>(inputs: AsyncIterable<T>, ready?: (yes: boolean) => void): AsyncGenerator<T> {
+  try {
+    ready?.(true);
+    for await (const input of inputs) {
+      ready?.(false);
+      yield input;
+      ready?.(true);
+    }
+  } finally {
+    ready?.(false);
+  }
+}
+
 async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise<"go" | "stop"> {
   if (!sent.ok) {
     deps.write(`  (${notSentNote(printable(sent.why))})\n`);
@@ -629,6 +646,7 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
   if (!state.listening || state.wakeId !== event.id) return "go";
   state.listening = false;
   state.wakeId = null;
+  state.talkId = null;
   deps.interrupt?.();
   const going = await heardOrNot(deps, state, heardFrom(event.answer, event.textMs, true));
   if (going === "go") deps.prompt();
@@ -637,12 +655,12 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
     current.prompt();
-    for await (const input of chatInputs(current.lines, current.wake)) {
+    for await (const input of readied(chatInputs(current.lines, current.wake), deps.ready)) {
       if (input.kind !== "line") {
         if ((await onWake(current, state, input)) === "stop") break;
         continue;
@@ -656,9 +674,11 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         }
         if (message === "") {
           const wake = state.wakeId !== null;
+          const id = state.wakeId ?? state.talkId;
           state.listening = false;
           state.wakeId = null;
-          if ((await heardOrNot(current, state, await talking.talk.send(current.closing, wake))) === "stop") break;
+          state.talkId = null;
+          if ((await heardOrNot(current, state, await talking.talk.send(current.closing, wake, id))) === "stop") break;
           current.prompt();
           continue;
         }

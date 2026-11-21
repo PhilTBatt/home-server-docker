@@ -39,6 +39,7 @@ const heard: Heard = { text: "Turn the lights on.", recordedMs: 2500, textMs: 13
 
 function fakeTalk(events: string[], replies: { start?: Started[]; send?: Sent[]; drop?: (string | null)[] } = {}) {
   const signals: (AbortSignal | undefined)[] = [];
+  const named: string[] = [];
   const talk: Talk = {
     check: async () => "Ears: ready",
     start: async (signal) => {
@@ -46,18 +47,20 @@ function fakeTalk(events: string[], replies: { start?: Started[]; send?: Sent[];
       signals.push(signal);
       return replies.start?.shift() ?? { ok: true };
     },
-    send: async (signal) => {
+    send: async (signal, _wake, id) => {
       events.push("talk send");
       signals.push(signal);
+      named.push(`send ${id}`);
       return replies.send?.shift() ?? { ok: true, heard };
     },
-    drop: async (signal) => {
+    drop: async (signal, id) => {
       events.push("talk drop");
       signals.push(signal);
+      named.push(`drop ${id}`);
       return replies.drop?.shift() ?? null;
     },
   };
-  return { talk, signals };
+  return { talk, signals, named };
 }
 
 async function* linesOf(...lines: string[]): AsyncGenerator<string> {
@@ -118,6 +121,42 @@ test("anything typed while listening drops the recording first, then is taken as
   assert.deepEqual(events, ["talk start", "talk drop", "ask What's the weather?", "talk start", "talk drop"]);
   assert.equal(output().split(`(${droppedNote})`).length - 1, 2);
   assert.equal(droppedNote, "dropped that recording");
+});
+
+test("the chat names the recording it started when it sends it, drops it, or leaves it at the end", async () => {
+  let made: ReturnType<typeof fakeTalk> | undefined;
+  const { run } = chat(["/talk", "", "/talk", "never mind", "/talk", "exit", "/talk"], { "Turn the lights on.": said("Done."), "never mind": said("OK.") }, (events) => {
+    made = fakeTalk(events, { start: [{ ok: true, id: 11 }, { ok: true, id: 12 }, { ok: true, id: 13 }] });
+    return { talk: made.talk };
+  });
+  await run();
+  assert.deepEqual(made?.named, ["send 11", "drop 12", "drop 13"]);
+  let ended: ReturnType<typeof fakeTalk> | undefined;
+  const { run: runAgain } = chat(["/talk"], {}, (events) => {
+    ended = fakeTalk(events, { start: [{ ok: true, id: 14 }] });
+    return { talk: ended.talk };
+  });
+  await runAgain();
+  assert.deepEqual(ended?.named, ["drop 14"]);
+});
+
+test("a start that gives no number sends and drops without one, as before", async () => {
+  let made: ReturnType<typeof fakeTalk> | undefined;
+  const { run } = chat(["/talk", "", "/talk", "exit"], { "Turn the lights on.": said("Done.") }, (events) => {
+    made = fakeTalk(events);
+    return { talk: made.talk };
+  });
+  await run();
+  assert.deepEqual(made?.named, ["send null", "drop null"]);
+});
+
+test("the chat says it's ready while it waits for what's typed or heard, and busy while it handles it", async () => {
+  const marks: boolean[] = [];
+  let during: boolean | null = null;
+  const { run } = chat(["hello"], { hello: async (listener) => ((during = marks.at(-1) ?? null), said("Hi.")(listener)) }, () => ({ ready: (yes: boolean) => void marks.push(yes) }));
+  await run();
+  assert.equal(during, false);
+  assert.deepEqual(marks, [true, false, true, false]);
 });
 
 test("an empty line typed before the listening prompt came back is ignored, and the next Enter sends", async () => {

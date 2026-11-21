@@ -37,8 +37,74 @@ test("push-to-talk is started with /talk, and ears is asked every quarter of a s
 test("starting asks ears to record, and passes on the caller's signal", async () => {
   const ears = pretendEars({ "POST /recording/start": [answer(200, { state: "recording" })] });
   const signal = new AbortController().signal;
-  assert.deepEqual(await startTalk({ call: ears.call }).start(signal), { ok: true });
+  assert.deepEqual(await startTalk({ call: ears.call }).start(signal), { ok: true, id: null });
   assert.deepEqual(ears.asked, [{ method: "POST", path: "/recording/start", ms: 4000, signal }]);
+});
+
+test("a start gives back the number ears gave the recording, so the chat can name it later", async () => {
+  const ears = pretendEars({ "POST /recording/start": [answer(200, { state: "recording", id: 7 })] });
+  assert.deepEqual(await startTalk({ call: ears.call }).start(), { ok: true, id: 7 });
+});
+
+test("send and drop name the recording when they're given its number, and don't when they aren't", async () => {
+  const ears = pretendEars({
+    "POST /recording/stop?id=7": [answer(200, { lastId: 7, last: heardLast("Hello.") })],
+    "POST /recording/cancel?id=8": [answer(200)],
+    "POST /recording/stop": [answer(200, { last: heardLast("Hi.") })],
+    "POST /recording/cancel": [answer(200)],
+  });
+  const talk = startTalk({ call: ears.call });
+  assert.equal((await talk.send(undefined, false, 7)).ok, true);
+  assert.equal(await talk.drop(undefined, 8), null);
+  assert.equal((await talk.send()).ok, true);
+  assert.equal(await talk.drop(), null);
+  assert.deepEqual(ears.asked.map((asked) => asked.path), ["/recording/stop?id=7", "/recording/cancel?id=8", "/recording/stop", "/recording/cancel"]);
+});
+
+test("a recording ears says is gone, because it has moved on to a newer one, isn't sent, says why, and dropping it is fine", async () => {
+  const ears = pretendEars({ "POST /recording/stop?id=3": [answer(410, { state: "recording", error: "ears has moved on to a newer recording, so that one is gone", lastId: 4 })], "POST /recording/cancel?id=3": [answer(410, { state: "recording" })] });
+  const talk = startTalk({ call: ears.call });
+  assert.deepEqual(await talk.send(undefined, false, 3), { ok: false, why: "ears has moved on to a newer recording, so that one is gone" });
+  assert.equal(await talk.drop(undefined, 3), null);
+  assert.deepEqual(ears.asked.map((asked) => asked.path), ["/recording/stop?id=3", "/recording/cancel?id=3"]);
+});
+
+test("a named recording that ended by itself gives its own text at once, even while another chat's recording runs", async () => {
+  const ears = pretendEars({ "POST /recording/stop?id=5": [answer(409, { state: "recording", error: "that recording has already ended" })], "GET /state": [answer(200, { state: "recording", lastId: 5, last: heardLast("Mine.") })] });
+  const sent = await startTalk({ call: ears.call, wait: async () => assert.fail("it waited") }).send(undefined, false, 5);
+  assert.deepEqual([sent.ok, sent.ok && sent.heard.text], [true, "Mine."]);
+});
+
+test("a named recording waits while Whisper works on it, then gives its text", async () => {
+  const ears = pretendEars({ "POST /recording/stop?id=5": [answer(409, { state: "working" })], "GET /state": [answer(200, { state: "working", lastId: 5 }), answer(200, { state: "idle", lastId: 5, last: heardLast("Done now.") })] });
+  const sent = await startTalk({ call: ears.call, wait: async () => {} }).send(undefined, false, 5);
+  assert.deepEqual([sent.ok, sent.ok && sent.heard.text, ears.asked.length], [true, "Done now.", 3]);
+});
+
+test("a named recording whose text was replaced by a newer one's says so instead of asking the newer one's words, without waiting for a recording that isn't its own", async () => {
+  const ears = pretendEars({ "POST /recording/stop?id=5": [answer(409, { state: "recording" })], "GET /state": [answer(200, { state: "recording", lastId: 6, last: heardLast("Someone else's.") })] });
+  const sent = await startTalk({ call: ears.call, wait: async () => assert.fail("it waited") }).send(undefined, false, 5);
+  assert.deepEqual(sent, { ok: false, why: "ears moved on to a newer recording, so this one's text is gone" });
+  const idle = pretendEars({ "POST /recording/stop?id=5": [answer(409, { state: "idle" })], "GET /state": [answer(200, { state: "idle", lastId: 6, last: heardLast("Someone else's.") })] });
+  assert.deepEqual(await startTalk({ call: idle.call }).send(undefined, false, 5), { ok: false, why: "ears moved on to a newer recording, so this one's text is gone" });
+});
+
+test("a stop that can't reach ears cancels the same recording it named", async () => {
+  const ears = pretendEars({ "POST /recording/stop?id=9": [new Error("Ears didn't answer within 70 seconds")], "POST /recording/cancel?id=9": [answer(200)] });
+  assert.deepEqual(await startTalk({ call: ears.call }).send(undefined, false, 9), { ok: false, why: "Ears didn't answer within 70 seconds" });
+  assert.deepEqual(ears.asked.map((asked) => asked.path), ["/recording/stop?id=9", "/recording/cancel?id=9"]);
+});
+
+test("the text is only taken as the chat's own when ears says the last recording is that one, or doesn't say which it is", () => {
+  const last = heardLast("Words.");
+  assert.equal(heardFrom(answer(200, { last, lastId: 2 }), 10, false, 2).ok, true);
+  assert.deepEqual(heardFrom(answer(200, { last, lastId: 3 }), 10, false, 2), { ok: false, why: "ears moved on to a newer recording, so this one's text is gone" });
+  assert.deepEqual(heardFrom(answer(200, { last, lastId: null }), 10, false, 2), { ok: false, why: "ears moved on to a newer recording, so this one's text is gone" });
+  assert.equal(heardFrom(answer(200, { last }), 10, false, 2).ok, true);
+  assert.equal(heardFrom(answer(200, { last, lastId: 3 }), 10, false).ok, true);
+  assert.equal(heardFrom(answer(200, { state: "recording", last, lastId: 2 }), 10, false, 2).ok, true);
+  assert.equal(heardFrom(answer(200, { state: "recording", last }), 10, false, 2).ok, false);
+  assert.equal(heardFrom(answer(200, { state: "working", last, lastId: 2 }), 10, false, 2).ok, false);
 });
 
 test("a refused start says why, and a muted ears says how to unmute it", async () => {

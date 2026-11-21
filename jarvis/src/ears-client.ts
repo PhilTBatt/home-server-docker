@@ -5,7 +5,7 @@ export const earsStopMs = 70_000;
 export type EarsLast = { seconds: number; reason: string; text: string | null; textProblem: string | null };
 export type EarsCurrent = { id: number; by: "push" | "wake"; claimed: boolean };
 export type EarsWake = { on: boolean; listening: boolean; held: boolean; problem: string | null };
-export type EarsAnswer = { status: number; state: string | null; reason: string | null; error: string | null; seconds: number | null; last: EarsLast | null; version?: number | null; run?: string | null; lastId?: number | null; current?: EarsCurrent | null; wake?: EarsWake | null };
+export type EarsAnswer = { status: number; state: string | null; reason: string | null; error: string | null; seconds: number | null; last: EarsLast | null; id?: number | null; version?: number | null; run?: string | null; lastId?: number | null; current?: EarsCurrent | null; wake?: EarsWake | null };
 export type EarsCall = (method: "GET" | "POST", path: string, ms: number, signal?: AbortSignal) => Promise<EarsAnswer>;
 
 function text(value: unknown): string | null {
@@ -53,7 +53,7 @@ export function readEarsAnswer(status: number, body: unknown): EarsAnswer {
     const found = text(value);
     return found === null ? null : tidy(found);
   };
-  const answer: EarsAnswer = { status, state: tidied(fields.state), reason: tidied(fields.reason), error: tidied(fields.error), seconds, last: lastOf(fields.last) };
+  const answer: EarsAnswer = { status, state: tidied(fields.state), reason: tidied(fields.reason), error: tidied(fields.error), seconds, last: lastOf(fields.last), ...("lastId" in fields ? { lastId: count(fields.lastId, 1) } : {}), ...("id" in fields ? { id: count(fields.id, 1) } : {}) };
   if (!("version" in fields)) return answer;
   const run = typeof fields.run === "string" && /^[0-9a-f]{1,32}$/.test(fields.run) ? fields.run : null;
   return { ...answer, version: count(fields.version, 0), run, lastId: count(fields.lastId, 1), current: currentOf(fields.current), wake: wakeOf(fields.wake) };

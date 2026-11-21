@@ -61,13 +61,17 @@ export function earsHandler(ears: Ears, token: string, wake?: WakeApi) {
       const done = path === "/wake/hold" ? wake.hold(by) : wake.release(by);
       return done ? send(response, 200, wake.full()) : send(response, 409, { error: wakeOffError, ...wake.full() });
     }
-    if (path === "/state") return send(response, 200, ears.view());
+    const known = () => ({ ...ears.view(), lastId: ears.lastId() });
+    if (path === "/state") return send(response, 200, known());
     if (path === "/recording/start") {
       const started = ears.start();
-      return started.ok ? send(response, 200, started.view) : send(response, 409, { error: started.error, ...ears.view() });
+      return started.ok ? send(response, 200, { ...started.view, lastId: ears.lastId(), id: started.id }) : send(response, 409, { error: started.error, ...known() });
     }
-    const stopped = await (path === "/recording/stop" ? ears.stop() : ears.cancel());
-    return stopped.ok ? send(response, 200, { seconds: stopped.seconds, ...stopped.view }) : send(response, 409, { error: stopped.error, ...ears.view() });
+    const named = query.get("id");
+    const id = named === null ? undefined : whole(named, 1);
+    if (id === null) return send(response, 400, { error: "id must be a recording's number, from 1" });
+    const stopped = await (path === "/recording/stop" ? ears.stop(id) : ears.cancel(id));
+    return stopped.ok ? send(response, 200, { seconds: stopped.seconds, ...stopped.view, lastId: ears.lastId() }) : send(response, stopped.gone === true ? 410 : 409, { error: stopped.error, ...known() });
   };
 }
 

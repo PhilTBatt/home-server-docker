@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EarsAnswer, EarsCall } from "./ears-client.js";
-import { eager, holdEveryMs, holderId, oldEarsLine, retryMs, spokenOf, startWakeHold, waitAskMs, wakeStatus, watchWake, type WakeEvent } from "./wake.js";
+import { busyClaimMs, eager, holdEveryMs, holderId, oldEarsLine, retryMs, spokenOf, startWakeHold, waitAskMs, wakeStatus, watchWake, type WakeEvent } from "./wake.js";
 
 function view(fields: Partial<EarsAnswer> = {}): EarsAnswer {
   return { status: 200, state: "idle", reason: null, error: null, seconds: null, last: null, version: 1, run: "aa", lastId: null, current: null, wake: { on: true, listening: true, held: false, problem: null }, ...fields };
@@ -117,6 +117,86 @@ test("a wake-word recording nobody has taken is claimed, and once claimed it's a
   assert.deepEqual(got[2], { kind: "done", id: 7, answer: view({ version: 6, state: "idle", lastId: 7, last: last("What's the time?") }), textMs: 1200 });
   assert.deepEqual(ears.asked.filter((one) => one.method === "POST").map((one) => [one.path, one.ms]), [["/wake/claim?id=7", 4000]]);
   signal.abort();
+});
+
+test("a chat that's busy waits a second before it claims a wake, so an idle chat gets it first, and an idle one claims at once", { timeout: 5_000 }, async () => {
+  assert.equal(busyClaimMs, 1_000);
+  for (const busy of [true, false]) {
+    const signal = new AbortController();
+    const order: string[] = [];
+    const ears = pretendEars([view({ version: 1, state: "recording", current: { id: 4, by: "wake", claimed: false } })], [view({ version: 2, state: "recording", current: { id: 4, by: "wake", claimed: true } })]);
+    const call: EarsCall = async (method, path, ms, signal) => {
+      if (path.startsWith("/wake/claim")) order.push("claim");
+      return ears.call(method, path, ms, signal);
+    };
+    const events = watchWake({ call, signal: signal.signal, wait: async (ms) => void order.push(`wait ${ms}`), first: "on: say Hey Jarvis", busy: () => busy });
+    assert.deepEqual(await take(events, 1), [{ kind: "wake", id: 4 }]);
+    assert.deepEqual(order, busy ? ["wait 1000", "claim"] : ["claim"]);
+    signal.abort();
+  }
+});
+
+test("a busy chat that loses the claim while it waits, or is called off, leaves the recording alone", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const ears = pretendEars([view({ version: 1, state: "recording", current: { id: 4, by: "wake", claimed: false } }), view({ version: 3, state: "muted" })], [view({ status: 409, error: "that wake-word recording isn't waiting to be taken" })]);
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis", busy: () => true, busyClaimMs: 5 });
+  assert.deepEqual(await take(events, 1), [{ kind: "status", line: "off while ears is muted, so unmute it on the server with bash host/ears.sh unmute" }]);
+  assert.deepEqual(ears.asked.filter((one) => one.method === "POST").map((one) => one.path), ["/wake/claim?id=4"]);
+  signal.abort();
+  const off = new AbortController();
+  const quiet = pretendEars([view({ version: 1, state: "recording", current: { id: 5, by: "wake", claimed: false } })]);
+  const stopped = watchWake({ call: quiet.call, signal: off.signal, wait: async () => off.abort(), first: "on: say Hey Jarvis", busy: () => true });
+  assert.deepEqual(await stopped.next(), { done: true, value: undefined });
+  assert.equal(quiet.asked.filter((one) => one.method === "POST").length, 0);
+});
+
+test("a watcher called off while it has a wake recording it claimed cancels that recording by its number, and one with none cancels nothing", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const posts: string[] = [];
+  const ears = pretendEars([view({ version: 1, state: "recording", current: { id: 6, by: "wake", claimed: false } })], [view({ version: 2, state: "recording", current: { id: 6, by: "wake", claimed: true } })]);
+  const call: EarsCall = async (method, path, ms, signal) => {
+    if (method === "POST") posts.push(`${path} ${signal === undefined ? "no signal" : "signal"}`);
+    if (path.startsWith("/recording/cancel")) return view({ status: 200 });
+    return ears.call(method, path, ms, signal);
+  };
+  const events = watchWake({ call, signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis" });
+  assert.deepEqual(await take(events, 1), [{ kind: "wake", id: 6 }]);
+  const next = events.next();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  signal.abort();
+  assert.deepEqual(await next, { done: true, value: undefined });
+  assert.deepEqual(posts, ["/wake/claim?id=6 signal", "/recording/cancel?id=6 no signal"]);
+  const none = new AbortController();
+  const quiet: string[] = [];
+  const plain = pretendEars([view({ version: 1 })]);
+  const idle = watchWake({ call: async (method, path, ms, signal) => (method === "POST" && quiet.push(path), plain.call(method, path, ms, signal)), signal: none.signal, wait: noPause, first: "on: say Hey Jarvis" });
+  const waiting = idle.next();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  none.abort();
+  await waiting;
+  assert.deepEqual(quiet, []);
+});
+
+test("a watcher whose recording is done, or lost to a restart, has nothing to cancel when it's called off, and a cancel that fails is let go", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const posts: string[] = [];
+  const ears = pretendEars([view({ version: 1, state: "recording", current: { id: 2, by: "wake", claimed: false } }), view({ version: 3, state: "idle", lastId: 2, last: last("Hi.") })], [view({ version: 2, state: "recording", current: { id: 2, by: "wake", claimed: true } })]);
+  const events = watchWake({ call: async (method, path, ms, signal) => (method === "POST" && posts.push(path), ears.call(method, path, ms, signal)), signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis", now: () => 0 });
+  const got = await take(events, 2);
+  assert.equal(got[1].kind, "done");
+  const next = events.next();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  signal.abort();
+  await next;
+  assert.deepEqual(posts, ["/wake/claim?id=2"]);
+  const failing = new AbortController();
+  const claims = pretendEars([view({ version: 1, state: "recording", current: { id: 3, by: "wake", claimed: false } })], [view({ version: 2, state: "recording", current: { id: 3, by: "wake", claimed: true } })]);
+  const broken = watchWake({ call: async (method, path, ms, signal) => (path.startsWith("/recording/cancel") ? Promise.reject(new Error("Couldn't reach ears")) : claims.call(method, path, ms, signal)), signal: failing.signal, wait: noPause, first: "on: say Hey Jarvis" });
+  assert.deepEqual(await take(broken, 1), [{ kind: "wake", id: 3 }]);
+  const after = broken.next();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  failing.abort();
+  assert.deepEqual(await after, { done: true, value: undefined });
 });
 
 test("a claim that loses to another chat, or fails, is left alone", { timeout: 5_000 }, async () => {

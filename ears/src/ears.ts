@@ -9,17 +9,17 @@ export type LastRecording = { seconds: number; reason: string; text: string | nu
 
 export type EarsView = { state: EarsState; reason: string | null; microphone: Microphone | null; last: LastRecording | null };
 
-export type Refused = { ok: false; error: string };
+export type Refused = { ok: false; error: string; gone?: true };
 
 export type Current = { id: number; by: By; claimed: boolean };
 
-export type EarsDeps = { microphone: Microphone | null; record: (by: By) => Recording; log: (line: string) => void; toText?: ToText; now?: () => number; changed?: () => void; claimMs?: number };
+export type EarsDeps = { microphone: Microphone | null; record: (by: By) => Recording; log: (line: string) => void; toText?: ToText; now?: () => number; changed?: () => void; claimMs?: number; idsAfter?: number };
 
 export type Ears = {
   view(): EarsView;
-  start(by?: By): { ok: true; view: EarsView } | Refused;
-  stop(): Promise<{ ok: true; seconds: number; view: EarsView } | Refused>;
-  cancel(): Promise<{ ok: true; seconds: number; view: EarsView } | Refused>;
+  start(by?: By): { ok: true; view: EarsView; id: number } | Refused;
+  stop(id?: number): Promise<{ ok: true; seconds: number; view: EarsView } | Refused>;
+  cancel(id?: number): Promise<{ ok: true; seconds: number; view: EarsView } | Refused>;
   mute(why: string | null): Promise<void>;
   unmute(): Promise<void>;
   claim(id: number): { ok: true; view: EarsView } | Refused;
@@ -64,6 +64,8 @@ export const clearedByCancel = "it was cancelled after it was turned into text, 
 export const failedBeforeText = "the microphone failed before it was turned into text";
 export const claimMs = 2_000;
 export const notTakenWhy = `no Jarvis chat took it within ${claimMs / 1000} seconds`;
+export const movedOn = "ears has moved on to a newer recording, so that one is gone";
+export const thatOneEnded = "that recording has already ended";
 
 export function createEars(deps: EarsDeps): Ears {
   let state: EarsState = "muted";
@@ -74,7 +76,7 @@ export function createEars(deps: EarsDeps): Ears {
   let working: { calledOff: AbortController; done: Promise<void> } | null = null;
   let notHeardWhy: string | null = null;
   let stopping: Promise<{ ok: true; seconds: number; view: EarsView }> | null = null;
-  let count = 0;
+  let count = deps.idsAfter ?? 0;
   let underway: Current | null = null;
   let lastId: number | null = null;
   let claimTimer: ReturnType<typeof setTimeout> | null = null;
@@ -83,6 +85,11 @@ export function createEars(deps: EarsDeps): Ears {
   const now = deps.now ?? (() => performance.now());
   const view = (): EarsView => ({ state, reason, microphone: deps.microphone, last: last === null ? null : { ...last } });
   const refuse = (error: string): Refused => ({ ok: false, error });
+  const aimedAt = (): number | null => underway?.id ?? lastId;
+  const notThatOne = (id: number | undefined): Refused | null => {
+    if (id === undefined || aimedAt() === id) return null;
+    return lastId === id ? refuse(thatOneEnded) : { ok: false, error: movedOn, gone: true };
+  };
   const finished = (stopped: Stopped, of: Recording) => {
     last = { seconds: seconds(stopped.ms), reason: stopped.reason, text: null, textProblem: null };
     lastId = ids.get(of) ?? null;
@@ -207,9 +214,11 @@ export function createEars(deps: EarsDeps): Ears {
         void settle(stopped, stopped.unheard !== true);
       });
       changed();
-      return { ok: true, view: view() };
+      return { ok: true, view: view(), id };
     },
-    stop() {
+    stop(id) {
+      const other = notThatOne(id);
+      if (other !== null) return Promise.resolve(other);
       const current = recording;
       if (state !== "recording" || current === null) return Promise.resolve(refuse("ears isn't recording"));
       recording = null;
@@ -230,7 +239,9 @@ export function createEars(deps: EarsDeps): Ears {
       });
       return run;
     },
-    async cancel() {
+    async cancel(id) {
+      const other = notThatOne(id);
+      if (other !== null) return other;
       if (state === "working") {
         state = "idle";
         await dropText(cancelledBeforeText);

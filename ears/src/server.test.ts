@@ -62,7 +62,7 @@ test("with the token, the state says muted and why, and every answer is JSON tha
   const { server, call } = await serve();
   const answer = await call("GET", "/state");
   assert.deepEqual([answer.status, answer.type, answer.cache], [200, "application/json", "no-store"]);
-  assert.deepEqual(answer.body, { state: "muted", reason: "ears starts muted after every start, and waits to be unmuted", microphone: "pretend", last: null });
+  assert.deepEqual(answer.body, { state: "muted", reason: "ears starts muted after every start, and waits to be unmuted", microphone: "pretend", last: null, lastId: null });
   assert.equal((await call("GET", "/state?x=1")).status, 200);
   await closed(server);
 });
@@ -78,13 +78,34 @@ test("unmuted, start and stop record, and stop says how long it ran", async () =
   const { server, ears, call } = await serve();
   ears.unmute();
   const started = await call("POST", "/recording/start");
-  assert.deepEqual([started.status, started.body], [200, { state: "recording", reason: null, microphone: "pretend", last: null }]);
+  assert.deepEqual([started.status, started.body], [200, { state: "recording", reason: null, microphone: "pretend", last: null, lastId: null, id: 1 }]);
   assert.deepEqual((await call("GET", "/state")).body.state, "recording");
   assert.deepEqual([(await call("POST", "/recording/start")).status, (await call("POST", "/recording/start")).body.error], [409, "ears is already recording"]);
   const stopped = await call("POST", "/recording/stop");
-  assert.deepEqual([stopped.status, stopped.body], [200, { seconds: 2, state: "idle", reason: null, microphone: "pretend", last: { seconds: 2, reason: "asked to stop", text: null, textProblem: null } }]);
+  assert.deepEqual([stopped.status, stopped.body], [200, { seconds: 2, state: "idle", reason: null, microphone: "pretend", last: { seconds: 2, reason: "asked to stop", text: null, textProblem: null }, lastId: 1 }]);
   const again = await call("POST", "/recording/stop");
   assert.deepEqual([again.status, again.body.error, again.body.state], [409, "ears isn't recording", "idle"]);
+  await closed(server);
+});
+
+test("stop and cancel can name the recording: a bad number is 400, a newer one's gone is 410, one that has ended is 409, and the right one works", async () => {
+  const { server, ears, call } = await serve(createEars({ microphone: "pretend", record: quickRecording, log: () => {} }));
+  ears.unmute();
+  assert.deepEqual([(await call("POST", "/recording/start")).body.id, (await call("GET", "/state")).body.lastId], [1, null]);
+  for (const id of ["0", "-1", "1.5", "abc", "", "1e2", "01x"]) {
+    for (const path of ["/recording/stop", "/recording/cancel"]) {
+      const answer = await call("POST", `${path}?id=${id}`);
+      assert.deepEqual([answer.status, answer.body], [400, { error: "id must be a recording's number, from 1" }], `${path} ${id}`);
+    }
+  }
+  const gone = await call("POST", "/recording/stop?id=2");
+  assert.deepEqual([gone.status, gone.body.error, gone.body.state, gone.body.lastId], [410, "ears has moved on to a newer recording, so that one is gone", "recording", null]);
+  assert.equal((await call("POST", "/recording/stop?id=1")).status, 200);
+  assert.equal((await call("POST", "/recording/start")).body.id, 2);
+  const ended = await call("POST", "/recording/cancel?id=1");
+  assert.deepEqual([ended.status, ended.body.error, ended.body.state, ended.body.lastId], [409, "that recording has already ended", "recording", 1]);
+  const cancelled = await call("POST", "/recording/cancel?id=2");
+  assert.deepEqual([cancelled.status, cancelled.body.lastId, cancelled.body.last.reason], [200, 2, "asked to cancel"]);
   await closed(server);
 });
 
@@ -93,7 +114,7 @@ test("cancel ends a recording without its text, says how long it ran, and is ref
   ears.unmute();
   assert.equal((await call("POST", "/recording/start")).status, 200);
   const cancelled = await call("POST", "/recording/cancel");
-  assert.deepEqual([cancelled.status, cancelled.body], [200, { seconds: 2, state: "idle", reason: null, microphone: "pretend", last: { seconds: 2, reason: "asked to cancel", text: null, textProblem: null } }]);
+  assert.deepEqual([cancelled.status, cancelled.body], [200, { seconds: 2, state: "idle", reason: null, microphone: "pretend", last: { seconds: 2, reason: "asked to cancel", text: null, textProblem: null }, lastId: 1 }]);
   const again = await call("POST", "/recording/cancel");
   assert.deepEqual([again.status, again.body.error, again.body.state], [409, "ears isn't recording", "idle"]);
   await closed(server);

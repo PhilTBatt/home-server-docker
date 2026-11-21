@@ -5,14 +5,14 @@ export const unmuteHint = "unmute it on the server with bash host/ears.sh unmute
 export const talkPollMs = 250;
 
 export type Heard = { text: string; recordedMs: number; textMs: number; wake?: true };
-export type Started = { ok: true } | { ok: false; why: string };
+export type Started = { ok: true; id?: number | null } | { ok: false; why: string };
 export type Sent = { ok: true; heard: Heard } | { ok: false; why: string };
 
 export type Talk = {
   check(signal?: AbortSignal): Promise<string>;
   start(signal?: AbortSignal): Promise<Started>;
-  send(signal?: AbortSignal, wake?: boolean): Promise<Sent>;
-  drop(signal?: AbortSignal): Promise<string | null>;
+  send(signal?: AbortSignal, wake?: boolean, id?: number | null): Promise<Sent>;
+  drop(signal?: AbortSignal, id?: number | null): Promise<string | null>;
 };
 
 export type TalkDeps = { call: EarsCall; now?: () => number; wait?: (ms: number) => Promise<void>; pollMs?: number; waitMs?: number; wake?: boolean };
@@ -46,10 +46,18 @@ function whyNoText(answer: EarsAnswer): string {
   return `it wasn't turned into text: ${last.reason}`;
 }
 
-export function heardFrom(answer: EarsAnswer, textMs: number, wake = false): Sent {
+export const movedOnWhy = "ears moved on to a newer recording, so this one's text is gone";
+
+function named(path: string, id: number | null | undefined): string {
+  return id === null || id === undefined ? path : `${path}?id=${id}`;
+}
+
+export function heardFrom(answer: EarsAnswer, textMs: number, wake = false, id: number | null = null): Sent {
   if (answer.status !== 200) return { ok: false, why: refusal(answer) };
+  const known = id !== null && answer.lastId !== undefined;
+  if (known && answer.lastId !== id) return { ok: false, why: movedOnWhy };
   const text = answer.last?.text ?? null;
-  if (answer.state === "working" || answer.state === "recording" || text === null || text.trim() === "") return { ok: false, why: whyNoText(answer) };
+  if (answer.state === "working" || (answer.state === "recording" && !known) || text === null || text.trim() === "") return { ok: false, why: whyNoText(answer) };
   return { ok: true, heard: { text: text.trim(), recordedMs: Math.round((answer.last?.seconds ?? 0) * 1000), textMs, ...(wake ? { wake: true as const } : {}) } };
 }
 
@@ -58,12 +66,13 @@ export function startTalk(deps: TalkDeps): Talk {
   const wait = deps.wait ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const pollMs = deps.pollMs ?? talkPollMs;
   const waitMs = deps.waitMs ?? earsStopMs;
-  const cancelQuietly = () => deps.call("POST", "/recording/cancel", earsQuickMs).then(() => {}, () => {});
-  const settled = async (signal?: AbortSignal): Promise<EarsAnswer> => {
+  const cancelQuietly = (id: number | null = null) => deps.call("POST", named("/recording/cancel", id), earsQuickMs).then(() => {}, () => {});
+  const settled = async (signal: AbortSignal | undefined, id: number | null): Promise<EarsAnswer> => {
     const deadline = now() + waitMs;
     for (;;) {
       const answer = await deps.call("GET", "/state", earsQuickMs, signal);
       if (answer.status !== 200 || (answer.state !== "working" && answer.state !== "recording") || now() >= deadline) return answer;
+      if (id !== null && answer.lastId !== undefined && answer.lastId !== null && (answer.lastId > id || (answer.lastId === id && answer.state !== "working"))) return answer;
       await wait(pollMs);
     }
   };
@@ -79,27 +88,27 @@ export function startTalk(deps: TalkDeps): Talk {
     async start(signal) {
       try {
         const answer = await deps.call("POST", "/recording/start", earsQuickMs, signal);
-        return answer.status === 200 ? { ok: true } : { ok: false, why: refusal(answer) };
+        return answer.status === 200 ? { ok: true, id: answer.id ?? null } : { ok: false, why: refusal(answer) };
       } catch (error) {
         await cancelQuietly();
         return { ok: false, why: reasonOf(error) };
       }
     },
-    async send(signal, wake = false) {
+    async send(signal, wake = false, id = null) {
       const began = now();
       try {
-        let answer = await deps.call("POST", "/recording/stop", earsStopMs, signal);
-        if (answer.status === 409) answer = await settled(signal);
-        return heardFrom(answer, now() - began, wake);
+        let answer = await deps.call("POST", named("/recording/stop", id), earsStopMs, signal);
+        if (answer.status === 409) answer = await settled(signal, id);
+        return heardFrom(answer, now() - began, wake, id);
       } catch (error) {
-        await cancelQuietly();
+        await cancelQuietly(id);
         return { ok: false, why: reasonOf(error) };
       }
     },
-    async drop(signal) {
+    async drop(signal, id = null) {
       try {
-        const answer = await deps.call("POST", "/recording/cancel", earsQuickMs, signal);
-        return answer.status === 200 || answer.status === 409 ? null : refusal(answer);
+        const answer = await deps.call("POST", named("/recording/cancel", id), earsQuickMs, signal);
+        return answer.status === 200 || answer.status === 409 || answer.status === 410 ? null : refusal(answer);
       } catch (error) {
         return reasonOf(error);
       }

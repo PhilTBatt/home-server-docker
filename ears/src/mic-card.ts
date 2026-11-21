@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
+import { mostBoostSteps, type MicSettings } from "./config.js";
 import { recordingRate } from "./recorder.js";
 
 export const soundDir = "/dev/snd";
@@ -71,4 +72,28 @@ export async function setMicLevel(card: number, control: string, level: number, 
   } catch (error) {
     throw new Error(`Couldn't set ${control} on sound card ${card}: ${error instanceof Error ? error.message : String(error)}. Set EARS_MIC_CONTROL to one of the card's controls, or EARS_MIC_LEVEL=keep to leave its level alone`);
   }
+}
+
+export function micBoostArgs(card: number, control: string, steps: number): string[] {
+  return ["-q", "-c", String(card), "sset", control, String(steps)];
+}
+
+export async function setMicBoost(card: number, control: string, steps: number, run: Run = runCommand): Promise<void> {
+  if (!Number.isSafeInteger(card) || card < 0) throw new Error(`A sound card's number must be a whole number from 0, not ${card}`);
+  if (!Number.isInteger(steps) || steps < 0 || steps > mostBoostSteps) throw new Error(`The microphone's boost must be a whole number of steps from 0 to ${mostBoostSteps}, not ${steps}`);
+  try {
+    await run(mixerCommand, micBoostArgs(card, control, steps));
+  } catch (error) {
+    throw new Error(`Couldn't set ${control} on sound card ${card}: ${error instanceof Error ? error.message : String(error)}. Set EARS_MIC_BOOST_CONTROL to one of the card's controls, or EARS_MIC_BOOST=keep to leave its boost alone`);
+  }
+}
+
+export type MicSetters = { setLevel?: (card: number, control: string, level: number) => Promise<void>; setBoost?: (card: number, control: string, steps: number) => Promise<void> };
+
+export async function applyMicSettings(card: number, settings: MicSettings, setters: MicSetters = {}): Promise<string> {
+  if (settings.micLevel !== "keep") await (setters.setLevel ?? setMicLevel)(card, settings.micControl, settings.micLevel);
+  if (settings.micBoost !== "keep") await (setters.setBoost ?? setMicBoost)(card, settings.micBoostControl, settings.micBoost);
+  const level = settings.micLevel === "keep" ? "at its own level" : `${settings.micControl} set to ${settings.micLevel}%`;
+  if (settings.micBoost === "keep") return level;
+  return `${settings.micLevel === "keep" ? `${settings.micControl} ${level}` : level}, ${settings.micBoostControl} set to ${settings.micBoost}`;
 }

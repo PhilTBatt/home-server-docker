@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EarsState } from "./ears.js";
-import { frameBytes } from "./levels.js";
+import { frameBytes, frameLevel } from "./levels.js";
 import { backgroundMs, beforeMs, behindBytes, createListener, gapMs, holdMs, lateMs, presenceMs, retryMs, wakeHost, wakeOff, wakePort, wakeWord, type Listener, type ListenerDeps } from "./listener.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { By } from "./tap.js";
@@ -464,6 +464,39 @@ test("a push recording opens the microphone even with no chat waiting, and close
   assert.equal((await stopped).sound.length, frameBytes * 2);
   await until(() => streams[0].stopped.length === 1);
   assert.deepEqual(streams[0].stopped, ["no Jarvis chat is listening for the wake word"]);
+  await listener.close();
+});
+
+test("while any chat holds the wake word, a recording that's already running hears silence instead of him, and hears the room again once it's let go", { timeout: 5_000 }, async () => {
+  const { listener, streams, sound, earsState } = setUp();
+  earsState.state = "recording";
+  const push = listener.tap("push");
+  streams[0].onSound(sound(500, 2));
+  listener.hold("bb");
+  streams[0].onSound(sound(4000, 3));
+  listener.release("bb");
+  streams[0].onSound(sound(700, 1));
+  const stopped = push.stop("asked to stop");
+  earsState.state = "idle";
+  const kept = (await stopped).sound;
+  assert.equal(kept.length, frameBytes * 6);
+  const levels = [0, 1, 2, 3, 4, 5].map((index) => frameLevel(kept.subarray(index * frameBytes, (index + 1) * frameBytes)));
+  assert.deepEqual(levels, [500, 500, 0, 0, 0, 700]);
+  await listener.close();
+});
+
+test("a hold that has run out no longer silences a running recording", { timeout: 5_000 }, async () => {
+  const { listener, streams, sound, earsState } = setUp({ holdMs: 30 });
+  earsState.state = "recording";
+  const push = listener.tap("push");
+  listener.hold("bb");
+  streams[0].onSound(sound(4000, 1));
+  await pause(60);
+  streams[0].onSound(sound(900, 1));
+  const stopped = push.stop("asked to stop");
+  earsState.state = "idle";
+  const kept = (await stopped).sound;
+  assert.deepEqual([frameLevel(kept.subarray(0, frameBytes)), frameLevel(kept.subarray(frameBytes))], [0, 900]);
   await listener.close();
 });
 

@@ -5,6 +5,7 @@ import { unmuteHint } from "./talk.js";
 export const waitAskMs = 30_000;
 export const retryMs = 2_000;
 export const holdEveryMs = 5_000;
+export const busyClaimMs = 1_000;
 
 export type WakeEvent = { kind: "wake"; id: number } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string };
 
@@ -24,7 +25,7 @@ export function wakeStatus(answer: EarsAnswer): string {
   return "on: say Hey Jarvis";
 }
 
-export type WatchDeps = { call: EarsCall; signal: AbortSignal; first?: string | null; now?: () => number; wait?: (ms: number, signal: AbortSignal) => Promise<void>; retryMs?: number };
+export type WatchDeps = { call: EarsCall; signal: AbortSignal; first?: string | null; now?: () => number; wait?: (ms: number, signal: AbortSignal) => Promise<void>; retryMs?: number; busy?: () => boolean; busyClaimMs?: number };
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -46,58 +47,66 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
   let run: string | null = null;
   let status = deps.first ?? null;
   let taken: { id: number; endedAt: number | null } | null = null;
-  while (!deps.signal.aborted) {
-    let answer: EarsAnswer;
-    try {
-      answer = await deps.call("GET", `/wait?after=${after}${run === null ? "" : `&run=${encodeURIComponent(run)}`}`, waitAskMs, deps.signal);
-    } catch (error) {
-      if (deps.signal.aborted) return;
-      answer = { status: 0, state: null, reason: null, error: reasonOf(error), seconds: null, last: null };
-    }
-    const line = answer.status === 0 ? `off: ${answer.error ?? "ears didn't answer"}` : wakeStatus(answer);
-    if (line !== status) {
-      status = line;
-      yield { kind: "status", line };
-    }
-    if (answer.status !== 200 || answer.version === undefined || answer.version === null) {
-      if (taken !== null) {
-        const gone = taken;
-        taken = null;
-        yield { kind: "done", id: gone.id, answer: answer.status === 0 ? { ...answer, status: 503 } : answer, textMs: now() - (gone.endedAt ?? now()) };
-      }
-      await wait(again, deps.signal);
-      continue;
-    }
-    if (answer.run !== run) {
-      run = answer.run ?? null;
-      if (taken !== null && answer.current?.id !== taken.id && answer.lastId !== taken.id) {
-        const gone = taken;
-        taken = null;
-        yield { kind: "done", id: gone.id, answer: { ...answer, status: 409, error: "ears started again, so the recording was lost" }, textMs: 0 };
-      }
-    }
-    after = answer.version;
-    if (taken === null && answer.current?.by === "wake" && !answer.current.claimed) {
-      const id: number = answer.current.id;
-      let claimed: EarsAnswer | null = null;
+  try {
+    while (!deps.signal.aborted) {
+      let answer: EarsAnswer;
       try {
-        claimed = await deps.call("POST", `/wake/claim?id=${id}`, earsQuickMs, deps.signal);
-      } catch {
+        answer = await deps.call("GET", `/wait?after=${after}${run === null ? "" : `&run=${encodeURIComponent(run)}`}`, waitAskMs, deps.signal);
+      } catch (error) {
         if (deps.signal.aborted) return;
+        answer = { status: 0, state: null, reason: null, error: reasonOf(error), seconds: null, last: null };
       }
-      if (claimed?.status === 200) {
-        taken = { id, endedAt: null };
-        yield { kind: "wake", id };
-        answer = claimed;
+      const line = answer.status === 0 ? `off: ${answer.error ?? "ears didn't answer"}` : wakeStatus(answer);
+      if (line !== status) {
+        status = line;
+        yield { kind: "status", line };
       }
+      if (answer.status !== 200 || answer.version === undefined || answer.version === null) {
+        if (taken !== null) {
+          const gone = taken;
+          taken = null;
+          yield { kind: "done", id: gone.id, answer: answer.status === 0 ? { ...answer, status: 503 } : answer, textMs: now() - (gone.endedAt ?? now()) };
+        }
+        await wait(again, deps.signal);
+        continue;
+      }
+      if (answer.run !== run) {
+        run = answer.run ?? null;
+        if (taken !== null && answer.current?.id !== taken.id && answer.lastId !== taken.id) {
+          const gone = taken;
+          taken = null;
+          yield { kind: "done", id: gone.id, answer: { ...answer, status: 409, error: "ears started again, so the recording was lost" }, textMs: 0 };
+        }
+      }
+      after = answer.version;
+      if (taken === null && answer.current?.by === "wake" && !answer.current.claimed) {
+        const id: number = answer.current.id;
+        let claimed: EarsAnswer | null = null;
+        if (deps.busy?.() === true) {
+          await wait(deps.busyClaimMs ?? busyClaimMs, deps.signal);
+          if (deps.signal.aborted) return;
+        }
+        try {
+          claimed = await deps.call("POST", `/wake/claim?id=${id}`, earsQuickMs, deps.signal);
+        } catch {
+          if (deps.signal.aborted) return;
+        }
+        if (claimed?.status === 200) {
+          taken = { id, endedAt: null };
+          yield { kind: "wake", id };
+          answer = claimed;
+        }
+      }
+      if (taken === null) continue;
+      if (answer.state === "recording" && answer.current?.id === taken.id) continue;
+      taken.endedAt ??= now();
+      if (answer.state === "working") continue;
+      const done = taken;
+      taken = null;
+      yield { kind: "done", id: done.id, answer, textMs: now() - (done.endedAt ?? now()) };
     }
-    if (taken === null) continue;
-    if (answer.state === "recording" && answer.current?.id === taken.id) continue;
-    taken.endedAt ??= now();
-    if (answer.state === "working") continue;
-    const done = taken;
-    taken = null;
-    yield { kind: "done", id: done.id, answer, textMs: now() - (done.endedAt ?? now()) };
+  } finally {
+    if (taken !== null) await deps.call("POST", `/recording/cancel?id=${taken.id}`, earsQuickMs).catch(() => {});
   }
 }
 

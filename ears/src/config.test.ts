@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultMicControl, defaultMicLevel, microphones, readConfig, shortestToken } from "./config.js";
+import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, microphones, mostBoostSteps, readConfig, readMicSettings, shortestToken } from "./config.js";
 
 const token = "t".repeat(64);
 
-const usual = { micLevel: 80, micControl: "Capture", wake: false };
+const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false };
 
 test("reads the token, and with no microphone set there's nothing to record from", () => {
   assert.deepEqual(readConfig({ EARS_TOKEN: token }), { token, microphone: null, ...usual });
@@ -38,6 +38,31 @@ test("the mic's control is any plain mixer control name, since it's passed to am
   }
 });
 
+test("the mic's boost is left alone unless set, then any whole number of steps from 0 to 10", () => {
+  assert.deepEqual([defaultMicBoostControl, mostBoostSteps], ["Internal Mic Boost", 10]);
+  for (const [value, boost] of [[undefined, "keep"], ["", "keep"], ["  ", "keep"], ["keep", "keep"], [" keep ", "keep"], ["0", 0], ["1", 1], [" 3 ", 3], ["10", 10], ["03", 3]] as const) {
+    assert.equal(readConfig({ EARS_TOKEN: token, EARS_MIC_BOOST: value }).micBoost, boost, String(value));
+  }
+  for (const value of ["11", "-1", "1.5", "Keep", "100", "010", "+1", "1 step", "max", "33%"]) {
+    assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MIC_BOOST: value }), { message: `EARS_MIC_BOOST must be a whole number of steps from 0 to 10, or keep to leave the card's own boost, not "${value}"` }, value);
+  }
+});
+
+test("the boost's control is Internal Mic Boost unless set, and any plain mixer control name", () => {
+  for (const value of ["Mic Boost", "Internal Mic Boost", "Front Mic Boost", "Mic_2"]) assert.equal(readConfig({ EARS_TOKEN: token, EARS_MIC_BOOST_CONTROL: ` ${value} ` }).micBoostControl, value);
+  assert.equal(readConfig({ EARS_TOKEN: token, EARS_MIC_BOOST_CONTROL: " " }).micBoostControl, "Internal Mic Boost");
+  for (const value of ["-q", "Boost;rm", "Mic'", "a".repeat(41), "Mic\nBoost"]) {
+    assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MIC_BOOST_CONTROL: value }), { message: `EARS_MIC_BOOST_CONTROL must be a mixer control's name, like Internal Mic Boost or Mic Boost, as amixer scontrols lists them, not "${value.trim()}"` }, value);
+  }
+});
+
+test("the microphone's four settings can be read on their own, without a token, for the mic check", () => {
+  assert.deepEqual(readMicSettings({}), { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost" });
+  assert.deepEqual(readMicSettings({ EARS_MIC_LEVEL: "100", EARS_MIC_CONTROL: "Mic", EARS_MIC_BOOST: "2", EARS_MIC_BOOST_CONTROL: "Mic Boost", EARS_TOKEN: "short" }), { micLevel: 100, micControl: "Mic", micBoost: 2, micBoostControl: "Mic Boost" });
+  assert.throws(() => readMicSettings({ EARS_MIC_LEVEL: "loud" }), { message: /^EARS_MIC_LEVEL must be/ });
+  assert.throws(() => readMicSettings({ EARS_MIC_BOOST: "loud" }), { message: /^EARS_MIC_BOOST must be/ });
+});
+
 test("a missing or short token stops ears, saying how to make one", () => {
   assert.equal(shortestToken, 32);
   for (const env of [{}, { EARS_TOKEN: "" }, { EARS_TOKEN: "   " }]) {
@@ -68,4 +93,5 @@ test("the wake word is off unless EARS_WAKE is on, and on needs a microphone to 
 test("EARS_WAKE is checked after the microphone and its level", () => {
   assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "real", EARS_WAKE: "maybe" }), { message: /^EARS_MICROPHONE must be/ });
   assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_MIC_LEVEL: "loud", EARS_WAKE: "maybe" }), { message: /^EARS_MIC_LEVEL must be/ });
+  assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_MIC_BOOST: "loud", EARS_WAKE: "maybe" }), { message: /^EARS_MIC_BOOST must be/ });
 });

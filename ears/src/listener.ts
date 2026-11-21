@@ -228,7 +228,7 @@ export function createListener(deps: ListenerDeps): Listener {
     }
     if (sound.length === 0) return;
     if (tap !== null) {
-      tap.push(sound);
+      tap.push(held() ? new Uint8Array(sound.length) : sound);
       return;
     }
     const connection = detector;

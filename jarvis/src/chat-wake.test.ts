@@ -69,23 +69,26 @@ const typedHeard: Heard = { text: "Turn the lights on.", recordedMs: 2500, textM
 
 function fakeTalk(events: string[], sends: Sent[] = []) {
   const sent: { signal: AbortSignal | undefined; wake: boolean | undefined }[] = [];
+  const named: string[] = [];
   const talk: Talk = {
     check: async () => "Ears: ready",
     start: async () => {
       events.push("talk start");
-      return { ok: true };
+      return { ok: true, id: 20 };
     },
-    send: async (signal, wake) => {
+    send: async (signal, wake, id) => {
       events.push("talk send");
       sent.push({ signal, wake });
+      named.push(`send ${id}`);
       return sends.shift() ?? { ok: true, heard: wake === true ? { ...typedHeard, wake: true } : typedHeard };
     },
-    drop: async () => {
+    drop: async (_signal, id) => {
       events.push("talk drop");
+      named.push(`drop ${id}`);
       return null;
     },
   };
-  return { talk, sent };
+  return { talk, sent, named };
 }
 
 function earsDone(text: string | null, fields: Partial<EarsAnswer> = {}): EarsAnswer {
@@ -135,7 +138,7 @@ function wakeChat(scripts: Record<string, Script>, sends: Sent[] = []) {
     interrupt: () => void events.push("interrupt"),
   };
   const running = runChat(deps);
-  return { lines, wake, events, output: () => output, recorded, sent: made.sent, closing, running, deps };
+  return { lines, wake, events, output: () => output, recorded, sent: made.sent, named: made.named, closing, running, deps };
 }
 
 test("typed lines and wake events come in the order they arrive, and when the lines end the watcher is told to stop", { timeout: 5_000 }, async () => {
@@ -380,4 +383,40 @@ test("a question asked through the wake word is logged with wake true and the ti
   assert.deepEqual(line.heard, { recordedMs: 3400, textMs: 950, wake: true });
   assert.equal(JSON.stringify(line).includes("time?"), false);
   assert.deepEqual(logLine(context, "c", 2, at, { answer, heard: typedHeard }).heard, { recordedMs: 2500, textMs: 1300 });
+});
+
+test("a wake recording is sent or dropped by its own number, and one that takes over a /talk recording uses the wake's", { timeout: 5_000 }, async () => {
+  const chat = wakeChat({ "Turn the lights on.": said("Done."), "stop that": said("OK.") });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.lines.push("");
+  await settled();
+  chat.wake.push({ kind: "wake", id: 5 });
+  await settled();
+  chat.lines.push("stop that");
+  await settled();
+  chat.lines.push("/talk");
+  await settled();
+  chat.wake.push({ kind: "wake", id: 6 });
+  await settled();
+  chat.lines.push("");
+  await settled();
+  chat.lines.push("/talk");
+  await settled();
+  chat.lines.close();
+  await chat.running;
+  assert.deepEqual(chat.named, ["send 4", "drop 5", "send 6", "drop 20"]);
+});
+
+test("a wake that takes over a /talk recording is the one dropped when something's typed", { timeout: 5_000 }, async () => {
+  const chat = wakeChat({ "never mind": said("OK.") });
+  chat.lines.push("/talk");
+  await settled();
+  chat.wake.push({ kind: "wake", id: 7 });
+  await settled();
+  chat.lines.push("never mind");
+  await settled();
+  chat.lines.close();
+  await chat.running;
+  assert.deepEqual(chat.named, ["drop 7"]);
 });

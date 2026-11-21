@@ -47,11 +47,11 @@ test("ask sends the token and prints the status and the answer, refusals include
   const ears = createEars({ microphone: null, record: () => assert.fail("nothing should record"), log: () => {} });
   const server = await startEarsServer(ears, token, 0, "127.0.0.1");
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  assert.deepEqual(await ask("state", token, base), { status: 200, body: '{"state":"muted","reason":"ears starts muted after every start, and waits to be unmuted","microphone":null,"last":null}' });
-  assert.deepEqual(await ask("start", token, base), { status: 409, body: '{"error":"ears is muted","state":"muted","reason":"ears starts muted after every start, and waits to be unmuted","microphone":null,"last":null}' });
+  assert.deepEqual(await ask("state", token, base), { status: 200, body: '{"state":"muted","reason":"ears starts muted after every start, and waits to be unmuted","microphone":null,"last":null,"lastId":null}' });
+  assert.deepEqual(await ask("start", token, base), { status: 409, body: '{"error":"ears is muted","state":"muted","reason":"ears starts muted after every start, and waits to be unmuted","microphone":null,"last":null,"lastId":null}' });
   ears.unmute();
-  assert.deepEqual(await ask("start", token, base), { status: 409, body: '{"error":"no microphone is set, so there\'s nothing to record from","state":"idle","reason":null,"microphone":null,"last":null}' });
-  assert.deepEqual(await ask("stop", token, base), { status: 409, body: '{"error":"ears isn\'t recording","state":"idle","reason":null,"microphone":null,"last":null}' });
+  assert.deepEqual(await ask("start", token, base), { status: 409, body: '{"error":"no microphone is set, so there\'s nothing to record from","state":"idle","reason":null,"microphone":null,"last":null,"lastId":null}' });
+  assert.deepEqual(await ask("stop", token, base), { status: 409, body: '{"error":"ears isn\'t recording","state":"idle","reason":null,"microphone":null,"last":null,"lastId":null}' });
   assert.deepEqual(await ask("state", "wrong", base), { status: 401, body: '{"error":"A valid token is needed"}' });
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));

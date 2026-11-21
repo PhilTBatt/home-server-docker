@@ -5,6 +5,7 @@ import { createServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { movedOn } from "./ears.js";
 import { pretendMic, startService, type Service } from "./service.js";
 import { createEventReader, encodeEvent } from "./wyoming.js";
 import { connectWyoming } from "./wyoming-client.js";
@@ -44,7 +45,7 @@ async function setUp(atStart: string | null, limitMs?: number) {
   if (atStart !== null) await writeFile(switchAt, atStart);
   const lines: string[] = [];
   const start = async () => {
-    const started = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", wake: false }, log: (line) => lines.push(line), switchAt, everyMs: 20, port: 0, host: "127.0.0.1", limitMs });
+    const started = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false }, log: (line) => lines.push(line), switchAt, everyMs: 20, port: 0, host: "127.0.0.1", limitMs });
     services.push(started);
     return started;
   };
@@ -169,11 +170,34 @@ test("shutting down ends any recording and its process, and a restart with the s
   await again.close();
 });
 
+test("a restarted ears numbers its recordings after the ones it made before, so a chat still holding an old number can't stop or cancel a new one", { timeout: 15_000 }, async () => {
+  const { service, call, flip, start } = await setUp(null);
+  await flip("unmuted 1\n");
+  await until(() => service.ears.view().state === "idle");
+  const old = (await call("POST", "/recording/start")).id;
+  await call("POST", "/recording/stop");
+  await service.close();
+  const before = Date.now();
+  const again = await start();
+  await flip("unmuted 2\n");
+  await until(() => again.ears.view().state === "idle");
+  const started = await call("POST", "/recording/start", again);
+  try {
+    assert.ok(Number.isInteger(old) && started.id > old, `${started.id} after ${old}`);
+    assert.ok(started.id > before, "numbered from the clock, not from how long this ears has run");
+    const stale = [await call("POST", `/recording/stop?id=${old}`, again), await call("POST", `/recording/cancel?id=${old}`, again)];
+    assert.deepEqual(stale.map((answer) => answer.error), [movedOn, movedOn]);
+    assert.deepEqual([again.ears.view().state, again.ears.current()?.id], ["recording", started.id]);
+  } finally {
+    await again.close();
+  }
+});
+
 test("if the port is taken, starting fails and leaves nothing running", { timeout: 15_000 }, async () => {
   const taken = createServer();
   await new Promise<void>((resolve) => taken.listen(0, "127.0.0.1", resolve));
   const port = (taken.address() as AddressInfo).port;
-  await assert.rejects(startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", wake: false }, log: () => {}, switchAt: "/no/such/switch", everyMs: 20, port, host: "127.0.0.1" }), { code: "EADDRINUSE" });
+  await assert.rejects(startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false }, log: () => {}, switchAt: "/no/such/switch", everyMs: 20, port, host: "127.0.0.1" }), { code: "EADDRINUSE" });
   await new Promise((resolve) => taken.close(resolve));
 });
 
@@ -186,27 +210,33 @@ const quietSwitch = async () => {
 test("each microphone setting says what ears records from: nothing, the pretend one, or the card passed in, at the level set", { timeout: 15_000 }, async () => {
   const switchAt = await quietSwitch();
   const base = { log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1" };
-  const none = await startService({ ...base, config: { token, microphone: null, micLevel: 80, micControl: "Capture", wake: false } });
+  const none = await startService({ ...base, config: { token, microphone: null, micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false } });
   services.push(none);
   assert.equal(none.microphone, "no microphone set");
-  const pretend = await startService({ ...base, config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", wake: false } });
+  const pretend = await startService({ ...base, config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false } });
   services.push(pretend);
   assert.equal(pretend.microphone, "the pretend microphone");
   const levels: [number, string, number][] = [];
-  const card = await startService({ ...base, config: { token, microphone: "card", micLevel: 65, micControl: "Mic", wake: false }, findCard: async () => ({ number: 2, device: "plughw:2,0", capture: "pcmC2D0c", mixer: "controlC2" }), setLevel: async (number, control, level) => void levels.push([number, control, level]) });
+  const card = await startService({ ...base, config: { token, microphone: "card", micLevel: 65, micControl: "Mic", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false }, findCard: async () => ({ number: 2, device: "plughw:2,0", capture: "pcmC2D0c", mixer: "controlC2" }), setLevel: async (number, control, level) => void levels.push([number, control, level]) });
   services.push(card);
   assert.equal(card.microphone, "sound card 2's microphone (Mic set to 65%)");
   assert.deepEqual(levels, [[2, "Mic", 65]]);
-  const kept = await startService({ ...base, config: { token, microphone: "card", micLevel: "keep", micControl: "Capture", wake: false }, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => assert.fail("the level was set") });
+  const kept = await startService({ ...base, config: { token, microphone: "card", micLevel: "keep", micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false }, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => assert.fail("the level was set") });
   services.push(kept);
   assert.equal(kept.microphone, "sound card 1's microphone (at its own level)");
+  const boosts: [number, string, number][] = [];
+  const boosted = await startService({ ...base, config: { token, microphone: "card", micLevel: 100, micControl: "Capture", micBoost: 1, micBoostControl: "Internal Mic Boost", wake: false }, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => {}, setBoost: async (number, control, steps) => void boosts.push([number, control, steps]) });
+  services.push(boosted);
+  assert.equal(boosted.microphone, "sound card 1's microphone (Capture set to 100%, Internal Mic Boost set to 1)");
+  assert.deepEqual(boosts, [[1, "Internal Mic Boost", 1]]);
 });
 
 test("with the card microphone, the card is found and its level set before anything listens, and either failing stops ears starting", { timeout: 15_000 }, async () => {
   const switchAt = await quietSwitch();
-  const base = { log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", config: { token, microphone: "card" as const, micLevel: 80, micControl: "Capture", wake: false } };
+  const base = { log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", config: { token, microphone: "card" as const, micLevel: 80, micControl: "Capture", micBoost: "keep" as const, micBoostControl: "Internal Mic Boost", wake: false } };
   await assert.rejects(startService({ ...base, findCard: async () => Promise.reject(new Error("No sound devices were passed in")) }), { message: "No sound devices were passed in" });
   await assert.rejects(startService({ ...base, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => Promise.reject(new Error("Couldn't set Capture on sound card 1")) }), { message: "Couldn't set Capture on sound card 1" });
+  await assert.rejects(startService({ ...base, config: { ...base.config, micBoost: 2 }, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => {}, setBoost: async () => Promise.reject(new Error("Couldn't set Internal Mic Boost on sound card 1")) }), { message: "Couldn't set Internal Mic Boost on sound card 1" });
 });
 
 test("with the card microphone and nothing pretend given, ears records with arecord on that card", { timeout: 15_000 }, async () => {
@@ -219,7 +249,7 @@ test("with the card microphone and nothing pretend given, ears records with arec
   const path = process.env.PATH;
   process.env.PATH = `${folder}:${path}`;
   try {
-    const service = await startService({ config: { token, microphone: "card", micLevel: 80, micControl: "Capture", wake: false }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", findCard: async () => ({ number: 3, device: "plughw:3,0", capture: "pcmC3D0c", mixer: "controlC3" }), setLevel: async () => {} });
+    const service = await startService({ config: { token, microphone: "card", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", findCard: async () => ({ number: 3, device: "plughw:3,0", capture: "pcmC3D0c", mixer: "controlC3" }), setLevel: async () => {} });
     services.push(service);
     await writeFile(switchAt, "unmuted 1");
     await until(() => service.ears.view().state === "idle");
@@ -242,7 +272,7 @@ test("with Whisper given, a stopped recording's sound is turned into text, and t
   const switchAt = await quietSwitch();
   await writeFile(switchAt, "muted");
   const heard: number[] = [];
-  const service = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", wake: false }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", toText: async (sound) => (heard.push(sound.length), "Hello there.") });
+  const service = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", toText: async (sound) => (heard.push(sound.length), "Hello there.") });
   services.push(service);
   await writeFile(switchAt, "unmuted 2");
   await until(() => service.ears.view().state === "idle");
@@ -294,7 +324,7 @@ test("with the wake word on, a waiting chat opens the microphone and sends it to
   const lines: string[] = [];
   const turned: number[] = [];
   const service = await startService({
-    config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", wake: true },
+    config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: true },
     log: (line) => lines.push(line),
     switchAt,
     everyMs: 20,
@@ -330,17 +360,18 @@ test("with the wake word on, a waiting chat opens the microphone and sends it to
   assert.equal(service.wake.full().wake && (service.wake.full().wake as { listening: boolean }).listening, true);
   stand.fire();
   await until(() => service.ears.current() !== null);
-  assert.deepEqual(service.ears.current(), { id: 1, by: "wake", claimed: false });
-  const claimed = await call("POST", "/wake/claim?id=1");
-  assert.deepEqual([claimed.state, claimed.current], ["recording", { id: 1, by: "wake", claimed: true }]);
+  const id = service.ears.current()?.id ?? 0;
+  assert.deepEqual(service.ears.current(), { id, by: "wake", claimed: false });
+  const claimed = await call("POST", `/wake/claim?id=${id}`);
+  assert.deepEqual([claimed.state, claimed.current], ["recording", { id, by: "wake", claimed: true }]);
   await until(() => service.ears.view().state === "idle", 5000);
   const quiet = await call("GET", "/wait?after=0");
-  assert.deepEqual([quiet.state, quiet.lastId, quiet.current, quiet.last.reason, quiet.last.text], ["idle", 1, null, "nothing loud enough to be speech came within 0.4 seconds, so it wasn't sent to Whisper", null]);
+  assert.deepEqual([quiet.state, quiet.lastId, quiet.current, quiet.last.reason, quiet.last.text], ["idle", id, null, "nothing loud enough to be speech came within 0.4 seconds, so it wasn't sent to Whisper", null]);
   assert.deepEqual(turned, [], "the pretend microphone's steady tone is never speech, so nothing went to Whisper");
   await pause(800);
   stand.fire();
-  await until(() => service.ears.current()?.id === 2);
-  assert.equal((await call("POST", "/wake/claim?id=2")).current.claimed, true);
+  await until(() => service.ears.current()?.id === id + 1);
+  assert.equal((await call("POST", `/wake/claim?id=${id + 1}`)).current.claimed, true);
   await pause(200);
   const stopped = await call("POST", "/recording/stop");
   assert.deepEqual([stopped.state, stopped.last.text, stopped.last.reason], ["idle", "What's the time?", "asked to stop"]);
@@ -357,7 +388,7 @@ test("with no chat waiting, the microphone closes a moment later, and with the w
   const stand = await standInWakeServer();
   t.after(() => stand.close());
   const switchAt = await quietSwitch();
-  const service = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", wake: true }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", wake: { connect: stand.connect, presenceMs: 150, waitMs: 50 } });
+  const service = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: true }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", wake: { connect: stand.connect, presenceMs: 150, waitMs: 50 } });
   services.push(service);
   const base = `http://127.0.0.1:${(service.server.address() as AddressInfo).port}`;
   const call = async (method: string, path: string) => (await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}` } })).json();
@@ -367,7 +398,7 @@ test("with no chat waiting, the microphone closes a moment later, and with the w
   await until(() => recorders().length === 1);
   await until(() => recorders().length === 0, 2000);
   await service.close();
-  const off = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", wake: false }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", wake: { waitMs: 50 } });
+  const off = await startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false }, log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", wake: { waitMs: 50 } });
   services.push(off);
   const offBase = `http://127.0.0.1:${(off.server.address() as AddressInfo).port}`;
   await writeFile(switchAt, "unmuted 2\n");

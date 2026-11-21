@@ -481,5 +481,266 @@ output=$(with_fakes stop)
 check "stop stops ears, Whisper and openWakeWord" "0|docker compose stop ears whisper openwakeword | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
 check "start, stop and whisper-model write no switch" "no folder" "$([ -e "$work/repo/ears/switch" ] && echo folder || echo "no folder")"
 
+mkdir -p "$work/micbin"
+cat > "$work/micbin/docker" <<'FAKE'
+#!/bin/bash
+if [ "$1 $2" = "compose ps" ]; then
+  echo "docker $*" >> "$MIC_LOG"
+  [ -n "${FAKE_PS:-}" ] && echo "$FAKE_PS"
+  exit 0
+fi
+if [ "$1 $2" = "build -q" ]; then
+  echo "docker $*" >> "$MIC_LOG"
+  if [ "${FAKE_BUILD_FAIL:-}" = "${*: -1}" ]; then echo "pretend build failure" >&2; exit 1; fi
+  echo "sha256:0123"
+  exit 0
+fi
+if [ "$1" = run ] && [[ " $* " == *" home-hub-ears "* ]]; then
+  echo "recorder: docker $* | EARS_MIC_LEVEL=${EARS_MIC_LEVEL-unset} EARS_MIC_CONTROL=${EARS_MIC_CONTROL-unset} EARS_MIC_BOOST=${EARS_MIC_BOOST-unset} EARS_MIC_BOOST_CONTROL=${EARS_MIC_BOOST_CONTROL-unset} EARS_MIC_TEST_WAIT=${EARS_MIC_TEST_WAIT-unset} EARS_TOKEN=${EARS_TOKEN-unset}" >> "$MIC_LOG"
+  echo "The room's background is 41, so speech is anything above 300." >&2
+  if [ -n "${FAKE_RECORDER_FAIL:-}" ]; then echo "$FAKE_RECORDER_FAIL" >&2; exit 1; fi
+  if [ -n "${FAKE_RECORDER_SILENT:-}" ]; then exit 0; fi
+  if [ -n "${FAKE_RECORDER_SAYS:-}" ]; then echo "$FAKE_RECORDER_SAYS"; exit 0; fi
+  if [ -n "${FAKE_RECORDER_INT:-}" ]; then
+    if [ "$FAKE_RECORDER_INT" = sends ]; then trap 'printf "sound follows\n"; cat "$SOUND"; exit 0' INT; else trap 'exit 130' INT; fi
+    : > "$STARTED"
+    for _ in $(seq 1 100); do sleep 0.05; done
+    exit 0
+  fi
+  printf 'sound follows\n'
+  if [ -n "${FAKE_RECORDER_BIG:-}" ]; then
+    head -c 320000 /dev/zero
+    code=$?
+    echo "recorder ended $code" >> "$MIC_LOG"
+    exit "$code"
+  fi
+  cat "$SOUND"
+  exit 0
+fi
+if [ "$1" = run ] && [[ " $* " == *" home-hub-jarvis "* ]]; then
+  echo "player: docker $*" >> "$MIC_LOG"
+  if [ "${FAKE_PLAYER_FAIL:-}" = early ]; then echo "aplay: main:850: audio open error: Device or resource busy" >&2; exit 1; fi
+  cat > "$PLAYED"
+  if [ -n "${FAKE_PLAYER_INT:-}" ]; then
+    [ "$FAKE_PLAYER_INT" = die ] || trap 'exit "$FAKE_PLAYER_INT"' INT
+    : > "$STARTED"
+    for _ in $(seq 1 100); do sleep 0.05; done
+    exit 0
+  fi
+  if [ -n "${FAKE_PLAYER_FAIL:-}" ]; then echo "aplay: main:850: audio open error: Device or resource busy" >&2; exit 1; fi
+  exit 0
+fi
+echo "unexpected: docker $*" >> "$MIC_LOG"
+exit 9
+FAKE
+chmod +x "$work/micbin/docker"
+export MIC_LOG="$work/mic.log" PLAYED="$work/played" SOUND="$work/sound" STARTED="$work/started"
+printf 'ab\000\001\n\377sound follows\n' > "$SOUND"
+head -c 3200 /dev/zero >> "$SOUND"
+
+mic_cards() {
+  rm -rf "${snd:?}"
+  mkdir -p "$snd/by-path"
+  : > "$snd/controlC1"
+  : > "$snd/pcmC1D0c"
+  : > "$snd/pcmC1D0p"
+  ln -s ../controlC1 "$snd/by-path/pci-0000:04:00.6"
+  : > "$snd/controlC0"
+  : > "$snd/pcmC0D3p"
+  ln -s ../controlC0 "$snd/by-path/pci-0000:04:00.1"
+  : > "$snd/controlC2"
+  : > "$snd/pcmC2D0c"
+  ln -s ../controlC2 "$snd/by-path/usb-0000:00:14.0-1"
+}
+
+mic_setup() {
+  fresh
+  mic_cards
+  mkdir -p "$work/repo/ears" "$work/repo/jarvis"
+  printf 'EARS_TOKEN=a-secret-token\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=pci-0000:04:00.6\n' > "$work/repo/ears/.env"
+  printf 'ANTHROPIC_API_KEY=another-secret\nJARVIS_SOUND_CARD=pci-0000:04:00.6\n' > "$work/repo/jarvis/.env"
+}
+
+mic_test() {
+  : > "$MIC_LOG"
+  rm -f "$PLAYED"
+  rm -rf "${work:?}/tmp"
+  mkdir -p "$work/tmp"
+  local line
+  line=$(printf '%q ' bash host/ears.sh "$@")
+  (cd "$work/repo" && SOUND_DIR="$snd" TMPDIR="$work/tmp" PATH="$work/micbin:$PATH" script -qec "$line" /dev/null < /dev/null > "$work/out" 2>&1)
+  mic_status=$?
+  mic_output=$(tr -d '\r' < "$work/out")
+}
+
+mic_test_ctrl_c() {
+  : > "$MIC_LOG"
+  rm -f "$PLAYED" "$STARTED"
+  rm -rf "${work:?}/tmp"
+  mkdir -p "$work/tmp"
+  (cd "$work/repo" && { for _ in $(seq 1 100); do [ -e "$STARTED" ] && break; sleep 0.05; done; sleep 0.2; printf '\003'; sleep 1; } | SOUND_DIR="$snd" TMPDIR="$work/tmp" PATH="$work/micbin:$PATH" script -qec "bash host/ears.sh mic-test" /dev/null > "$work/out" 2>&1)
+  mic_status=$?
+  mic_output=$(tr -d '\r' < "$work/out")
+}
+
+hardened="docker run --rm --init --log-driver none --network none --cap-drop ALL --security-opt no-new-privileges"
+
+mic_setup
+output=$(cd "$work/repo" && PATH="$work/micbin:$PATH" SOUND_DIR="$snd" bash host/ears.sh mic-test < /dev/null 2>&1)
+check "mic-test without a terminal is refused, before Docker" "1|" "$?|$(cat "$MIC_LOG" 2> /dev/null)"
+check_has "saying it only runs from a terminal someone types in" "mic-test records the room, so it only runs from a terminal someone is typing in, not from a script or an AI tool." "$output"
+
+mic_setup
+: > "$MIC_LOG"
+(cd "$work/repo" && SOUND_DIR="$snd" PATH="$work/micbin:$PATH" script -qec "bash host/ears.sh mic-test < /dev/null" /dev/null < /dev/null > "$work/out" 2>&1)
+check "mic-test with its output on a terminal but its input from elsewhere is refused too, before Docker" "1|" "$?|$(cat "$MIC_LOG")"
+check_has "saying why" "mic-test records the room, so it only runs from a terminal someone is typing in" "$(tr -d '\r' < "$work/out")"
+
+mic_setup
+card_group=$(stat -c %g "$snd/controlC1")
+mic_test mic-test
+check "mic-test in a terminal records, then plays back, and succeeds" "0" "$mic_status"
+check "it looks whether ears is running, builds both images, then runs the recorder with only the microphone and its mixer, then the player with only the speakers and the mixer" "docker compose ps --status running --quiet ears
+docker build -q -t home-hub-ears ears
+docker build -q -t home-hub-jarvis jarvis
+recorder: $hardened --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | EARS_MIC_LEVEL= EARS_MIC_CONTROL= EARS_MIC_BOOST= EARS_MIC_BOOST_CONTROL= EARS_MIC_TEST_WAIT=0 EARS_TOKEN=unset
+player: $hardened -i --user node --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0p:/dev/snd/pcmC1D0p:rw home-hub-jarvis sh -c amixer -q -c 1 sset Master 80% unmute && exec aplay -q -t raw -f S16_LE -r 16000 -c 1 -D plughw:1,0" "$(cat "$MIC_LOG")"
+check "the player gets exactly the sound after the line that says it follows, byte for byte, with no line of its own" "same" "$(cmp -s "$SOUND" "$PLAYED" && echo same || echo different)"
+check "the recorder never gets a speaker, and the player never gets a microphone" "0 0" "$(grep '^recorder:' "$MIC_LOG" | grep -c 'D0p') $(grep '^player:' "$MIC_LOG" | grep -c 'D0c')"
+check "neither container gets the network or keeps a log, and no token or key is passed" "0 0" "$(grep -E '^(recorder|player):' "$MIC_LOG" | grep -v -e '--network none' -e '--log-driver none' | wc -l) $(grep -c -e 'a-secret-token' -e 'another-secret' "$MIC_LOG")"
+check "nothing is written to a temporary folder or the repo" "|ears/.env jarvis/.env" "$(ls -A "$work/tmp")|$(cd "$work/repo" && find . -type f ! -path './host/*' | sed 's|^\./||' | sort | tr '\n' ' ' | sed 's/ $//')"
+check_has "saying it's getting the images ready" "Getting ears's and Jarvis's images ready..." "$mic_output"
+check_has "passing on what the check says" "The room's background is 41, so speech is anything above 300." "$mic_output"
+check "saying where it'll play it back before it records, so nothing it prints can come between the report's lines" "When it's done, it plays the recording back on sound card 1's speakers.|1" "$(grep "plays the recording back" <<< "$mic_output")|$(awk '/plays the recording back/ { at = NR } /The room.s background is/ { print (at > 0 && at < NR) ? 1 : 0 }' <<< "$mic_output")"
+check_has "and that it's done" "Done. Run it again from somewhere else to compare." "$mic_output"
+
+mic_setup
+printf 'EARS_TOKEN=a-secret-token\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=usb-0000:00:14.0-1\nEARS_MIC_LEVEL=100\nEARS_MIC_CONTROL=Mic\nEARS_MIC_BOOST=2\nEARS_MIC_BOOST_CONTROL="Mic Boost"\n' > "$work/repo/ears/.env"
+printf 'JARVIS_SOUND_CARD=pci-0000:04:00.6\nJARVIS_VOLUME=55\n' > "$work/repo/jarvis/.env"
+mic_test mic-test 07
+check "a USB microphone on its own card is recorded from that card, with ears's four microphone settings and the wait passed by name, and played on the speakers' card at Jarvis's volume" "0|recorder: $hardened --group-add $(stat -c %g "$snd/controlC2") --device /dev/snd/controlC2:/dev/snd/controlC2:rw --device /dev/snd/pcmC2D0c:/dev/snd/pcmC2D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | EARS_MIC_LEVEL=100 EARS_MIC_CONTROL=Mic EARS_MIC_BOOST=2 EARS_MIC_BOOST_CONTROL=Mic Boost EARS_MIC_TEST_WAIT=7 EARS_TOKEN=unset|player: $hardened -i --user node --group-add $(stat -c %g "$snd/controlC1") --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0p:/dev/snd/pcmC1D0p:rw home-hub-jarvis sh -c amixer -q -c 1 sset Master 55% unmute && exec aplay -q -t raw -f S16_LE -r 16000 -c 1 -D plughw:1,0" "$mic_status|$(grep '^recorder:' "$MIC_LOG")|$(grep '^player:' "$MIC_LOG")"
+
+for case in "0|0% mute" "007|7% unmute" "100|100% unmute" "|80% unmute"; do
+  mic_setup
+  printf 'JARVIS_SOUND_CARD=pci-0000:04:00.6\nJARVIS_VOLUME=%s\n' "${case%%|*}" > "$work/repo/jarvis/.env"
+  mic_test mic-test
+  check "JARVIS_VOLUME '${case%%|*}' plays it back at ${case#*|}" "0|1" "$mic_status|$(grep -c "sset Master ${case#*|} &&" "$MIC_LOG")"
+done
+
+for volume in 101 -1 loud 5.5 50%; do
+  mic_setup
+  printf 'JARVIS_SOUND_CARD=pci-0000:04:00.6\nJARVIS_VOLUME=%s\n' "$volume" > "$work/repo/jarvis/.env"
+  mic_test mic-test
+  check "JARVIS_VOLUME '$volume' stops mic-test before Docker" "1|" "$mic_status|$(cat "$MIC_LOG")"
+  check_has "saying what it must be: '$volume'" "JARVIS_VOLUME is $volume in jarvis/.env, but it must be a whole number from 0 to 100, like 80." "$mic_output"
+done
+
+for wait_for in x 61 -1 1.5 100 060 5s; do
+  mic_setup
+  mic_test mic-test "$wait_for"
+  check "a wait of '$wait_for' stops mic-test before Docker" "1|" "$mic_status|$(cat "$MIC_LOG")"
+  check_has "saying what it must be: '$wait_for'" "The wait is $wait_for, but it must be a whole number of seconds from 0 to 60, like 10 to give you time to move away from the server." "$mic_output"
+done
+
+for wait_for in 0 60 10; do
+  mic_setup
+  mic_test mic-test "$wait_for"
+  check "a wait of $wait_for is passed on" "0|1" "$mic_status|$(grep -c "EARS_MIC_TEST_WAIT=$wait_for EARS_TOKEN" "$MIC_LOG")"
+done
+
+for case in "ears|EARS_SOUND_CARD=|No EARS_SOUND_CARD in ears/.env. Set it to the microphone's card from ls /dev/snd/by-path, like pci-0000:04:00.6." "ears|EARS_SOUND_CARD=pci-0000:04:00.1|Sound card 0 (pci-0000:04:00.1) has no microphone at /dev/snd/pcmC0D0c." "jarvis|JARVIS_SOUND_CARD=|No JARVIS_SOUND_CARD in jarvis/.env. Set it to the speakers' name from ls /dev/snd/by-path, like pci-0000:04:00.6." "jarvis|JARVIS_SOUND_CARD=usb-0000:00:14.0-1|Sound card 2 (usb-0000:00:14.0-1) has no speakers at /dev/snd/pcmC2D0p." "jarvis|JARVIS_SOUND_CARD=nowhere|JARVIS_SOUND_CARD is nowhere, which isn't in /dev/snd/by-path. ls /dev/snd/by-path lists the names."; do
+  IFS='|' read -r which line said <<< "$case"
+  mic_setup
+  if [ "$which" = ears ]; then printf 'EARS_TOKEN=x\n%s\n' "$line" > "$work/repo/ears/.env"; else printf '%s\n' "$line" > "$work/repo/jarvis/.env"; fi
+  mic_test mic-test
+  check "a card that can't be used stops mic-test before Docker: $line" "1|" "$mic_status|$(cat "$MIC_LOG")"
+  check_has "saying why: $line" "$said" "$mic_output"
+done
+
+mic_setup
+rm "$work/repo/jarvis/.env"
+mic_test mic-test
+check "with no jarvis/.env there are no speakers named, so mic-test stops before Docker" "1|" "$mic_status|$(cat "$MIC_LOG")"
+check_has "saying which setting it needs" "No JARVIS_SOUND_CARD in jarvis/.env." "$mic_output"
+
+mic_setup
+mkdir -p "$work/repo/ears/switch"
+echo "unmuted 1763690000000000000" > "$work/repo/ears/switch/mute"
+FAKE_PS=abc123 mic_test mic-test
+check "with ears running and unmuted, mic-test stops after only looking, and never mutes it" "1|docker compose ps --status running --quiet ears|unmuted 1763690000000000000" "$mic_status|$(cat "$MIC_LOG")|$(cat "$work/repo/ears/switch/mute")"
+check_has "saying to mute it first" "Ears is running and unmuted, so it may be using the microphone. Mute it first with bash host/ears.sh mute, run this again, then unmute it." "$mic_output"
+
+for case in "abc123|muted" "|unmuted 1" "abc123|"; do
+  mic_setup
+  mkdir -p "$work/repo/ears/switch"
+  [ -n "${case#*|}" ] && echo "${case#*|}" > "$work/repo/ears/switch/mute"
+  FAKE_PS=${case%%|*} mic_test mic-test
+  check "ears running '${case%%|*}' with the switch '${case#*|}' doesn't stop mic-test" "0" "$mic_status"
+done
+
+for image in ears jarvis; do
+  mic_setup
+  FAKE_BUILD_FAIL=$image mic_test mic-test
+  check "an image that won't build ($image) stops mic-test before anything runs" "1|0" "$mic_status|$(grep -c -e '^recorder' -e '^player' "$MIC_LOG")"
+done
+
+mic_setup
+FAKE_RECORDER_FAIL="The microphone is busy: something else has it open." mic_test mic-test
+check "a recorder that fails makes mic-test fail with its code, and nothing is played" "1|0" "$mic_status|$(grep -c '^player:' "$MIC_LOG")"
+check_has "with what the recorder said" "The microphone is busy: something else has it open." "$mic_output"
+check "and nothing about it sending no sound or playing it back" "0" "$(grep -c -e 'ended without sending' -e "couldn't be played back" <<< "$mic_output")"
+check "and no done line" "0" "$(grep -c 'Done.' <<< "$mic_output")"
+
+mic_setup
+FAKE_RECORDER_SILENT=1 mic_test mic-test
+check "a recorder that ends well but sends nothing fails mic-test, and nothing is played" "1|0" "$mic_status|$(grep -c '^player:' "$MIC_LOG")"
+check_has "saying so" "The check ended without sending any sound, so nothing was played." "$mic_output"
+
+mic_setup
+FAKE_RECORDER_SAYS="something else" mic_test mic-test
+check "a recorder that sends anything but the sound line fails mic-test, and nothing is played" "1|0" "$mic_status|$(grep -c '^player:' "$MIC_LOG")"
+check_has "saying so" "The check sent something other than sound, so nothing was played." "$mic_output"
+check "and nothing about playing it back" "0" "$(grep -c "couldn't be played back" <<< "$mic_output")"
+
+mic_setup
+FAKE_PLAYER_FAIL=1 mic_test mic-test
+check "a player that fails makes mic-test fail" "1" "$mic_status"
+check_has "with what aplay said" "aplay: main:850: audio open error: Device or resource busy" "$mic_output"
+check_has "and what to do" "The recording worked, but it couldn't be played back. If aplay says the device is busy, something else is playing, like Jarvis speaking: wait for it to finish and run this again." "$mic_output"
+check "and no done line" "0" "$(grep -c 'Done.' <<< "$mic_output")"
+
+mic_setup
+FAKE_RECORDER_BIG=1 FAKE_PLAYER_FAIL=early mic_test mic-test
+check "a player that fails before taking any sound fails mic-test with its own code, though the recorder then fails on the closed pipe" "1|recorder ended 141" "$mic_status|$(grep '^recorder ended' "$MIC_LOG")"
+check_has "and still says what to do" "The recording worked, but it couldn't be played back. If aplay says the device is busy, something else is playing, like Jarvis speaking: wait for it to finish and run this again." "$mic_output"
+
+for code in 0 1 die; do
+  mic_setup
+  FAKE_PLAYER_INT=$code mic_test_ctrl_c
+  check "Ctrl+C while it plays back ends mic-test as Ctrl+C does, with nothing about a busy device and no done line, whatever the player then does ($code)" "130|same|0|0" "$mic_status|$(cmp -s "$SOUND" "$PLAYED" && echo same || echo different)|$(grep -c "couldn't be played back" <<< "$mic_output")|$(grep -c 'Done.' <<< "$mic_output")"
+done
+
+mic_setup
+FAKE_RECORDER_INT=1 mic_test_ctrl_c
+check "Ctrl+C while it records ends mic-test as Ctrl+C does, playing nothing and saying nothing about sound that didn't come" "130|1|0|0" "$mic_status|$(grep -c '^recorder:' "$MIC_LOG")|$(grep -c '^player:' "$MIC_LOG")|$(grep -c -e 'ended without sending' -e "couldn't be played back" <<< "$mic_output")"
+
+mic_setup
+FAKE_RECORDER_INT=sends mic_test_ctrl_c
+check "Ctrl+C before the sound comes plays nothing, even if the sound still comes after it" "130|0" "$mic_status|$(grep -c '^player:' "$MIC_LOG")"
+
+mic_setup
+: > "$MIC_LOG"
+rm -f "$STARTED"
+(cd "$work/repo" && SOUND_DIR="$snd" TMPDIR="$work/tmp" PATH="$work/micbin:$PATH" FAKE_PLAYER_INT=0 script -qec "bash -c 'bash host/ears.sh mic-test; echo after it'" /dev/null < <(for _ in $(seq 1 100); do [ -e "$STARTED" ] && break; sleep 0.05; done; sleep 0.2; printf '\003'; sleep 1) > "$work/out" 2>&1)
+check "and a script that ran it is stopped by the same Ctrl+C while it plays back, as by any other command's" "1|0" "$(grep -c '^player:' "$MIC_LOG")|$(grep -c 'after it' "$work/out")"
+
+for args in "mic-test 5 6" "mute 5" "start 5" "whisper-model x"; do
+  mic_setup
+  read -r -a words <<< "$args"
+  mic_test "${words[@]}"
+  check "too many arguments are refused before anything runs: '$args'" "1|" "$mic_status|$(cat "$MIC_LOG")"
+  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model, or bash host/ears.sh mic-test [seconds to wait]" "$mic_output"
+done
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

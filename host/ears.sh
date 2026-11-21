@@ -2,24 +2,24 @@
 
 cd "$(dirname "$0")/.." || exit 1
 
-if [ $# -ne 1 ] || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != whisper-model ]; }; then
-  echo "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model" >&2
+if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ]; }; then
+  echo "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model, or bash host/ears.sh mic-test [seconds to wait]" >&2
   exit 1
 fi
 
 setting() {
-  sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:][[:space:]]*//p" ears/.env 2> /dev/null | tail -n 1 | sed -E "/^\"[^\"]*\"/{s/^\"([^\"]*)\".*$/\1/;b}; /^'[^']*'/{s/^'([^']*)'.*$/\1/;b}; s/ #.*$//; s/[[:space:]]+$//"
+  sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:][[:space:]]*//p" "${2:-ears/.env}" 2> /dev/null | tail -n 1 | sed -E "/^\"[^\"]*\"/{s/^\"([^\"]*)\".*$/\1/;b}; /^'[^']*'/{s/^'([^']*)'.*$/\1/;b}; s/ #.*$//; s/[[:space:]]+$//"
 }
 
-mic_card() {
+card_of() {
   local dir=${SOUND_DIR:-/dev/snd} name target control number
-  name=$(setting EARS_SOUND_CARD)
+  name=$(setting "$1" "$2")
   if [ -z "$name" ]; then
-    echo "No EARS_SOUND_CARD in ears/.env. Set it to the microphone's card from ls /dev/snd/by-path, like pci-0000:04:00.6." >&2
+    echo "No $1 in $2. Set it to $4 from ls /dev/snd/by-path, like pci-0000:04:00.6." >&2
     return 1
   fi
   if [[ "$name" == */* ]] || ! target=$(readlink "$dir/by-path/$name"); then
-    echo "EARS_SOUND_CARD is $name, which isn't in /dev/snd/by-path. ls /dev/snd/by-path lists the names." >&2
+    echo "$1 is $name, which isn't in /dev/snd/by-path. ls /dev/snd/by-path lists the names." >&2
     return 1
   fi
   control=${target##*/}
@@ -29,12 +29,95 @@ mic_card() {
     echo "/dev/snd/by-path/$name doesn't lead to a sound card's mixer." >&2
     return 1
   fi
-  if [ ! -e "$dir/pcmC${number}D0c" ]; then
-    echo "Sound card $number ($name) has no microphone at /dev/snd/pcmC${number}D0c." >&2
+  if [ ! -e "$dir/pcmC${number}D0$3" ]; then
+    echo "Sound card $number ($name) has no $5 at /dev/snd/pcmC${number}D0$3." >&2
     return 1
   fi
   echo "$number $(stat -c %g "$dir/$control")"
 }
+
+mic_card() {
+  card_of EARS_SOUND_CARD ears/.env c "the microphone's card" microphone
+}
+
+hardened=(--rm --init --log-driver none --network none --cap-drop ALL --security-opt no-new-privileges)
+
+play_back() {
+  local ready interrupted=
+  trap 'interrupted=1' INT
+  IFS= read -r ready || return 3
+  [ -z "$interrupted" ] || return 130
+  if [ "$ready" != "sound follows" ]; then
+    echo "The check sent something other than sound, so nothing was played." >&2
+    return 1
+  fi
+  docker run "${hardened[@]}" -i --user node --group-add "$speakers_group" --device "/dev/snd/controlC$speakers:/dev/snd/controlC$speakers:rw" --device "/dev/snd/pcmC${speakers}D0p:/dev/snd/pcmC${speakers}D0p:rw" home-hub-jarvis sh -c "amixer -q -c $speakers sset Master $volume% $switch_to && exec aplay -q -t raw -f S16_LE -r 16000 -c 1 -D plughw:$speakers,0" || {
+    local code=$?
+    if [ -z "$interrupted" ]; then
+      echo "The recording worked, but it couldn't be played back. If aplay says the device is busy, something else is playing, like Jarvis speaking: wait for it to finish and run this again." >&2
+    fi
+    return "$code"
+  }
+}
+
+if [ "$1" = mic-test ]; then
+  if [ ! -t 0 ]; then
+    echo "mic-test records the room, so it only runs from a terminal someone is typing in, not from a script or an AI tool." >&2
+    exit 1
+  fi
+  wait_for=${2:-0}
+  if [[ ! "$wait_for" =~ ^[0-9]{1,2}$ ]] || [ "$((10#$wait_for))" -gt 60 ]; then
+    echo "The wait is $wait_for, but it must be a whole number of seconds from 0 to 60, like 10 to give you time to move away from the server." >&2
+    exit 1
+  fi
+  card=$(mic_card) || exit 1
+  read -r number group <<< "$card"
+  card=$(card_of JARVIS_SOUND_CARD jarvis/.env p "the speakers' name" speakers) || exit 1
+  read -r speakers speakers_group <<< "$card"
+  volume=$(setting JARVIS_VOLUME jarvis/.env)
+  volume=${volume:-80}
+  if [[ ! "$volume" =~ ^[0-9]{1,3}$ ]] || [ "$((10#$volume))" -gt 100 ]; then
+    echo "JARVIS_VOLUME is $volume in jarvis/.env, but it must be a whole number from 0 to 100, like 80." >&2
+    exit 1
+  fi
+  volume=$((10#$volume))
+  switch_to=unmute
+  [ "$volume" -eq 0 ] && switch_to=mute
+  if [ -n "$(docker compose ps --status running --quiet ears 2> /dev/null)" ] && grep -q '^unmuted' ears/switch/mute 2> /dev/null; then
+    echo "Ears is running and unmuted, so it may be using the microphone. Mute it first with bash host/ears.sh mute, run this again, then unmute it." >&2
+    exit 1
+  fi
+  echo "Getting ears's and Jarvis's images ready..."
+  docker build -q -t home-hub-ears ears > /dev/null || exit 1
+  docker build -q -t home-hub-jarvis jarvis > /dev/null || exit 1
+  echo "When it's done, it plays the recording back on sound card $speakers's speakers."
+  export EARS_MIC_LEVEL EARS_MIC_CONTROL EARS_MIC_BOOST EARS_MIC_BOOST_CONTROL EARS_MIC_TEST_WAIT
+  EARS_MIC_LEVEL=$(setting EARS_MIC_LEVEL)
+  EARS_MIC_CONTROL=$(setting EARS_MIC_CONTROL)
+  EARS_MIC_BOOST=$(setting EARS_MIC_BOOST)
+  EARS_MIC_BOOST_CONTROL=$(setting EARS_MIC_BOOST_CONTROL)
+  EARS_MIC_TEST_WAIT=$((10#$wait_for))
+  interrupted=
+  trap 'interrupted=1' INT
+  docker run "${hardened[@]}" --group-add "$group" --device "/dev/snd/controlC$number:/dev/snd/controlC$number:rw" --device "/dev/snd/pcmC${number}D0c:/dev/snd/pcmC${number}D0c:rw" -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | play_back
+  codes=("${PIPESTATUS[@]}")
+  if [ -n "$interrupted" ]; then
+    trap - INT
+    kill -INT "$$"
+  fi
+  if [ "${codes[1]}" -ne 0 ] && [ "${codes[1]}" -ne 3 ]; then
+    exit "${codes[1]}"
+  fi
+  if [ "${codes[0]}" -ne 0 ]; then
+    exit "${codes[0]}"
+  fi
+  if [ "${codes[1]}" -eq 3 ]; then
+    echo "The check ended without sending any sound, so nothing was played." >&2
+    exit 1
+  fi
+  echo "Done. Run it again from somewhere else to compare."
+  exit 0
+fi
 
 whisper_model=base-int8
 whisper_files=(config.json model.bin vocabulary.txt tokenizer.json)

@@ -3,11 +3,15 @@ export type Microphone = (typeof microphones)[number];
 
 export type MicLevel = number | "keep";
 
-export type Config = { token: string; microphone: Microphone | null; micLevel: MicLevel; micControl: string; wake: boolean };
+export type MicSettings = { micLevel: MicLevel; micControl: string; micBoost: MicLevel; micBoostControl: string };
+
+export type Config = { token: string; microphone: Microphone | null; wake: boolean } & MicSettings;
 
 export const shortestToken = 32;
 export const defaultMicLevel = 80;
 export const defaultMicControl = "Capture";
+export const defaultMicBoostControl = "Internal Mic Boost";
+export const mostBoostSteps = 10;
 
 function readMicLevel(value: string | undefined): MicLevel {
   const level = value?.trim() ?? "";
@@ -17,11 +21,27 @@ function readMicLevel(value: string | undefined): MicLevel {
   throw new Error(`EARS_MIC_LEVEL must be a whole number from 0 to 100, or keep to leave the card's own level, not "${level}"`);
 }
 
-function readMicControl(value: string | undefined): string {
+function readMicBoost(value: string | undefined): MicLevel {
+  const boost = value?.trim() ?? "";
+  if (boost === "" || boost === "keep") return "keep";
+  if (/^\d{1,2}$/.test(boost) && Number(boost) <= mostBoostSteps) return Number(boost);
+  throw new Error(`EARS_MIC_BOOST must be a whole number of steps from 0 to ${mostBoostSteps}, or keep to leave the card's own boost, not "${boost}"`);
+}
+
+function readControl(name: string, value: string | undefined, fallback: string, like: string): string {
   const control = value?.trim() ?? "";
-  if (control === "") return defaultMicControl;
+  if (control === "") return fallback;
   if (/^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$/.test(control)) return control;
-  throw new Error(`EARS_MIC_CONTROL must be a mixer control's name, like Capture or Mic, as amixer scontrols lists them, not "${control}"`);
+  throw new Error(`${name} must be a mixer control's name, like ${like}, as amixer scontrols lists them, not "${control}"`);
+}
+
+export function readMicSettings(env: Record<string, string | undefined>): MicSettings {
+  return {
+    micLevel: readMicLevel(env.EARS_MIC_LEVEL),
+    micControl: readControl("EARS_MIC_CONTROL", env.EARS_MIC_CONTROL, defaultMicControl, "Capture or Mic"),
+    micBoost: readMicBoost(env.EARS_MIC_BOOST),
+    micBoostControl: readControl("EARS_MIC_BOOST_CONTROL", env.EARS_MIC_BOOST_CONTROL, defaultMicBoostControl, "Internal Mic Boost or Mic Boost"),
+  };
 }
 
 function readWake(value: string | undefined, microphone: Microphone | null): boolean {
@@ -39,5 +59,6 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const microphone = env.EARS_MICROPHONE?.trim() || "";
   if (microphone !== "" && !(microphones as readonly string[]).includes(microphone)) throw new Error(`EARS_MICROPHONE must be pretend or card, or left out until a microphone is set up, not "${microphone}"`);
   const mic = microphone === "" ? null : (microphone as Microphone);
-  return { token, microphone: mic, micLevel: readMicLevel(env.EARS_MIC_LEVEL), micControl: readMicControl(env.EARS_MIC_CONTROL), wake: readWake(env.EARS_WAKE, mic) };
+  const settings = readMicSettings(env);
+  return { token, microphone: mic, micLevel: settings.micLevel, micControl: settings.micControl, micBoost: settings.micBoost, micBoostControl: settings.micBoostControl, wake: readWake(env.EARS_WAKE, mic) };
 }

@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { findMicCard, micLevelArgs, mixerCommand, recorderArgs, recorderCommand, runCommand, setMicLevel, soundDir, SpeakersPassedIn, startHint } from "./mic-card.js";
+import { applyMicSettings, findMicCard, micBoostArgs, micLevelArgs, mixerCommand, recorderArgs, recorderCommand, runCommand, setMicBoost, setMicLevel, soundDir, SpeakersPassedIn, startHint } from "./mic-card.js";
 
 const folders: string[] = [];
 after(async () => {
@@ -83,6 +83,61 @@ test("amixer failing says which control and card, and what to set instead", asyn
   await assert.rejects(setMicLevel(1, "Capture", 80, async () => Promise.reject(new Error("Unable to find simple control 'Capture',0"))), {
     message: "Couldn't set Capture on sound card 1: Unable to find simple control 'Capture',0. Set EARS_MIC_CONTROL to one of the card's controls, or EARS_MIC_LEVEL=keep to leave its level alone",
   });
+});
+
+test("the boost is set on its control as a raw number of steps, which is how amixer takes a plain number", () => {
+  assert.deepEqual(micBoostArgs(1, "Internal Mic Boost", 1), ["-q", "-c", "1", "sset", "Internal Mic Boost", "1"]);
+  assert.deepEqual(micBoostArgs(3, "Mic Boost", 0), ["-q", "-c", "3", "sset", "Mic Boost", "0"]);
+});
+
+test("setting the boost runs amixer once, and a bad card or number of steps is refused before it runs", async () => {
+  const ran: (readonly string[])[] = [];
+  const run = async (command: string, args: readonly string[]) => {
+    ran.push([command, ...args]);
+  };
+  await setMicBoost(1, "Internal Mic Boost", 2, run);
+  await setMicBoost(0, "Mic Boost", 10, run);
+  assert.deepEqual(ran, [
+    ["amixer", "-q", "-c", "1", "sset", "Internal Mic Boost", "2"],
+    ["amixer", "-q", "-c", "0", "sset", "Mic Boost", "10"],
+  ]);
+  await assert.rejects(setMicBoost(-1, "Mic Boost", 1, run), { message: "A sound card's number must be a whole number from 0, not -1" });
+  await assert.rejects(setMicBoost(2.5, "Mic Boost", 1, run), { message: "A sound card's number must be a whole number from 0, not 2.5" });
+  await assert.rejects(setMicBoost(1, "Mic Boost", 11, run), { message: "The microphone's boost must be a whole number of steps from 0 to 10, not 11" });
+  await assert.rejects(setMicBoost(1, "Mic Boost", -1, run), { message: "The microphone's boost must be a whole number of steps from 0 to 10, not -1" });
+  await assert.rejects(setMicBoost(1, "Mic Boost", 0.5, run), { message: "The microphone's boost must be a whole number of steps from 0 to 10, not 0.5" });
+  assert.equal(ran.length, 2);
+});
+
+test("amixer failing on the boost says which control and card, and what to set instead", async () => {
+  await assert.rejects(setMicBoost(1, "Internal Mic Boost", 1, async () => Promise.reject(new Error("Unable to find simple control 'Internal Mic Boost',0"))), {
+    message: "Couldn't set Internal Mic Boost on sound card 1: Unable to find simple control 'Internal Mic Boost',0. Set EARS_MIC_BOOST_CONTROL to one of the card's controls, or EARS_MIC_BOOST=keep to leave its boost alone",
+  });
+});
+
+test("the microphone's settings set the level, then the boost, each only when it isn't keep, and say what they did", async () => {
+  const cases = [
+    [{ micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost" }, [["level", 1, "Capture", 80]], "Capture set to 80%"],
+    [{ micLevel: "keep", micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost" }, [], "at its own level"],
+    [{ micLevel: 100, micControl: "Mic", micBoost: 2, micBoostControl: "Mic Boost" }, [["level", 1, "Mic", 100], ["boost", 1, "Mic Boost", 2]], "Mic set to 100%, Mic Boost set to 2"],
+    [{ micLevel: "keep", micControl: "Capture", micBoost: 0, micBoostControl: "Internal Mic Boost" }, [["boost", 1, "Internal Mic Boost", 0]], "Capture at its own level, Internal Mic Boost set to 0"],
+  ] as const;
+  for (const [settings, calls, said] of cases) {
+    const made: unknown[] = [];
+    const told = await applyMicSettings(1, settings, { setLevel: async (...args) => void made.push(["level", ...args]), setBoost: async (...args) => void made.push(["boost", ...args]) });
+    assert.deepEqual(made, calls);
+    assert.equal(told, said);
+  }
+});
+
+test("a level that can't be set stops the settings before the boost", async () => {
+  let boosted = false;
+  await assert.rejects(
+    applyMicSettings(2, { micLevel: 80, micControl: "Capture", micBoost: 1, micBoostControl: "Internal Mic Boost" }, { setLevel: async () => Promise.reject(new Error("no Capture")), setBoost: async () => void (boosted = true) }),
+    { message: "no Capture" },
+  );
+  assert.equal(boosted, false);
+  await assert.rejects(applyMicSettings(2, { micLevel: 80, micControl: "Capture", micBoost: 1, micBoostControl: "Internal Mic Boost" }, { setLevel: async () => {}, setBoost: async () => Promise.reject(new Error("no boost")) }), { message: "no boost" });
 });
 
 test("running a real command: one that works resolves, one that fails says what it said, tidied, or something when it says nothing", async () => {

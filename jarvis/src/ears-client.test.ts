@@ -140,3 +140,11 @@ test("wake fields that aren't the shape ears sends are read as nothing, and a pr
   const tidy = readEarsAnswer(200, { version: 1, wake: { on: true, listening: false, held: false, problem: "the wake-word server\u001b[31m can't\n be reached" } });
   assert.equal(tidy.wake?.problem, "the wake-word server [31m can't be reached");
 });
+
+test("an answer outside the wake word's wait keeps the recording's number and the last one's number when ears sends them", () => {
+  assert.deepEqual(readEarsAnswer(200, { state: "recording", reason: null, last: null, id: 4, lastId: 3 }), { status: 200, state: "recording", reason: null, error: null, seconds: null, last: null, lastId: 3, id: 4 });
+  assert.deepEqual(readEarsAnswer(200, { state: "idle", reason: null, last: null, lastId: null }), { status: 200, state: "idle", reason: null, error: null, seconds: null, last: null, lastId: null });
+  assert.deepEqual(readEarsAnswer(200, { state: "idle", reason: null, last: null, id: 0, lastId: "2" }), { status: 200, state: "idle", reason: null, error: null, seconds: null, last: null, lastId: null, id: null });
+  assert.deepEqual(readEarsAnswer(200, { state: "idle", reason: null, last: null }), { status: 200, state: "idle", reason: null, error: null, seconds: null, last: null });
+  assert.deepEqual(readEarsAnswer(200, { state: "recording", reason: null, last: null, id: 1_795_000_000_124, lastId: 1_795_000_000_123 }), { status: 200, state: "recording", reason: null, error: null, seconds: null, last: null, lastId: 1_795_000_000_123, id: 1_795_000_000_124 });
+});

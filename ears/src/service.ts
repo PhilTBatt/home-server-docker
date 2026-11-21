@@ -7,7 +7,7 @@ import { createChanges, type Changes } from "./changes.js";
 import type { Config } from "./config.js";
 import { createEars, type Ears } from "./ears.js";
 import { createListener, wakeHost, wakeOff, wakePort, type Listener, type ListenerDeps } from "./listener.js";
-import { findMicCard, recorderArgs, recorderCommand, setMicLevel, type MicCard } from "./mic-card.js";
+import { applyMicSettings, findMicCard, recorderArgs, recorderCommand, type MicCard } from "./mic-card.js";
 import { switchEveryMs, switchFile, watchSwitch } from "./mute.js";
 import { startRecording, type Recorder } from "./recorder.js";
 import { earsPort, startEarsServer, type WakeApi } from "./server.js";
@@ -28,6 +28,7 @@ export type ServiceOptions = {
   toText?: ToText;
   findCard?: () => Promise<MicCard>;
   setLevel?: (card: number, control: string, level: number) => Promise<void>;
+  setBoost?: (card: number, control: string, steps: number) => Promise<void>;
   wake?: Partial<Pick<ListenerDeps, "connect" | "presenceMs" | "holdMs" | "gapMs" | "retryMs" | "settleMs" | "startWithinMs" | "quietForMs">> & { claimMs?: number; waitMs?: number };
 };
 
@@ -38,8 +39,7 @@ async function chooseRecorder(options: ServiceOptions): Promise<{ recorder: Reco
   if (config.microphone === null) return { recorder: options.recorder ?? pretendMic, microphone: "no microphone set" };
   if (config.microphone === "pretend") return { recorder: options.recorder ?? pretendMic, microphone: "the pretend microphone" };
   const card = await (options.findCard ?? (() => findMicCard()))();
-  if (config.micLevel !== "keep") await (options.setLevel ?? setMicLevel)(card.number, config.micControl, config.micLevel);
-  const level = config.micLevel === "keep" ? "at its own level" : `${config.micControl} set to ${config.micLevel}%`;
+  const level = await applyMicSettings(card.number, config, { setLevel: options.setLevel, setBoost: options.setBoost });
   return { recorder: options.recorder ?? { command: recorderCommand, args: recorderArgs(card) }, microphone: `sound card ${card.number}'s microphone (${level})` };
 }
 
@@ -54,6 +54,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
     log: options.log,
     toText: options.toText,
     claimMs: tuning.claimMs,
+    idsAfter: Date.now(),
     changed: () => {
       listener?.update();
       changes?.check();

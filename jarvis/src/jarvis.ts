@@ -113,7 +113,8 @@ try {
   const speaking = speaker;
   const talk = earsCall === null ? undefined : startTalk({ call: earsCall, wake: config.ears === "wake" });
   if (talk !== undefined) process.stdout.write(`${printable(await talk.check(starting.signal))}\n`);
-  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]) }));
+  let chatReady = false;
+  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady }));
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
@@ -140,6 +141,7 @@ try {
     talk,
     closing: closing.signal,
     wake,
+    ready: (yes) => (chatReady = yes),
     chime: wake === undefined || speaking === null ? undefined : chimeFor(speaking),
     interrupt: () => {
       if (!process.stdout.isTTY) return;
