@@ -208,7 +208,9 @@ Why the seller type matters, as the research for this read the sources (not lega
 The Deals section shows, from the last six hours of checks:
 - **Best now:** up to 10 matches under their search's guide price, from each search's 15 cheapest, great deals first, then the furthest under. Auctions and listings whose option price isn't known have no guide figure, so they're never in it.
 - **By part type:** one folded section for each part type (the searches' `group`), saying how many matches it has and its best price against the guide. Opened, it shows each search's five cheapest matches, and lists the searches with none. Searches with no `group` come last, under "No part type".
-- **Searches:** the switched-on searches, folded by part type: each one's matches, what its rules hid, its option reads, any problem or note, its Snooze or Wake button, and "What was hidden", which shows up to three titles for each rule that hid listings.
+- **Needs a look:** shown only when a switched-on search has a health note other than finding nothing (see "Search health"), naming each one and what's wrong.
+- **Searches:** the switched-on searches, folded by part type: each one's matches, what its rules hid, its option reads, any problem, note or health note, its eBay calls today, its Snooze or Wake button, "What was hidden", which shows up to three titles for each rule that hid listings, and for an eBay search "What cuts it", which asks for its cuts (see "What each filter cuts") and can take half a minute.
+- **Why didn't this alert?:** paste a listing's link or item number from eBay's site or app and it shows what `/deals/explain` says for each search it could belong to.
 
 Sections you open stay open when the page reloads the deals (after Check now, Snooze or Wake), until the page itself is reloaded.
 

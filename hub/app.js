@@ -114,6 +114,62 @@
  * @property {Record<string, number> | null} hidden
  * @property {{ fitted: number, unknown: number, unread: number } | null} [options]
  * @property {string[]} [notes]
+ * @property {string} [source]
+ * @property {number} [callsToday]
+ * @property {DealHealth[]} [health]
+ */
+
+/**
+ * @typedef {object} DealHealth
+ * @property {"incomplete" | "mostlyHidden" | "nothingFound" | "noMatch"} kind
+ * @property {string} text
+ */
+
+/**
+ * @typedef {object} DealCut
+ * @property {string} filter
+ * @property {number} total
+ * @property {{ name: string, count: number }[]} by
+ */
+
+/**
+ * @typedef {object} DealCuts
+ * @property {number} asWatched
+ * @property {DealCut[]} without
+ * @property {{ total: number, categoryId: string | null, categories: { id: string, name: string, count: number }[] }} wordsAlone
+ */
+
+/**
+ * @typedef {object} DealExplainedItem
+ * @property {string} title
+ * @property {number} total
+ * @property {string | null} [condition]
+ * @property {string | null} [country]
+ * @property {string} url
+ * @property {boolean | null} inStock
+ */
+
+/**
+ * @typedef {object} DealExplainReason
+ * @property {"eBay" | "watcher"} by
+ * @property {string} text
+ */
+
+/**
+ * @typedef {object} DealExplainedSearch
+ * @property {string} name
+ * @property {boolean} on
+ * @property {boolean} snoozed
+ * @property {string | null} [option]
+ * @property {string} says
+ * @property {DealExplainReason[]} reasons
+ */
+
+/**
+ * @typedef {object} DealExplained
+ * @property {DealExplainedItem} item
+ * @property {DealExplainedSearch[]} searches
+ * @property {string} about
  */
 
 /**
@@ -201,9 +257,14 @@ const dealsBest = byId("deals-best");
 const dealsList = byId("deals-list");
 const dealsSearches = byId("deals-searches");
 const checkDealsButton = /** @type {HTMLButtonElement} */ (byId("check-deals"));
+const explainForm = /** @type {HTMLFormElement} */ (byId("explain-form"));
+const explainInput = /** @type {HTMLInputElement} */ (byId("explain-item"));
+const explainButton = /** @type {HTMLButtonElement} */ (byId("explain-button"));
+const explainResult = byId("explain-result");
 const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/", "https://www.hotukdeals.com/deals/"];
 /** @type {number | undefined} */ let refreshTimer;
 /** @type {Set<string>} */ const openDealSections = new Set();
+/** @type {Map<string, "counting" | string[]>} */ const dealCuts = new Map();
 const dealsShownPerSearch = 5;
 const dealsReadPerSearch = 15;
 const dealsFreshMs = 6 * 60 * 60 * 1000;
@@ -441,6 +502,14 @@ function formatMoney(pence) {
 }
 
 /**
+ * @param {number} count
+ * @returns {string}
+ */
+function formatCount(count) {
+  return count.toLocaleString("en-GB");
+}
+
+/**
  * @param {DealListing} listing
  * @returns {string}
  */
@@ -451,21 +520,27 @@ function dealPrice(listing) {
 }
 
 /**
+ * @param {string} title
+ * @param {string} url
+ * @returns {HTMLAnchorElement | string}
+ */
+function listingLink(title, url) {
+  if (!listingLinkStarts.some((start) => url.startsWith(start))) return title;
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = title;
+  return link;
+}
+
+/**
  * @param {DealListing} listing
  * @returns {HTMLLIElement}
  */
 function dealItem(listing) {
   const item = document.createElement("li");
-  if (listingLinkStarts.some((start) => listing.url.startsWith(start))) {
-    const link = document.createElement("a");
-    link.href = listing.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = listing.title;
-    item.append(link);
-  } else {
-    item.append(listing.title);
-  }
+  item.append(listingLink(listing.title, listing.url));
   const auction = listing.buying.includes("AUCTION") && !listing.buying.includes("FIXED_PRICE");
   const details = [dealPrice(listing)];
   if (listing.condition !== null) details.push(listing.condition);
@@ -540,12 +615,16 @@ function dealSearchItem(search) {
   if (search.options) parts.push(`options: ${search.options.fitted} fitted, ${search.options.unknown} couldn't tell, ${search.options.unread} not read yet`);
   if (search.problem) parts.push(`problem: ${search.problem}`);
   for (const note of search.notes ?? []) parts.push(`note: ${note}`);
+  for (const note of search.health ?? []) parts.push(note.text.replace(/\.$/, ""));
+  if (search.callsToday) parts.push(`${search.callsToday} eBay call${search.callsToday === 1 ? "" : "s"} today`);
   const item = listItem(`${search.name}: ${parts.join("; ")}. `);
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = search.snoozed ? "Wake" : "Snooze for a day";
   button.addEventListener("click", () => snoozeDealSearch(search, button));
   item.append(button);
+  /** @type {HTMLUListElement[]} */
+  const lists = [];
   const recent = search.lastChecked !== null && Date.now() - Date.parse(search.lastChecked) <= dealsFreshMs;
   if (!search.snoozed && hidden !== "" && recent) {
     const show = document.createElement("button");
@@ -553,9 +632,129 @@ function dealSearchItem(search) {
     show.textContent = "What was hidden";
     const examples = document.createElement("ul");
     show.addEventListener("click", () => showHiddenExamples(search, show, examples));
-    item.append(" ", show, examples);
+    item.append(" ", show);
+    lists.push(examples);
   }
+  if (search.source === "ebay") {
+    const count = document.createElement("button");
+    count.type = "button";
+    count.textContent = "What cuts it";
+    count.setAttribute("aria-label", `What cuts ${search.name}`);
+    count.dataset.cuts = search.id;
+    const cuts = document.createElement("ul");
+    cuts.setAttribute("aria-live", "polite");
+    cuts.dataset.cuts = search.id;
+    count.addEventListener("click", () => showCuts(search.id));
+    showCutsState(search.id, count, cuts);
+    item.append(" ", count);
+    lists.push(cuts);
+  }
+  item.append(...lists);
   return item;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+function isObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * @param {string} path
+ * @param {string} failing
+ * @returns {Promise<{ reply: unknown } | { text: string }>}
+ */
+async function fetchReply(path, failing) {
+  /** @type {Response} */
+  let response;
+  /** @type {unknown} */
+  let reply;
+  try {
+    response = await fetch(path);
+    reply = response.ok ? await response.json() : await response.json().catch(() => null);
+  } catch {
+    return { text: "Couldn't reach the API." };
+  }
+  if (response.ok) return { reply };
+  const error = isObject(reply) && typeof reply.error === "string" ? reply.error : `the API replied ${response.status}`;
+  return { text: `${failing}: ${error}.` };
+}
+
+/**
+ * @param {unknown} part
+ * @returns {boolean}
+ */
+function isNamedCount(part) {
+  return isObject(part) && typeof part.name === "string" && typeof part.count === "number";
+}
+
+/**
+ * @param {unknown} reply
+ * @returns {reply is DealCuts}
+ */
+function isDealCuts(reply) {
+  if (!isObject(reply) || typeof reply.asWatched !== "number" || !Array.isArray(reply.without) || !isObject(reply.wordsAlone)) return false;
+  const alone = reply.wordsAlone;
+  const cutsOk = reply.without.every((cut) => isObject(cut) && typeof cut.filter === "string" && typeof cut.total === "number" && Array.isArray(cut.by) && cut.by.every(isNamedCount));
+  return cutsOk && typeof alone.total === "number" && (alone.categoryId === null || typeof alone.categoryId === "string") && Array.isArray(alone.categories) && alone.categories.every(isNamedCount);
+}
+
+/**
+ * @param {DealCuts} cuts
+ * @returns {string[]}
+ */
+function cutLines(cuts) {
+  const lines = [`As it's set: ${formatCount(cuts.asWatched)} listing${cuts.asWatched === 1 ? "" : "s"}`];
+  for (const cut of cuts.without) {
+    const by = cut.by.length === 0 ? "" : ` (${cut.by.map((part) => `${part.name} ${formatCount(part.count)}`).join(", ")})`;
+    lines.push(`Without ${cut.filter}: ${formatCount(cut.total)}${by}`);
+  }
+  const alone = cuts.wordsAlone;
+  const categories = alone.categories.slice(0, 5).map((category) => `${category.name} ${formatCount(category.count)}`).join(", ");
+  const where = [alone.categoryId === null ? "" : `mostly in category ${alone.categoryId}`, categories].filter((part) => part !== "");
+  lines.push(`Words alone: ${formatCount(alone.total)}${where.length === 0 ? "" : ` (${where.join("; ")})`}`);
+  return lines;
+}
+
+/**
+ * @param {string} id
+ * @param {HTMLButtonElement} button
+ * @param {HTMLUListElement} list
+ */
+function showCutsState(id, button, list) {
+  const state = dealCuts.get(id);
+  button.disabled = state === "counting";
+  button.hidden = Array.isArray(state);
+  list.replaceChildren(...(state === undefined ? [] : state === "counting" ? [listItem("Counting, which can take half a minute...")] : state.map(listItem)));
+}
+
+/**
+ * @param {string} id
+ * @returns {{ button: HTMLButtonElement, list: HTMLUListElement } | null}
+ */
+function cutsRow(id) {
+  const button = [...dealsSearches.querySelectorAll("button")].find((element) => element.dataset.cuts === id);
+  const list = [...dealsSearches.querySelectorAll("ul")].find((element) => element.dataset.cuts === id);
+  return button === undefined || list === undefined ? null : { button, list };
+}
+
+/**
+ * @param {string} id
+ */
+async function showCuts(id) {
+  dealCuts.set(id, "counting");
+  const counting = cutsRow(id);
+  if (counting !== null) showCutsState(id, counting.button, counting.list);
+  const got = await fetchReply(`/api/deals/searches/${encodeURIComponent(id)}/cuts`, "Couldn't count them");
+  const lines = "text" in got ? got.text : isDealCuts(got.reply) ? cutLines(got.reply) : "Couldn't read the API's reply.";
+  if (Array.isArray(lines)) dealCuts.set(id, lines);
+  else dealCuts.delete(id);
+  const row = cutsRow(id);
+  if (row === null) return;
+  showCutsState(id, row.button, row.list);
+  if (!Array.isArray(lines)) row.list.replaceChildren(listItem(lines));
 }
 
 /**
@@ -669,10 +868,15 @@ function searchSections(searches) {
   const sections = byPartType(on).map(([type, found]) => {
     const list = document.createElement("ul");
     list.replaceChildren(...found.map(dealSearchItem));
-    const trouble = found.filter((search) => search.problem || (search.notes ?? []).length > 0).length;
+    const trouble = found.filter((search) => search.problem || (search.notes ?? []).length > 0 || (search.health ?? []).length > 0).length;
     return dealSection(`searches:${type}`, `${partTypeName(type)}: ${found.length} search${found.length === 1 ? "" : "es"}${trouble > 0 ? `, ${trouble} with a problem or note` : ""}`, [list]);
   });
-  return [dealSection("searches", `Searches: ${on.length} switched on`, sections)];
+  const all = dealSection("searches", `Searches: ${on.length} switched on`, sections);
+  const needing = on.filter((search) => !search.snoozed).map((search) => ({ search, notes: (search.health ?? []).filter((note) => note.kind !== "nothingFound") })).filter(({ notes }) => notes.length > 0);
+  if (needing.length === 0) return [all];
+  const list = document.createElement("ul");
+  list.replaceChildren(...needing.map(({ search, notes }) => listItem(`${search.name}: ${notes.map((note) => note.text).join(" ")}`)));
+  return [dealSection("health", `Needs a look: ${needing.length} search${needing.length === 1 ? "" : "es"}`, [list]), all];
 }
 
 /**
@@ -737,6 +941,60 @@ checkDealsButton.addEventListener("click", async () => {
     dealsStatus.textContent = "Couldn't reach the API.";
   }
   checkDealsButton.disabled = false;
+});
+
+/**
+ * @param {unknown} reply
+ * @returns {reply is DealExplained}
+ */
+function isDealExplained(reply) {
+  if (!isObject(reply) || !isObject(reply.item) || !Array.isArray(reply.searches)) return false;
+  const item = reply.item;
+  const searchesOk = reply.searches.every((search) => isObject(search) && typeof search.name === "string" && typeof search.says === "string" && Array.isArray(search.reasons) && search.reasons.every((reason) => isObject(reason) && typeof reason.text === "string"));
+  return searchesOk && typeof item.title === "string" && typeof item.url === "string" && typeof item.total === "number";
+}
+
+/**
+ * @param {DealExplained} explained
+ * @returns {HTMLLIElement[]}
+ */
+function explainedItems(explained) {
+  const listing = explained.item;
+  const first = document.createElement("li");
+  first.append(listingLink(listing.title, listing.url));
+  const details = [formatMoney(listing.total)];
+  if (listing.condition) details.push(listing.condition);
+  if (listing.inStock === false) details.push("sold out");
+  if (listing.country && listing.country !== "GB") details.push(`in ${listing.country}`);
+  first.append(`: ${details.join(", ")}`);
+  const items = [first];
+  for (const search of explained.searches) {
+    const option = typeof search.option === "string" ? ` (at option: ${search.option})` : "";
+    const state = search.on === false ? " (switched off)" : search.snoozed === true ? " (snoozed)" : "";
+    const item = listItem(`${search.name}${option}${state}: ${search.says}`);
+    if (search.reasons.length > 0) {
+      const reasons = document.createElement("ul");
+      reasons.replaceChildren(...search.reasons.map((reason) => listItem(`${reason.by === "eBay" ? "eBay" : "Watcher"}: ${reason.text}`)));
+      item.append(reasons);
+    }
+    items.push(item);
+  }
+  if (explained.searches.length === 0) items.push(listItem("None of the searches have words from its title."));
+  const about = document.createElement("small");
+  about.textContent = explained.about;
+  const last = document.createElement("li");
+  last.append(about);
+  items.push(last);
+  return items;
+}
+
+explainForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  explainButton.disabled = true;
+  explainResult.replaceChildren(listItem("Reading the listing..."));
+  const got = await fetchReply(`/api/deals/explain?item=${encodeURIComponent(explainInput.value)}`, "Couldn't explain it");
+  explainResult.replaceChildren(...("text" in got ? [listItem(got.text)] : isDealExplained(got.reply) ? explainedItems(got.reply) : [listItem("Couldn't read the API's reply.")]));
+  explainButton.disabled = false;
 });
 
 async function checkLogin() {
