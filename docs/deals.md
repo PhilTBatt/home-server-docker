@@ -153,7 +153,7 @@ bash host/hub-get.sh "/deals/categories/170083/details"
 ```
 The first suggests categories for some words, each with its number and where it sits ("Computers, Tablets & Network Hardware > Computer Components & Parts > Memory (RAM)"). The second lists one category's details: each name, whether sellers must fill it in, whether they type it freely (so spellings vary) or pick from eBay's list, and up to 100 values. Only the last level of categories has details; asking for one higher up says so.
 
-Each lookup is one eBay call (the first category lookup after a restart is two), they count towards the 150 full reads a day, and at most one lookup of any kind is allowed every ten seconds.
+Each lookup is one eBay call (the first category lookup after a restart is two), they count towards the 150 full reads a day, and lookups of any kind run at least ten seconds apart. One asked sooner waits its turn, so a command can take up to half a minute to answer; once three are waiting, the next is refused with "Too many eBay lookups are already waiting their turn".
 
 **Hiding by details.** eBay can only be asked for listings that *have* a detail, not ones that don't. So `hideDetails` asks again for each name, with the values to hide (and, in `"only"` mode, the search's own `details` too), and hides the listings that come back. Listings whose seller left that detail blank still show, which is the point: blank details are often the bargains, and the title words in `avoid` still catch many of them.
 

@@ -11,16 +11,18 @@ type DealOptions = Pick<Config, "features"> & {
   environment?: string;
   ai?: boolean;
   now?: () => Date;
+  wait?: (ms: number) => Promise<void>;
 };
 
 const checkGapMs = 60 * 1000;
 const lookupGapMs = 10 * 1000;
+const lookupQueueMs = 30 * 1000;
 const hourMs = 60 * 60 * 1000;
 const switchedOff = { error: "The deal watcher is switched off" };
 const aiOff = { error: "Listings for AI are switched off" };
 const usedUp = { error: "Today's eBay calls, or today's listings read in full, are used up" };
 const waiting = { error: "eBay asked the watcher to wait, so nothing is being read for now" };
-const lookupWait = { error: "Something was looked up on eBay less than ten seconds ago" };
+const lookupWait = { error: "Too many eBay lookups are already waiting their turn, so try again in a minute" };
 const briefMatches = 15;
 const maxShown = 50;
 const replyLength = 45_000;
@@ -127,13 +129,16 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
   const now = options.now ?? (() => new Date());
   const watcher = options.features.deals ? options.watcher : undefined;
   let lastForced: number | null = null;
-  let lastLookup: number | null = null;
+  let nextLookup = 0;
+  const pause = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
-  function tooSoon(): boolean {
+  async function lookupTurn(): Promise<boolean> {
     const time = now().getTime();
-    if (lastLookup !== null && time - lastLookup < lookupGapMs) return true;
-    lastLookup = time;
-    return false;
+    const turn = Math.max(time, nextLookup);
+    if (turn - time > lookupQueueMs) return false;
+    nextLookup = turn + lookupGapMs;
+    if (turn > time) await pause(turn - time);
+    return true;
   }
 
   async function readFull(params: unknown) {
@@ -215,7 +220,7 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     if (categoryId !== null && !(typeof categoryId === "string" && /^[0-9]{1,10}$/.test(categoryId))) {
       return reply.code(400).send({ error: "categoryId must be one of eBay's category numbers" });
     }
-    if (tooSoon()) return reply.code(429).send(lookupWait);
+    if (!(await lookupTurn())) return reply.code(429).send(lookupWait);
     const result = await watcher.detailNames("ebay", query, categoryId, now());
     if (result.status === "ok") return { query, ...result.names };
     if (result.status === "limit") return reply.code(429).send(usedUp);
@@ -228,7 +233,7 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     const asked = isObject(request.query) ? request.query : {};
     const query = typeof asked.q === "string" ? asked.q.trim() : "";
     if (query === "" || query.length > 100 || controlCharacters.test(query)) return reply.code(400).send({ error: "q must be the search words, 1 to 100 characters" });
-    if (tooSoon()) return reply.code(429).send(lookupWait);
+    if (!(await lookupTurn())) return reply.code(429).send(lookupWait);
     const result = await watcher.categories("ebay", query, now());
     if (result.status === "ok") return { query, ...result.value };
     if (result.status === "limit") return reply.code(429).send(usedUp);
@@ -240,7 +245,7 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
     const id = isObject(request.params) ? request.params.id : null;
     if (typeof id !== "string" || !/^[0-9]{1,10}$/.test(id)) return reply.code(400).send({ error: "That isn't one of eBay's category numbers" });
-    if (tooSoon()) return reply.code(429).send(lookupWait);
+    if (!(await lookupTurn())) return reply.code(429).send(lookupWait);
     const result = await watcher.categoryDetails("ebay", id, now());
     if (result.status === "ok") return result.value;
     if (result.status === "limit") return reply.code(429).send(usedUp);

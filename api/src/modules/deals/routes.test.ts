@@ -81,6 +81,7 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
     wakes: [] as string[],
     fulls: [] as string[],
     names: [] as [string, string, string | null][],
+    nameTimes: [] as string[],
     full: { status: "unknown" } as FullReply,
     namesReply: { status: "ok", names: { categoryId: "179", categories: [], details: [{ name: "Form Factor", values: [{ value: "SFF", count: 310 }] }] } } as NamesReply,
     lookups: [] as string[][],
@@ -119,8 +120,9 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
       seen.fulls.push(id);
       return seen.full;
     },
-    detailNames: async (source, query, categoryId) => {
+    detailNames: async (source, query, categoryId, now) => {
       seen.names.push([source, query, categoryId]);
+      seen.nameTimes.push(now === undefined ? "none" : now.toISOString());
       return seen.namesReply;
     },
     categories: async (source, query) => {
@@ -137,9 +139,21 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
 
 function buildApp(watcher: DealWatcher | undefined, features = allOn, ai = false) {
   const clock = { time: start };
+  const waits: number[] = [];
   const app = Fastify();
-  app.register(deals, { prefix: "/deals", features, watcher, seen: "memory", environment: "production", ai, now: () => new Date(clock.time) });
-  return { app, clock };
+  app.register(deals, {
+    prefix: "/deals",
+    features,
+    watcher,
+    seen: "memory",
+    environment: "production",
+    ai,
+    now: () => new Date(clock.time),
+    wait: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  return { app, clock, waits };
 }
 
 const routes = [
@@ -431,19 +445,32 @@ test("with listings for AI switched on, a full listing carries the same note, an
   assert.deepEqual([missing.statusCode, missing.json()], [404, { error: "That listing isn't among the current matches" }]);
 });
 
-test("item details are looked up for a query on eBay, at most once every ten seconds", async () => {
+test("item details are looked up for a query on eBay, at most once every ten seconds, with a lookup asked sooner waiting its turn", async () => {
   const { watcher, seen } = fakeWatcher();
-  const { app, clock } = buildApp(watcher);
+  const { app, clock, waits } = buildApp(watcher);
   const first = await app.inject({ method: "GET", url: "/deals/details?q=%20optiplex%207070%20&categoryId=179" });
   assert.equal(first.statusCode, 200);
   assert.deepEqual(first.json(), { query: "optiplex 7070", categoryId: "179", categories: [], details: [{ name: "Form Factor", values: [{ value: "SFF", count: 310 }] }] });
   assert.deepEqual(seen.names, [["ebay", "optiplex 7070", "179"]]);
+  assert.deepEqual(waits, []);
   clock.time = start + 9_000;
-  const tooSoon = await app.inject({ method: "GET", url: "/deals/details?q=ddr4" });
-  assert.deepEqual([tooSoon.statusCode, tooSoon.json()], [429, { error: "Something was looked up on eBay less than ten seconds ago" }]);
-  clock.time = start + 10_000;
-  assert.equal((await app.inject({ method: "GET", url: "/deals/details?q=ddr4" })).statusCode, 200);
+  const soon = await app.inject({ method: "GET", url: "/deals/details?q=ddr4" });
+  assert.equal(soon.statusCode, 200);
+  assert.deepEqual(waits, [1_000]);
   assert.deepEqual(seen.names[1], ["ebay", "ddr4", null]);
+  assert.equal((await app.inject({ method: "GET", url: "/deals/details?q=ddr5" })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/deals/details?q=ddr3" })).statusCode, 200);
+  assert.deepEqual(waits, [1_000, 11_000, 21_000]);
+  const full = await app.inject({ method: "GET", url: "/deals/details?q=sodimm" });
+  assert.deepEqual([full.statusCode, full.json()], [429, { error: "Too many eBay lookups are already waiting their turn, so try again in a minute" }]);
+  assert.deepEqual(waits, [1_000, 11_000, 21_000]);
+  assert.equal(seen.names.length, 4);
+  clock.time = start + 40_000;
+  assert.equal((await app.inject({ method: "GET", url: "/deals/details?q=sodimm" })).statusCode, 200);
+  assert.deepEqual(waits, [1_000, 11_000, 21_000]);
+  clock.time = start + 45_000;
+  assert.equal((await app.inject({ method: "GET", url: "/deals/details?q=ecc" })).statusCode, 200);
+  assert.deepEqual(waits, [1_000, 11_000, 21_000, 5_000]);
 });
 
 test("a details lookup that eBay refuses or the day's limit stops says which", async () => {
@@ -563,23 +590,22 @@ test("reading a listing in full leaves no item number in the request log", async
 });
 test("categories are suggested for some words, and a category's item details are listed, sharing the ten-second wait", async () => {
   const { watcher, seen } = fakeWatcher();
-  const { app, clock } = buildApp(watcher);
+  const { app, clock, waits } = buildApp(watcher);
   const found = await app.inject({ method: "GET", url: "/deals/categories?q=%20ddr4%2032gb%20" });
   assert.deepEqual([found.statusCode, found.json()], [200, { query: "ddr4 32gb", categories: [{ id: "170083", name: "Memory (RAM)", path: "Computers > Components > Memory (RAM)" }] }]);
   clock.time = start + 5_000;
-  const early = await app.inject({ method: "GET", url: "/deals/categories/170083/details" });
-  assert.deepEqual([early.statusCode, early.json()], [429, { error: "Something was looked up on eBay less than ten seconds ago" }]);
-  clock.time = start + 10_000;
   const listed = await app.inject({ method: "GET", url: "/deals/categories/170083/details" });
   assert.deepEqual([listed.statusCode, listed.json()], [200, { categoryId: "170083", details: [{ name: "Form Factor", required: false, freeText: true, values: ["DIMM", "SO-DIMM"], moreValues: 0 }] }]);
+  assert.deepEqual(waits, [5_000]);
   clock.time = start + 15_000;
-  assert.equal((await app.inject({ method: "GET", url: "/deals/details?q=ddr4" })).statusCode, 429);
+  assert.equal((await app.inject({ method: "GET", url: "/deals/details?q=ddr4" })).statusCode, 200);
+  assert.deepEqual(waits, [5_000, 5_000]);
   assert.deepEqual(seen.lookups, [["categories", "ebay", "ddr4 32gb"], ["details", "ebay", "170083"]]);
 });
 
 test("a category lookup with odd words or an odd number is refused without asking eBay or starting the wait", async () => {
   const { watcher, seen } = fakeWatcher();
-  const { app } = buildApp(watcher);
+  const { app, waits } = buildApp(watcher);
   for (const query of ["", "q=", "q=%20", `q=${"x".repeat(101)}`, "q=a%0Ab", "q=a&q=b"]) {
     const response = await app.inject({ method: "GET", url: `/deals/categories?${query}` });
     assert.deepEqual([response.statusCode, response.json()], [400, { error: "q must be the search words, 1 to 100 characters" }], query);
@@ -590,6 +616,7 @@ test("a category lookup with odd words or an odd number is refused without askin
   }
   assert.deepEqual(seen.lookups, []);
   assert.equal((await app.inject({ method: "GET", url: "/deals/categories?q=ram" })).statusCode, 200);
+  assert.deepEqual(waits, []);
 });
 
 test("a category lookup that is refused, waiting or out of calls says which", async () => {
@@ -775,4 +802,24 @@ test("the matches can be asked for at most a few listings a search, and anything
     assert.deepEqual([response.statusCode, response.json()], [400, { error: "Ask for nothing, or most=n with a whole number from 1 to 50" }], odd);
   }
   assert.equal(seen.matchMost.length, 4);
+});
+
+test("a lookup that has to wait reaches eBay only after its wait, ten seconds after the last", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const clock = { time: start };
+  const app = Fastify();
+  app.register(deals, {
+    prefix: "/deals",
+    features: allOn,
+    watcher,
+    now: () => new Date(clock.time),
+    wait: async (ms) => {
+      await new Promise((resolve) => setImmediate(resolve));
+      clock.time += ms;
+    },
+  });
+  await app.inject({ method: "GET", url: "/deals/details?q=ddr4" });
+  clock.time = start + 3_000;
+  await app.inject({ method: "GET", url: "/deals/details?q=ddr5" });
+  assert.deepEqual(seen.nameTimes, [new Date(start).toISOString(), new Date(start + 10_000).toISOString()]);
 });
