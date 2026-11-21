@@ -220,6 +220,7 @@ const routes = [
   ["GET", "/deals/searches/optiplex/cuts"],
   ["GET", "/deals/explain?item=110000000001"],
   ["GET", "/deals/ai/explain?item=110000000001"],
+  ["GET", "/deals/ai/searches/optiplex/hidden"],
   ["POST", "/deals/searches/optiplex/snooze"],
   ["POST", "/deals/searches/optiplex/wake"],
 ] as const;
@@ -997,4 +998,19 @@ test("the AI's explain route only answers while listings for AI are on, and carr
   assert.deepEqual([answered.statusCode, answered.json()], [200, { note: aiNote, ...explainedValue }]);
   const bad = await on.inject({ method: "GET", url: "/deals/ai/explain?item=nope" });
   assert.equal(bad.statusCode, 400);
+});
+
+test("the AI's route for a search's hidden titles only answers while listings for AI are on, with the note about seller text", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const refused = await buildApp(watcher).app.inject({ method: "GET", url: "/deals/ai/searches/optiplex/hidden" });
+  assert.deepEqual([refused.statusCode, refused.json()], [403, { error: "Listings for AI are switched off" }]);
+  assert.equal(seen.hiddenAsked.length, 0);
+  const { app } = buildApp(watcher, allOn, true);
+  const found = await app.inject({ method: "GET", url: "/deals/ai/searches/optiplex/hidden" });
+  assert.deepEqual([found.statusCode, found.json()], [200, { note: aiNote, id: "optiplex", name: "OptiPlex", checkedAt: "2026-11-18T11:55:00.000Z", hidden: { words: 4 }, examples: { words: ["Dell OptiPlex 7070 Micro"] } }]);
+  const missing = await app.inject({ method: "GET", url: "/deals/ai/searches/ram/hidden" });
+  assert.deepEqual([missing.statusCode, missing.json()], [404, { error: "That isn't one of the searches, or it has nothing checked in the last six hours" }]);
+  const odd = await app.inject({ method: "GET", url: "/deals/ai/searches/Bad%20Id/hidden" });
+  assert.deepEqual([odd.statusCode, odd.json()], [400, { error: "That isn't a search id" }]);
+  assert.deepEqual(seen.hiddenAsked.map(([id]) => id), ["optiplex", "ram"]);
 });

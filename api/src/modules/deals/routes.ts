@@ -182,6 +182,16 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     return found;
   });
 
+  app.get("/ai/searches/:id/hidden", async (request, reply) => {
+    if (watcher === undefined) return reply.code(404).send(switchedOff);
+    if (options.ai !== true) return reply.code(403).send(aiOff);
+    const id = searchId(request.params);
+    if (id === null) return reply.code(400).send({ error: "That isn't a search id" });
+    const found = watcher.hidden(id, now());
+    if (found === null) return reply.code(404).send({ error: "That isn't one of the searches, or it has nothing checked in the last six hours" });
+    return { note: aiNote, ...found };
+  });
+
   app.get("/matches", async (request, reply) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
     const asked = isObject(request.query) ? request.query : {};
