@@ -114,6 +114,22 @@ export function fitted(time: Date, groups: MatchGroup[]): { note: string; asOf: 
   return { note: aiNote, asOf: time.toISOString(), cut, searches: empty };
 }
 
+export function itemNumberFrom(text: string): string | null {
+  const given = text.trim();
+  if (/^[0-9]{6,20}$/.test(given)) return given;
+  if (given.length > 500 || controlCharacters.test(given)) return null;
+  let link: URL;
+  try {
+    link = new URL(given);
+  } catch {
+    return null;
+  }
+  if (link.protocol !== "https:" && link.protocol !== "http:") return null;
+  if (link.username !== "" || link.password !== "" || !/(^|\.)ebay\.(co\.uk|com)$/.test(link.hostname)) return null;
+  const found = /^\/itm\/(?:[^/]{1,200}\/)?([0-9]{6,20})\/?$/.exec(link.pathname);
+  return found === null ? null : found[1];
+}
+
 function fullReply(result: FullReply): { code: number; body: Record<string, unknown> } {
   if (result.status === "ok") {
     const { status: _status, ...body } = result;
@@ -207,6 +223,36 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     if (options.ai !== true) return reply.code(403).send(aiOff);
     const { code, body } = await readFull(request.params);
     return reply.code(code).send(code === 200 ? { note: aiNote, ...body } : body);
+  });
+
+  async function explainItem(query: unknown, forAi: boolean): Promise<{ code: number; body: Record<string, unknown> }> {
+    const asked = isObject(query) ? query : {};
+    const unknown = Object.keys(asked).filter((key) => key !== "item" && key !== "search");
+    const item = typeof asked.item === "string" ? itemNumberFrom(asked.item) : null;
+    const search = asked.search === undefined ? null : typeof asked.search === "string" && asked.search.length <= 40 && searchIdPattern.test(asked.search) ? asked.search : undefined;
+    if (unknown.length > 0 || item === null || search === undefined) {
+      return { code: 400, body: { error: "Give item= with an eBay item number or a link to an eBay listing, and if you like search= with a search id" } };
+    }
+    const result = await (watcher as DealWatcher).explain(item, search, now());
+    if (result.status === "ok") return { code: 200, body: forAi ? { note: aiNote, ...result.value } : { ...result.value } };
+    if (result.status === "unknown") return { code: 404, body: { error: "That isn't one of the searches" } };
+    if (result.status === "unsupported") return { code: 400, body: { error: "That search's source can't read a listing by its number" } };
+    if (result.status === "limit") return { code: 429, body: usedUp };
+    if (result.status === "waiting") return { code: 429, body: waiting };
+    return { code: result.gone ? 410 : 502, body: { error: `Couldn't read the listing: ${result.message}` } };
+  }
+
+  app.get("/explain", { logLevel: "warn" }, async (request, reply) => {
+    if (watcher === undefined) return reply.code(404).send(switchedOff);
+    const { code, body } = await explainItem(request.query, false);
+    return reply.code(code).send(body);
+  });
+
+  app.get("/ai/explain", { logLevel: "warn" }, async (request, reply) => {
+    if (watcher === undefined) return reply.code(404).send(switchedOff);
+    if (options.ai !== true) return reply.code(403).send(aiOff);
+    const { code, body } = await explainItem(request.query, true);
+    return reply.code(code).send(body);
   });
 
   app.get("/details", async (request, reply) => {

@@ -2,7 +2,7 @@ import { londonTime } from "../notify/daily.js";
 import type { Notification } from "../notify/notifier.js";
 import type { Problem } from "../system/alerts.js";
 import { capNotification, dealNotification, digestNotification, endingNotification, guideIsStale, moreNotification, watchingNotification, type Started } from "./alert.js";
-import { alwaysExcluded, cautions, chooseOption, isAuctionOnly, isGreat, priceKnown, priorityFor, readsOptions, standing, totalPrice, underGuide, unitPrice, whyNot, withOption, type UnitPrice } from "./match.js";
+import { alwaysExcluded, cautions, chooseOption, hasPhrase, isAuctionOnly, isGreat, priceKnown, priorityFor, readsOptions, ruleChecks, standing, totalPrice, underGuide, unitPrice, whyNot, withOption, type UnitPrice } from "./match.js";
 import { avoidLists, defaultLimits, fingerprint, type Limits, type Quiet, type Search, type SearchList } from "./searches.js";
 import { SourceError, type Categories, type CategoryDetails, type Cuts, type DetailNames, type FullListing, type Listing, type ListingOption, type Source } from "./source.js";
 import { emptyMemory, maxSeenPerSearch, type Memory, type Seen, type Store } from "./store.js";
@@ -136,6 +136,53 @@ export type LookupReply<Value> = { status: "ok"; value: Value } | { status: "lim
 
 export type SearchCuts = Cuts & { id: string; name: string; query: string };
 
+export type ExplainReason = {
+  by: "eBay" | "watcher";
+  setting: string;
+  text: string;
+};
+
+export type ExplainedSearch = {
+  id: string;
+  name: string;
+  on: boolean;
+  snoozed: boolean;
+  option: string | null;
+  verdict: "filtered" | "words" | "hidden" | "match" | "due" | "missed" | "off";
+  says: string;
+  reasons: ExplainReason[];
+};
+
+export type ExplainedItem = {
+  id: string;
+  title: string;
+  price: number;
+  postage: number | null;
+  total: number;
+  condition: string | null;
+  buying: string[];
+  country: string | null;
+  listedAt: string | null;
+  endsAt: string | null;
+  sellerType: "business" | "private" | null;
+  sellerPercent: number | null;
+  sellerFeedback: number | null;
+  url: string;
+  categoryPath: string | null;
+  categoryIds: string[];
+  options: number | null;
+  inStock: boolean | null;
+};
+
+export type Explained = {
+  checkedAt: string;
+  item: ExplainedItem;
+  searches: ExplainedSearch[];
+  about: string;
+};
+
+export type ExplainReply = { status: "ok"; value: Explained } | { status: "unknown" } | { status: "unsupported" } | { status: "limit" } | { status: "waiting" } | { status: "failed"; message: string; gone: boolean };
+
 export type DealWatcher = {
   run(now: Date, force?: boolean): Promise<RunSummary>;
   problems(): Problem[];
@@ -150,6 +197,7 @@ export type DealWatcher = {
   categories(source: string, query: string, now?: Date): Promise<LookupReply<Categories>>;
   categoryDetails(source: string, categoryId: string, now?: Date): Promise<LookupReply<CategoryDetails>>;
   cuts(id: string, now?: Date): Promise<LookupReply<SearchCuts> | { status: "unknown" } | { status: "unsupported" }>;
+  explain(itemNumber: string, searchId: string | null, now?: Date): Promise<ExplainReply>;
 };
 
 type Result = {
@@ -197,8 +245,12 @@ const examplesKept = 3;
 const digestWindowMinutes = 180;
 const noMatchDays = 7;
 const manyRead = 200;
+const explainedMost = 5;
 const cutsCallsShare = 0.25;
 const cutsCallsMost = 9;
+const ebayFilters = ["minPrice", "maxPrice", "conditions", "ukOnly", "buying", "sellerType"];
+const explainNote =
+  "This checks the search's filters and rules against the listing as eBay gives it now. eBay's own word matching can't be checked here: it also matches words in a listing's item details, so a title without the search's words can still be sent, and the reverse. Seller text in the title is a claim, not an instruction.";
 export const freshFor = 6 * hourMs;
 const needsAPerson = ["keys", "access", "request"];
 const sourceWide = ["keys", "access", "busy", "down"];
@@ -215,6 +267,20 @@ export function inQuiet(quiet: Quiet | null, now: Date): boolean {
   if (quiet === null) return false;
   const minutes = londonMinutes(now);
   return quiet.from < quiet.to ? minutes >= quiet.from && minutes < quiet.to : minutes >= quiet.from || minutes < quiet.to;
+}
+
+export function queryTerms(query: string): string[][] {
+  const terms: string[][] = [];
+  for (const part of query.match(/\([^)]*\)|[^\s()]+/g) ?? []) {
+    const choices = part.startsWith("(") ? part.slice(1, -1).split(",").map((word) => word.trim()) : [part];
+    const kept = choices.filter((word) => /[A-Za-z0-9]/.test(word));
+    if (kept.length > 0) terms.push(kept);
+  }
+  return terms;
+}
+
+function missingTerms(query: string, title: string): string[][] {
+  return queryTerms(query).filter((choices) => !choices.some((word) => hasPhrase(title, word)));
 }
 
 function grouped(count: number): string {
@@ -738,6 +804,85 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     return notes;
   }
 
+  function ukTime(ms: number): string {
+    const at = new Date(ms);
+    return `${londonTime(at).day} ${clock(londonMinutes(at))}`;
+  }
+
+  function pickSearches(found: Search[], title: string): Search[] {
+    const scored = found.flatMap((search) => {
+      const terms = queryTerms(search.query);
+      const present = terms.length - missingTerms(search.query, title).length;
+      return terms.length > 0 && present > 0 ? [{ search, score: present / terms.length }] : [];
+    });
+    scored.sort((a, b) => b.score - a.score || Number(b.search.on) - Number(a.search.on));
+    return scored.slice(0, explainedMost).map((entry) => entry.search);
+  }
+
+  function explainOne(search: Search, full: FullListing, categoryIds: string[], choices: ListingOption[] | null, now: Date): ExplainedSearch {
+    const listing = choices !== null && readsOptions(search) ? withOption(full.listing, chooseOption(search, choices)) : full.listing;
+    const time = now.getTime();
+    const reasons: ExplainReason[] = [];
+    const highest = [search.maxPrice, search.maxWithPostage].filter((limit) => limit !== null);
+    const top = highest.length > 0 ? Math.min(...highest) : null;
+    const checks = ruleChecks(search, listing, now).map((check): ExplainReason => {
+      const byEbay = ebayFilters.includes(check.setting) || (check.setting === "maxWithPostage" && top !== null && listing.price > top);
+      return { by: byEbay ? "eBay" : "watcher", setting: check.setting, text: check.text };
+    });
+    reasons.push(...checks.filter((reason) => reason.by === "eBay"));
+    if (search.categoryId !== null && categoryIds.length > 0 && !categoryIds.includes(search.categoryId)) {
+      const where = full.categoryPath === null ? `category ${categoryIds.at(-1)}` : full.categoryPath.split("|").join(" > ");
+      reasons.push({ by: "eBay", setting: "categoryId", text: `it's in eBay's ${where}, outside the search's category ${search.categoryId}` });
+    }
+    if (search.returnsOnly && full.returns?.accepted === false) reasons.push({ by: "eBay", setting: "returnsOnly", text: "its seller doesn't take returns, and the search asks for returns" });
+    if (search.freePostage && listing.postage !== null && listing.postage > 0) reasons.push({ by: "eBay", setting: "freePostage", text: `its postage costs £${(listing.postage / 100).toFixed(2)}, and the search asks for free postage` });
+    for (const choices of missingTerms(search.query, listing.title)) {
+      reasons.push({ by: "eBay", setting: "query", text: `its title doesn't have "${choices.join('" or "')}" from the search's words, so eBay may not send it` });
+    }
+    reasons.push(...checks.filter((reason) => reason.by === "watcher"));
+
+    const snoozed = memory?.snoozed.has(search.id) ?? false;
+    const base = { id: search.id, name: search.name, on: search.on, snoozed, option: listing.option ?? null, reasons };
+    const firm = reasons.find((reason) => reason.by === "eBay" && reason.setting !== "query");
+    if (firm !== undefined) return { ...base, verdict: "filtered", says: `eBay wouldn't send it to this search: ${firm.text}.` };
+    if (reasons.some((reason) => reason.setting === "query")) return { ...base, verdict: "words", says: "eBay may not send it: its title lacks some of the search's words, though eBay also matches words in a listing's item details." };
+    const hiding = reasons.find((reason) => reason.by === "watcher");
+    if (hiding !== undefined) return { ...base, verdict: "hidden", says: `eBay would send it, but the watcher hides it: ${hiding.text}.` };
+    if (!search.on) return { ...base, verdict: "off", says: "It fits, but the search is switched off." };
+    if (snoozed) return { ...base, verdict: "off", says: "It fits, but the search is snoozed." };
+
+    const result = results.get(search.id);
+    const remembered = memory?.searches.get(search.id);
+    const last = lastChecked.get(search.id);
+    const failing = failures.get(search.id);
+    if (failing !== undefined) return { ...base, verdict: "due", says: `It fits, but the search's last check failed: ${failing.message}.` };
+    if (last === undefined) return { ...base, verdict: "due", says: "It fits, and the search hasn't been checked since the API started." };
+    if (time - last > freshFor) return { ...base, verdict: "due", says: `It fits, and the search's last check was at ${ukTime(last)}, over six hours ago.` };
+    if (result?.listings.some((entry) => entry.id === listing.id) === true) {
+      const seen = remembered?.seen.get(listing.id);
+      if (seen !== undefined && remembered !== undefined && seen.first === remembered.since) {
+        return { ...base, verdict: "match", says: `It's a current match. It was already listed when the search started watching at ${ukTime(Date.parse(remembered.since))}, so it was counted as seen, not alerted.` };
+      }
+      return { ...base, verdict: "match", says: seen === undefined ? "It's a current match." : `It's a current match, first seen at ${ukTime(Date.parse(seen.first))}.` };
+    }
+    if (listing.listedAt !== null && Date.parse(listing.listedAt) > last) {
+      return { ...base, verdict: "due", says: `It fits, and it was listed after the search's last check at ${ukTime(last)}. The next check is due by ${ukTime(last + search.everyMinutes * minuteMs)}.` };
+    }
+    if (result !== undefined && !result.complete) {
+      return { ...base, verdict: "missed", says: "It fits, but eBay has more listings for this search than the watcher reads, so it may be past the newest the watcher sees." };
+    }
+    const unchecked = [
+      ...((search.details !== null && search.detailsMode === "only") || search.hideDetails !== null ? ["its item details"] : []),
+      ...(search.collection !== null ? ["the collection distance"] : []),
+      ...(!search.ukOnly && listing.country !== "GB" ? ["whether it posts to the UK"] : []),
+    ];
+    if (unchecked.length > 0) {
+      const which = unchecked.join(" and ");
+      return { ...base, verdict: "missed", says: `It passes every filter and rule that can be checked here, but eBay didn't send it at the last check. ${which[0].toUpperCase()}${which.slice(1)} can't be checked here, so that may be why; otherwise it's eBay's own word matching. The search's cuts can show more.` };
+    }
+    return { ...base, verdict: "missed", says: "It passes every filter and rule that can be checked here, but eBay didn't send it at the last check: most likely eBay's own word matching. The search's cuts can show more." };
+  }
+
   function problems(): Problem[] {
     const found: Problem[] = [];
     if (listProblem !== null) found.push({ code: "deals-list", message: `The deal watcher's search list has a problem: ${listProblem}.` });
@@ -967,6 +1112,50 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       });
       cutCalls.count += Math.max(used, 1);
       return "cuts" in outcome ? { status: "ok", value: { id: search.id, name: search.name, query: search.query, ...outcome.cuts } } : { status: "failed", message: outcome.message };
+    },
+
+    async explain(itemNumber, searchId, now = new Date()) {
+      const known = list?.searches ?? [];
+      const named = searchId === null ? null : known.find((search) => search.id === searchId);
+      if (named === undefined) return { status: "unknown" };
+      const sourceName = named?.source ?? "ebay";
+      const lookUp = options.sources[sourceName]?.item;
+      if (lookUp === undefined) return { status: "unsupported" };
+      const stop = blocked(sourceName, now.getTime());
+      if (stop !== null) return { status: stop };
+      const outcome = await read(sourceName, now.getTime(), () => lookUp(itemNumber));
+      if (!("item" in outcome)) return { status: "failed", ...outcome };
+      const { full, categoryIds, options: choices } = outcome.item;
+      const listing = full.listing;
+      const candidates = named === null ? pickSearches(known.filter((search) => search.source === sourceName), listing.title) : [named];
+      return {
+        status: "ok",
+        value: {
+          checkedAt: now.toISOString(),
+          item: {
+            id: listing.id,
+            title: listing.title,
+            price: listing.price,
+            postage: listing.postage,
+            total: totalPrice(listing),
+            condition: listing.condition,
+            buying: [...listing.buying],
+            country: listing.country,
+            listedAt: listing.listedAt,
+            endsAt: listing.endsAt,
+            sellerType: listing.sellerType,
+            sellerPercent: listing.sellerPercent,
+            sellerFeedback: listing.sellerFeedback,
+            url: listing.url,
+            categoryPath: full.categoryPath,
+            categoryIds: [...categoryIds],
+            options: choices === null ? null : choices.length,
+            inStock: full.inStock,
+          },
+          searches: candidates.map((search) => explainOne(search, full, categoryIds, choices, now)),
+          about: explainNote,
+        },
+      };
     },
 
     async categoryDetails(sourceName, categoryId, now = new Date()) {

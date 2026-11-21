@@ -3,9 +3,9 @@ import { test } from "node:test";
 import type { Notification } from "../notify/notifier.js";
 import { ebayMessages } from "./ebay.js";
 import { readSearches, type Search, type SearchList } from "./searches.js";
-import { SourceError, type DetailNames, type FailReason, type FullListing, type Listing, type ListingOption, type SearchResult, type Source } from "./source.js";
+import { SourceError, type DetailNames, type FailReason, type FullListing, type ItemRead, type Listing, type ListingOption, type SearchResult, type Source } from "./source.js";
 import { emptyMemory, readMemory, writeMemory, type Store } from "./store.js";
-import { createDealWatcher, inQuiet } from "./watcher.js";
+import { createDealWatcher, inQuiet, queryTerms } from "./watcher.js";
 
 const start = Date.parse("2026-11-18T12:00:00.000Z");
 
@@ -2750,4 +2750,253 @@ test("cuts count only their own calls towards their share, not a check that runs
   assert.equal(watcher.status().callsToday, 29);
   assert.equal((await watcher.cuts("optiplex", at(2))).status, "ok");
   assert.equal((await watcher.cuts("optiplex", at(3))).status, "limit");
+});
+
+function explainSetup(searches: Record<string, unknown>[]) {
+  const { world } = setup(searches);
+  const items = { reply: null as ItemRead | Error | null, asked: [] as string[] };
+  const searchReply = async (search: Search): Promise<SearchResult> => {
+    const reply = world.found.get(search.id) ?? [];
+    if (reply instanceof Error) throw reply;
+    if (Array.isArray(reply)) return { listings: reply, total: reply.length, complete: true, calls: 1, skipped: 0 };
+    return { listings: [], total: 0, complete: true, calls: 1, skipped: 0, ...reply };
+  };
+  const watcher = createDealWatcher({
+    loadSearches: async () => {
+      if (world.list instanceof Error) throw world.list;
+      return world.list;
+    },
+    sources: {
+      ebay: {
+        search: searchReply,
+        item: async (itemNumber) => {
+          items.asked.push(itemNumber);
+          if (items.reply instanceof Error) throw items.reply;
+          return { item: items.reply ?? { full: fullOf(listing(1)), categoryIds: [], options: null }, calls: 1 };
+        },
+      },
+      other: { search: searchReply },
+    },
+    store: world.store,
+    notify: async () => undefined,
+  });
+  return { world, watcher, items };
+}
+
+function itemOf(shown: Listing, categoryIds: string[] = [], categoryPath: string | null = null): ItemRead {
+  return { full: { ...fullOf(shown), categoryPath }, categoryIds, options: null };
+}
+
+test("a search's words split into terms, with eBay's (a, b) groups as one term of choices", () => {
+  assert.deepEqual(queryTerms("rtx 3060 12gb"), [["rtx"], ["3060"], ["12gb"]]);
+  assert.deepEqual(queryTerms("m.2 nvme (pcie, pci-e) adapter"), [["m.2"], ["nvme"], ["pcie", "pci-e"], ["adapter"]]);
+  assert.deepEqual(queryTerms("rtx 3060 12gb (pc, computer, desktop, tower, rig)"), [["rtx"], ["3060"], ["12gb"], ["pc", "computer", "desktop", "tower", "rig"]]);
+  assert.deepEqual(queryTerms("  a   ( , ) - b "), [["a"], ["b"]]);
+});
+
+test("explaining a listing that fits a checked search says whether it's a match, first seen at the start or later", async () => {
+  const { world, watcher, items } = explainSetup([optiplex]);
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(0));
+  items.reply = itemOf(listing(1));
+  const first = await watcher.explain("110000000001", "optiplex", at(5));
+  assert.equal(first.status, "ok");
+  if (first.status !== "ok") return;
+  assert.deepEqual(first.value.searches, [{ id: "optiplex", name: "OptiPlex", on: true, snoozed: false, option: null, verdict: "match", says: "It's a current match. It was already listed when the search started watching at 2026-11-18 12:00, so it was counted as seen, not alerted.", reasons: [] }]);
+  assert.deepEqual(items.asked, ["110000000001"]);
+  assert.equal(first.value.item.total, 9100);
+  assert.match(first.value.about, /eBay's own word matching can't be checked here/);
+  world.found.set("optiplex", listings(1, 2));
+  await watcher.run(at(30));
+  items.reply = itemOf(listing(2));
+  const later = await watcher.explain("110000000002", "optiplex", at(35));
+  assert.equal(later.status === "ok" ? later.value.searches[0].says : "", "It's a current match, first seen at 2026-11-18 12:30.");
+});
+
+test("explaining a listing that fits but isn't a match says whether it's newer than the last check, or eBay didn't send it", async () => {
+  const { world, watcher, items } = explainSetup([optiplex]);
+  items.reply = itemOf(listing(7, { listedAt: at(10).toISOString() }));
+  const unchecked = await watcher.explain("110000000007", "optiplex", at(0));
+  assert.equal(unchecked.status, "unknown");
+  await watcher.run(at(0));
+  const says = async (minutes: number) => {
+    const reply = await watcher.explain("110000000007", "optiplex", at(minutes));
+    return reply.status === "ok" ? [reply.value.searches[0].verdict, reply.value.searches[0].says] : [reply.status];
+  };
+  assert.deepEqual(await says(15), ["due", "It fits, and it was listed after the search's last check at 2026-11-18 12:00. The next check is due by 2026-11-18 12:30."]);
+  items.reply = itemOf(listing(7, { listedAt: at(-60).toISOString() }));
+  assert.deepEqual(await says(16), ["missed", "It passes every filter and rule that can be checked here, but eBay didn't send it at the last check: most likely eBay's own word matching. The search's cuts can show more."]);
+  world.found.set("optiplex", { listings: listings(1), total: 900, complete: false });
+  await watcher.run(at(30));
+  assert.deepEqual(await says(31), ["missed", "It fits, but eBay has more listings for this search than the watcher reads, so it may be past the newest the watcher sees."]);
+  assert.deepEqual(await says(30 + 7 * 60), ["due", "It fits, and the search's last check was at 2026-11-18 12:30, over six hours ago."]);
+});
+
+test("explaining a listing names each filter eBay would drop it by, before the watcher's own rules", async () => {
+  const strict = { ...optiplex, minPrice: 50, maxWithPostage: 80, conditions: ["new", "opened", "used"], categoryId: 27386, returnsOnly: true, freePostage: true, mustInclude: ["sff"], exclude: ["spares"] };
+  const { watcher, items } = explainSetup([strict]);
+  await watcher.run(at(0));
+  const shown = listing(3, { price: 9000, postage: 500, conditionId: "2500", condition: "Seller refurbished", buying: ["AUCTION"], country: "DE", title: "Dell OptiPlex 7070 Micro spares" });
+  items.reply = { full: { ...fullOf(shown), categoryPath: "Computers/Tablets & Networking|Desktops & All-In-Ones", returns: { accepted: false, days: null, paidBy: null } }, categoryIds: ["58058", "171957"], options: null };
+  const reply = await watcher.explain("110000000003", "optiplex", at(1));
+  assert.equal(reply.status, "ok");
+  if (reply.status !== "ok") return;
+  const [explained] = reply.value.searches;
+  assert.equal(explained.verdict, "filtered");
+  assert.equal(explained.says, "eBay wouldn't send it to this search: with postage it's £95.00, over the search's £80.00 top with postage.");
+  assert.deepEqual(explained.reasons.map((reason) => [reason.by, reason.setting]), [
+    ["eBay", "maxWithPostage"],
+    ["eBay", "conditions"],
+    ["eBay", "ukOnly"],
+    ["eBay", "buying"],
+    ["eBay", "categoryId"],
+    ["eBay", "returnsOnly"],
+    ["eBay", "freePostage"],
+    ["eBay", "query"],
+    ["watcher", "mustInclude"],
+    ["watcher", "exclude"],
+  ]);
+  assert.equal(explained.reasons.find((reason) => reason.setting === "categoryId")?.text, "it's in eBay's Computers/Tablets & Networking > Desktops & All-In-Ones, outside the search's category 27386");
+  assert.equal(explained.reasons.find((reason) => reason.setting === "query")?.text, 'its title doesn\'t have "sff" from the search\'s words, so eBay may not send it');
+  assert.equal(explained.reasons.find((reason) => reason.setting === "freePostage")?.text, "its postage costs £5.00, and the search asks for free postage");
+  items.reply = itemOf(listing(4, { price: 7000, postage: 500 }));
+  const postage = await watcher.explain("110000000004", "optiplex", at(2));
+  assert.deepEqual(postage.status === "ok" ? postage.value.searches[0].reasons.map((reason) => [reason.by, reason.setting]) : [], [["eBay", "freePostage"]]);
+
+  const relaxed = explainSetup([{ ...optiplex, maxWithPostage: 80 }]);
+  await relaxed.watcher.run(at(0));
+  relaxed.items.reply = itemOf(listing(4, { price: 7600, postage: 500 }));
+  const total = await relaxed.watcher.explain("110000000004", "optiplex", at(1));
+  assert.deepEqual(total.status === "ok" ? [total.value.searches[0].verdict, total.value.searches[0].reasons.map((reason) => [reason.by, reason.setting])] : [], ["hidden", [["watcher", "maxWithPostage"]]]);
+});
+
+test("explaining a listing that only lacks the search's words, or that only the watcher hides, says so", async () => {
+  const { watcher, items } = explainSetup([{ ...optiplex, exclude: ["micro"], sellerMinPercent: 99.5 }]);
+  await watcher.run(at(0));
+  items.reply = itemOf(listing(5, { title: "Dell OptiPlex 7070 small form factor" }));
+  const words = await watcher.explain("110000000005", "optiplex", at(1));
+  assert.deepEqual(words.status === "ok" ? [words.value.searches[0].verdict, words.value.searches[0].says] : [], ["words", "eBay may not send it: its title lacks some of the search's words, though eBay also matches words in a listing's item details."]);
+  items.reply = itemOf(listing(6, { title: "Dell OptiPlex 7070 SFF micro" }));
+  const hidden = await watcher.explain("110000000006", "optiplex", at(2));
+  assert.deepEqual(hidden.status === "ok" ? [hidden.value.searches[0].verdict, hidden.value.searches[0].says] : [], ["hidden", "eBay would send it, but the watcher hides it: its seller is 99.4% positive, under the search's 99.5%."]);
+  assert.deepEqual(hidden.status === "ok" ? hidden.value.searches[0].reasons.map((reason) => reason.setting) : [], ["sellerMinPercent", "exclude"]);
+});
+
+test("explaining a listing for a switched-off or snoozed search says it would fit", async () => {
+  const { watcher, items } = explainSetup([optiplex, { ...optiplex, id: "off-one", name: "Off one", switch: "off" }]);
+  await watcher.run(at(0));
+  items.reply = itemOf(listing(1));
+  const off = await watcher.explain("110000000001", "off-one", at(1));
+  assert.deepEqual(off.status === "ok" ? [off.value.searches[0].on, off.value.searches[0].verdict, off.value.searches[0].says] : [], [false, "off", "It fits, but the search is switched off."]);
+  await watcher.snooze("optiplex", null);
+  const dozing = await watcher.explain("110000000001", "optiplex", at(2));
+  assert.deepEqual(dozing.status === "ok" ? [dozing.value.searches[0].snoozed, dozing.value.searches[0].says] : [], [true, "It fits, but the search is snoozed."]);
+});
+
+test("explaining a listing without naming a search picks up to five eBay searches whose words its title has most of, best first", async () => {
+  const named = (id: string, query: string, extra: Record<string, unknown> = {}) => ({ id, name: id, switch: "on", query, ...extra });
+  const { watcher, items } = explainSetup([
+    named("ram", "ddr4 2x16gb"),
+    named("half", "optiplex 9020 sff"),
+    named("all", "optiplex 7070 sff"),
+    named("off-all", "dell optiplex 7070", { switch: "off" }),
+    named("on-all", "dell optiplex 7070"),
+    named("third", "optiplex hp z440"),
+    named("fourth", "optiplex hp z440 xeon"),
+    named("fifth", "optiplex a b c d e"),
+    named("feed", "optiplex 7070 sff", { source: "other" }),
+  ]);
+  await watcher.run(at(0));
+  items.reply = itemOf(listing(1));
+  const reply = await watcher.explain("110000000001", null, at(1));
+  assert.deepEqual(reply.status === "ok" ? reply.value.searches.map((search) => search.id) : [], ["all", "on-all", "off-all", "half", "third"]);
+  items.reply = itemOf(listing(1, { title: "Nothing in common here" }));
+  const none = await watcher.explain("110000000001", null, at(2));
+  assert.deepEqual(none.status === "ok" ? none.value.searches : null, []);
+});
+
+test("explaining a listing reads it once from eBay as one of the day's reads, and an unknown search, a gone listing or a used-up day say so", async () => {
+  const { watcher, items } = explainSetup([optiplex, { ...optiplex, id: "feed-one", source: "other" }]);
+  await watcher.run(at(0));
+  assert.deepEqual(await watcher.explain("110000000001", "nope", at(1)), { status: "unknown" });
+  assert.deepEqual(items.asked, []);
+  assert.deepEqual(await watcher.explain("110000000001", "feed-one", at(1)), { status: "unsupported" });
+  items.reply = failed("gone");
+  assert.deepEqual(await watcher.explain("110000000001", "optiplex", at(2)), { status: "failed", message: ebayMessages.gone, gone: true });
+  items.reply = itemOf(listing(1));
+  const before = watcher.status().callsToday;
+  await watcher.explain("110000000001", "optiplex", at(3));
+  assert.equal(watcher.status().callsToday, before + 1);
+  let reads = 2;
+  for (; reads < 200; reads++) {
+    const reply = await watcher.explain("110000000001", "optiplex", at(4));
+    if (reply.status !== "ok") {
+      assert.deepEqual(reply, { status: "limit" });
+      break;
+    }
+  }
+  assert.equal(reads, 150);
+});
+
+test("explaining a listing with options judges it at the option the search would pick, as a check would", async () => {
+  const fourTb = { ...drive, maxWithPostage: 60 };
+  const { watcher, items } = explainSetup([fourTb, { ...drive, id: "hiding", name: "Hiding drive", hideVariations: true, maxWithPostage: 100 }, { ...drive, id: "plain", name: "Plain drive", readOptions: false, maxWithPostage: 100 }]);
+  await watcher.run(at(0));
+  const group = { ...fullOf(grouped(1, "201", { id: "226543210987", price: 1500 })), inStock: true };
+  items.reply = { full: group, categoryIds: [], options: sizes("201", ["1 TB", 1500], ["4 TB", 8000], ["8 TB", 9900]) };
+  const reply = await watcher.explain("226543210987", "drive", at(1));
+  assert.deepEqual(reply.status === "ok" ? [reply.value.searches[0].verdict, reply.value.searches[0].reasons.map((reason) => reason.text)] : [], ["filtered", ["with postage it's £80.00, over the search's £60.00 top with postage"]]);
+  const hiding = await watcher.explain("226543210987", "hiding", at(2));
+  assert.deepEqual(hiding.status === "ok" ? [hiding.value.searches[0].verdict, hiding.value.searches[0].reasons, hiding.value.searches[0].option] : [], ["missed", [], "Storage Capacity: 4 TB"]);
+  const plain = await watcher.explain("226543210987", "plain", at(3));
+  assert.deepEqual(plain.status === "ok" ? [plain.value.searches[0].verdict, plain.value.searches[0].reasons, plain.value.searches[0].option] : [], ["missed", [], null]);
+  items.reply = { full: group, categoryIds: [], options: sizes("201", ["1 TB", 1500], ["2 TB", 2500]) };
+  const none = await watcher.explain("226543210987", "hiding", at(4));
+  assert.deepEqual(none.status === "ok" ? none.value.searches[0].reasons.map((reason) => reason.setting) : [], ["hideVariations"]);
+});
+
+test("explaining gives times in UK time, which is an hour ahead of UTC in summer", async () => {
+  const summer = Date.parse("2026-07-01T12:00:00.000Z");
+  const { world, watcher, items } = explainSetup([optiplex]);
+  world.found.set("optiplex", listings(1));
+  await watcher.run(new Date(summer));
+  items.reply = itemOf(listing(7, { listedAt: new Date(summer + 60_000).toISOString() }));
+  const reply = await watcher.explain("110000000007", "optiplex", new Date(summer + 5 * 60_000));
+  assert.equal(reply.status === "ok" ? reply.value.searches[0].says : "", "It fits, and it was listed after the search's last check at 2026-07-01 13:00. The next check is due by 2026-07-01 13:30.");
+  items.reply = itemOf(listing(1));
+  const baseline = await watcher.explain("110000000001", "optiplex", new Date(summer + 6 * 60_000));
+  assert.match(baseline.status === "ok" ? baseline.value.searches[0].says : "", /started watching at 2026-07-01 13:00,/);
+});
+
+test("explaining a current match from a check over six hours old says the check is old, not that it's a match", async () => {
+  const { world, watcher, items } = explainSetup([{ ...optiplex, everyMinutes: 1440 }]);
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(0));
+  items.reply = itemOf(listing(1));
+  const reply = await watcher.explain("110000000001", "optiplex", at(7 * 60));
+  assert.deepEqual(reply.status === "ok" ? reply.value.searches[0].verdict : null, "due");
+});
+
+test("explaining a listing that eBay didn't send names the settings that can't be checked from outside eBay", async () => {
+  const { watcher, items } = explainSetup([{ ...optiplex, ukOnly: false, hideDetails: { "Form Factor": ["Micro"] }, categoryId: 179 }]);
+  await watcher.run(at(0));
+  items.reply = itemOf(listing(7, { listedAt: at(-60).toISOString() }), ["179"]);
+  const reply = await watcher.explain("110000000007", "optiplex", at(1));
+  assert.equal(
+    reply.status === "ok" ? reply.value.searches[0].says : "",
+    "It passes every filter and rule that can be checked here, but eBay didn't send it at the last check. Its item details can't be checked here, so that may be why; otherwise it's eBay's own word matching. The search's cuts can show more.",
+  );
+  items.reply = itemOf(listing(8, { listedAt: at(-60).toISOString(), country: "DE" }), ["179"]);
+  const abroad = await watcher.explain("110000000008", "optiplex", at(2));
+  assert.match(abroad.status === "ok" ? abroad.value.searches[0].says : "", /Its item details and whether it posts to the UK can't be checked here/);
+});
+
+test("explaining a listing for a search whose last check failed says so, with the failure", async () => {
+  const { world, watcher, items } = explainSetup([optiplex]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", failed("request"));
+  await watcher.run(at(30));
+  items.reply = itemOf(listing(1));
+  const reply = await watcher.explain("110000000001", "optiplex", at(31));
+  assert.deepEqual(reply.status === "ok" ? [reply.value.searches[0].verdict, reply.value.searches[0].says] : [], ["due", `It fits, but the search's last check failed: ${ebayMessages.request}.`]);
 });

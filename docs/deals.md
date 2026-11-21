@@ -256,7 +256,7 @@ With `DEALS_AI=on`, two more MCP tools work:
 
 With `DEALS_AI=off` both reply 403 and no listing leaves the API through them. The hub page isn't affected either way.
 
-The switch covers Claude's tools, not the API as a whole. `/deals/matches`, `/deals/listing/<item number>` and `/deals/searches/<id>/hidden` still answer anything that has the API token, because that's how the hub page works. A Claude Code session in this repo could run `host/hub-get.sh` against them, so `CLAUDE.md` tells it not to while the switch is off.
+The switch covers Claude's tools, not the API as a whole. `/deals/matches`, `/deals/listing/<item number>`, `/deals/explain` and `/deals/searches/<id>/hidden` still answer anything that has the API token, because that's how the hub page works. A Claude Code session in this repo could run `host/hub-get.sh` against them, so `CLAUDE.md` tells it not to while the switch is off (`/deals/explain` needs adding to that line by hand).
 
 Two skills in `.claude/skills/` use them: `pc-build` puts together the best PC for a budget, and `deal-check` compares the matches for one kind of part, or listings you name. Every session in this repo may search the web and open the maker and spec sites listed in `.claude/settings.json` without asking (record 0029); any other site still asks, and eBay's own pages are refused. For the PCs, workstations and servers the catalogue searches for, the skills read that machine's file in `docs/specs/` first: what its maker's documents say about its CPU, memory, slots, storage, power supply and networking, each fact with its source, so a fit can be checked without the makers' sites, many of whose spec pages refused automated reads in November 2026. For the CPUs, motherboard chipsets and graphics cards it searches for, and the Xeon E and Xeon W CPUs in its workstations and small servers, they read the part's file in `docs/specs/parts/`: which CPUs a chipset takes and when it needs a BIOS update, memory, ECC, PCIe, coolers, and a card's power, size and bracket. Each folder's `README.md` says how it was gathered, how it was checked and how far to trust it.
 
@@ -303,6 +303,26 @@ It works for switched-off searches too, so a catalogue search can be checked bef
 bash host/hub-get.sh /deals/searches/rtx-3060-12gb/cuts
 ```
 
+## Why didn't this alert?
+`GET /deals/explain?item=<item number or link>` reads one listing from eBay and says, for each search it could belong to, what happened to it. The item can be its number or a link to it on ebay.co.uk or ebay.com, as copied from a browser or the app's share button; the link is only read for its number, never opened. A short ebay.us link has no number in it, so open it and copy the number from the address. Add `&search=<id>` to ask about one search, switched off or not; without it, the watcher picks up to five eBay searches whose words the title has most of.
+
+For each search, `verdict` is one of:
+- `filtered`: one of the search's eBay filters would stop eBay sending it (price, condition, buy it now or auction, items in the UK, seller type, category, returns, free postage).
+- `words`: its title lacks some of the search's words. eBay also matches words in a listing's item details, so it may still be sent: this can't be checked from outside eBay.
+- `hidden`: eBay would send it, but one of the watcher's rules hides it (`mustInclude`, `exclude`, an avoid list, the seller's feedback, postage, options).
+- `match`: it's a current match, and when it was first seen. A listing that was already there when the search started watching was counted as seen, not alerted, and it says so.
+- `due`: it fits and was listed after the last check, or the search hasn't been checked lately.
+- `missed`: it fits every filter and rule that can be checked, but eBay didn't send it: eBay has more than the watcher reads for that search, a setting that can't be checked from outside eBay (item details, collection distance, or posting to the UK for a listing abroad when the search isn't UK only), or, most often, eBay's own word matching.
+- `off`: it fits, but the search is switched off or snoozed.
+
+A listing with options is judged at the option the search would pick, as a check does with `readOptions`, and `option` names it. A search whose last check failed says so, with the failure.
+
+`reasons` lists every filter and rule it fails, each with the setting (`minPrice`, `categoryId`, `exclude` and so on), who drops it (`eBay` or `watcher`) and plain words. The reply also gives the listing's price, postage, condition, seller, place, category path and category ids, so it shows seller text: like `/deals/listing`, it answers anything with the API token, and Claude's tool for it only works while `DEALS_AI=on`. It's one of the day's 150 full reads (two calls for a listing with options). The hub page has a box for it.
+
+```
+bash host/hub-get.sh "/deals/explain?item=110000000001&search=rtx-3060-12gb"
+```
+
 ## Routes and tools
 All behind the API token, and all 404 with "The deal watcher is switched off" while `DEALS=off`.
 - `GET /deals/status`: last run, today's counts, quiet hours, the digest's time and whether today's has gone or its three hours passed without it, where seen listings are kept, problems.
@@ -313,11 +333,12 @@ All behind the API token, and all 404 with "The deal watcher is switched off" wh
 - `POST /deals/check`: check every switched-on search now, and say how many were checked, how many alerts went, and whether any couldn't be sent. Refused if asked twice within a minute.
 
 - `GET /deals/listing/<item number>`: one current match in full. 404 if it isn't a current match, 410 if eBay says it's gone.
+- `GET /deals/explain?item=<item number or link>&search=<id>`: why a listing did or didn't match (see "Why didn't this alert?"). 404 for an unknown search, 410 if eBay says it's gone.
 - `GET /deals/details?q=<words>&categoryId=<number>`: eBay's item details for a query.
 - `GET /deals/categories?q=<words>`: eBay's suggested categories for some words.
 - `GET /deals/categories/<number>/details`: one category's item details and their values.
 - `POST /deals/searches/<id>/snooze` with `{"hours": 24}` (or nothing, for until woken), and `POST /deals/searches/<id>/wake`.
-- `GET /deals/ai/matches` and `GET /deals/ai/listing/<item number>`: the same listings, for the MCP tools. 403 while `DEALS_AI=off`. The first takes `search=<id>` on its own, or any of `searches=<id>,<id>`, `group=<group>`, `words=<words>` and `ids=<id>,<id>`, with `maxTotal=<pounds>` and `limit=<1 to 50>` alongside one of those.
+- `GET /deals/ai/matches`, `GET /deals/ai/listing/<item number>` and `GET /deals/ai/explain?item=<item>&search=<id>`: the same listings and explanations, for the MCP tools. 403 while `DEALS_AI=off`. The first takes `search=<id>` on its own, or any of `searches=<id>,<id>`, `group=<group>`, `words=<words>` and `ids=<id>,<id>`, with `maxTotal=<pounds>` and `limit=<1 to 50>` alongside one of those.
 
 Nothing here changes `searches.json`, and there is still no route that buys, bids, makes an offer or messages anyone.
 

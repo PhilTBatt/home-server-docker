@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
-import { aiNote, deals, fitted } from "./routes.js";
+import { aiNote, deals, fitted, itemNumberFrom } from "./routes.js";
 import type { Categories, CategoryDetails, Listing } from "./source.js";
-import type { DealWatcher, FullReply, LookupReply, MatchGroup, MatchedListing, NamesReply, RunSummary, SearchCuts, SearchStatus, WatcherStatus } from "./watcher.js";
+import type { DealWatcher, Explained, ExplainReply, FullReply, LookupReply, MatchGroup, MatchedListing, NamesReply, RunSummary, SearchCuts, SearchStatus, WatcherStatus } from "./watcher.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true };
 const start = Date.parse("2026-11-18T12:00:00.000Z");
@@ -82,6 +82,32 @@ const cutsValue: SearchCuts = {
   wordsAlone: { total: 4409, categoryId: "27386", categories: [{ id: "27386", name: "Graphics/Video Cards", count: 117 }] },
 };
 
+const explainedValue: Explained = {
+  checkedAt: "2026-11-18T12:00:00.000Z",
+  item: {
+    id: "110000000001",
+    title: "Dell OptiPlex 7070 SFF",
+    price: 9500,
+    postage: 699,
+    total: 10199,
+    condition: "Used",
+    buying: ["FIXED_PRICE"],
+    country: "GB",
+    listedAt: null,
+    endsAt: null,
+    sellerType: "business",
+    sellerPercent: 99.4,
+    sellerFeedback: 1234,
+    url: "https://www.ebay.co.uk/itm/110000000001",
+    categoryPath: "Computers/Tablets & Networking|Desktops & All-In-Ones",
+    categoryIds: ["58058", "171957"],
+    options: null,
+    inStock: true,
+  },
+  searches: [{ id: "optiplex", name: "OptiPlex", on: true, snoozed: false, option: null, verdict: "match", says: "It's a current match.", reasons: [] }],
+  about: "This checks the search's filters and rules.",
+};
+
 function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, failed: 0, unsent: true }) {
   const seen = {
     runs: [] as { now: string; force: boolean }[],
@@ -100,6 +126,8 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
     categoriesReply: { status: "ok", value: { categories: [{ id: "170083", name: "Memory (RAM)", path: "Computers > Components > Memory (RAM)" }] } } as LookupReply<Categories>,
     categoryReply: { status: "ok", value: { categoryId: "170083", details: [{ name: "Form Factor", required: false, freeText: true, values: ["DIMM", "SO-DIMM"], moreValues: 0 }] } } as LookupReply<CategoryDetails>,
     cutsReply: { status: "ok", value: cutsValue } as LookupReply<SearchCuts> | { status: "unknown" } | { status: "unsupported" },
+    explained: [] as [string, string | null][],
+    explainReply: { status: "ok", value: explainedValue } as ExplainReply,
   };
   const watcher: DealWatcher = {
     run: async (now, force = false) => {
@@ -150,6 +178,10 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
       seen.lookups.push(["cuts", id]);
       return seen.cutsReply;
     },
+    explain: async (item, search) => {
+      seen.explained.push([item, search]);
+      return seen.explainReply;
+    },
   };
   return { watcher, seen };
 }
@@ -186,6 +218,8 @@ const routes = [
   ["GET", "/deals/categories?q=ddr4"],
   ["GET", "/deals/categories/170083/details"],
   ["GET", "/deals/searches/optiplex/cuts"],
+  ["GET", "/deals/explain?item=110000000001"],
+  ["GET", "/deals/ai/explain?item=110000000001"],
   ["POST", "/deals/searches/optiplex/snooze"],
   ["POST", "/deals/searches/optiplex/wake"],
 ] as const;
@@ -876,4 +910,91 @@ test("a search's cuts that are refused, waiting, out of reads or gone say which"
     const response = await app.inject({ method: "GET", url: "/deals/searches/optiplex/cuts" });
     assert.deepEqual([response.statusCode, response.json()], [code, { error }]);
   }
+});
+
+test("an item number is taken as it is, or from a link to a listing on eBay's UK or US site, and nothing else", () => {
+  const good: [string, string][] = [
+    ["110000000001", "110000000001"],
+    ["  110000000001 ", "110000000001"],
+    ["https://www.ebay.co.uk/itm/110000000001", "110000000001"],
+    ["https://www.ebay.co.uk/itm/110000000001?hash=item1a&var=0", "110000000001"],
+    ["https://www.ebay.co.uk/itm/Dell-OptiPlex-7070-SFF/110000000001", "110000000001"],
+    ["https://m.ebay.co.uk/itm/110000000001/", "110000000001"],
+    ["https://ebay.com/itm/110000000001#top", "110000000001"],
+    ["http://www.ebay.co.uk/itm/110000000001", "110000000001"],
+  ];
+  for (const [text, number] of good) assert.equal(itemNumberFrom(text), number, text);
+  const bad = [
+    "",
+    "12345",
+    "1".repeat(21),
+    "110000000001a",
+    "https://www.ebay.co.uk/sch/i.html?_nkw=110000000001",
+    "https://www.ebay.co.uk/itm/",
+    "https://ebay.us/m/AbCdEf",
+    "https://www.notebay.co.uk/itm/110000000001",
+    "https://www.ebay.co.uk.example.com/itm/110000000001",
+    "https://example.com/?u=https://www.ebay.co.uk/itm/110000000001",
+    "https://user:pass@www.ebay.co.uk/itm/110000000001",
+    "ftp://www.ebay.co.uk/itm/110000000001",
+    "javascript:alert(1)//www.ebay.co.uk/itm/110000000001",
+    "https://www.ebay.co.uk/itm/a/b/110000000001",
+    `https://www.ebay.co.uk/itm/${"x".repeat(600)}/110000000001`,
+    "https://www.ebay.co.uk/itm/110000000001\nhttps://evil",
+  ];
+  for (const text of bad) assert.equal(itemNumberFrom(text), null, text);
+});
+
+test("a listing is explained from its item number or link, for one named search or the ones that fit, with the item number kept out of the log", async () => {
+  const lines: string[] = [];
+  const { watcher, seen } = fakeWatcher();
+  const app = Fastify({ logger: { level: "info", stream: { write: (line: string) => lines.push(line) } } });
+  app.register(deals, { prefix: "/deals", features: allOn, watcher, now: () => new Date(start) });
+  const plain = await app.inject({ method: "GET", url: `/deals/explain?item=${encodeURIComponent("https://www.ebay.co.uk/itm/110000000001?hash=x")}` });
+  assert.deepEqual([plain.statusCode, plain.json()], [200, explainedValue]);
+  const named = await app.inject({ method: "GET", url: "/deals/explain?item=110000000001&search=optiplex" });
+  assert.equal(named.statusCode, 200);
+  assert.deepEqual(seen.explained, [["110000000001", null], ["110000000001", "optiplex"]]);
+  assert.ok(!lines.join("").includes("110000000001"), lines.join("").slice(0, 300));
+});
+
+test("an explain request with an odd item, an odd search or anything else is refused without asking eBay", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const { app } = buildApp(watcher);
+  for (const query of ["", "item=", "item=12345", "item=https%3A%2F%2Febay.us%2Fm%2Fx", "item=1&item=2", "item=110000000001&search=Bad%20Id", "item=110000000001&search=a&search=b", "item=110000000001&extra=1"]) {
+    const response = await app.inject({ method: "GET", url: `/deals/explain?${query}` });
+    assert.deepEqual([response.statusCode, response.json()], [400, { error: "Give item= with an eBay item number or a link to an eBay listing, and if you like search= with a search id" }], query);
+  }
+  assert.deepEqual(seen.explained, []);
+});
+
+test("an explanation that's unknown, out of reads, waiting, gone or failed says which", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const { app } = buildApp(watcher);
+  const cases: [ExplainReply, number, string][] = [
+    [{ status: "unknown" }, 404, "That isn't one of the searches"],
+    [{ status: "unsupported" }, 400, "That search's source can't read a listing by its number"],
+    [{ status: "limit" }, 429, "Today's eBay calls, or today's listings read in full, are used up"],
+    [{ status: "waiting" }, 429, "eBay asked the watcher to wait, so nothing is being read for now"],
+    [{ status: "failed", message: "eBay says that listing has gone", gone: true }, 410, "Couldn't read the listing: eBay says that listing has gone"],
+    [{ status: "failed", message: "couldn't reach eBay", gone: false }, 502, "Couldn't read the listing: couldn't reach eBay"],
+  ];
+  for (const [reply, code, error] of cases) {
+    seen.explainReply = reply;
+    const response = await app.inject({ method: "GET", url: "/deals/explain?item=110000000001" });
+    assert.deepEqual([response.statusCode, response.json()], [code, { error }]);
+  }
+});
+
+test("the AI's explain route only answers while listings for AI are on, and carries the note about seller text", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const off = buildApp(watcher).app;
+  const refused = await off.inject({ method: "GET", url: "/deals/ai/explain?item=110000000001" });
+  assert.deepEqual([refused.statusCode, refused.json()], [403, { error: "Listings for AI are switched off" }]);
+  assert.deepEqual(seen.explained, []);
+  const on = buildApp(watcher, allOn, true).app;
+  const answered = await on.inject({ method: "GET", url: "/deals/ai/explain?item=110000000001&search=optiplex" });
+  assert.deepEqual([answered.statusCode, answered.json()], [200, { note: aiNote, ...explainedValue }]);
+  const bad = await on.inject({ method: "GET", url: "/deals/ai/explain?item=nope" });
+  assert.equal(bad.statusCode, 400);
 });
