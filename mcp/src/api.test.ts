@@ -80,14 +80,37 @@ test("says when the API can't be reached at all", async () => {
   await assert.rejects(createApiGet(token)("/health"), { message: "Couldn't reach the API" });
 });
 
-test("names the status and path when the API replies with an error", async () => {
+test("names the status and path when the API replies with an error, and what the API said", async () => {
   fakeApi(502, JSON.stringify({ error: "Bad Gateway" }));
-  await assert.rejects(createApiGet(token)("/media/downloads"), { message: "The API replied 502 to /media/downloads" });
+  await assert.rejects(createApiGet(token)("/media/downloads"), { message: "The API replied 502 to /media/downloads: Bad Gateway" });
 });
 
 test("a wrong token comes back as a 401", async () => {
   fakeApi(401, JSON.stringify({ error: "Unauthorized" }));
-  await assert.rejects(createApiGet(token)("/system/status"), { message: "The API replied 401 to /system/status" });
+  await assert.rejects(createApiGet(token)("/system/status"), { message: "The API replied 401 to /system/status: Unauthorized" });
+});
+
+test("an error reply without a usable error text gives just the status and path", async () => {
+  for (const body of ["<html>oops</html>", "", JSON.stringify({ error: 42 }), JSON.stringify(["error"]), JSON.stringify({ message: "nope" }), JSON.stringify({ error: " \n\t " }), "null"]) {
+    mock.restoreAll();
+    fakeApi(500, body);
+    await assert.rejects(createApiGet(token)("/deals/status"), { message: "The API replied 500 to /deals/status" }, body);
+  }
+});
+
+test("what the API said is flattened to one line and cut to 200 characters", async () => {
+  fakeApi(429, JSON.stringify({ error: `Too many\nlookups\u2028waiting ${"x".repeat(300)}` }));
+  await assert.rejects(createApiGet(token)("/deals/categories?q=ram"), (error: Error) => {
+    assert.equal(error.message.split("\n").length, 1);
+    assert.ok(error.message.startsWith("The API replied 429 to /deals/categories?q=ram: Too many lookups waiting xxx"));
+    assert.equal(error.message.length, "The API replied 429 to /deals/categories?q=ram: ".length + 200);
+    return true;
+  });
+});
+
+test("a POST that fails says what the API said too", async () => {
+  fakeApi(404, JSON.stringify({ error: "That torrent isn't in qBittorrent" }));
+  await assert.rejects(createApiPost(token)(`/media/downloads/${"a".repeat(40)}/stop`), { message: `The API replied 404 to /media/downloads/${"a".repeat(40)}/stop: That torrent isn't in qBittorrent` });
 });
 
 test("a reply that isn't JSON is an error, not a crash", async () => {
@@ -142,7 +165,7 @@ test("createApiPost has the same 10 second timeout", async () => {
 
 test("createApiPost names the status and path when the API refuses", async () => {
   fakeApi(400, JSON.stringify({ error: "Bad Request" }));
-  await assert.rejects(createApiPost(token)("/media/downloads/all/stop"), { message: "The API replied 400 to /media/downloads/all/stop" });
+  await assert.rejects(createApiPost(token)("/media/downloads/all/stop"), { message: "The API replied 400 to /media/downloads/all/stop: Bad Request" });
 });
 
 test("createApiPost says when the API can't be reached", async () => {
