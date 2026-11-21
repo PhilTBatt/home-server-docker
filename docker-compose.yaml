@@ -346,6 +346,34 @@ services:
       start_period: 2m
       start_interval: 2s
 
+  openwakeword:
+    image: rhasspy/wyoming-openwakeword:2.1.0@sha256:52cb1168731a1849fc28cf339c935fde58746bbabc94226668a40ef6ddf5d42b
+    container_name: openwakeword
+    profiles:
+      - wake
+    user: "10400:10400"
+    init: true
+    command: ["--threshold", "${WAKE_THRESHOLD:-0.5}"]
+    volumes:
+      - type: bind
+        source: ./openwakeword/health.py
+        target: /health/health.py
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    networks:
+      - ears
+    healthcheck:
+      test: ["CMD", "/usr/src/.venv/bin/python3", "/health/health.py"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 1m
+      start_interval: 2s
+
 networks:
   jarvis:
   speech:

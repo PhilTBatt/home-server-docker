@@ -176,7 +176,8 @@ check "the ears network has no way out, and the server has no address on it" "  
       com.docker.network.bridge.gateway_mode_ipv4: isolated" "$(grep -A3 '^  ears:$' <<< "$networks")"
 check "and nothing else is set on it" "0" "$(grep -A4 '^  ears:$' <<< "$networks" | tail -n +5 | grep -c '^    ')"
 others=$(awk '/^  ears:$/ {skip=1; next} skip && /^  [a-z]/ {skip=0} skip && /^[a-z]/ {skip=0} !skip' <(sed -n '/^services:$/,/^networks:$/p' "$compose_file"))
-check "only Whisper joins ears on its network" "  whisper:" "$(awk '/^  [a-z]/ {name=$0; net=0} /^    networks:$/ {net=1; next} /^    [a-z]/ {net=0} net && /^      - ears$/ {print name}' <<< "$others")"
+check "only Whisper and openWakeWord join ears on its network" "  whisper:
+  openwakeword:" "$(awk '/^  [a-z]/ {name=$0; net=0} /^    networks:$/ {net=1; next} /^    [a-z]/ {net=0} net && /^      - ears$/ {print name}' <<< "$others")"
 check "the sound file doesn't put Jarvis on it" "0" "$(grep -c 'ears' "$here/../docker-compose.sound.yaml")"
 check "the switch, ears's settings and its build are git-ignored" "ears/node_modules/ ears/dist/ ears/switch/ " "$(grep '^ears/' "$here/../.gitignore" | tr '\n' ' ')"
 check "and so is Whisper's model" "whisper/models/" "$(grep '^whisper/' "$here/../.gitignore")"
@@ -226,6 +227,33 @@ check "the quietening file only lifts that one logger to warnings" 'import loggi
 logging.getLogger("wyoming_faster_whisper.dispatch_handler").setLevel(logging.WARNING)' "$(cat "$here/../whisper/sitecustomize.py")"
 check "ears asks Whisper by the service's name on Wyoming's usual port" "export const whisperHost = \"whisper\";
 export const whisperPort = 10300;" "$(grep -e '^export const whisperHost' -e '^export const whisperPort' "$here/../ears/src/whisper.ts")"
+wake=$(awk '/^  openwakeword:$/ {on=1; next} on && /^  [a-z]/ {on=0} on && /^[a-z]/ {on=0} on' <(sed -n '/^services:$/,/^networks:$/p' "$compose_file"))
+check "openWakeWord is pinned by version and digest" "    image: rhasspy/wyoming-openwakeword:2.1.0@sha256:52cb1168731a1849fc28cf339c935fde58746bbabc94226668a40ef6ddf5d42b" "$(grep '^    image:' <<< "$wake")"
+check "it only starts when it's named, which host/ears.sh does when EARS_WAKE is on" "    profiles:
+      - wake" "$(grep -A1 '^    profiles:$' <<< "$wake")"
+check "it runs as a user with no account on the server, not root and not mine" '    user: "10400:10400"' "$(grep '^    user:' <<< "$wake")"
+check "and with Docker's init as its first process, so a stop reaches it" '    init: true' "$(grep '^    init:' <<< "$wake")"
+check "its threshold comes from the script, and is openWakeWord's own 0.5 if it's run another way" '    command: ["--threshold", "${WAKE_THRESHOLD:-0.5}"]' "$(grep '^    command:' <<< "$wake")"
+check "its one file is its health check, mounted read-only, and Docker won't make it if it's missing" "    volumes:
+      - type: bind
+        source: ./openwakeword/health.py
+        target: /health/health.py
+        read_only: true
+        bind:
+          create_host_path: false" "$(grep -A6 '^    volumes:$' <<< "$wake")"
+check "and it has no other" "1" "$(grep -c -e 'source:' -e '^      - [./~][^ ]*:' <<< "$wake")"
+check "its /tmp is in memory" "    tmpfs:
+      - /tmp" "$(grep -A1 '^    tmpfs:$' <<< "$wake")"
+check "it publishes no port, gets no devices and no extra rights, and never restarts by itself" "0" "$(grep -c -e 'ports:' -e 'expose:' -e 'network_mode' -e 'devices:' -e 'privileged' -e 'cap_add' -e 'docker.sock' -e 'group_add' -e 'pid:' -e 'ipc:' -e 'security_opt' -e 'extra_hosts' -e 'restart:' -e 'environment:' -e 'env_file:' <<< "$wake")"
+check "it has a 256 MB memory limit" "    mem_limit: 256m" "$(grep '^    mem_limit:' <<< "$wake")"
+check "it's on the ears network and no other" "    networks:
+      - ears" "$(grep -A2 '^    networks:$' <<< "$wake" | grep -e 'networks:' -e '^      - ')"
+check "its healthcheck runs that file with the image's own Python" '    healthcheck:
+      test: ["CMD", "/usr/src/.venv/bin/python3", "/health/health.py"]' "$(grep -A1 '^    healthcheck:$' <<< "$wake")"
+check "the health check asks the server to describe itself on its own port, and passes only if it has hey_jarvis" "1|1|1" "$(grep -c 'AsyncTcpClient("127.0.0.1", 10400)' "$here/../openwakeword/health.py")|$(grep -c 'return 0 if "hey_jarvis" in names else 1' "$here/../openwakeword/health.py")|$(grep -c 'asyncio.wait_for(check(), 5)' "$here/../openwakeword/health.py")"
+check "ears asks openWakeWord by the service's name on Wyoming's usual wake port, for hey_jarvis" 'export const wakeWord = "hey_jarvis";
+export const wakeHost = "openwakeword";
+export const wakePort = 10400;' "$(grep -e '^export const wakeWord' -e '^export const wakeHost' -e '^export const wakePort' "$here/../ears/src/listener.ts")"
 mic_file="$here/../docker-compose.mic.yaml"
 check "the mic file gives ears only the named card's mixer and microphone, and the audio group" 'services:
   ears:
@@ -240,6 +268,7 @@ mkdir -p "$work/bin"
 cat > "$work/bin/docker" <<'FAKE'
 #!/bin/bash
 echo "docker $* | MIC_CARD_NUMBER=${MIC_CARD_NUMBER:-} AUDIO_GROUP_ID=${AUDIO_GROUP_ID:-}" >> "$DOCKER_LOG"
+if [ -n "${WAKE_THRESHOLD+set}" ]; then echo "WAKE_THRESHOLD=$WAKE_THRESHOLD for: docker $*" >> "$DOCKER_LOG.wake"; fi
 exit "${DOCKER_EXIT:-0}"
 FAKE
 cat > "$work/bin/curl" <<'FAKE'
@@ -274,6 +303,7 @@ export DOCKER_LOG="$work/docker.log" CURL_LOG="$work/curl.log"
 
 with_fakes() {
   : > "$DOCKER_LOG"
+  : > "$DOCKER_LOG.wake"
   : > "$CURL_LOG"
   (cd "$work/repo" && PATH="$work/bin:$PATH" bash host/ears.sh "$@" < /dev/null 2>&1)
 }
@@ -376,9 +406,79 @@ for case in "|No EARS_SOUND_CARD in ears/.env. Set it to the microphone's card f
   check_has "saying why: '${case%%|*}'" "${case#*|}" "$output"
 done
 
+for setting in "EARS_MICROPHONE=pretend
+EARS_WAKE=on" "EARS_MICROPHONE=pretend
+EARS_WAKE=on
+EARS_WAKE_THRESHOLD=" "EARS_MICROPHONE=pretend
+EARS_WAKE= on  # listen for Hey Jarvis"; do
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\n%s\n' "$setting" > "$work/repo/ears/.env"
+  output=$(with_fakes start)
+  check "with the wake word on ($(tr '\n' ' ' <<< "$setting")), start starts openWakeWord too" "0|docker compose up -d --build --wait ears openwakeword | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
+  check "at openWakeWord's own threshold, passed to Docker by name ($(tr '\n' ' ' <<< "$setting"))" "WAKE_THRESHOLD=0.5 for: docker compose up -d --build --wait ears openwakeword" "$(cat "$DOCKER_LOG.wake")"
+  check_has "saying so ($(tr '\n' ' ' <<< "$setting"))" "Starting ears, Whisper and openWakeWord at threshold 0.5..." "$output"
+done
+
+for threshold in 0.65 0.999 0.1 0.01 "0.7  # fewer false wakes"; do
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\nEARS_MICROPHONE=pretend\nEARS_WAKE=on\nEARS_WAKE_THRESHOLD=%s\n' "$threshold" > "$work/repo/ears/.env"
+  with_fakes start > /dev/null
+  check "a threshold from 0.001 to 0.999 is passed on: $threshold" "WAKE_THRESHOLD=${threshold%% *} for: docker compose up -d --build --wait ears openwakeword" "$(cat "$DOCKER_LOG.wake")"
+done
+
+for threshold in 1 0 0.0 0.000 .5 0.5x 0.1234 -0.5 1.0 50% "0. 5" 0,5; do
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\nEARS_MICROPHONE=pretend\nEARS_WAKE=on\nEARS_WAKE_THRESHOLD=%s\n' "$threshold" > "$work/repo/ears/.env"
+  output=$(with_fakes start)
+  check "a threshold that isn't between 0 and 1 stops start before Docker: '$threshold'" "1|" "$?|$(cat "$DOCKER_LOG")"
+  check_has "saying what it must be: '$threshold'" "EARS_WAKE_THRESHOLD is $threshold in ears/.env, but it must be a number above 0 and below 1, with up to 3 decimal places, like 0.5 or 0.65." "$output"
+done
+
+fresh
+fake_card
+fake_model
+mkdir -p "$work/repo/ears"
+printf 'EARS_TOKEN=x\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=pci-0000:04:00.6\nEARS_WAKE=on\nEARS_WAKE_THRESHOLD=0.6\n' > "$work/repo/ears/.env"
+output=$(SOUND_DIR="$snd" with_fakes start)
+check "with the card microphone and the wake word, start adds the mic file and starts openWakeWord too" "0|docker compose -f docker-compose.yaml -f docker-compose.mic.yaml up -d --build --wait ears openwakeword | MIC_CARD_NUMBER=1 AUDIO_GROUP_ID=$(stat -c %g "$snd/controlC1")|WAKE_THRESHOLD=0.6 for: docker compose -f docker-compose.yaml -f docker-compose.mic.yaml up -d --build --wait ears openwakeword" "$?|$(cat "$DOCKER_LOG")|$(cat "$DOCKER_LOG.wake")"
+check_has "saying both" "Starting ears with sound card 1's microphone, Whisper, and openWakeWord at threshold 0.6..." "$output"
+
+for setting in "EARS_WAKE=off" "EARS_WAKE=" ""; do
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\nEARS_MICROPHONE=pretend\n%s\nEARS_WAKE_THRESHOLD=7\n' "$setting" > "$work/repo/ears/.env"
+  output=$(with_fakes start)
+  check "with the wake word off ('$setting'), openWakeWord isn't started and the threshold isn't looked at" "0|docker compose up -d --build --wait ears | MIC_CARD_NUMBER= AUDIO_GROUP_ID=|" "$?|$(cat "$DOCKER_LOG")|$(cat "$DOCKER_LOG.wake")"
+done
+
+for wake in On yes 1 true; do
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\nEARS_MICROPHONE=pretend\nEARS_WAKE=%s\n' "$wake" > "$work/repo/ears/.env"
+  output=$(with_fakes start)
+  check "EARS_WAKE=$wake stops start before Docker" "1|" "$?|$(cat "$DOCKER_LOG")"
+  check_has "saying what it must be: $wake" "EARS_WAKE is $wake in ears/.env, but it must be on or off." "$output"
+done
+
+fresh
+fake_model
+mkdir -p "$work/repo/ears"
+printf 'EARS_TOKEN=x\nEARS_WAKE=on\n' > "$work/repo/ears/.env"
+output=$(with_fakes start)
+check "the wake word with no microphone stops start before Docker" "1|" "$?|$(cat "$DOCKER_LOG")"
+check_has "saying why" "EARS_WAKE is on, but EARS_MICROPHONE isn't set in ears/.env, so there's nothing to listen with. Set EARS_MICROPHONE=card, or pretend to try it out." "$output"
+
 fresh
 output=$(with_fakes stop)
-check "stop stops ears and Whisper" "0|docker compose stop ears whisper | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
+check "stop stops ears, Whisper and openWakeWord" "0|docker compose stop ears whisper openwakeword | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
 check "start, stop and whisper-model write no switch" "no folder" "$([ -e "$work/repo/ears/switch" ] && echo folder || echo "no folder")"
 
 echo "$passed passed, $failed failed"

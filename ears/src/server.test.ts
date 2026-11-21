@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { createEars, type Ears } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
-import { earsPort, startEarsServer, tokenMatches } from "./server.js";
+import { earsPort, startEarsServer, tokenMatches, wakeOffError, type WakeApi } from "./server.js";
 
 const token = "t".repeat(64);
 
@@ -107,4 +107,133 @@ test("an unknown route is 404 and a wrong method 405 naming the right one", asyn
     assert.deepEqual([answer.status, answer.allow, answer.body.error], [405, allowed, `Use ${allowed} for ${path}`]);
   }
   await closed(server);
+});
+
+function wakeApi(ears: Ears, on = true) {
+  let version = 3;
+  const calls: string[] = [];
+  const waits: { after: number; run: string | null }[] = [];
+  let release: () => void = () => {};
+  const api: WakeApi = {
+    full: () => ({ ...ears.view(), version, run: "abc123" }),
+    async wait(after, run, signal) {
+      waits.push({ after, run });
+      if (after < version) return api.full();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return api.full();
+    },
+    hold: (by) => (calls.push(`hold ${by}`), on),
+    release: (by) => (calls.push(`release ${by}`), on),
+  };
+  return { api, calls, waits, bump: () => (version++, release()) };
+}
+
+async function serveWake(on = true) {
+  const ears = createEars({ microphone: "pretend", record: quickRecording, log: () => {} });
+  const wake = wakeApi(ears, on);
+  const server = await startEarsServer(ears, token, 0, "127.0.0.1", wake.api);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const call = async (method: string, path: string, init: RequestInit = {}) => {
+    const response = await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}` }, ...init });
+    return { status: response.status, allow: response.headers.get("allow"), body: await response.json() };
+  };
+  return { server, ears, wake, call, base };
+}
+
+test("without the wake word's routes, they don't exist", async () => {
+  const { server, call } = await serve();
+  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold"], ["POST", "/wake/release"]]) assert.equal((await call(method, path)).status, 404, path);
+  await closed(server);
+});
+
+test("the wake word's routes need the token too", async () => {
+  const { server, base } = await serveWake();
+  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold?by=aa"], ["POST", "/wake/release?by=aa"]]) {
+    const response = await fetch(`${base}${path}`, { method });
+    assert.equal(response.status, 401, path);
+    await response.body?.cancel();
+  }
+  await closed(server);
+});
+
+test("a wait gives the whole view with its version, at once when the version is already past, passing on which run it knew", async () => {
+  const { server, wake, call } = await serveWake();
+  const first = await call("GET", "/wait");
+  assert.deepEqual([first.status, first.body.version, first.body.run, first.body.state], [200, 3, "abc123", "muted"]);
+  assert.deepEqual(wake.waits, [{ after: -1, run: null }]);
+  assert.equal((await call("GET", "/wait?after=2&run=abc123")).body.version, 3);
+  assert.deepEqual(wake.waits[1], { after: 2, run: "abc123" });
+  await closed(server);
+});
+
+test("a wait from the latest version is answered when something changes", async () => {
+  const { server, wake, call } = await serveWake();
+  const waiting = call("GET", "/wait?after=3");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  wake.bump();
+  const answer = await waiting;
+  assert.deepEqual([answer.status, answer.body.version], [200, 4]);
+  await closed(server);
+});
+
+test("a wait whose caller has gone is let go, and nothing is written to it", async () => {
+  const { server, wake, base } = await serveWake();
+  const gone = new AbortController();
+  const waiting = fetch(`${base}/wait?after=3`, { headers: { authorization: `Bearer ${token}` }, signal: gone.signal }).catch((error: unknown) => error);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  gone.abort();
+  await waiting;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(wake.waits.length, 1);
+  await closed(server);
+});
+
+test("a wait's after must be a whole number from -1", async () => {
+  const { server, call } = await serveWake();
+  for (const after of ["", "x", "1.5", "-2", "1e3", " 1", "99999999999999999"]) {
+    const answer = await call("GET", `/wait?after=${encodeURIComponent(after)}`);
+    assert.deepEqual([answer.status, answer.body], [400, { error: "after must be a whole number from -1" }], after);
+  }
+  assert.equal((await call("GET", "/wait?after=-1")).status, 200);
+  assert.equal((await call("GET", "/wait?after=0")).status, 200);
+  await closed(server);
+});
+
+test("claiming takes a wake-word recording by its number, with 409 if it isn't waiting and 400 for a bad number", async () => {
+  const { server, ears, call } = await serveWake();
+  await ears.unmute();
+  ears.start("wake");
+  for (const id of ["", "0", "-1", "x", "1.0"]) assert.deepEqual((await call("POST", `/wake/claim?id=${id}`)).body, { error: "id must be a recording's number, from 1" }, id);
+  assert.equal((await call("POST", "/wake/claim")).status, 400);
+  const wrong = await call("POST", "/wake/claim?id=2");
+  assert.deepEqual([wrong.status, wrong.body.error, wrong.body.version, wrong.body.state], [409, "that wake-word recording isn't waiting to be taken", 3, "recording"]);
+  const claimed = await call("POST", "/wake/claim?id=1");
+  assert.deepEqual([claimed.status, claimed.body.state, claimed.body.version], [200, "recording", 3]);
+  assert.equal((await call("POST", "/wake/claim?id=1")).status, 409);
+  assert.deepEqual([(await call("GET", "/wake/claim?id=1")).allow], ["POST"]);
+  await ears.stop();
+  await closed(server);
+});
+
+test("hold and release pass on who holds, and with the wake word off they're refused saying how to turn it on", async () => {
+  const on = await serveWake();
+  assert.deepEqual([(await on.call("POST", "/wake/hold?by=0f3a")).status, (await on.call("POST", "/wake/release?by=0f3a")).status], [200, 200]);
+  assert.deepEqual(on.wake.calls, ["hold 0f3a", "release 0f3a"]);
+  for (const by of ["", "XYZ", "0F3A", "a".repeat(33), "a-b", "a b"]) {
+    const answer = await on.call("POST", `/wake/hold?by=${encodeURIComponent(by)}`);
+    assert.deepEqual([answer.status, answer.body], [400, { error: "by must name who holds, in up to 32 lower-case hex digits" }], by);
+  }
+  assert.equal((await on.call("POST", "/wake/release")).status, 400);
+  assert.deepEqual(on.wake.calls.length, 2);
+  assert.deepEqual([(await on.call("GET", "/wake/hold?by=a")).allow, (await on.call("POST", "/wait")).allow], ["POST", "GET"]);
+  await closed(on.server);
+  const off = await serveWake(false);
+  const held = await off.call("POST", "/wake/hold?by=a");
+  assert.deepEqual([held.status, held.body.error], [409, wakeOffError]);
+  assert.equal(wakeOffError, "ears has the wake word off, so set EARS_WAKE=on in ears/.env and start it again with bash host/ears.sh start");
+  assert.equal((await off.call("POST", "/wake/release?by=a")).status, 409);
+  await closed(off.server);
 });

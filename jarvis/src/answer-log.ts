@@ -7,7 +7,7 @@ export const answerLogFile = fileURLToPath(new URL("../data/answers.jsonl", impo
 export const loggingNote = "Logging: each answer's numbers, never its words, go to data/answers.jsonl. Type + or - after an answer to rate it.";
 export const logVersion = 1;
 
-export type HeardTimes = { recordedMs: number; textMs: number };
+export type HeardTimes = { recordedMs: number; textMs: number; wake?: true };
 export type Outcome = ({ answer: Answer } | { error: string }) & { heard?: HeardTimes };
 
 export type Rating = "good" | "bad";
@@ -183,7 +183,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     refusedTools: stats === null ? null : stats.refusedTools.length,
     spokeFirst: stats?.spokeFirst ?? null,
     retried: stats?.retried ?? null,
-    ...(outcome.heard === undefined ? {} : { heard: { recordedMs: Math.round(outcome.heard.recordedMs), textMs: Math.round(outcome.heard.textMs) } }),
+    ...(outcome.heard === undefined ? {} : { heard: { recordedMs: Math.round(outcome.heard.recordedMs), textMs: Math.round(outcome.heard.textMs), ...(outcome.heard.wake === true ? { wake: true as const } : {}) } }),
   };
 }
 

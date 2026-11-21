@@ -1,14 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createChanges, type Changes } from "./changes.js";
 import type { Config } from "./config.js";
 import { createEars, type Ears } from "./ears.js";
+import { createListener, wakeHost, wakeOff, wakePort, type Listener, type ListenerDeps } from "./listener.js";
 import { findMicCard, recorderArgs, recorderCommand, setMicLevel, type MicCard } from "./mic-card.js";
 import { switchEveryMs, switchFile, watchSwitch } from "./mute.js";
 import { startRecording, type Recorder } from "./recorder.js";
-import { earsPort, startEarsServer } from "./server.js";
+import { earsPort, startEarsServer, type WakeApi } from "./server.js";
 import type { ToText } from "./whisper.js";
+import { connectWyoming } from "./wyoming-client.js";
 
 export const pretendMic: Recorder = { command: process.execPath, args: [join(dirname(fileURLToPath(import.meta.url)), "pretend-mic-run.js")] };
 
@@ -24,9 +28,10 @@ export type ServiceOptions = {
   toText?: ToText;
   findCard?: () => Promise<MicCard>;
   setLevel?: (card: number, control: string, level: number) => Promise<void>;
+  wake?: Partial<Pick<ListenerDeps, "connect" | "presenceMs" | "holdMs" | "gapMs" | "retryMs" | "settleMs" | "startWithinMs" | "quietForMs">> & { claimMs?: number; waitMs?: number };
 };
 
-export type Service = { ears: Ears; server: Server; microphone: string; close(): Promise<void> };
+export type Service = { ears: Ears; server: Server; microphone: string; wake: WakeApi; close(): Promise<void> };
 
 async function chooseRecorder(options: ServiceOptions): Promise<{ recorder: Recorder; microphone: string }> {
   const { config } = options;
@@ -40,13 +45,63 @@ async function chooseRecorder(options: ServiceOptions): Promise<{ recorder: Reco
 
 export async function startService(options: ServiceOptions): Promise<Service> {
   const { recorder, microphone } = await chooseRecorder(options);
-  const ears = createEars({ microphone: options.config.microphone, record: () => startRecording({ recorder, limitMs: options.limitMs }), log: options.log, toText: options.toText });
+  const tuning = options.wake ?? {};
+  let changes: Changes | null = null;
+  let listener: Listener | null = null;
+  const ears = createEars({
+    microphone: options.config.microphone,
+    record: (by) => (listener === null ? startRecording({ recorder, limitMs: options.limitMs }) : listener.tap(by)),
+    log: options.log,
+    toText: options.toText,
+    claimMs: tuning.claimMs,
+    changed: () => {
+      listener?.update();
+      changes?.check();
+    },
+  });
+  const run = randomUUID().replaceAll("-", "").slice(0, 16);
+  const full = () => ({ ...ears.view(), lastId: ears.lastId(), current: ears.current(), wake: listener?.view() ?? wakeOff });
+  changes = createChanges(full);
+  const seen = changes;
+  if (options.config.wake) {
+    listener = createListener({
+      ...tuning,
+      ears: () => ({ state: () => ears.view().state, start: (by) => ears.start(by), fail: (why) => ears.fail(why) }),
+      stream: (onSound) => startRecording({ recorder, limitMs: null, keep: false, onSound }),
+      connect: tuning.connect ?? ((signal) => connectWyoming({ host: wakeHost, port: wakePort, signal })),
+      log: options.log,
+      changed: () => seen.check(),
+      limitMs: options.limitMs,
+    });
+  }
+  const hearing = listener;
+  const wake: WakeApi = {
+    full: () => ({ ...full(), version: seen.version(), run }),
+    async wait(after, from, signal) {
+      const done = hearing?.waiting();
+      try {
+        if (from === null || from === run) await seen.wait(after, signal, tuning.waitMs);
+      } finally {
+        done?.();
+      }
+      return { ...full(), version: seen.version(), run };
+    },
+    hold(by) {
+      hearing?.hold(by);
+      return hearing !== null;
+    },
+    release(by) {
+      hearing?.release(by);
+      return hearing !== null;
+    },
+  };
   const watch = await watchSwitch({ read: () => readFile(options.switchAt ?? switchFile, "utf8"), everyMs: options.everyMs ?? switchEveryMs, onMute: () => void ears.mute(null), onUnmute: () => void ears.unmute() });
   let server: Server;
   try {
-    server = await startEarsServer(ears, options.config.token, options.port ?? earsPort, options.host);
+    server = await startEarsServer(ears, options.config.token, options.port ?? earsPort, options.host, wake);
   } catch (error) {
     watch.stop();
+    await hearing?.close();
     throw error;
   }
   let closing: Promise<void> | null = null;
@@ -54,10 +109,12 @@ export async function startService(options: ServiceOptions): Promise<Service> {
     ears,
     server,
     microphone,
+    wake,
     close() {
       closing ??= (async () => {
         watch.stop();
         await ears.mute("ears is shutting down");
+        await hearing?.close();
         await new Promise<void>((resolve) => {
           server.close(() => resolve());
           server.closeAllConnections();

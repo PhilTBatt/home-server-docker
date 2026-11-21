@@ -3,7 +3,9 @@ export const earsQuickMs = 4_000;
 export const earsStopMs = 70_000;
 
 export type EarsLast = { seconds: number; reason: string; text: string | null; textProblem: string | null };
-export type EarsAnswer = { status: number; state: string | null; reason: string | null; error: string | null; seconds: number | null; last: EarsLast | null };
+export type EarsCurrent = { id: number; by: "push" | "wake"; claimed: boolean };
+export type EarsWake = { on: boolean; listening: boolean; held: boolean; problem: string | null };
+export type EarsAnswer = { status: number; state: string | null; reason: string | null; error: string | null; seconds: number | null; last: EarsLast | null; version?: number | null; run?: string | null; lastId?: number | null; current?: EarsCurrent | null; wake?: EarsWake | null };
 export type EarsCall = (method: "GET" | "POST", path: string, ms: number, signal?: AbortSignal) => Promise<EarsAnswer>;
 
 function text(value: unknown): string | null {
@@ -24,6 +26,26 @@ function lastOf(value: unknown): EarsLast | null {
   return { seconds: last.seconds, reason: tidy(last.reason), text: last.text, textProblem: last.textProblem === null ? null : tidy(last.textProblem) };
 }
 
+function count(value: unknown, least: number): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= least ? value : null;
+}
+
+function currentOf(value: unknown): EarsCurrent | null {
+  if (typeof value !== "object" || value === null) return null;
+  const current = value as Record<string, unknown>;
+  const id = count(current.id, 1);
+  if (id === null || (current.by !== "push" && current.by !== "wake") || typeof current.claimed !== "boolean") return null;
+  return { id, by: current.by, claimed: current.claimed };
+}
+
+function wakeOf(value: unknown): EarsWake | null {
+  if (typeof value !== "object" || value === null) return null;
+  const wake = value as Record<string, unknown>;
+  if (typeof wake.on !== "boolean" || typeof wake.listening !== "boolean" || typeof wake.held !== "boolean") return null;
+  if (wake.problem !== null && typeof wake.problem !== "string") return null;
+  return { on: wake.on, listening: wake.listening, held: wake.held, problem: wake.problem === null ? null : tidy(wake.problem) };
+}
+
 export function readEarsAnswer(status: number, body: unknown): EarsAnswer {
   const fields = typeof body === "object" && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
   const seconds = typeof fields.seconds === "number" && Number.isFinite(fields.seconds) ? fields.seconds : null;
@@ -31,7 +53,10 @@ export function readEarsAnswer(status: number, body: unknown): EarsAnswer {
     const found = text(value);
     return found === null ? null : tidy(found);
   };
-  return { status, state: tidied(fields.state), reason: tidied(fields.reason), error: tidied(fields.error), seconds, last: lastOf(fields.last) };
+  const answer: EarsAnswer = { status, state: tidied(fields.state), reason: tidied(fields.reason), error: tidied(fields.error), seconds, last: lastOf(fields.last) };
+  if (!("version" in fields)) return answer;
+  const run = typeof fields.run === "string" && /^[0-9a-f]{1,32}$/.test(fields.run) ? fields.run : null;
+  return { ...answer, version: count(fields.version, 0), run, lastId: count(fields.lastId, 1), current: currentOf(fields.current), wake: wakeOf(fields.wake) };
 }
 
 function code(error: unknown): string {

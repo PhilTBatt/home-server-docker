@@ -34,6 +34,7 @@ function isHeard(value: unknown): boolean {
   if (value === undefined) return true;
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const heard = value as Record<string, unknown>;
+  if (heard.wake !== undefined && heard.wake !== true) return false;
   return [heard.recordedMs, heard.textMs].every((time) => typeof time === "number" && Number.isFinite(time) && time >= 0);
 }
 
@@ -424,7 +425,9 @@ function heardLine(lines: LogLine[]): string | null {
   const recorded = summarise(spoken.map((heard) => heard.recordedMs));
   const text = summarise(spoken.map((heard) => heard.textMs));
   if (recorded === null || text === null) return null;
-  return `${plural(spoken.length, "question")} ${spoken.length === 1 ? "was" : "were"} asked through ears. Recording ${seconds(recorded.median)} (${seconds(recorded.max)}), and the text back after Enter ${seconds(text.median)} (${seconds(text.max)}): the median, with the slowest in brackets.`;
+  const woken = spoken.filter((heard) => heard.wake === true).length;
+  const how = woken === 0 ? "" : spoken.length === 1 ? ", with the wake word" : `, ${woken === spoken.length ? "all" : woken} of them with the wake word`;
+  return `${plural(spoken.length, "question")} ${spoken.length === 1 ? "was" : "were"} asked through ears${how}. Recording ${seconds(recorded.median)} (${seconds(recorded.max)}), and the text back once it ended ${seconds(text.median)} (${seconds(text.max)}): the median, with the slowest in brackets.`;
 }
 
 function failureLines(groups: Group[]): string[] {

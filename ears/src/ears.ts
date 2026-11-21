@@ -1,5 +1,6 @@
 import type { Microphone } from "./config.js";
 import type { Recording, Stopped } from "./recorder.js";
+import type { By } from "./tap.js";
 import type { ToText } from "./whisper.js";
 
 export type EarsState = "muted" | "idle" | "recording" | "working" | "failed";
@@ -10,15 +11,21 @@ export type EarsView = { state: EarsState; reason: string | null; microphone: Mi
 
 export type Refused = { ok: false; error: string };
 
-export type EarsDeps = { microphone: Microphone | null; record: () => Recording; log: (line: string) => void; toText?: ToText; now?: () => number };
+export type Current = { id: number; by: By; claimed: boolean };
+
+export type EarsDeps = { microphone: Microphone | null; record: (by: By) => Recording; log: (line: string) => void; toText?: ToText; now?: () => number; changed?: () => void; claimMs?: number };
 
 export type Ears = {
   view(): EarsView;
-  start(): { ok: true; view: EarsView } | Refused;
+  start(by?: By): { ok: true; view: EarsView } | Refused;
   stop(): Promise<{ ok: true; seconds: number; view: EarsView } | Refused>;
   cancel(): Promise<{ ok: true; seconds: number; view: EarsView } | Refused>;
   mute(why: string | null): Promise<void>;
   unmute(): Promise<void>;
+  claim(id: number): { ok: true; view: EarsView } | Refused;
+  fail(why: string): void;
+  current(): Current | null;
+  lastId(): number | null;
 };
 
 export const startsMuted = "ears starts muted after every start, and waits to be unmuted";
@@ -54,6 +61,9 @@ export const flippedBeforeText = "the switch was flipped before it was turned in
 export const cancelledBeforeText = "it was cancelled before it was turned into text";
 export const clearedByMute = "it was cleared by a mute";
 export const clearedByCancel = "it was cancelled after it was turned into text, so it was cleared";
+export const failedBeforeText = "the microphone failed before it was turned into text";
+export const claimMs = 2_000;
+export const notTakenWhy = `no Jarvis chat took it within ${claimMs / 1000} seconds`;
 
 export function createEars(deps: EarsDeps): Ears {
   let state: EarsState = "muted";
@@ -64,12 +74,25 @@ export function createEars(deps: EarsDeps): Ears {
   let working: { calledOff: AbortController; done: Promise<void> } | null = null;
   let notHeardWhy: string | null = null;
   let stopping: Promise<{ ok: true; seconds: number; view: EarsView }> | null = null;
+  let count = 0;
+  let underway: Current | null = null;
+  let lastId: number | null = null;
+  let claimTimer: ReturnType<typeof setTimeout> | null = null;
+  const ids = new WeakMap<Recording, number>();
+  const changed = () => deps.changed?.();
   const now = deps.now ?? (() => performance.now());
   const view = (): EarsView => ({ state, reason, microphone: deps.microphone, last: last === null ? null : { ...last } });
   const refuse = (error: string): Refused => ({ ok: false, error });
-  const finished = (stopped: Stopped) => {
+  const finished = (stopped: Stopped, of: Recording) => {
     last = { seconds: seconds(stopped.ms), reason: stopped.reason, text: null, textProblem: null };
+    lastId = ids.get(of) ?? null;
+    if (underway !== null && underway.id === lastId) underway = null;
+    if (claimTimer !== null && underway === null) {
+      clearTimeout(claimTimer);
+      claimTimer = null;
+    }
     deps.log(stoppedLine(stopped));
+    changed();
   };
   const toText = (stopped: Stopped): Promise<void> => {
     const turn = deps.toText;
@@ -79,6 +102,7 @@ export function createEars(deps: EarsDeps): Ears {
       return Promise.resolve();
     }
     state = "working";
+    changed();
     const calledOff = new AbortController();
     const began = now();
     const done = (async () => {
@@ -96,6 +120,7 @@ export function createEars(deps: EarsDeps): Ears {
           working = null;
           if (state === "working") state = "idle";
         }
+        changed();
       }
     })();
     working = { calledOff, done };
@@ -108,6 +133,7 @@ export function createEars(deps: EarsDeps): Ears {
     current.calledOff.abort(new Error(why));
     if (last !== null) last.textProblem = why;
     deps.log(`Not turned into text: ${why}.`);
+    changed();
     return current.done;
   };
   const settle = (stopped: Stopped, heard: boolean): Promise<void> => {
@@ -115,52 +141,72 @@ export function createEars(deps: EarsDeps): Ears {
     if (stopped.failed) {
       state = "failed";
       reason = stopped.reason;
+      changed();
       return Promise.resolve();
     }
     reason = null;
     if (!heard) {
       state = "idle";
+      changed();
       return Promise.resolve();
     }
     return toText(stopped);
   };
-  const end = async (current: Recording, why: string): Promise<Stopped> => {
-    const promise = current.stop(why);
+  const end = async (of: Recording, why: string): Promise<Stopped> => {
+    const promise = of.stop(why);
     ending = promise;
     const stopped = await promise;
     if (ending === promise) ending = null;
-    finished(stopped);
+    finished(stopped, of);
+    return stopped;
+  };
+  const drop = async (of: Recording, why: string) => {
+    recording = null;
+    const stopped = await end(of, why);
+    await settle(stopped, false);
     return stopped;
   };
 
   return {
     view,
-    start() {
+    start(by = "push") {
       if (state === "muted") return refuse("ears is muted");
       if (state === "failed") return refuse(`ears failed (${reason}), so it records nothing until it's unmuted again`);
       if (state === "recording") return refuse("ears is already recording");
       if (state === "working") return refuse("ears is still turning the last recording into text");
       if (ending !== null) return refuse("ears is still ending the last recording");
       if (deps.microphone === null) return refuse("no microphone is set, so there's nothing to record from");
-      let current: Recording;
+      let started: Recording;
       try {
-        current = deps.record();
+        started = deps.record(by);
       } catch (error) {
         state = "failed";
         reason = `the recorder couldn't start: ${error instanceof Error ? error.message : String(error)}`;
         deps.log(`Recording failed to start: ${reason}.`);
+        changed();
         return refuse(`ears failed (${reason})`);
       }
-      recording = current;
+      count++;
+      const id = count;
+      ids.set(started, id);
+      underway = { id, by, claimed: by === "push" };
+      recording = started;
       state = "recording";
       reason = null;
-      deps.log("Recording started.");
-      void current.ended.then((stopped) => {
-        if (recording !== current) return;
+      deps.log(by === "wake" ? "Recording started by the wake word." : "Recording started.");
+      if (by === "wake") {
+        claimTimer = setTimeout(() => {
+          claimTimer = null;
+          if (underway?.id === id && !underway.claimed && recording === started) void drop(started, notTakenWhy);
+        }, deps.claimMs ?? claimMs);
+      }
+      void started.ended.then((stopped) => {
+        if (recording !== started) return;
         recording = null;
-        finished(stopped);
-        void settle(stopped, true);
+        finished(stopped, started);
+        void settle(stopped, stopped.unheard !== true);
       });
+      changed();
       return { ok: true, view: view() };
     },
     stop() {
@@ -194,6 +240,7 @@ export function createEars(deps: EarsDeps): Ears {
         last.text = null;
         last.textProblem = clearedByCancel;
         deps.log("Cleared the last recording's text, since it was cancelled.");
+        changed();
         return { ok: true, seconds: last.seconds, view: view() };
       }
       const current = recording;
@@ -203,9 +250,7 @@ export function createEars(deps: EarsDeps): Ears {
         return { ok: true, seconds: stopped.seconds, view: view() };
       }
       if (state !== "recording" || current === null) return refuse("ears isn't recording");
-      recording = null;
-      const stopped = await end(current, "asked to cancel");
-      await settle(stopped, false);
+      const stopped = await drop(current, "asked to cancel");
       return { ok: true, seconds: seconds(stopped.ms), view: view() };
     },
     async mute(why) {
@@ -220,6 +265,7 @@ export function createEars(deps: EarsDeps): Ears {
         last.textProblem = clearedByMute;
         deps.log("Cleared the last recording's text, since it was muted.");
       }
+      changed();
       const dropped = dropText(mutedBeforeText);
       if (current !== null) await end(current, "muted");
       else if (ending !== null) await ending;
@@ -230,6 +276,7 @@ export function createEars(deps: EarsDeps): Ears {
         state = "idle";
         reason = null;
         deps.log("Unmuted.");
+        changed();
         return;
       }
       if (state === "working") {
@@ -245,5 +292,23 @@ export function createEars(deps: EarsDeps): Ears {
       recording = null;
       await settle(await end(current, "the switch was flipped while it was recording, so a mute may have come and gone"), false);
     },
+    claim(id) {
+      if (underway === null || underway.id !== id || underway.claimed || recording === null) return refuse("that wake-word recording isn't waiting to be taken");
+      underway.claimed = true;
+      deps.log("A Jarvis chat took the wake-word recording.");
+      changed();
+      return { ok: true, view: view() };
+    },
+    fail(why) {
+      if (state === "muted" || state === "failed" || state === "recording") return;
+      const was = state;
+      state = "failed";
+      reason = why;
+      deps.log(`The microphone failed: ${why}.`);
+      changed();
+      if (was === "working") void dropText(failedBeforeText);
+    },
+    current: () => (underway === null ? null : { ...underway }),
+    lastId: () => lastId,
   };
 }

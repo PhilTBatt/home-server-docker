@@ -6,6 +6,7 @@ export const wyomingConnectMs = 3_000;
 export type WyomingConnection = {
   send(event: WyomingEvent, signal?: AbortSignal): Promise<void>;
   next(signal?: AbortSignal): Promise<WyomingEvent | null>;
+  buffered(): number;
   close(): void;
 };
 
@@ -152,6 +153,9 @@ function connection(socket: ReturnType<typeof connect>, where: string, limits: W
         signal?.addEventListener("abort", stop, { once: true });
         check();
       });
+    },
+    buffered() {
+      return socket.writableLength;
     },
     close() {
       problem ??= new Error(`The connection to the Wyoming server at ${where} was closed at this end`);

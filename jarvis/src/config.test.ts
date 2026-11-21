@@ -394,25 +394,29 @@ test("JARVIS_SPOKEN_STYLE is checked after JARVIS_SPEECH_STOP and before JARVIS_
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPOKEN_STYLE: "on" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
 });
 
-test("JARVIS_EARS is off unless it's set to push, and push keeps ears's token, which host/jarvis.sh passes in", () => {
+test("JARVIS_EARS is off unless it's set to push or wake, and both keep ears's token, which host/jarvis.sh passes in", () => {
   assert.equal(readConfig(base).ears, "off");
   assert.equal(readConfig({ ...base, JARVIS_EARS: "" }).ears, "off");
   assert.equal(readConfig({ ...base, JARVIS_EARS: "  " }).ears, "off");
   assert.deepEqual([readConfig({ ...base, JARVIS_EARS: "off", EARS_TOKEN: "e".repeat(64) }).ears, readConfig({ ...base, JARVIS_EARS: "off", EARS_TOKEN: "e".repeat(64) }).earsToken], ["off", null]);
   assert.deepEqual([readConfig({ ...base, JARVIS_EARS: " push ", EARS_TOKEN: ` ${"e".repeat(64)} ` }).ears, readConfig({ ...base, JARVIS_EARS: "push", EARS_TOKEN: "e".repeat(64) }).earsToken], ["push", "e".repeat(64)]);
+  assert.deepEqual([readConfig({ ...base, JARVIS_EARS: " wake ", EARS_TOKEN: ` ${"w".repeat(64)} ` }).ears, readConfig({ ...base, JARVIS_EARS: "wake", EARS_TOKEN: ` ${"w".repeat(64)} ` }).earsToken], ["wake", "w".repeat(64)]);
 });
 
-test("anything else in JARVIS_EARS stops Jarvis and is named, and push without ears's token says how to start him", () => {
-  for (const value of ["on", "PUSH", "wake", "talk", "yes"]) {
-    assert.throws(() => readConfig({ ...base, JARVIS_EARS: value, EARS_TOKEN: "e".repeat(64) }), { message: `JARVIS_EARS must be off or push, not "${value}"` });
+test("anything else in JARVIS_EARS stops Jarvis and is named, and push or wake without ears's token says how to start him", () => {
+  for (const value of ["on", "PUSH", "Wake", "talk", "yes", "hey jarvis"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_EARS: value, EARS_TOKEN: "e".repeat(64) }), { message: `JARVIS_EARS must be off, push or wake, not "${value}"` });
   }
-  for (const token of [undefined, "", "   "]) {
-    assert.throws(() => readConfig({ ...base, JARVIS_EARS: "push", EARS_TOKEN: token }), { message: "JARVIS_EARS is push, but there's no EARS_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in from ears/.env" });
+  for (const mode of ["push", "wake"]) {
+    for (const token of [undefined, "", "   "]) {
+      assert.throws(() => readConfig({ ...base, JARVIS_EARS: mode, EARS_TOKEN: token }), { message: `JARVIS_EARS is ${mode}, but there's no EARS_TOKEN. Start Jarvis with bash host/jarvis.sh, which passes it in from ears/.env` });
+    }
   }
 });
 
 test("JARVIS_EARS is checked after JARVIS_SPOKEN_STYLE and before JARVIS_LOG", () => {
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPOKEN_STYLE: "word", JARVIS_EARS: "word" }), { message: 'JARVIS_SPOKEN_STYLE must be on or off, not "word"' });
-  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_EARS: "word" }), { message: 'JARVIS_EARS must be off or push, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_EARS: "word" }), { message: 'JARVIS_EARS must be off, push or wake, not "word"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_EARS: "push", EARS_TOKEN: "e" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_EARS: "wake", EARS_TOKEN: "e" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
 });

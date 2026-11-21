@@ -4,18 +4,18 @@ export const talkWord = "/talk";
 export const unmuteHint = "unmute it on the server with bash host/ears.sh unmute";
 export const talkPollMs = 250;
 
-export type Heard = { text: string; recordedMs: number; textMs: number };
+export type Heard = { text: string; recordedMs: number; textMs: number; wake?: true };
 export type Started = { ok: true } | { ok: false; why: string };
 export type Sent = { ok: true; heard: Heard } | { ok: false; why: string };
 
 export type Talk = {
   check(signal?: AbortSignal): Promise<string>;
   start(signal?: AbortSignal): Promise<Started>;
-  send(signal?: AbortSignal): Promise<Sent>;
+  send(signal?: AbortSignal, wake?: boolean): Promise<Sent>;
   drop(signal?: AbortSignal): Promise<string | null>;
 };
 
-export type TalkDeps = { call: EarsCall; now?: () => number; wait?: (ms: number) => Promise<void>; pollMs?: number; waitMs?: number };
+export type TalkDeps = { call: EarsCall; now?: () => number; wait?: (ms: number) => Promise<void>; pollMs?: number; waitMs?: number; wake?: boolean };
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -26,11 +26,12 @@ function refusal(answer: EarsAnswer): string {
   return answer.error ?? `ears answered ${answer.status}`;
 }
 
-export function earsLine(answer: EarsAnswer): string {
+export function earsLine(answer: EarsAnswer, wake = false): string {
+  const speak = wake ? `say Hey Jarvis or type ${talkWord}` : `type ${talkWord} to speak`;
   if (answer.status !== 200) return `Ears: ${refusal(answer)}`;
-  if (answer.state === "muted") return `Ears: ready but muted, so ${unmuteHint}, then type ${talkWord} to speak`;
-  if (answer.state === "failed") return `Ears: failed (${answer.reason ?? "no reason given"}), so ${unmuteHint} to start it again, then type ${talkWord} to speak`;
-  return `Ears: ready. Type ${talkWord} to speak, then press Enter on an empty line to send it`;
+  if (answer.state === "muted") return `Ears: ready but muted, so ${unmuteHint}, then ${speak}`;
+  if (answer.state === "failed") return `Ears: failed (${answer.reason ?? "no reason given"}), so ${unmuteHint} to start it again, then ${speak}`;
+  return wake ? `Ears: ready. Type ${talkWord} to speak, or say Hey Jarvis while the wake word is on` : `Ears: ready. Type ${talkWord} to speak, then press Enter on an empty line to send it`;
 }
 
 function whyNoText(answer: EarsAnswer): string {
@@ -43,6 +44,13 @@ function whyNoText(answer: EarsAnswer): string {
   if (last === null) return "ears sent back no text";
   if (last.text !== null) return "Whisper heard no words";
   return `it wasn't turned into text: ${last.reason}`;
+}
+
+export function heardFrom(answer: EarsAnswer, textMs: number, wake = false): Sent {
+  if (answer.status !== 200) return { ok: false, why: refusal(answer) };
+  const text = answer.last?.text ?? null;
+  if (answer.state === "working" || answer.state === "recording" || text === null || text.trim() === "") return { ok: false, why: whyNoText(answer) };
+  return { ok: true, heard: { text: text.trim(), recordedMs: Math.round((answer.last?.seconds ?? 0) * 1000), textMs, ...(wake ? { wake: true as const } : {}) } };
 }
 
 export function startTalk(deps: TalkDeps): Talk {
@@ -62,7 +70,7 @@ export function startTalk(deps: TalkDeps): Talk {
   return {
     async check(signal) {
       try {
-        return earsLine(await deps.call("GET", "/state", earsQuickMs, signal));
+        return earsLine(await deps.call("GET", "/state", earsQuickMs, signal), deps.wake === true);
       } catch (error) {
         if (signal?.aborted === true) throw error;
         return `Ears: ${reasonOf(error)}`;
@@ -77,15 +85,12 @@ export function startTalk(deps: TalkDeps): Talk {
         return { ok: false, why: reasonOf(error) };
       }
     },
-    async send(signal) {
+    async send(signal, wake = false) {
       const began = now();
       try {
         let answer = await deps.call("POST", "/recording/stop", earsStopMs, signal);
         if (answer.status === 409) answer = await settled(signal);
-        if (answer.status !== 200) return { ok: false, why: refusal(answer) };
-        const text = answer.last?.text ?? null;
-        if (answer.state === "working" || answer.state === "recording" || text === null || text.trim() === "") return { ok: false, why: whyNoText(answer) };
-        return { ok: true, heard: { text: text.trim(), recordedMs: Math.round((answer.last?.seconds ?? 0) * 1000), textMs: now() - began } };
+        return heardFrom(answer, now() - began, wake);
       } catch (error) {
         await cancelQuietly();
         return { ok: false, why: reasonOf(error) };

@@ -1,7 +1,7 @@
 # 0038. Jarvis takes spoken questions through ears with /talk
 
 - Date: 2026-11-20
-- Status: accepted
+- Status: accepted; with `JARVIS_EARS=wake`, "Hey Jarvis" starts a recording too, and the log's `heard` marks those with `wake` (0039)
 
 ## Context
 Ears records from a real microphone and Whisper turns each recording into text (record 0037), but nothing used the text. Jarvis needed a way for me to speak a question instead of typing it. His chat reads whole lines, an empty Enter already stops him talking (record 0023), and a terminal doesn't say when a key is let go, so it had to be press to start and press again to send (rule R3). The first test on 20 Nov showed the laptop's built-in microphone works through card 1. I'll want a talk button on the Stream Deck later, beside the wake word, so the way I start a recording now shouldn't be the only way there can be.

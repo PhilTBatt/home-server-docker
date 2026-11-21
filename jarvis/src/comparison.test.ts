@@ -805,11 +805,23 @@ test("a line's heard times are trusted only when both are whole, finite and not 
   }
 });
 
-test("questions asked through ears get a line of their own, with how long was recorded and how long the text took after Enter, and none without them", () => {
+test("questions asked through ears get a line of their own, with how long was recorded and how long the text took once it ended, and none without them", () => {
   const lines = [line({ heard: { recordedMs: 2000, textMs: 1000 } }), line({ question: 2, heard: { recordedMs: 4000, textMs: 3000 } }), line({ question: 3, ok: false, error: "timeout", heard: { recordedMs: 6000, textMs: 1200 } }), line({ question: 4 })];
   const report = compareReport({ lines, skipped: 0 });
-  assert.equal(report.includes("\n3 questions were asked through ears. Recording 4.00 s (6.00 s), and the text back after Enter 1.20 s (3.00 s): the median, with the slowest in brackets.\n"), true, report);
+  assert.equal(report.includes("\n3 questions were asked through ears. Recording 4.00 s (6.00 s), and the text back once it ended 1.20 s (3.00 s): the median, with the slowest in brackets.\n"), true, report);
   const one = compareReport({ lines: [line({ heard: { recordedMs: 2500, textMs: 1300 } })], skipped: 0 });
-  assert.equal(one.includes("\n1 question was asked through ears. Recording 2.50 s (2.50 s), and the text back after Enter 1.30 s (1.30 s)"), true, one);
+  assert.equal(one.includes("\n1 question was asked through ears. Recording 2.50 s (2.50 s), and the text back once it ended 1.30 s (1.30 s)"), true, one);
   assert.equal(compareReport({ lines: [line()], skipped: 0 }).includes("through ears"), false);
+});
+
+test("the ears line says how many questions came through the wake word, and a wake that isn't exactly true makes the line untrusted", () => {
+  const woken = (question: number, recordedMs: number) => line({ question, heard: { recordedMs, textMs: 900, wake: true } });
+  const mixed = compareReport({ lines: [line({ heard: { recordedMs: 2000, textMs: 1000 } }), woken(2, 3000), woken(3, 5000)], skipped: 0 });
+  assert.equal(mixed.includes("\n3 questions were asked through ears, 2 of them with the wake word. Recording 3.00 s (5.00 s), and the text back once it ended 0.90 s (1.00 s)"), true, mixed);
+  const all = compareReport({ lines: [woken(1, 3000), woken(2, 5000)], skipped: 0 });
+  assert.equal(all.includes("\n2 questions were asked through ears, all of them with the wake word. Recording"), true, all);
+  const single = compareReport({ lines: [woken(1, 3000)], skipped: 0 });
+  assert.equal(single.includes("\n1 question was asked through ears, with the wake word. Recording 3.00 s"), true, single);
+  assert.equal(isLogLine(line({ heard: { recordedMs: 1, textMs: 1, wake: true } })), true);
+  for (const wake of [false, "yes", 1, null]) assert.equal(isLogLine({ ...line(), heard: { recordedMs: 1, textMs: 1, wake } }), false, JSON.stringify(wake));
 });

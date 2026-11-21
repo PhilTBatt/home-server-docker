@@ -117,16 +117,16 @@ fi
 
 ears=$(setting JARVIS_EARS)
 ears=${ears:-off}
-if [ "$ears" != off ] && [ "$ears" != push ]; then
-  echo "JARVIS_EARS is $ears in jarvis/.env, but it must be off or push." >&2
+if [ "$ears" != off ] && [ "$ears" != push ] && [ "$ears" != wake ]; then
+  echo "JARVIS_EARS is $ears in jarvis/.env, but it must be off, push or wake." >&2
   exit 1
 fi
 
 ears_token=""
-if [ "$ears" = push ]; then
+if [ "$ears" != off ]; then
   ears_token=$(setting EARS_TOKEN ears/.env)
   if [ -z "$ears_token" ]; then
-    echo "JARVIS_EARS is push, but there's no EARS_TOKEN in ears/.env. The README's ears section says how to make one." >&2
+    echo "JARVIS_EARS is $ears, but there's no EARS_TOKEN in ears/.env. The README's ears section says how to make one." >&2
     exit 1
   fi
 fi
@@ -148,7 +148,7 @@ for session in docker:. brain:../hub-memory; do
 done
 
 if [ "$voice" = off ]; then
-  if [ "$ears" = push ]; then
+  if [ "$ears" != off ]; then
     API_TOKEN="$token" EARS_TOKEN="$ears_token" exec docker compose -f docker-compose.yaml -f docker-compose.talk.yaml run --rm -e API_TOKEN -e EARS_TOKEN "${mounts[@]}" jarvis
   fi
   API_TOKEN="$token" exec docker compose run --rm -e API_TOKEN "${mounts[@]}" jarvis
@@ -179,7 +179,7 @@ fi
 PIPER_VOICE="$piper_name" docker compose up -d "${keep[@]}" --wait --wait-timeout 120 "$voice" || echo "$voice isn't ready, so Jarvis will say his voice is off. If the lines above don't say why, try: docker compose logs --tail 20 $voice" >&2
 trap - INT
 
-if [ "$ears" = push ]; then
+if [ "$ears" != off ]; then
   SOUND_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" API_TOKEN="$token" EARS_TOKEN="$ears_token" docker compose -f docker-compose.yaml -f docker-compose.sound.yaml -f docker-compose.talk.yaml run --rm -e API_TOKEN -e EARS_TOKEN "${mounts[@]}" jarvis
 else
   SOUND_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" API_TOKEN="$token" docker compose -f docker-compose.yaml -f docker-compose.sound.yaml run --rm -e API_TOKEN "${mounts[@]}" jarvis

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cancelledBeforeText, clearedByCancel, clearedByMute, createEars, flippedBeforeText, mutedBeforeText, secondsText, startsMuted } from "./ears.js";
+import { cancelledBeforeText, claimMs, clearedByCancel, clearedByMute, createEars, failedBeforeText, flippedBeforeText, mutedBeforeText, notTakenWhy, secondsText, startsMuted } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { ToText } from "./whisper.js";
 
@@ -648,4 +648,211 @@ test("what the state shows of the last recording is a copy, so nothing outside c
   assert.equal(seen?.text, null);
   if (seen !== null) seen.text = "changed";
   assert.equal(ears.view().last?.text, "Hello.");
+});
+
+function setUpCounted(toText?: ToText, claimAfterMs?: number) {
+  const lines: string[] = [];
+  const recordings: Pretend[] = [];
+  const asked: string[] = [];
+  let changes = 0;
+  const ears = createEars({
+    microphone: "card",
+    record: (by) => {
+      asked.push(by);
+      const recording = pretendRecording();
+      recordings.push(recording);
+      return recording;
+    },
+    log: (line) => lines.push(line),
+    toText,
+    changed: () => void changes++,
+    claimMs: claimAfterMs,
+  });
+  return { ears, lines, recordings, asked, changes: () => changes };
+}
+
+test("a recording is a push one unless the wake word started it, and each is numbered from 1", { timeout: 5_000 }, async () => {
+  const { ears, lines, asked, recordings } = setUpCounted();
+  assert.deepEqual([ears.current(), ears.lastId()], [null, null]);
+  await ears.unmute();
+  ears.start();
+  assert.deepEqual(asked, ["push"]);
+  assert.deepEqual(ears.current(), { id: 1, by: "push", claimed: true });
+  assert.equal(lines.at(-1), "Recording started.");
+  await ears.stop();
+  assert.deepEqual([ears.current(), ears.lastId()], [null, 1]);
+  ears.start("wake");
+  assert.deepEqual(asked, ["push", "wake"]);
+  assert.deepEqual(ears.current(), { id: 2, by: "wake", claimed: false });
+  assert.equal(lines.at(-1), "Recording started by the wake word.");
+  assert.equal(ears.lastId(), 1);
+  recordings[1].end({ reason: "it went quiet for 1.5 seconds after you spoke" });
+  await tick();
+  assert.deepEqual([ears.current(), ears.lastId(), ears.view().last?.reason], [null, 2, "it went quiet for 1.5 seconds after you spoke"]);
+});
+
+test("what current gives is a copy", { timeout: 5_000 }, async () => {
+  const { ears } = setUpCounted();
+  await ears.unmute();
+  ears.start("wake");
+  const seen = ears.current();
+  if (seen !== null) seen.claimed = true;
+  assert.equal(ears.current()?.claimed, false);
+  await ears.cancel();
+});
+
+test("a chat claims a wake-word recording once, by its number, while it's still recording", { timeout: 5_000 }, async () => {
+  const { ears, lines } = setUpCounted();
+  await ears.unmute();
+  assert.deepEqual(ears.claim(1), { ok: false, error: "that wake-word recording isn't waiting to be taken" });
+  ears.start("wake");
+  for (const id of [0, 2, -1]) assert.equal(ears.claim(id).ok, false, String(id));
+  const claimed = ears.claim(1);
+  assert.equal(claimed.ok, true);
+  assert.equal(lines.at(-1), "A Jarvis chat took the wake-word recording.");
+  assert.deepEqual(ears.current(), { id: 1, by: "wake", claimed: true });
+  assert.deepEqual(ears.claim(1), { ok: false, error: "that wake-word recording isn't waiting to be taken" });
+  await ears.stop();
+  ears.start();
+  assert.equal(ears.claim(2).ok, false, "a push recording isn't claimed");
+  await ears.stop();
+});
+
+test("a wake-word recording can't be claimed once it's ending", { timeout: 5_000 }, async () => {
+  const { ears, recordings } = setUpCounted();
+  await ears.unmute();
+  ears.start("wake");
+  const slow = recordings[0];
+  const stopping = ears.stop();
+  assert.equal(ears.claim(1).ok, false);
+  slow.end({});
+  await stopping;
+});
+
+test("a wake-word recording that no chat claims within 2 seconds is dropped without being turned into text", { timeout: 5_000 }, async () => {
+  assert.deepEqual([claimMs, notTakenWhy], [2000, "no Jarvis chat took it within 2 seconds"]);
+  const whisper = pretendWhisper();
+  const { ears, recordings, lines } = setUpCounted(whisper.toText, 50);
+  await ears.unmute();
+  ears.start("wake");
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepEqual(recordings[0].asked, [notTakenWhy]);
+  assert.deepEqual([ears.view().state, ears.view().last?.reason, ears.view().last?.text], ["idle", notTakenWhy, null]);
+  assert.equal(whisper.asked.length, 0);
+  assert.equal(lines.at(-1), `Recording stopped after 1.2 seconds: ${notTakenWhy}.`);
+});
+
+test("a claimed one, or one that ends or is stopped first, isn't dropped later", { timeout: 5_000 }, async () => {
+  const { ears, recordings } = setUpCounted(undefined, 50);
+  await ears.unmute();
+  ears.start("wake");
+  ears.claim(1);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.deepEqual(recordings[0].asked, []);
+  assert.equal(ears.view().state, "recording");
+  await ears.stop();
+  ears.start("wake");
+  await ears.stop();
+  ears.start();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.deepEqual(recordings[2].asked, [], "the timer from the stopped wake recording doesn't reach the next one");
+  await ears.stop();
+  ears.start("wake");
+  recordings[3].end({});
+  await tick();
+  ears.start("wake");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  ears.claim(5);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(recordings[4].asked, []);
+  await ears.stop();
+});
+
+test("a microphone failure outside a recording fails ears, and a mute, a failure or a recording already under way are left alone", { timeout: 5_000 }, async () => {
+  const { ears, lines } = setUpCounted();
+  ears.fail("the microphone stopped (x)");
+  assert.equal(ears.view().state, "muted");
+  await ears.unmute();
+  ears.start();
+  ears.fail("the microphone stopped (x)");
+  assert.equal(ears.view().state, "recording");
+  await ears.stop();
+  ears.fail("the microphone stopped (the recorder ended by itself with code 1)");
+  assert.deepEqual([ears.view().state, ears.view().reason], ["failed", "the microphone stopped (the recorder ended by itself with code 1)"]);
+  assert.equal(lines.at(-1), "The microphone failed: the microphone stopped (the recorder ended by itself with code 1).");
+  ears.fail("again");
+  assert.equal(ears.view().reason, "the microphone stopped (the recorder ended by itself with code 1)");
+  assert.equal(ears.start().ok, false);
+  await ears.unmute();
+  assert.equal(ears.view().state, "idle");
+});
+
+test("a failure while Whisper works leaves ears failed, and drops the text, so it can't turn up after the unmute that recovers it", { timeout: 5_000 }, async () => {
+  const whisper = pretendWhisper();
+  const { ears, lines } = setUpCounted(whisper.toText);
+  await ears.unmute();
+  ears.start();
+  const stopping = ears.stop();
+  await tick();
+  ears.fail("the microphone stopped (y)");
+  assert.equal(whisper.asked[0].signal.aborted, true);
+  whisper.asked[0].answer("Lights.");
+  await stopping;
+  assert.deepEqual([ears.view().state, ears.view().last?.text, ears.view().last?.textProblem], ["failed", null, failedBeforeText]);
+  assert.equal(failedBeforeText, "the microphone failed before it was turned into text");
+  assert.equal(lines.at(-1), `Not turned into text: ${failedBeforeText}.`);
+  await ears.unmute();
+  assert.deepEqual([ears.view().state, ears.view().last?.text], ["idle", null]);
+});
+
+test("a wake-word recording that ended with no speech in it isn't sent to Whisper", { timeout: 5_000 }, async () => {
+  const whisper = pretendWhisper();
+  const { ears, recordings } = setUpCounted(whisper.toText);
+  await ears.unmute();
+  ears.start("wake");
+  ears.claim(1);
+  recordings[0].end({ reason: "nothing loud enough to be speech came within 5 seconds, so it wasn't sent to Whisper", unheard: true });
+  await tick();
+  assert.equal(whisper.asked.length, 0);
+  assert.deepEqual([ears.view().state, ears.view().last?.text, ears.view().last?.reason, ears.lastId()], ["idle", null, "nothing loud enough to be speech came within 5 seconds, so it wasn't sent to Whisper", 1]);
+  ears.start("wake");
+  ears.claim(2);
+  recordings[1].end({ reason: "it went quiet for 1.5 seconds after you spoke" });
+  await tick();
+  assert.equal(whisper.asked.length, 1);
+  whisper.asked[0].answer("Hi.");
+});
+
+test("every change to what ears shows is reported", { timeout: 5_000 }, async () => {
+  const whisper = pretendWhisper();
+  const { ears, changes } = setUpCounted(whisper.toText);
+  let seen = changes();
+  const changed = (what: string) => {
+    assert.ok(changes() > seen, what);
+    seen = changes();
+  };
+  await ears.unmute();
+  changed("unmute");
+  ears.start("wake");
+  changed("start");
+  ears.claim(1);
+  changed("claim");
+  const stopping = ears.stop();
+  await tick();
+  changed("stop, as it starts turning into text");
+  whisper.asked[0].answer("Hi.");
+  await stopping;
+  changed("the text");
+  await ears.cancel();
+  changed("cancel clearing the text");
+  ears.start();
+  seen = changes();
+  await ears.cancel();
+  changed("cancel of a recording");
+  await ears.mute(null);
+  changed("mute");
+  await ears.unmute();
+  changed("unmute again");
+  ears.fail("z");
+  changed("fail");
 });

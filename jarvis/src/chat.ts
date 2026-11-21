@@ -6,8 +6,9 @@ import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, ty
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
 import type { Prices } from "./prices.js";
 import { withPausableTimeout } from "./run.js";
-import { talkWord, type Heard, type Talk } from "./talk.js";
+import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { seconds, type Answer } from "./timing.js";
+import type { WakeEvent } from "./wake.js";
 
 export const chatModel = "claude-haiku-5-5";
 export const questionTimeoutMs = 120_000;
@@ -79,6 +80,11 @@ export const talkCommandNote = `Jarvis's only / command is ${talkWord}. To start
 export const listeningNote = "listening for up to 30 seconds: press Enter on an empty line to send what you say, or type anything else to drop it";
 export const droppedNote = "dropped that recording";
 export const heardPrefix = "You said: ";
+export const wakeListeningNote = "heard Hey Jarvis, so listening: it sends when you stop talking, or press Enter on an empty line to send it now, or type anything else to drop it";
+
+export function wakeStatusNote(line: string): string {
+  return `wake word ${line}`;
+}
 
 export function noListeningNote(why: string): string {
   return `couldn't start listening: ${why}`;
@@ -116,6 +122,9 @@ export type ChatDeps = {
   recordSpeech?: (report: Promise<SpeechReport>) => Promise<void>;
   talk?: Talk;
   closing?: AbortSignal;
+  wake?: AsyncIterable<WakeEvent>;
+  chime?: () => void;
+  interrupt?: () => void;
 };
 
 export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[] };
@@ -124,7 +133,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
@@ -542,24 +551,103 @@ async function startListening(deps: ChatDeps & { talk: Talk }, state: ChatState)
     return;
   }
   state.listening = true;
+  state.wakeId = null;
   deps.write(`  (${listeningNote})\n`);
 }
 
 async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState): Promise<void> {
   state.listening = false;
+  state.wakeId = null;
   const why = await deps.talk.drop();
   deps.write(`  (${why === null ? droppedNote : notDroppedNote(printable(why))})\n`);
 }
 
+export type ChatInput = { kind: "line"; text: string } | WakeEvent;
+
+export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>): AsyncGenerator<ChatInput> {
+  if (events === undefined) {
+    for await (const text of lines) yield { kind: "line", text };
+    return;
+  }
+  const typed = lines[Symbol.asyncIterator]();
+  const heard = events[Symbol.asyncIterator]();
+  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent> };
+  let nextLine: Promise<Got> | null = null;
+  let nextEvent: Promise<Got> | null = null;
+  let eventsOver = false;
+  try {
+    for (;;) {
+      nextLine ??= typed.next().then((result) => ({ from: "line", result }));
+      if (!eventsOver) {
+        nextEvent ??= heard.next().then(
+          (result): Got => ({ from: "event", result }),
+          (): Got => ({ from: "event", result: { done: true, value: undefined } }),
+        );
+      }
+      const got = await Promise.race(eventsOver || nextEvent === null ? [nextLine] : [nextLine, nextEvent]);
+      if (got.from === "line") {
+        nextLine = null;
+        if (got.result.done === true) return;
+        yield { kind: "line", text: got.result.value };
+      } else {
+        nextEvent = null;
+        if (got.result.done === true) eventsOver = true;
+        else yield got.result.value;
+      }
+    }
+  } finally {
+    void heard.return?.(undefined)?.catch(() => {});
+  }
+}
+
+async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise<"go" | "stop"> {
+  if (!sent.ok) {
+    deps.write(`  (${notSentNote(printable(sent.why))})\n`);
+    return "go";
+  }
+  deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
+  return ask(deps, state, sent.heard.text, sent.heard);
+}
+
+async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promise<"go" | "stop"> {
+  if (event.kind === "status") {
+    deps.interrupt?.();
+    deps.write(`  (${printable(wakeStatusNote(event.line))})\n`);
+    deps.prompt();
+    return "go";
+  }
+  if (event.kind === "wake") {
+    deps.interrupt?.();
+    await settle(deps, state, true);
+    state.listening = true;
+    state.wakeId = event.id;
+    deps.write(`  (${wakeListeningNote})\n`);
+    deps.chime?.();
+    deps.prompt();
+    return "go";
+  }
+  if (!state.listening || state.wakeId !== event.id) return "go";
+  state.listening = false;
+  state.wakeId = null;
+  deps.interrupt?.();
+  const going = await heardOrNot(deps, state, heardFrom(event.answer, event.textMs, true));
+  if (going === "go") deps.prompt();
+  return going;
+}
+
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
     current.prompt();
-    for await (const line of current.lines) {
-      const message = line.trim();
+    for await (const input of chatInputs(current.lines, current.wake)) {
+      if (input.kind !== "line") {
+        if ((await onWake(current, state, input)) === "stop") break;
+        continue;
+      }
+      const message = input.text.trim();
       const talking = current.talk === undefined ? null : { ...current, talk: current.talk };
       if (state.listening && talking !== null) {
         if (message === "" && current.early?.() === true) {
@@ -567,13 +655,10 @@ export async function runChat(deps: ChatDeps): Promise<void> {
           continue;
         }
         if (message === "") {
+          const wake = state.wakeId !== null;
           state.listening = false;
-          const sent = await talking.talk.send(current.closing);
-          if (!sent.ok) current.write(`  (${notSentNote(printable(sent.why))})\n`);
-          else {
-            current.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
-            if ((await ask(current, state, sent.heard.text, sent.heard)) === "stop") break;
-          }
+          state.wakeId = null;
+          if ((await heardOrNot(current, state, await talking.talk.send(current.closing, wake))) === "stop") break;
           current.prompt();
           continue;
         }

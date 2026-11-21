@@ -338,3 +338,19 @@ test("connecting can be called off part-way, with the caller's reason", { timeou
   await assert.rejects(connecting, { message: "stop now" });
   await stopped(server.server);
 });
+
+test("a connection says how much it's still waiting to send, which grows when the server stops reading", { timeout: 10_000 }, async () => {
+  const sockets: Socket[] = [];
+  const server = createServer((socket) => {
+    sockets.push(socket);
+    socket.pause();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const connection = await connectWyoming({ host: "127.0.0.1", port: (server.address() as AddressInfo).port });
+  assert.equal(connection.buffered(), 0);
+  for (let index = 0; index < 400; index++) void connection.send({ type: "audio-chunk", data: format, payload: new Uint8Array(32_000) }).catch(() => {});
+  assert.ok(connection.buffered() > 1_000_000, String(connection.buffered()));
+  connection.close();
+  for (const socket of sockets) socket.destroy();
+  await new Promise((resolve) => server.close(resolve));
+});

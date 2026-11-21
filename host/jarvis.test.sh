@@ -900,22 +900,39 @@ for line in 'EARS_TOKEN="ears-test-token"' "EARS_TOKEN=ears-test-token  # made w
   check "ears's token is read as ears reads its own settings: $(printf '%q' "$line")" "EARS_TOKEN=ears-test-token for: $talk_run" "$(cat "$work/docker.log.ears")"
 done
 
-for value in "on" "PUSH" "wake"; do
+fresh
+ears_on off wake
+output=$(run)
+check "with JARVIS_EARS=wake and no voice, the chat runs with the talk file added, passing both tokens by name only, as with push" "$talk_run | card= group= token=hub-test-token" "$(cat "$work/docker.log")"
+check "and ears's token reaches only that run" "EARS_TOKEN=ears-test-token for: $talk_run" "$(cat "$work/docker.log.ears")"
+
+fresh
+ears_on piper wake
+mkdir -p "$work/repo/piper/voices"
+printf 'x' > "$work/repo/piper/voices/en_GB-alan-medium.onnx"
+printf '{}' > "$work/repo/piper/voices/en_GB-alan-medium.onnx.json"
+output=$(run)
+check "with JARVIS_EARS=wake and a voice, the chat runs with the sound and talk files" "1" "$(grep -c -- "^$talk_voice_run | card=1" "$work/docker.log")"
+check "and ears's token reaches only the chat" "EARS_TOKEN=ears-test-token for: $talk_voice_run" "$(cat "$work/docker.log.ears")"
+
+for value in "on" "PUSH" "Wake" "hey"; do
   fresh
   ears_on off "$value"
   output=$(run)
   check "JARVIS_EARS=$value is refused" "1" "$?"
   check "and runs nothing: $value" "" "$(cat "$work/docker.log")"
-  check_has "saying what it must be: $value" "JARVIS_EARS is $value in jarvis/.env, but it must be off or push." "$output"
+  check_has "saying what it must be: $value" "JARVIS_EARS is $value in jarvis/.env, but it must be off, push or wake." "$output"
 done
 
-for line in "" "EARS_TOKEN=" "OTHER=x"; do
-  fresh
-  ears_on off push "$line"
-  output=$(run)
-  check "push with no ears token is refused: '$line'" "1" "$?"
-  check "and runs nothing: '$line'" "" "$(cat "$work/docker.log")"
-  check_has "saying where it looked: '$line'" "JARVIS_EARS is push, but there's no EARS_TOKEN in ears/.env. The README's ears section says how to make one." "$output"
+for mode in push wake; do
+  for line in "" "EARS_TOKEN=" "OTHER=x"; do
+    fresh
+    ears_on off "$mode" "$line"
+    output=$(run)
+    check "$mode with no ears token is refused: '$line'" "1" "$?"
+    check "and runs nothing: $mode '$line'" "" "$(cat "$work/docker.log")"
+    check_has "saying where it looked: $mode '$line'" "JARVIS_EARS is $mode, but there's no EARS_TOKEN in ears/.env. The README's ears section says how to make one." "$output"
+  done
 done
 
 fresh

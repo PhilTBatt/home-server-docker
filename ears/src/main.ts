@@ -10,6 +10,7 @@ try {
   process.on("SIGTERM", () => void service.close());
   process.on("SIGINT", () => void service.close());
   log(`Ears is ready and muted, with ${service.microphone}. Unmute it with bash host/ears.sh unmute.`);
+  if (config.wake) log("The wake word is on: ears listens for it whenever it's unmuted and a Jarvis chat with JARVIS_EARS=wake is open.");
 } catch (error) {
   console.error(`Ears couldn't start: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;

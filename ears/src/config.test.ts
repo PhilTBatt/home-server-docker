@@ -4,7 +4,7 @@ import { defaultMicControl, defaultMicLevel, microphones, readConfig, shortestTo
 
 const token = "t".repeat(64);
 
-const usual = { micLevel: 80, micControl: "Capture" };
+const usual = { micLevel: 80, micControl: "Capture", wake: false };
 
 test("reads the token, and with no microphone set there's nothing to record from", () => {
   assert.deepEqual(readConfig({ EARS_TOKEN: token }), { token, microphone: null, ...usual });
@@ -50,4 +50,22 @@ test("a missing or short token stops ears, saying how to make one", () => {
 
 test("the token is checked before the microphone", () => {
   assert.throws(() => readConfig({ EARS_MICROPHONE: "real" }), { message: "Missing setting: EARS_TOKEN. Make one with: openssl rand -hex 32" });
+});
+
+test("the wake word is off unless EARS_WAKE is on, and on needs a microphone to listen with", () => {
+  for (const value of [undefined, "", "  ", "off", " off "]) assert.equal(readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_WAKE: value }).wake, false, String(value));
+  assert.equal(readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_WAKE: " on " }).wake, true);
+  assert.equal(readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "pretend", EARS_WAKE: "on" }).wake, true);
+  assert.equal(readConfig({ EARS_TOKEN: token, EARS_WAKE: "off" }).wake, false);
+  for (const value of ["On", "yes", "true", "1", "hey_jarvis"]) {
+    assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_WAKE: value }), { message: `EARS_WAKE must be on or off, not "${value}"` }, value);
+  }
+  for (const microphone of [undefined, "", " "]) {
+    assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: microphone, EARS_WAKE: "on" }), { message: "EARS_WAKE is on, but EARS_MICROPHONE isn't set, so there's nothing to listen with. Set EARS_MICROPHONE=card, or pretend to try it out" });
+  }
+});
+
+test("EARS_WAKE is checked after the microphone and its level", () => {
+  assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "real", EARS_WAKE: "maybe" }), { message: /^EARS_MICROPHONE must be/ });
+  assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_MICROPHONE: "card", EARS_MIC_LEVEL: "loud", EARS_WAKE: "maybe" }), { message: /^EARS_MIC_LEVEL must be/ });
 });

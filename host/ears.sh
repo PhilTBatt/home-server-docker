@@ -101,18 +101,41 @@ if [ "$1" = start ]; then
     exit 1
   fi
   microphone=$(setting EARS_MICROPHONE)
+  wake=$(setting EARS_WAKE)
+  services=(ears)
+  with_card="and Whisper"
+  without_card=" and Whisper"
+  if [ "$wake" = on ]; then
+    if [ -z "$microphone" ]; then
+      echo "EARS_WAKE is on, but EARS_MICROPHONE isn't set in ears/.env, so there's nothing to listen with. Set EARS_MICROPHONE=card, or pretend to try it out." >&2
+      exit 1
+    fi
+    threshold=$(setting EARS_WAKE_THRESHOLD)
+    threshold=${threshold:-0.5}
+    if [[ ! "$threshold" =~ ^0\.[0-9]{1,3}$ ]] || [[ "$threshold" =~ ^0\.0+$ ]]; then
+      echo "EARS_WAKE_THRESHOLD is $threshold in ears/.env, but it must be a number above 0 and below 1, with up to 3 decimal places, like 0.5 or 0.65." >&2
+      exit 1
+    fi
+    export WAKE_THRESHOLD="$threshold"
+    services+=(openwakeword)
+    with_card="Whisper, and openWakeWord at threshold $threshold"
+    without_card=", Whisper and openWakeWord at threshold $threshold"
+  elif [ -n "$wake" ] && [ "$wake" != off ]; then
+    echo "EARS_WAKE is $wake in ears/.env, but it must be on or off." >&2
+    exit 1
+  fi
   if [ "$microphone" = card ]; then
     card=$(mic_card) || exit 1
     read -r number group <<< "$card"
-    echo "Starting ears with sound card $number's microphone, and Whisper..."
-    MIC_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" exec docker compose -f docker-compose.yaml -f docker-compose.mic.yaml up -d --build --wait ears
+    echo "Starting ears with sound card $number's microphone, $with_card..."
+    MIC_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" exec docker compose -f docker-compose.yaml -f docker-compose.mic.yaml up -d --build --wait "${services[@]}"
   fi
-  echo "Starting ears and Whisper..."
-  exec docker compose up -d --build --wait ears
+  echo "Starting ears$without_card..."
+  exec docker compose up -d --build --wait "${services[@]}"
 fi
 
 if [ "$1" = stop ]; then
-  exec docker compose stop ears whisper
+  exec docker compose stop ears whisper openwakeword
 fi
 
 if [ "$1" = mute ]; then

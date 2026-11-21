@@ -121,3 +121,22 @@ test("a redirect is refused, not followed", async () => {
   await closed(server);
   await closed(target.server);
 });
+
+test("a wait's answer brings the version, which run of ears it was, the last recording's number, the one under way and the wake word's state", () => {
+  const read = readEarsAnswer(200, { state: "recording", reason: null, microphone: "card", last: null, version: 12, run: "0123456789abcdef", lastId: 3, current: { id: 4, by: "wake", claimed: false }, wake: { on: true, listening: false, held: true, problem: null } });
+  assert.deepEqual([read.version, read.run, read.lastId, read.current, read.wake], [12, "0123456789abcdef", 3, { id: 4, by: "wake", claimed: false }, { on: true, listening: false, held: true, problem: null }]);
+  const zero = readEarsAnswer(200, { version: 0, run: "a", lastId: null, current: null, wake: null });
+  assert.deepEqual([zero.version, zero.run, zero.lastId, zero.current, zero.wake], [0, "a", null, null, null]);
+  assert.equal("version" in readEarsAnswer(200, { state: "idle" }), false, "a plain state answer has none of them");
+});
+
+test("wake fields that aren't the shape ears sends are read as nothing, and a problem is tidied", () => {
+  const bad = readEarsAnswer(200, { version: -1, run: "Not-Hex!", lastId: 0, current: { id: 1, by: "voice", claimed: false }, wake: { on: "yes", listening: false, held: false, problem: null } });
+  assert.deepEqual([bad.version, bad.run, bad.lastId, bad.current, bad.wake], [null, null, null, null, null]);
+  for (const current of [null, 5, { id: 0, by: "wake", claimed: false }, { id: 1.5, by: "wake", claimed: false }, { id: 1, by: "push", claimed: "no" }, { by: "wake", claimed: true }]) assert.equal(readEarsAnswer(200, { version: 1, current }).current, null, JSON.stringify(current));
+  for (const wake of [{ on: true, listening: 1, held: false, problem: null }, { on: true, listening: false, held: false, problem: 7 }, { on: true, listening: false, problem: null }]) assert.equal(readEarsAnswer(200, { version: 1, wake }).wake, null, JSON.stringify(wake));
+  for (const version of [1.5, "3", Number.MAX_SAFE_INTEGER + 2]) assert.equal(readEarsAnswer(200, { version }).version, null, String(version));
+  assert.equal(readEarsAnswer(200, { version: 1, run: "a".repeat(33) }).run, null);
+  const tidy = readEarsAnswer(200, { version: 1, wake: { on: true, listening: false, held: false, problem: "the wake-word server\u001b[31m can't\n be reached" } });
+  assert.equal(tidy.wake?.problem, "the wake-word server [31m can't be reached");
+});

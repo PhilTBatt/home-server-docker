@@ -3,7 +3,7 @@ export type Microphone = (typeof microphones)[number];
 
 export type MicLevel = number | "keep";
 
-export type Config = { token: string; microphone: Microphone | null; micLevel: MicLevel; micControl: string };
+export type Config = { token: string; microphone: Microphone | null; micLevel: MicLevel; micControl: string; wake: boolean };
 
 export const shortestToken = 32;
 export const defaultMicLevel = 80;
@@ -24,11 +24,20 @@ function readMicControl(value: string | undefined): string {
   throw new Error(`EARS_MIC_CONTROL must be a mixer control's name, like Capture or Mic, as amixer scontrols lists them, not "${control}"`);
 }
 
+function readWake(value: string | undefined, microphone: Microphone | null): boolean {
+  const wake = value?.trim() ?? "";
+  if (wake === "" || wake === "off") return false;
+  if (wake !== "on") throw new Error(`EARS_WAKE must be on or off, not "${wake}"`);
+  if (microphone === null) throw new Error("EARS_WAKE is on, but EARS_MICROPHONE isn't set, so there's nothing to listen with. Set EARS_MICROPHONE=card, or pretend to try it out");
+  return true;
+}
+
 export function readConfig(env: Record<string, string | undefined>): Config {
   const token = env.EARS_TOKEN?.trim() ?? "";
   if (token === "") throw new Error("Missing setting: EARS_TOKEN. Make one with: openssl rand -hex 32");
   if (token.length < shortestToken) throw new Error(`EARS_TOKEN must be at least ${shortestToken} characters, like the 64 that openssl rand -hex 32 makes`);
   const microphone = env.EARS_MICROPHONE?.trim() || "";
   if (microphone !== "" && !(microphones as readonly string[]).includes(microphone)) throw new Error(`EARS_MICROPHONE must be pretend or card, or left out until a microphone is set up, not "${microphone}"`);
-  return { token, microphone: microphone === "" ? null : (microphone as Microphone), micLevel: readMicLevel(env.EARS_MIC_LEVEL), micControl: readMicControl(env.EARS_MIC_CONTROL) };
+  const mic = microphone === "" ? null : (microphone as Microphone);
+  return { token, microphone: mic, micLevel: readMicLevel(env.EARS_MIC_LEVEL), micControl: readMicControl(env.EARS_MIC_CONTROL), wake: readWake(env.EARS_WAKE, mic) };
 }

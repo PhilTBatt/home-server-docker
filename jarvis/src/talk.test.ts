@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EarsAnswer, EarsCall } from "./ears-client.js";
-import { earsLine, startTalk, talkPollMs, talkWord, unmuteHint } from "./talk.js";
+import { earsLine, heardFrom, startTalk, talkPollMs, talkWord, unmuteHint } from "./talk.js";
 
 type Asked = { method: string; path: string; ms: number; signal: AbortSignal | undefined };
 
@@ -173,4 +173,33 @@ test("a check that's called off passes the call-off on, rather than writing a li
   control.abort(new Error("Starting called off"));
   const talk = startTalk({ call: async (_method, _path, _ms, signal) => Promise.reject(signal?.reason) });
   await assert.rejects(talk.check(control.signal), { message: "Starting called off" });
+});
+
+test("with the wake word, the ears line says both ways to speak", async () => {
+  assert.equal(earsLine(answer(200, { state: "idle" }), true), "Ears: ready. Type /talk to speak, or say Hey Jarvis while the wake word is on");
+  assert.equal(earsLine(answer(200, { state: "muted" }), true), "Ears: ready but muted, so unmute it on the server with bash host/ears.sh unmute, then say Hey Jarvis or type /talk");
+  assert.equal(earsLine(answer(200, { state: "failed", reason: "x" }), true), "Ears: failed (x), so unmute it on the server with bash host/ears.sh unmute to start it again, then say Hey Jarvis or type /talk");
+  assert.equal(earsLine(answer(401, { state: null, error: "nope" }), true), "Ears: nope");
+  const ears = pretendEars({ "GET /state": [answer(200, { state: "idle" })] });
+  assert.equal(await startTalk({ call: ears.call, wake: true }).check(), "Ears: ready. Type /talk to speak, or say Hey Jarvis while the wake word is on");
+});
+
+test("a finished recording read on its own gives the text and times, marked as the wake word's when it was", () => {
+  const done = answer(200, { state: "idle", last: heardLast("  Lights on.  ", null, 3.21) });
+  assert.deepEqual(heardFrom(done, 900), { ok: true, heard: { text: "Lights on.", recordedMs: 3210, textMs: 900 } });
+  assert.deepEqual(heardFrom(done, 900, true), { ok: true, heard: { text: "Lights on.", recordedMs: 3210, textMs: 900, wake: true } });
+  assert.deepEqual(heardFrom(answer(200, { state: "working", last: heardLast(null) }), 1), { ok: false, why: "Whisper was still working on it after 70 seconds" });
+  assert.deepEqual(heardFrom(answer(200, { state: "idle", last: heardLast(null, "no Jarvis chat took it within 2 seconds") }), 1, true), { ok: false, why: "no Jarvis chat took it within 2 seconds" });
+  assert.deepEqual(heardFrom(answer(200, { state: "idle", last: { seconds: 5, reason: "nothing loud enough to be speech came within 5 seconds", text: "  ", textProblem: null } }), 1, true), { ok: false, why: "Whisper heard no words" });
+  assert.deepEqual(heardFrom(answer(503, { state: null, error: "Couldn't reach ears at http://ears:8090" }), 1, true), { ok: false, why: "Couldn't reach ears at http://ears:8090" });
+  assert.deepEqual(heardFrom(answer(200, { state: "muted", last: heardLast(null, "it was cleared by a mute") }), 1, true), { ok: false, why: "it was cleared by a mute" });
+});
+
+test("sending with the wake word marks what was heard as the wake word's", async () => {
+  const ears = pretendEars({ "POST /recording/stop": [answer(200, { state: "idle", last: heardLast("Hello.") })] });
+  const sent = await startTalk({ call: ears.call }).send(undefined, true);
+  assert.equal(sent.ok && sent.heard.wake, true);
+  const plain = pretendEars({ "POST /recording/stop": [answer(200, { state: "idle", last: heardLast("Hello.") })] });
+  const pushed = await startTalk({ call: plain.call }).send();
+  assert.equal(pushed.ok && "wake" in pushed.heard, false);
 });

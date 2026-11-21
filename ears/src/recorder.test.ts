@@ -198,3 +198,35 @@ test("the recorder is given no settings but PATH, so ears's token isn't passed t
     else process.env.EARS_TOKEN = before;
   }
 });
+
+test("with no limit and nothing kept, a recorder runs until it's stopped and hands each piece on as it comes", { timeout: 10_000 }, async () => {
+  const pieces: number[] = [];
+  const recording = startRecording({ recorder: pretend, limitMs: null, keep: false, onSound: (sound) => pieces.push(sound.length) });
+  await pause(500);
+  assert.equal(alive(recording.pid), true);
+  assert.ok(pieces.length >= 3, `${pieces.length} pieces`);
+  const stopped = await recording.stop("not needed");
+  assert.deepEqual([stopped.reason, stopped.failed, stopped.sound.length], ["not needed", false, 0]);
+  assert.equal(stopped.bytes, pieces.reduce((sum, size) => sum + size, 0));
+  assert.equal(alive(recording.pid), false);
+  const after = pieces.length;
+  await pause(200);
+  assert.equal(pieces.length, after, "nothing more is handed on once it has ended");
+});
+
+test("a recorder with no limit never stops for sending a lot", { timeout: 10_000 }, async () => {
+  let bytes = 0;
+  const recording = startRecording({ recorder: node("setInterval(() => process.stdout.write(Buffer.alloc(64000)), 5)"), limitMs: null, keep: false, onSound: (sound) => (bytes += sound.length) });
+  await pause(400);
+  const stopped = await recording.stop("asked to stop");
+  assert.equal(stopped.reason, "asked to stop");
+  assert.ok(bytes > 1_000_000, String(bytes));
+});
+
+test("pieces are handed on even when they're also kept", { timeout: 10_000 }, async () => {
+  const pieces: number[] = [];
+  const recording = startRecording({ recorder: node("process.stdout.write(Buffer.from([1, 2, 3, 4])); setInterval(() => {}, 1000)"), onSound: (sound) => pieces.push(...sound) });
+  await pause(300);
+  const stopped = await recording.stop("asked to stop");
+  assert.deepEqual([[...stopped.sound], pieces], [[1, 2, 3, 4], [1, 2, 3, 4]]);
+});
