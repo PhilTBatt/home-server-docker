@@ -495,6 +495,12 @@ if [ "$1 $2" = "compose ps" ]; then
   [ -n "${FAKE_PS:-}" ] && echo "$FAKE_PS"
   exit 0
 fi
+if [ "$1 $2" = "compose exec" ]; then
+  echo "docker $*" >> "$MIC_LOG"
+  [ "${FAKE_HEALTH-200 muted}" = fails ] && exit 1
+  echo "${FAKE_HEALTH-200 muted}"
+  exit 0
+fi
 if [ "$1 $2" = "build -q" ]; then
   echo "docker $*" >> "$MIC_LOG"
   if [ "${FAKE_BUILD_FAIL:-}" = "${*: -1}" ]; then echo "pretend build failure" >&2; exit 1; fi
@@ -515,7 +521,7 @@ if [ "$1" = run ] && [[ " $* " == *" home-hub-ears "* ]]; then
   fi
   printf 'sound follows\n'
   if [ -n "${FAKE_RECORDER_BIG:-}" ]; then
-    head -c 320000 /dev/zero
+    (printf '%320000s' '') 2> /dev/null
     code=$?
     echo "recorder ended $code" >> "$MIC_LOG"
     exit "$code"
@@ -606,9 +612,9 @@ mic_setup
 card_group=$(stat -c %g "$snd/controlC1")
 mic_test mic-test
 check "mic-test in a terminal records, then plays back, and succeeds" "0" "$mic_status"
-check "it looks whether ears is running, builds both images, then runs the recorder with only the microphone and its mixer, then the player with only the speakers and the mixer" "docker compose ps --status running --quiet ears
-docker build -q -t home-hub-ears ears
+check "it builds both images, then looks whether ears is running just before it records, then runs the recorder with only the microphone and its mixer, then the player with only the speakers and the mixer" "docker build -q -t home-hub-ears ears
 docker build -q -t home-hub-jarvis jarvis
+docker compose ps --status running --quiet ears
 recorder: $hardened --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_WAKE_END -e EARS_MIC_TEST_WAIT home-hub-ears node dist/mic-test-run.js | EARS_MIC_LEVEL= EARS_MIC_CONTROL= EARS_MIC_BOOST= EARS_MIC_BOOST_CONTROL= EARS_WAKE_END= EARS_MIC_TEST_WAIT=0 EARS_TOKEN=unset
 player: $hardened -i --user node --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0p:/dev/snd/pcmC1D0p:rw home-hub-jarvis sh -c amixer -q -c 1 sset Master 80% unmute && exec aplay -q -t raw -f S16_LE -r 16000 -c 1 -D plughw:1,0" "$(cat "$MIC_LOG")"
 check "the player gets exactly the sound after the line that says it follows, byte for byte, with no line of its own" "same" "$(cmp -s "$SOUND" "$PLAYED" && echo same || echo different)"
@@ -669,20 +675,31 @@ mic_test mic-test
 check "with no jarvis/.env there are no speakers named, so mic-test stops before Docker" "1|" "$mic_status|$(cat "$MIC_LOG")"
 check_has "saying which setting it needs" "No JARVIS_SOUND_CARD in jarvis/.env." "$mic_output"
 
+for state in idle recording working failed; do
+  mic_setup
+  mkdir -p "$work/repo/ears/switch"
+  echo "unmuted 1763690000000000000" > "$work/repo/ears/switch/mute"
+  FAKE_PS=abc123 FAKE_HEALTH="200 $state" mic_test mic-test
+  check "with ears running and $state, mic-test asks ears after building and stops, without touching the switch" "1|docker compose ps --status running --quiet ears|docker compose exec -T ears node dist/ask.js health|unmuted 1763690000000000000" "$mic_status|$(sed -n 3p "$MIC_LOG")|$(sed -n 4p "$MIC_LOG")|$(cat "$work/repo/ears/switch/mute")"
+  check_has "saying what ears said and to mute it first" "Ears is running and $state, not muted, so it may be using the microphone. Mute it with bash host/ears.sh mute, wait a second, run this again, then unmute it." "$mic_output"
+done
+
+for health in fails "" "404 {}" "401 muted" "200 (no state)"; do
+  mic_setup
+  FAKE_PS=abc123 FAKE_HEALTH="$health" mic_test mic-test
+  check "with ears running and no clear answer ('$health'), mic-test stops, saying only that" "1|0|0" "$mic_status|$(grep -c '^recorder' "$MIC_LOG")|$(grep -c 'not muted' <<< "$mic_output")"
+  check_has "saying ears didn't say" "Ears is running but didn't say whether it's muted, so it may be using the microphone. If it has only just started, wait a few seconds and run this again; otherwise stop it with bash host/ears.sh stop, run this again, then start it." "$mic_output"
+done
+
 mic_setup
 mkdir -p "$work/repo/ears/switch"
 echo "unmuted 1763690000000000000" > "$work/repo/ears/switch/mute"
-FAKE_PS=abc123 mic_test mic-test
-check "with ears running and unmuted, mic-test stops after only looking, and never mutes it" "1|docker compose ps --status running --quiet ears|unmuted 1763690000000000000" "$mic_status|$(cat "$MIC_LOG")|$(cat "$work/repo/ears/switch/mute")"
-check_has "saying to mute it first" "Ears is running and unmuted, so it may be using the microphone. Mute it first with bash host/ears.sh mute, run this again, then unmute it." "$mic_output"
+FAKE_PS=abc123 FAKE_HEALTH="200 muted" mic_test mic-test
+check "with ears running and muted, mic-test runs whatever the switch file says, as after a restart that left it saying unmuted" "0|1" "$mic_status|$(grep -c '^recorder' "$MIC_LOG")"
 
-for case in "abc123|muted" "|unmuted 1" "abc123|"; do
-  mic_setup
-  mkdir -p "$work/repo/ears/switch"
-  [ -n "${case#*|}" ] && echo "${case#*|}" > "$work/repo/ears/switch/mute"
-  FAKE_PS=${case%%|*} mic_test mic-test
-  check "ears running '${case%%|*}' with the switch '${case#*|}' doesn't stop mic-test" "0" "$mic_status"
-done
+mic_setup
+FAKE_HEALTH="200 idle" mic_test mic-test
+check "with ears not running, mic-test doesn't ask it anything" "0|0" "$mic_status|$(grep -c 'compose exec' "$MIC_LOG")"
 
 for image in ears jarvis; do
   mic_setup
@@ -717,7 +734,7 @@ check "and no done line" "0" "$(grep -c 'Done.' <<< "$mic_output")"
 
 mic_setup
 FAKE_RECORDER_BIG=1 FAKE_PLAYER_FAIL=early mic_test mic-test
-check "a player that fails before taking any sound fails mic-test with its own code, though the recorder then fails on the closed pipe" "1|recorder ended 141" "$mic_status|$(grep '^recorder ended' "$MIC_LOG")"
+check "a player that fails before taking any sound fails mic-test with its own code, though the recorder then fails on the closed pipe" "1|failed" "$mic_status|$(grep '^recorder ended' "$MIC_LOG" | grep -qv 'ended 0$' && echo failed)"
 check_has "and still says what to do" "The recording worked, but it couldn't be played back. If aplay says the device is busy, something else is playing, like Jarvis speaking: wait for it to finish and run this again." "$mic_output"
 
 for code in 0 1 die; do

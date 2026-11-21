@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { MicSettings } from "./config.js";
-import { busyLine, describeDetector, describeMic, detectorView, longestPauseOf, longestWait, louder, markMs, measure, measuredFrames, micTestMs, quietTimes, readWait, roomUntilMs, runMicTest, secondsOf, sendSound, skipMs, softer, soundFollows, strip, verdict, type MicReport, type MicTestDeps } from "./mic-test.js";
+import { busyLine, describeDetector, describeMic, detectorView, longestPauseOf, longestWait, louder, markMs, measure, measuredFrames, micTestMs, quietTimes, readWait, roomAdvice, roomUntilMs, runMicTest, secondsOf, sendSound, skipMs, softer, soundFollows, strip, verdict, type MicReport, type MicTestDeps } from "./mic-test.js";
 import type { SileroStep } from "./silero.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -157,7 +157,24 @@ test("the verdict: no speech is too quiet, then clipping is too loud, then speec
   assert.equal(verdict(report({ clipped: 1, typical: 400 }), usual), `Too loud. ${softer(usual)}`);
   assert.equal(verdict(report({ typical: 599 }), usual), `Quiet: you're above the line, but not by much, so ears may stop a recording while you're still talking. ${louder(usual)}`);
   assert.equal(verdict(report({ typical: 600 }), usual), "Clear: your voice is well above the room, so ears can tell when you've finished.");
-  assert.equal(verdict(report({ typical: 1_799, line: 900 }), usual), `Quiet: you're above the line, but not by much, so ears may stop a recording while you're still talking. ${louder(usual)}`);
+  assert.equal(verdict(report({ typical: 1_799, room: 300, line: 900 }), usual), `Quiet: you're above the line, but not by much, so ears may stop a recording while you're still talking. ${roomAdvice}`);
+});
+
+test("when turning the microphone up can't lift the voice clear of the room, because it lifts both together, the advice says what would instead", () => {
+  assert.equal(roomAdvice, "Turning the microphone up won't help from there: the line rises with the room, so your voice and the room get louder together. Get closer to the microphone, make the room quieter, or try another microphone.");
+  const maxed = { ...usual, micLevel: 100, micBoost: 0 } as const;
+  assert.equal(verdict(report({ room: 349, line: 1_047, typical: 1_651 }), maxed), `Quiet: you're above the line, but not by much, so ears may stop a recording while you're still talking. ${roomAdvice}`);
+  assert.equal(verdict(report({ room: 349, line: 1_047, speechMs: 0, typical: 0, loudest: 1_000 }), maxed), `Too quiet: ears wouldn't count this as speech, so a wake-word recording from there would be dropped. ${roomAdvice}`);
+  assert.equal(verdict(report({ room: 100, line: 300, typical: 599 }), maxed).endsWith(roomAdvice), true, "under six times the room, gain lifts both and never reaches clear, even at the line's floor");
+  assert.equal(verdict(report({ room: 50, line: 300, typical: 400 }), maxed), `Quiet: you're above the line, but not by much, so ears may stop a recording while you're still talking. ${louder(maxed)}`, "six times the room or more, so gain can lift the voice clear of the floor");
+  assert.equal(verdict(report({ room: 50, line: 300, typical: 300 }), maxed).endsWith(louder(maxed)), true);
+  assert.equal(verdict(report({ room: 50, line: 300, typical: 299 }), maxed).endsWith(roomAdvice), true);
+  assert.equal(verdict(report({ room: 100, line: 300, speechMs: 0, typical: 0, loudest: 300 }), maxed).endsWith(roomAdvice), true, "nothing louder than three times the room can be lifted over the line");
+  assert.equal(verdict(report({ room: 100, line: 300, speechMs: 0, typical: 0, loudest: 299 }), maxed).endsWith(roomAdvice), true);
+  assert.equal(verdict(report({ room: 50, line: 300, speechMs: 0, typical: 0, loudest: 151 }), maxed).endsWith(louder(maxed)), true);
+  assert.equal(verdict(report({ room: 50, line: 300, speechMs: 0, typical: 0, loudest: 150 }), maxed).endsWith(roomAdvice), true);
+  assert.equal(verdict(report({ room: 0, line: 300, typical: 10 }), maxed).endsWith(louder(maxed)), true, "a silent room never blames the room");
+  assert.equal(verdict(report({ room: 349, line: 1_047, typical: 1_651, clipped: 3 }), maxed).startsWith("Too loud."), true);
 });
 
 test("the report says the room's level in the same words as ears's log, then the speech, the longest pause, clipping and the verdict", () => {

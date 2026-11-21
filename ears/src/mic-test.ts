@@ -1,6 +1,6 @@
 import type { Writable } from "node:stream";
 import { mostBoostSteps, readMicSettings, readWakeEnd, type MicSettings } from "./config.js";
-import { backgroundLevel, frameBytes, frameLevel, frameMs, quietForMs, speakingLevel } from "./levels.js";
+import { backgroundLevel, frameBytes, frameLevel, frameMs, quietForMs, speakingLevel, speakingTimes } from "./levels.js";
 import { applyMicSettings, findMicCard, recorderArgs, recorderCommand, type MicCard, type MicSetters } from "./mic-card.js";
 import { bytesPerSecond, startRecording, type Recorder } from "./recorder.js";
 import { createDetector, heardSpeech, loadSilero, type SileroStep } from "./silero.js";
@@ -66,6 +66,12 @@ export function louder(settings: MicSettings): string {
   return "EARS_MIC_LEVEL and EARS_MIC_BOOST are both as high as they go, so this microphone is too quiet from there.";
 }
 
+export const roomAdvice = "Turning the microphone up won't help from there: the line rises with the room, so your voice and the room get louder together. Get closer to the microphone, make the room quieter, or try another microphone.";
+
+function raise(report: MicReport, settings: MicSettings, against: number): string {
+  return against < speakingTimes * report.room ? roomAdvice : louder(settings);
+}
+
 export function softer(settings: MicSettings): string {
   const knock = "A single knock or cough can clip too, so if that's what it was, just run this again.";
   if (settings.micBoost !== "keep" && settings.micBoost > 0) return `Lower EARS_MIC_BOOST in ears/.env from ${settings.micBoost} to ${settings.micBoost - 1} and run this again. ${knock}`;
@@ -74,9 +80,9 @@ export function softer(settings: MicSettings): string {
 }
 
 export function verdict(report: MicReport, settings: MicSettings): string {
-  if (report.speechMs === 0) return `Too quiet: ears wouldn't count this as speech, so a wake-word recording from there would be dropped. ${louder(settings)}`;
+  if (report.speechMs === 0) return `Too quiet: ears wouldn't count this as speech, so a wake-word recording from there would be dropped. ${raise(report, settings, report.loudest - 1)}`;
   if (report.clipped > 0) return `Too loud. ${softer(settings)}`;
-  if (report.typical < report.line * quietTimes) return `Quiet: you're above the line, but not by much, so ears may stop a recording while you're still talking. ${louder(settings)}`;
+  if (report.typical < report.line * quietTimes) return `Quiet: you're above the line, but not by much, so ears may stop a recording while you're still talking. ${raise(report, settings, report.typical / quietTimes)}`;
   return "Clear: your voice is well above the room, so ears can tell when you've finished.";
 }
 

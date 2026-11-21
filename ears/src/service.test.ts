@@ -103,7 +103,8 @@ test("a mute and an unmute between two looks at the switch still end the recordi
   assert.deepEqual(recorders(), []);
   assert.ok(took < 1000, `${took} ms`);
   await until(() => service.ears.view().last !== null);
-  assert.equal(service.ears.view().state, "idle");
+  await until(() => service.ears.view().state === "idle");
+  assert.equal(service.ears.view().state, "idle", "ears ends up unmuted, whether it saw the mute or only the new unmute");
   await service.close();
 });
 

@@ -83,13 +83,20 @@ if [ "$1" = mic-test ]; then
   volume=$((10#$volume))
   switch_to=unmute
   [ "$volume" -eq 0 ] && switch_to=mute
-  if [ -n "$(docker compose ps --status running --quiet ears 2> /dev/null)" ] && grep -q '^unmuted' ears/switch/mute 2> /dev/null; then
-    echo "Ears is running and unmuted, so it may be using the microphone. Mute it first with bash host/ears.sh mute, run this again, then unmute it." >&2
-    exit 1
-  fi
   echo "Getting ears's and Jarvis's images ready..."
   docker build -q -t home-hub-ears ears > /dev/null || exit 1
   docker build -q -t home-hub-jarvis jarvis > /dev/null || exit 1
+  if [ -n "$(docker compose ps --status running --quiet ears 2> /dev/null)" ]; then
+    state=$(docker compose exec -T ears node dist/ask.js health 2> /dev/null)
+    if [[ ! "$state" =~ ^200\ [a-z]+$ ]]; then
+      echo "Ears is running but didn't say whether it's muted, so it may be using the microphone. If it has only just started, wait a few seconds and run this again; otherwise stop it with bash host/ears.sh stop, run this again, then start it." >&2
+      exit 1
+    fi
+    if [ "$state" != "200 muted" ]; then
+      echo "Ears is running and ${state#200 }, not muted, so it may be using the microphone. Mute it with bash host/ears.sh mute, wait a second, run this again, then unmute it." >&2
+      exit 1
+    fi
+  fi
   echo "When it's done, it plays the recording back on sound card $speakers's speakers."
   export EARS_MIC_LEVEL EARS_MIC_CONTROL EARS_MIC_BOOST EARS_MIC_BOOST_CONTROL EARS_WAKE_END EARS_MIC_TEST_WAIT
   EARS_MIC_LEVEL=$(setting EARS_MIC_LEVEL)
