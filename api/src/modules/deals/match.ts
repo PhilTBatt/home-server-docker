@@ -41,35 +41,72 @@ export const hiddenReasons = ["price", "condition", "place", "buying", "ending",
 
 export type HiddenReason = (typeof hiddenReasons)[number];
 
-export function whyNot(search: Search, listing: Listing, now: Date): HiddenReason | null {
-  if (search.minPrice !== null && listing.price < search.minPrice) return "price";
-  if (search.maxPrice !== null && listing.price > search.maxPrice) return "price";
-  if (search.maxWithPostage !== null && totalPrice(listing) > search.maxWithPostage) return "price";
+export type RuleCheck = {
+  rule: HiddenReason;
+  setting: string;
+  text: string;
+};
+
+function pounds(pence: number): string {
+  return `£${(pence / 100).toFixed(2)}`;
+}
+
+const buyingWords: Record<string, string> = { FIXED_PRICE: "buy it now", AUCTION: "an auction", BEST_OFFER: "best offer", CLASSIFIED_AD: "a classified ad" };
+
+function* failingRules(search: Search, listing: Listing, now: Date): Generator<RuleCheck> {
+  if (search.minPrice !== null && listing.price < search.minPrice) yield { rule: "price", setting: "minPrice", text: `its price, ${pounds(listing.price)}, is under the search's ${pounds(search.minPrice)} minimum` };
+  if (search.maxPrice !== null && listing.price > search.maxPrice) yield { rule: "price", setting: "maxPrice", text: `its price, ${pounds(listing.price)}, is over the search's ${pounds(search.maxPrice)} top price` };
+  if (search.maxWithPostage !== null && totalPrice(listing) > search.maxWithPostage) {
+    yield { rule: "price", setting: "maxWithPostage", text: `with postage it's ${pounds(totalPrice(listing))}, over the search's ${pounds(search.maxWithPostage)} top with postage` };
+  }
 
   if (search.conditions.length > 0 && listing.conditionId !== null) {
-    if (!search.conditions.some((name) => conditionIds[name] === listing.conditionId)) return "condition";
+    if (!search.conditions.some((name) => conditionIds[name] === listing.conditionId)) {
+      yield { rule: "condition", setting: "conditions", text: `its condition, ${listing.condition ?? `number ${listing.conditionId}`}, isn't one the search takes (${search.conditions.join(", ")})` };
+    }
   }
-  if (search.ukOnly && listing.country !== null && listing.country !== "GB") return "place";
+  if (search.ukOnly && listing.country !== null && listing.country !== "GB") yield { rule: "place", setting: "ukOnly", text: `it's in ${listing.country}, and the search only takes items in the UK` };
 
   const wanted = search.buying.map((option) => buyingNames[option]);
-  if (listing.buying.length > 0 && !listing.buying.some((option) => wanted.includes(option))) return "buying";
+  if (listing.buying.length > 0 && !listing.buying.some((option) => wanted.includes(option))) {
+    yield { rule: "buying", setting: "buying", text: `it's ${listing.buying.map((option) => buyingWords[option] ?? option).join(" or ")}, and the search takes ${search.buying.join(" or ")}` };
+  }
 
   if (search.endingWithinHours !== null && isAuctionOnly(listing)) {
     const left = listing.endsAt === null ? Number.NaN : Date.parse(listing.endsAt) - now.getTime();
-    if (!(left > 0 && left <= search.endingWithinHours * hourMs)) return "ending";
+    if (!(left > 0 && left <= search.endingWithinHours * hourMs)) yield { rule: "ending", setting: "endingWithinHours", text: `the auction doesn't end within the search's ${search.endingWithinHours} hours` };
   }
 
-  if (search.sellerMinPercent !== null && !(listing.sellerPercent !== null && listing.sellerPercent >= search.sellerMinPercent)) return "seller";
-  if (search.sellerMinFeedback !== null && !(listing.sellerFeedback !== null && listing.sellerFeedback >= search.sellerMinFeedback)) return "seller";
-  if (search.sellerType !== null && listing.sellerType !== null && listing.sellerType !== search.sellerType) return "seller";
-  if (search.postageShown && listing.postage === null) return "postage";
+  if (search.sellerMinPercent !== null && !(listing.sellerPercent !== null && listing.sellerPercent >= search.sellerMinPercent)) {
+    yield { rule: "seller", setting: "sellerMinPercent", text: listing.sellerPercent === null ? `its seller's feedback isn't shown, and the search needs ${search.sellerMinPercent}% positive` : `its seller is ${listing.sellerPercent}% positive, under the search's ${search.sellerMinPercent}%` };
+  }
+  if (search.sellerMinFeedback !== null && !(listing.sellerFeedback !== null && listing.sellerFeedback >= search.sellerMinFeedback)) {
+    yield { rule: "seller", setting: "sellerMinFeedback", text: listing.sellerFeedback === null ? `its seller's feedback score isn't shown, and the search needs ${search.sellerMinFeedback}` : `its seller's feedback score is ${listing.sellerFeedback}, under the search's ${search.sellerMinFeedback}` };
+  }
+  if (search.sellerType !== null && listing.sellerType !== null && listing.sellerType !== search.sellerType) yield { rule: "seller", setting: "sellerType", text: `its seller is ${listing.sellerType}, and the search takes ${search.sellerType} sellers only` };
+  if (search.postageShown && listing.postage === null) yield { rule: "postage", setting: "postageShown", text: "it shows no postage price, and the search needs one" };
 
-  if (search.mustInclude.some((phrase) => !hasPhrase(listing.title, phrase))) return "words";
-  if (search.exclude.some((phrase) => hasPhrase(listing.title, phrase))) return "words";
-  if (search.avoid.some((name) => (avoidLists[name] ?? []).some((phrase) => hasPhrase(listing.title, phrase)))) return "avoid";
-  if (listing.hiddenDetail !== undefined) return "details";
-  if (search.hideVariations && listing.variations && listing.option === undefined) return "options";
-  return null;
+  for (const phrase of search.mustInclude) {
+    if (!hasPhrase(listing.title, phrase)) yield { rule: "words", setting: "mustInclude", text: `its title doesn't have "${phrase}", which the search needs` };
+  }
+  for (const phrase of search.exclude) {
+    if (hasPhrase(listing.title, phrase)) yield { rule: "words", setting: "exclude", text: `its title has "${phrase}", which the search leaves out` };
+  }
+  for (const name of search.avoid) {
+    const word = (avoidLists[name] ?? []).find((phrase) => hasPhrase(listing.title, phrase));
+    if (word !== undefined) yield { rule: "avoid", setting: "avoid", text: `its title has "${word}", from the ${name} avoid list` };
+  }
+  if (listing.hiddenDetail !== undefined) yield { rule: "details", setting: "hideDetails", text: `eBay says its ${listing.hiddenDetail} is one the search hides` };
+  if (search.hideVariations && listing.variations && listing.option === undefined) yield { rule: "options", setting: "hideVariations", text: "it has several options, and the search hides those" };
+}
+
+export function ruleChecks(search: Search, listing: Listing, now: Date): RuleCheck[] {
+  return [...failingRules(search, listing, now)];
+}
+
+export function whyNot(search: Search, listing: Listing, now: Date): HiddenReason | null {
+  const first = failingRules(search, listing, now).next();
+  return first.done === true ? null : first.value.rule;
 }
 
 export function matches(search: Search, listing: Listing, now: Date): boolean {

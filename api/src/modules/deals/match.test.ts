@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
-import { alwaysExcluded, cautions, chooseOption, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot, withOption } from "./match.js";
+import { alwaysExcluded, ruleChecks, cautions, chooseOption, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot, withOption } from "./match.js";
 import { readSearches, type Search } from "./searches.js";
 import type { Listing, ListingOption } from "./source.js";
 
@@ -649,4 +649,78 @@ test("the catalogue's B660 bundle, Quadro P620 and M.2 adapter searches keep out
     ["m2-nvme-pcie-adapter", "Dual M.2 Adapter NVMe PCIe x4 plus SATA M.2 Slot, No Bifurcation Required, Not for Laptop", 1400],
   ];
   for (const [id, title, price] of kept) assert.equal(reason(id, title, price), null, `${id}: ${title}`);
+});
+
+test("ruleChecks names every rule a listing fails, in the watcher's order, with the setting and plain words", () => {
+  const strict = search({
+    minPrice: 100,
+    conditions: ["new"],
+    buying: ["auction"],
+    endingWithinHours: 4,
+    sellerMinPercent: 99.5,
+    sellerMinFeedback: 5000,
+    sellerType: "business",
+    postageShown: true,
+    mustInclude: ["7080", "micro"],
+    exclude: ["sff", "win 11"],
+    avoid: ["faulty"],
+    hideVariations: true,
+  });
+  const bad = listing({ price: 9500, postage: null, country: "DE", sellerType: "private", title: "Dell OptiPlex 7070 SFF i5 Win 11 spares or repair", variations: true, hiddenDetail: "Form Factor" });
+  assert.deepEqual(ruleChecks(strict, bad, now), [
+    { rule: "price", setting: "minPrice", text: "its price, £95.00, is under the search's £100.00 minimum" },
+    { rule: "condition", setting: "conditions", text: "its condition, Used, isn't one the search takes (new)" },
+    { rule: "place", setting: "ukOnly", text: "it's in DE, and the search only takes items in the UK" },
+    { rule: "buying", setting: "buying", text: "it's buy it now, and the search takes auction" },
+    { rule: "seller", setting: "sellerMinPercent", text: "its seller is 99.4% positive, under the search's 99.5%" },
+    { rule: "seller", setting: "sellerMinFeedback", text: "its seller's feedback score is 1234, under the search's 5000" },
+    { rule: "seller", setting: "sellerType", text: "its seller is private, and the search takes business sellers only" },
+    { rule: "postage", setting: "postageShown", text: "it shows no postage price, and the search needs one" },
+    { rule: "words", setting: "mustInclude", text: 'its title doesn\'t have "7080", which the search needs' },
+    { rule: "words", setting: "mustInclude", text: 'its title doesn\'t have "micro", which the search needs' },
+    { rule: "words", setting: "exclude", text: 'its title has "sff", which the search leaves out' },
+    { rule: "words", setting: "exclude", text: 'its title has "win 11", which the search leaves out' },
+    { rule: "avoid", setting: "avoid", text: 'its title has "spares", from the faulty avoid list' },
+    { rule: "details", setting: "hideDetails", text: "eBay says its Form Factor is one the search hides" },
+    { rule: "options", setting: "hideVariations", text: "it has several options, and the search hides those" },
+  ]);
+  assert.deepEqual(ruleChecks(search({ maxWithPostage: 100 }), listing({ price: 9500, postage: 699 }), now), [{ rule: "price", setting: "maxWithPostage", text: "with postage it's £101.99, over the search's £100.00 top with postage" }]);
+  assert.deepEqual(ruleChecks(search({ maxPrice: 90, maxWithPostage: 90 }), listing({ price: 9500, postage: 699 }), now), [
+    { rule: "price", setting: "maxPrice", text: "its price, £95.00, is over the search's £90.00 top price" },
+    { rule: "price", setting: "maxWithPostage", text: "with postage it's £101.99, over the search's £90.00 top with postage" },
+  ]);
+  const auction = listing({ buying: ["AUCTION"], endsAt: "2026-11-19T12:00:00.000Z", sellerPercent: null, sellerFeedback: null });
+  assert.deepEqual(ruleChecks(search({ buying: ["auction"], endingWithinHours: 4, sellerMinPercent: 98, sellerMinFeedback: 10 }), auction, now).map((check) => check.text), [
+    "the auction doesn't end within the search's 4 hours",
+    "its seller's feedback isn't shown, and the search needs 98% positive",
+    "its seller's feedback score isn't shown, and the search needs 10",
+  ]);
+  assert.deepEqual(ruleChecks(search({ sellerMinPercent: 99.5 }), listing(), now).map((check) => check.text), ["its seller is 99.4% positive, under the search's 99.5%"]);
+  assert.deepEqual(ruleChecks(search(), listing(), now), []);
+});
+
+test("whyNot is always the first rule ruleChecks names, or nothing when it names none", () => {
+  const searches = [
+    search(),
+    search({ minPrice: 9600 }),
+    search({ maxPrice: 9000, conditions: ["new"] }),
+    search({ maxWithPostage: 10000, mustInclude: ["7070"], exclude: ["win 11"] }),
+    search({ buying: ["auction"], sellerMinPercent: 99.9 }),
+    search({ avoid: ["faulty", "parts only"], hideVariations: true }),
+    search({ sellerType: "business", postageShown: true, ukOnly: false }),
+  ];
+  const listings = [
+    listing(),
+    listing({ price: 9700, postage: null }),
+    listing({ conditionId: null, country: null, buying: [] }),
+    listing({ title: "OptiPlex 7070 faulty for parts", sellerType: "business" }),
+    listing({ variations: true, option: "Size: 16GB", country: "IE" }),
+    listing({ variations: true, buying: ["AUCTION"], endsAt: "2026-11-18T13:00:00.000Z", sellerPercent: null }),
+    listing({ hiddenDetail: "Features", sellerType: "private", conditionId: "1000" }),
+  ];
+  for (const wanted of searches) {
+    for (const found of listings) {
+      assert.equal(whyNot(wanted, found, now), ruleChecks(wanted, found, now)[0]?.rule ?? null);
+    }
+  }
 });
