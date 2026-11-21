@@ -199,7 +199,7 @@ test("limits outside their ranges are refused by name", () => {
 });
 
 test("an empty list of searches is fine", () => {
-  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null, postcode: null, files: [], digest: null });
+  assert.deepEqual(readSearches(listOf(), sources), { searches: [], limits: defaultLimits, quiet: null, postcode: null, files: [], digest: null, digestHealth: false });
 });
 
 test("searches keep the order they were written in", () => {
@@ -961,6 +961,17 @@ test("with hideVariations off, searches keep the fingerprints they had before it
     assert.equal(print({ ...extra, readOptions: false }, top), was, JSON.stringify(extra));
     assert.notEqual(print({ ...extra, readOptions: true }, top), was, JSON.stringify(extra));
     assert.notEqual(print({ ...extra, readOptions: true, hideVariations: true }, top), print({ ...extra, hideVariations: true }, top), JSON.stringify(extra));
+  }
+});
+
+test("digestHealth is on or off, off unless set, and anything else is refused", () => {
+  const health = (value: unknown) => readSearches(JSON.stringify({ searches: [], digest: "08:00", digestHealth: value }), sources).digestHealth;
+  assert.equal(health("on"), true);
+  assert.equal(health("off"), false);
+  assert.equal(readSearches(JSON.stringify({ searches: [], digest: "08:00" }), sources).digestHealth, false);
+  assert.equal(readSearches(JSON.stringify({ searches: [], digestHealth: "on" }), sources).digestHealth, true);
+  for (const odd of [true, false, "yes", "ON", 1, null, ["on"], { on: true }, ""]) {
+    assert.match(problemIn(JSON.stringify({ searches: [], digestHealth: odd })), /digestHealth must be "on" or "off"/, JSON.stringify(odd));
   }
 });
 

@@ -673,8 +673,14 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         const result = results.get(search.id);
         return search.on && !state.snoozed.has(search.id) && result !== undefined && time - result.checkedAt <= freshFor ? [{ search, listings: result.listings }] : [];
       });
+      const health = loaded.digestHealth
+        ? loaded.searches.flatMap((search) => {
+            const kinds = healthOf(search, time).map((note) => note.kind);
+            return kinds.length === 0 ? [] : [{ name: search.name, kinds }];
+          })
+        : [];
       await options
-        .notify(digestNotification(entries, sandbox))
+        .notify(digestNotification(entries, sandbox, health))
         .then(() => {
           state.digested = today;
         })

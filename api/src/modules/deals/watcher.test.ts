@@ -1240,9 +1240,9 @@ function fullOf(shown: Listing): FullListing {
   };
 }
 
-function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { quiet?: unknown; limits?: Record<string, number>; keepSeen?: boolean; digest?: string } = {}) {
+function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { quiet?: unknown; limits?: Record<string, number>; keepSeen?: boolean; digest?: string; digestHealth?: string } = {}) {
   const world = {
-    list: readSearches(JSON.stringify({ searches, limits: options.limits, quiet: options.quiet, digest: options.digest }), ["ebay"]),
+    list: readSearches(JSON.stringify({ searches, limits: options.limits, quiet: options.quiet, digest: options.digest, digestHealth: options.digestHealth }), ["ebay"]),
     failSend: false,
     found: new Map<string, Listing[] | SourceError>(),
     sent: [] as Notification[],
@@ -2594,4 +2594,27 @@ test("a snoozed search has no health notes, so a snooze doesn't build up a week 
   assert.deepEqual(watcher.searches(at(8 * 1440))[0].health, []);
   await watcher.wake("optiplex");
   assert.deepEqual(watcher.searches(at(8 * 1440 + 1))[0].health.map((note) => note.kind), ["incomplete", "noMatch"]);
+});
+
+test("with digestHealth on, the digest names the switched-on searches that need a look, leaving out snoozed ones and finding nothing", async () => {
+  for (const digestHealth of ["on", "off", undefined]) {
+    const searches = [
+      { ...optiplex, group: "whole pc", guidePrice: 100, mustInclude: ["optiplex"] },
+      { ...ram, group: "ram" },
+      { ...optiplex, id: "dozy", name: "Dozy search" },
+      { ...optiplex, id: "empty", name: "Empty search" },
+    ];
+    const { world, watcher } = richSetup(searches, { digest: "12:30", digestHealth });
+    world.found.set("optiplex", [listing(1, { price: 8000, postage: 0 })]);
+    world.found.set("ram", [listing(2, { price: 4000, postage: 0 })]);
+    world.found.set("dozy", [listing(3)]);
+    await watcher.run(at(0));
+    await watcher.snooze("dozy", null);
+    world.list = readSearches(JSON.stringify({ searches: searches.map((search) => (search.id === "ram" ? { ...search, query: "ddr4 2x16gb kit" } : search)), digest: "12:30", digestHealth }), ["ebay"]);
+    world.found.set("optiplex", [listing(1, { price: 8000, postage: 0 }), ...Array.from({ length: 300 }, (_, n) => listing(500 + n, { title: `Galaxy Tab keyboard case ${n}` }))]);
+    await watcher.run(at(7 * 1440 + 30));
+    const [digest] = digests(world.sent);
+    const look = digest.message.split("\n").filter((line) => line.startsWith("Needs a look"));
+    assert.deepEqual(look, digestHealth === "on" ? ["Needs a look: OptiPlex (mostly hides junk); Empty search (no match for a week)."] : [], String(digestHealth));
+  }
 });

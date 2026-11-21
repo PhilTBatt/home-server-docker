@@ -352,6 +352,21 @@ test("the digest gives the best match for each part type, in part type order: th
   });
 });
 
+test("the digest ends with the searches that need a look, by name, in plain words, five at most", () => {
+  const ram = search({ id: "ram", name: "DDR4 RAM", group: "ram", query: "ddr4 32gb", guidePrice: 100 });
+  const entries = [{ search: ram, listings: [listing({ title: "Kit", price: 5000, postage: 0 })] }];
+  assert.equal(digestNotification(entries, false, []).message, "1 match across 1 part type. The best of each:\nRAM: Kit, £50.00, 50% under guide (DDR4 RAM).");
+  assert.equal(
+    digestNotification(entries, false, [{ name: "Quadro P620", kinds: ["incomplete", "mostlyHidden"] }, { name: "Old search", kinds: ["noMatch"] }]).message,
+    "1 match across 1 part type. The best of each:\nRAM: Kit, £50.00, 50% under guide (DDR4 RAM).\nNeeds a look: Quadro P620 (reads only part of what eBay has, mostly hides junk); Old search (no match for a week).",
+  );
+  const seven = Array.from({ length: 7 }, (_, n) => ({ name: `Search ${n + 1}`, kinds: ["noMatch"] }));
+  assert.match(digestNotification(entries, false, seven).message, /\nNeeds a look: Search 1 \(no match for a week\); Search 2 .*; Search 5 \(no match for a week\) and 2 more\.$/);
+  assert.equal(digestNotification(entries, false, [{ name: "Unknown", kinds: ["nothingFound", "somethingNew"] }]).message, "1 match across 1 part type. The best of each:\nRAM: Kit, £50.00, 50% under guide (DDR4 RAM).");
+  assert.equal(digestNotification([], false, [{ name: "Old search", kinds: ["noMatch"] }]).message, "Nothing to report: every search is snoozed, switched off or not checked in the last six hours.\nNeeds a look: Old search (no match for a week).");
+  assert.equal(digestNotification([{ search: ram, listings: [] }], false, [{ name: "Old search", kinds: ["noMatch"] }]).message, "Nothing matches right now.\nNeeds a look: Old search (no match for a week).");
+});
+
 test("the digest leaves out auctions and listings whose option isn't known, and says when there's nothing", () => {
   const ram = search({ id: "ram", name: "DDR4 RAM", group: "ram", query: "ddr4 32gb", guidePrice: 100, buying: ["buy it now", "auction"] });
   const message = digestNotification([{ search: ram, listings: [listing({ title: "Bid", price: 100, buying: ["AUCTION"] }), listing({ title: "Options", price: 200, variations: true }), listing({ title: "Fitted", price: 5000, postage: 0, variations: true, option: "Capacity: 32GB" })] }], true);

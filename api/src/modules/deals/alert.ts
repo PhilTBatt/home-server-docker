@@ -173,7 +173,29 @@ function shortTitle(title: string): string {
   return title.length <= digestTitleLength ? title : `${title.slice(0, digestTitleLength - 1).trimEnd()}\u2026`;
 }
 
-export function digestNotification(entries: DigestEntry[], sandbox: boolean): Notification {
+export type DigestHealth = {
+  name: string;
+  kinds: string[];
+};
+
+const healthWords: Record<string, string> = {
+  incomplete: "reads only part of what eBay has",
+  mostlyHidden: "mostly hides junk",
+  noMatch: "no match for a week",
+};
+const healthShown = 5;
+
+function healthLine(health: DigestHealth[]): string[] {
+  const named = health
+    .map((entry) => ({ name: entry.name, words: entry.kinds.flatMap((kind) => (healthWords[kind] === undefined ? [] : [healthWords[kind]])) }))
+    .filter((entry) => entry.words.length > 0);
+  if (named.length === 0) return [];
+  const shown = named.slice(0, healthShown).map((entry) => `${entry.name} (${entry.words.join(", ")})`);
+  const more = named.length > healthShown ? ` and ${named.length - healthShown} more` : "";
+  return [`Needs a look: ${shown.join("; ")}${more}.`];
+}
+
+export function digestNotification(entries: DigestEntry[], sandbox: boolean, health: DigestHealth[] = []): Notification {
   const title = sandbox ? "Deal digest (sandbox)" : "Deal digest";
   const groups = new Set<string | null>(entries.map((entry) => entry.search.group));
   const order = [...partTypes.map(([id]) => id).filter((id) => groups.has(id)), ...(groups.has(null) ? [null] : [])];
@@ -194,6 +216,7 @@ export function digestNotification(entries: DigestEntry[], sandbox: boolean): No
     const cheapest = found.reduce((low, item) => (totalPrice(item.listing) < totalPrice(low.listing) ? item : low));
     lines.push(`${label}: ${found.length} match${found.length === 1 ? "" : "es"}, none under guide. Cheapest: ${shortTitle(cheapest.listing.title)}, ${money(totalPrice(cheapest.listing))} (${cheapest.search.name}).`);
   }
-  if (lines.length === 0) return { title, message: entries.length === 0 ? "Nothing to report: every search is snoozed, switched off or not checked in the last six hours." : "Nothing matches right now.", tags: "newspaper" };
-  return { title, message: [`${total} match${total === 1 ? "" : "es"} across ${lines.length} part type${lines.length === 1 ? "" : "s"}. The best of each:`, ...lines].join("\n"), tags: "newspaper" };
+  const look = healthLine(health);
+  if (lines.length === 0) return { title, message: [entries.length === 0 ? "Nothing to report: every search is snoozed, switched off or not checked in the last six hours." : "Nothing matches right now.", ...look].join("\n"), tags: "newspaper" };
+  return { title, message: [`${total} match${total === 1 ? "" : "es"} across ${lines.length} part type${lines.length === 1 ? "" : "s"}. The best of each:`, ...lines, ...look].join("\n"), tags: "newspaper" };
 }
