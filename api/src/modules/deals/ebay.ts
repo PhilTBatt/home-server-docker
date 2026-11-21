@@ -764,7 +764,8 @@ export function createEbaySource(options: EbayOptions): Source {
           const prices = (inStock.length > 0 ? inStock : options).map((option) => option.price);
           const price = prices.length > 0 ? Math.min(...prices) : full.listing.price;
           const listing = { ...full.listing, id: itemNumber, url: `https://${siteHost}/itm/${itemNumber}`, price, variations: true, groupId: itemNumber };
-          return { full: { ...full, listing }, categoryIds: categoryIdsOf(first), options };
+          const stock = options.some((option) => option.inStock === true) ? true : options.length > 0 && options.every((option) => option.inStock === false) ? false : null;
+          return { full: { ...full, listing, inStock: stock }, categoryIds: categoryIdsOf(first), options };
         }
         const full = toFull(body, siteHost);
         if (full === null) throw failure("reply");

@@ -1806,8 +1806,10 @@ test("a listing with options is read through its item group, at its cheapest opt
   assert.deepEqual([read.full.listing.id, read.full.listing.url, read.full.listing.price, read.full.listing.variations, read.full.listing.groupId], ["226543210987", "https://www.ebay.co.uk/itm/226543210987", 2000, true, "226543210987"]);
   assert.deepEqual(read.categoryIds, ["58058", "175669", "56083"]);
   assert.deepEqual(read.options?.map((entry) => [entry.price, entry.inStock]), [[1500, false], [4800, true], [2000, true]]);
+  assert.equal(read.full.inStock, true);
   fakeEbay((_call, n) => (n === 1 ? Response.json({ errors: [{ errorId: 11006 }] }, { status: 400 }) : Response.json({ items: [option(1, [["Size", "1 TB"]], "15.00", "OUT_OF_STOCK")].map((entry) => ({ ...entry, legacyItemId: "226543210987" })) })));
-  assert.equal((await source().item!("226543210987")).item.full.listing.price, 1500);
+  const sold = (await source().item!("226543210987")).item;
+  assert.deepEqual([sold.full.listing.price, sold.full.inStock], [1500, false]);
 });
 
 test("a listing read by number that's gone, refused, unreadable or not a number says which, counting its calls", async () => {

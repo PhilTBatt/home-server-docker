@@ -148,7 +148,7 @@ export type ExplainedSearch = {
   on: boolean;
   snoozed: boolean;
   option: string | null;
-  verdict: "filtered" | "words" | "hidden" | "match" | "due" | "missed" | "off";
+  verdict: "sold" | "filtered" | "words" | "hidden" | "match" | "due" | "missed" | "off";
   says: string;
   reasons: ExplainReason[];
 };
@@ -246,6 +246,7 @@ const digestWindowMinutes = 180;
 const noMatchDays = 7;
 const manyRead = 200;
 const explainedMost = 5;
+const endedKept = 1000;
 const cutsCallsShare = 0.25;
 const cutsCallsMost = 9;
 const ebayFilters = ["minPrice", "maxPrice", "conditions", "ukOnly", "buying", "sellerType"];
@@ -336,6 +337,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
   const reading = new Map<string, Promise<FullListing | { message: string; gone: boolean }>>();
   const optionCache = new Map<string, { until: number; options: ListingOption[] | null }>();
   const optionsPaused = new Map<string, { until: number; reason: string; message: string }>();
+  const ended = new Map<string, number>();
   let reads = { day: "", count: 0 };
   let cutCalls = { day: "", count: 0 };
   let loading: Promise<Memory> | null = null;
@@ -416,6 +418,16 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
   function spend(calls: number) {
     if (memory === null) pendingCalls += calls;
     else memory.counters.calls += calls;
+  }
+
+  function markEnded(id: string, time: number) {
+    for (const [key, until] of ended) {
+      if (until <= time) ended.delete(key);
+    }
+    ended.delete(id);
+    ended.set(id, time + freshFor);
+    for (const oldest of [...ended.keys()].slice(0, Math.max(0, ended.size - endedKept))) ended.delete(oldest);
+    for (const result of results.values()) result.listings = result.listings.filter((listing) => listing.id !== id);
   }
 
   function optionCallLimit(): number {
@@ -502,6 +514,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     };
     lastRun = time;
     if (memory !== null) newDay(memory);
+    for (const [id, until] of [...ended]) {
+      if (until <= time) ended.delete(id);
+    }
 
     let loaded: SearchList;
     try {
@@ -626,7 +641,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       const examples: Record<string, string[]> = {};
       const matched: Listing[] = [];
       for (const listing of listings) {
-        const reason = whyNot(search, listing, now);
+        const reason = (ended.get(listing.id) ?? 0) > time ? "ended" : whyNot(search, listing, now);
         if (reason === null) {
           matched.push(listing);
           continue;
@@ -843,6 +858,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
 
     const snoozed = memory?.snoozed.has(search.id) ?? false;
     const base = { id: search.id, name: search.name, on: search.on, snoozed, option: listing.option ?? null, reasons };
+    if (full.inStock === false) return { ...base, verdict: "sold", says: "eBay says it's sold out, so the watcher leaves it out for six hours." };
     const firm = reasons.find((reason) => reason.by === "eBay" && reason.setting !== "query");
     if (firm !== undefined) return { ...base, verdict: "filtered", says: `eBay wouldn't send it to this search: ${firm.text}.` };
     if (reasons.some((reason) => reason.setting === "query")) return { ...base, verdict: "words", says: "eBay may not send it: its title lacks some of the search's words, though eBay also matches words in a listing's item details." };
@@ -1050,12 +1066,21 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
             reading.set(ref, pending);
           }
           const outcome = await pending;
-          if ("message" in outcome) return { status: "failed", ...outcome };
+          if ("message" in outcome) {
+            if (outcome.gone) markEnded(id, time);
+            return { status: "failed", ...outcome };
+          }
           kept = fullCache.get(ref) ?? { at: time, full: outcome };
           fullCache.set(ref, kept);
           for (const oldest of [...fullCache.keys()].slice(0, Math.max(0, fullCache.size - fullKept))) fullCache.delete(oldest);
         }
         const { listing: current, ...full } = kept.full;
+        if (full.inStock === false && listing.option === undefined) markEnded(id, time);
+        if (full.inStock === false && listing.option !== undefined) {
+          for (const key of [...optionCache.keys()]) {
+            if (key.startsWith(`${listing.groupId}:`)) optionCache.delete(key);
+          }
+        }
         const firstSeen = memory?.searches.get(search.id)?.seen.get(id)?.first ?? null;
         return {
           status: "ok",
@@ -1124,9 +1149,13 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       const stop = blocked(sourceName, now.getTime());
       if (stop !== null) return { status: stop };
       const outcome = await read(sourceName, now.getTime(), () => lookUp(itemNumber));
-      if (!("item" in outcome)) return { status: "failed", ...outcome };
+      if (!("item" in outcome)) {
+        if (outcome.gone) markEnded(itemNumber, now.getTime());
+        return { status: "failed", ...outcome };
+      }
       const { full, categoryIds, options: choices } = outcome.item;
       const listing = full.listing;
+      if (full.inStock === false) markEnded(listing.id, now.getTime());
       const candidates = named === null ? pickSearches(known.filter((search) => search.source === sourceName), listing.title) : [named];
       return {
         status: "ok",

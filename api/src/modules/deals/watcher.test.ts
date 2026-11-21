@@ -1649,15 +1649,57 @@ test("a listing that has gone, or one eBay won't give, is reported and its call 
   world.found.set("optiplex", [listing(1, { id: "110000000001", ref: "v1|110000000001|0" }), listing(2, { id: "110000000002" })]);
   await watcher.run(at(0));
   const before = watcher.status().callsToday;
-  world.fullReply = failed("gone");
-  assert.deepEqual(await watcher.full("110000000001", at(1)), { status: "failed", message: "eBay says that listing has gone", gone: true });
   world.fullReply = new Error("boom");
-  assert.deepEqual(await watcher.full("110000000001", at(2)), { status: "failed", message: "the check stopped unexpectedly", gone: false });
+  assert.deepEqual(await watcher.full("110000000001", at(1)), { status: "failed", message: "the check stopped unexpectedly", gone: false });
   world.fullReply = failed("request");
-  assert.deepEqual(await watcher.full("110000000001", at(3)), { status: "failed", message: "eBay refused the search", gone: false });
+  assert.deepEqual(await watcher.full("110000000001", at(2)), { status: "failed", message: "eBay refused the search", gone: false });
+  assert.deepEqual(watcher.matches(at(2))[0].listings.map((shown) => shown.id), ["110000000001", "110000000002"]);
+  world.fullReply = failed("gone");
+  assert.deepEqual(await watcher.full("110000000001", at(3)), { status: "failed", message: "eBay says that listing has gone", gone: true });
   assert.equal(watcher.status().callsToday, before + 3);
+  assert.deepEqual(await watcher.full("110000000001", at(4)), { status: "unknown" });
   assert.deepEqual(await watcher.full("110000000002", at(4)), { status: "failed", message: "this listing can't be read in full", gone: false });
   assert.equal(world.fullCalls.length, 3);
+});
+
+test("a listing a full read finds gone or sold out leaves the matches at once and is hidden as ended for six hours", async () => {
+  const { world, watcher } = richSetup();
+  const shown = [listing(1, { id: "110000000001", ref: "v1|110000000001|0" }), listing(2, { id: "110000000002", ref: "v1|110000000002|0" }), listing(3, { id: "110000000003", ref: "v1|110000000003|0" })];
+  world.found.set("optiplex", shown);
+  await watcher.run(at(0));
+  world.fullReply = failed("gone");
+  await watcher.full("110000000001", at(1));
+  world.fullReply = { ...fullOf(shown[1]), inStock: false };
+  const sold = await watcher.full("110000000002", at(2));
+  assert.equal(sold.status === "ok" ? sold.full.inStock : null, false);
+  assert.deepEqual(watcher.matches(at(3))[0].listings.map((entry) => entry.id), ["110000000003"]);
+  assert.deepEqual(watcher.matches(at(3))[0].count, 1);
+  world.found.set("optiplex", [...shown, listing(4, { id: "110000000004" })]);
+  world.sent.length = 0;
+  await watcher.run(at(30));
+  assert.deepEqual(watcher.matches(at(31))[0].listings.map((entry) => entry.id), ["110000000003", "110000000004"]);
+  assert.deepEqual(watcher.searches(at(31))[0].hidden, { ended: 2 });
+  assert.equal(world.sent.filter((notification) => notification.title.startsWith("Deal:")).length, 1);
+  world.fullReply = { ...fullOf(shown[2]), inStock: true };
+  await watcher.full("110000000003", at(32));
+  await watcher.run(at(60));
+  assert.deepEqual(watcher.searches(at(61))[0].hidden, { ended: 2 });
+  await watcher.run(at(6 * 60 + 2));
+  assert.deepEqual(watcher.searches(at(6 * 60 + 3))[0].hidden, {});
+  assert.deepEqual(watcher.matches(at(6 * 60 + 3))[0].listings.map((entry) => entry.id), ["110000000001", "110000000002", "110000000003", "110000000004"]);
+  assert.equal(world.sent.filter((notification) => notification.title.startsWith("Deal:")).length, 1);
+});
+
+test("explaining a listing eBay says is sold out, or gone, leaves it out of the matches too", async () => {
+  const { world, watcher, items } = explainSetup([optiplex]);
+  world.found.set("optiplex", [listing(1, { id: "110000000001" }), listing(2, { id: "110000000002" })]);
+  await watcher.run(at(0));
+  items.reply = { full: { ...fullOf(listing(1, { id: "110000000001" })), inStock: false }, categoryIds: [], options: null };
+  const sold = await watcher.explain("110000000001", "optiplex", at(1));
+  assert.deepEqual(sold.status === "ok" ? [sold.value.searches[0].verdict, sold.value.searches[0].says] : [], ["sold", "eBay says it's sold out, so the watcher leaves it out for six hours."]);
+  items.reply = failed("gone");
+  await watcher.explain("110000000002", "optiplex", at(2));
+  assert.deepEqual(watcher.matches(at(3))[0].listings, []);
 });
 
 test("once the day's calls are used, nothing more is read in full or looked up", async () => {
@@ -2999,4 +3041,21 @@ test("explaining a listing for a search whose last check failed says so, with th
   items.reply = itemOf(listing(1));
   const reply = await watcher.explain("110000000001", "optiplex", at(31));
   assert.deepEqual(reply.status === "ok" ? [reply.value.searches[0].verdict, reply.value.searches[0].says] : [], ["due", `It fits, but the search's last check failed: ${ebayMessages.request}.`]);
+});
+
+test("a full read that finds the fitting option sold out leaves the listing in, and reads its options again at the next check", async () => {
+  const { world, watcher } = richSetup([drive]);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800], ["4 TB", 5200]));
+  world.found.set("drive", [grouped(1, "201")]);
+  await watcher.run(at(0));
+  assert.deepEqual(world.groupCalls, ["201"]);
+  const [shown] = watcher.matches(at(1))[0].listings;
+  assert.equal(shown.option, "Storage Capacity: 4 TB");
+  world.fullReply = { ...fullOf(grouped(1, "201", { ref: "v1|201|2", price: 4800 })), inStock: false };
+  await watcher.full(shown.id, at(2));
+  assert.equal(watcher.matches(at(3))[0].count, 1);
+  world.groups.set("201", sizes("201", ["1 TB", 1500], ["4 TB", 4800, false], ["4 TB", 5200]));
+  await watcher.run(at(60));
+  assert.deepEqual(world.groupCalls, ["201", "201"]);
+  assert.equal(watcher.matches(at(61))[0].listings[0].price, 5200);
 });

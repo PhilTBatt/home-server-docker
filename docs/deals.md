@@ -19,6 +19,7 @@ What that means in practice:
 - **Price drops** alert again only for searches with `dropPercent` set.
 - **A listing is known by eBay's item number**, so its variations count as one listing.
 - **A listing that's been gone for two days is forgotten**, so if it comes back it alerts again.
+- **A listing found sold out or gone when it's read in full** (by the hub page, Claude's tools or `/deals/explain`) leaves the matches straight away, so Best now, the digest and Claude stop offering it, and for six hours it's hidden as `ended` if eBay's search still sends it. Its item number is kept in memory only, never in `state.json`. For a listing matched at one of its options, a full read only covers that option, so finding it sold out just makes the watcher read the listing's options again at the next check.
 - **A search too wide to see in one go** (more than 600 results) only watches the newest 600. Older listings drifting into view don't alert; newly created ones do. `GET /deals/searches` shows `"complete": false` for a search like that.
 - **Each alert says where the listing stands** among the current matches ("Cheapest of 14 matches right now; the next is £110.00"). That's worked out from the one reply and never stored.
 
@@ -310,6 +311,7 @@ For each search, `verdict` is one of:
 - `filtered`: one of the search's eBay filters would stop eBay sending it (price, condition, buy it now or auction, items in the UK, seller type, category, returns, free postage).
 - `words`: its title lacks some of the search's words. eBay also matches words in a listing's item details, so it may still be sent: this can't be checked from outside eBay.
 - `hidden`: eBay would send it, but one of the watcher's rules hides it (`mustInclude`, `exclude`, an avoid list, the seller's feedback, postage, options).
+- `sold`: eBay says it's sold out, so it's left out of the matches for six hours.
 - `match`: it's a current match, and when it was first seen. A listing that was already there when the search started watching was counted as seen, not alerted, and it says so.
 - `due`: it fits and was listed after the last check, or the search hasn't been checked lately.
 - `missed`: it fits every filter and rule that can be checked, but eBay didn't send it: eBay has more than the watcher reads for that search, a setting that can't be checked from outside eBay (item details, collection distance, or posting to the UK for a listing abroad when the search isn't UK only), or, most often, eBay's own word matching.
