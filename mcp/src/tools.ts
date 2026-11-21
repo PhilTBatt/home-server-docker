@@ -51,7 +51,7 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_deal_searches",
-    description: "The searches the deal watcher is set up with: each one's name, query, whether it's switched on or snoozed, when it was last checked, how many listings match now, how many each rule hid, its guide price, any problem, notes on settings that can't do anything or a guide price over 30 days old, and for a search that reads options, how many listings' options gave a price that fits, couldn't be told, or weren't read yet. It never includes the listings themselves. Fails with a 404 while the deal watcher is switched off.",
+    description: "The searches the deal watcher is set up with: each one's name, query, whether it's switched on or snoozed, when it was last checked, how many listings match now, how many each rule hid, its guide price, any problem, notes on settings that can't do anything or a guide price over 30 days old, for a search that reads options, how many listings' options gave a price that fits, couldn't be told, or weren't read yet, its eBay calls today (callsToday), and its health: notes with a kind (incomplete: eBay has more than the newest 600 the watcher reads; mostlyHidden: at least half of 200 or more read were hidden by titles or item details; nothingFound: eBay found nothing with its filters; noMatch: no match for 7 days) and plain words. It never includes the listings themselves. Fails with a 404 while the deal watcher is switched off.",
     path: "/deals/searches",
   },
 ];
@@ -97,6 +97,25 @@ const listingInput = z.object({
   id: z.string().regex(/^[0-9]{1,20}$/).describe("The listing's eBay item number: its id in get_deal_matches"),
 });
 
+const searchInput = z.object({
+  search: searchId.describe("A search's id from get_deal_searches"),
+});
+
+const lookupWords = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[^*\u0000-\u001F\u007F]*[A-Za-z0-9][^*\u0000-\u001F\u007F]*$/);
+
+const categoriesInput = z.object({
+  words: lookupWords.describe("Search words, like \"quadro p620\" or \"graphics card\", without *"),
+});
+
+const detailsInput = z.object({
+  words: lookupWords.describe("Search words, like \"rtx 3060 12gb\", without *"),
+  categoryId: z.string().regex(/^[0-9]{1,10}$/).optional().describe("One of eBay's category numbers, to count only within it"),
+});
+
 const hashInput = z.object({
   hash: z.string().regex(/^[0-9a-f]{40}$/).describe("The torrent's hash, from get_downloads"),
 });
@@ -105,7 +124,13 @@ function asText(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
 }
 
-export function buildServer(get: ApiGet, post: ApiPost, actions: boolean): McpServer {
+function lookupPath(path: string, query: Record<string, string | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, value);
+  return `${path}?${params.toString()}`;
+}
+
+export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGet: ApiGet = get): McpServer {
   const server = new McpServer({ name: "home-hub", version: "1.0.0" });
   for (const tool of readTools) {
     server.registerTool(tool.name, { description: tool.description }, async () => asText(await get(tool.path)));
@@ -126,6 +151,33 @@ export function buildServer(get: ApiGet, post: ApiPost, actions: boolean): McpSe
       inputSchema: listingInput,
     },
     async ({ id }) => asText(await get(`/deals/ai/listing/${id}`)),
+  );
+
+  server.registerTool(
+    "get_deal_search_cuts",
+    {
+      description: "How many listings eBay has for one search as it's set (asWatched), then with each of its eBay filters dropped in turn (without: buy it now only, items in the UK, the price range, the conditions, the category, item details, seller and postage filters), each keeping the others, so the biggest jump shows which filter cuts most. Dropping buy it now only, or the conditions, also gives eBay's breakdown (by), like how many are auctions or seller refurbished. wordsAlone is the search's words with no filters, with eBay's main category and its counts by category. Works for switched-off searches too. Counts only, no listings. It costs up to nine eBay calls and one of the day's 150 reads, and eBay lookups run ten seconds apart, so it can take half a minute; ask about the searches that matter. Fails with a 404 while the deal watcher is switched off or for a search id it doesn't know, a 400 for a search whose source isn't eBay, and a 429 when too many lookups are waiting, or the day's reads, or the quarter of the day's calls cuts may use, are used up.",
+      inputSchema: searchInput,
+    },
+    async ({ search }) => asText(await slowGet(`/deals/searches/${search}/cuts`)),
+  );
+
+  server.registerTool(
+    "lookup_deal_categories",
+    {
+      description: "eBay's suggested categories for some search words: each one's number, name and path, like 27386, Graphics/Video Cards. Use a category number in a search's categoryId only after checking it this way, because a wrong category quietly finds nothing. Counts as one of the day's 150 reads, and eBay lookups run ten seconds apart. Fails with a 404 while the deal watcher is switched off, and a 429 when too many lookups are waiting or the day's reads are used up.",
+      inputSchema: categoriesInput,
+    },
+    async ({ words }) => asText(await slowGet(lookupPath("/deals/categories", { q: words }))),
+  );
+
+  server.registerTool(
+    "lookup_deal_details",
+    {
+      description: "For some search words with no filters, how many listings eBay has in each category and its main category (categoryId), and the item details sellers filled in with their values and counts; with a categoryId, only within that category. Good for comparing words (with and without a brand, \"gen2\" against \"gen 2\") before changing a search. Counts only, no listings. Counts as one of the day's 150 reads, and eBay lookups run ten seconds apart. Fails with a 404 while the deal watcher is switched off, and a 429 when too many lookups are waiting or the day's reads are used up.",
+      inputSchema: detailsInput,
+    },
+    async ({ words, categoryId }) => asText(await slowGet(lookupPath("/deals/details", { q: words, categoryId }))),
   );
   if (!actions) return server;
 

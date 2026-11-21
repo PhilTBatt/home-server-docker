@@ -344,7 +344,7 @@ All behind the API token, and all 404 with "The deal watcher is switched off" wh
 
 Nothing here changes `searches.json`, and there is still no route that buys, bids, makes an offer or messages anyone.
 
-The MCP server offers `get_deal_status` and `get_deal_searches`, which never include listings, and `get_deal_matches` and `get_deal_listing`, which do and only work while `DEALS_AI=on`.
+The MCP server offers `get_deal_status` and `get_deal_searches`, which never include listings, and `get_deal_matches` and `get_deal_listing`, which do and only work while `DEALS_AI=on`. For tuning searches it also offers `get_deal_search_cuts` (what each filter cuts), `lookup_deal_categories` and `lookup_deal_details` (the lookups above), which give counts and categories, not listings. These three wait their turn with the other eBay lookups, so the MCP server gives them a minute to answer instead of ten seconds.
 
 ## Staying inside eBay's terms
 Not legal advice, and the agreement changes, so read the live page: https://developer.ebay.com/join/api-license-agreement. What the watcher does about the parts that matter:
