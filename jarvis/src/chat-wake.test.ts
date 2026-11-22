@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import { logLine, type LogContext, type Outcome } from "./answer-log.js";
 import type { AnswerSpeech } from "./answer-speech.js";
-import { chatInputs, droppedNote, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
+import { chatInputs, droppedNote, lateNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
 import type { EarsAnswer } from "./ears-client.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Heard, Sent, Talk } from "./talk.js";
@@ -176,7 +176,7 @@ test("typed lines and wake events come in the order they arrive, and when the li
   assert.deepEqual(asked, ["return"]);
 });
 
-test("without wake events, only the lines come, and when the events end or fail the lines carry on", { timeout: 5_000 }, async () => {
+test("without wake events, only the lines come, and when the events end or fail the lines carry on, saying so unless the chat is closing", { timeout: 5_000 }, async () => {
   const got: ChatInput[] = [];
   for await (const input of chatInputs((async function* () {
     yield "a";
@@ -195,7 +195,7 @@ test("without wake events, only the lines come, and when the events end or fail 
   await settled();
   lines.close();
   await reading;
-  assert.deepEqual(more, [{ kind: "line", text: "still here" }]);
+  assert.deepEqual(more, [{ kind: "status", line: stoppedWatchingLine("it stopped with no reason given") }, { kind: "line", text: "still here" }]);
   const failing = (async function* (): AsyncGenerator<WakeEvent> {
     throw new Error("the watcher broke");
   })();
@@ -204,7 +204,47 @@ test("without wake events, only the lines come, and when the events end or fail 
     await tick();
     yield "x";
   })(), failing)) after.push(input);
-  assert.deepEqual(after, [{ kind: "line", text: "x" }]);
+  assert.deepEqual(after, [{ kind: "status", line: stoppedWatchingLine("the watcher broke") }, { kind: "line", text: "x" }]);
+  assert.equal(stoppedWatchingLine("the watcher broke"), "off: this chat stopped watching ears (the watcher broke), so start the chat again to use it");
+  const closing = new AbortController();
+  closing.abort();
+  const quiet: ChatInput[] = [];
+  for await (const input of chatInputs((async function* () {
+    await tick();
+    yield "y";
+  })(), (async function* (): AsyncGenerator<WakeEvent> {
+    throw new Error("closed");
+  })(), closing.signal)) quiet.push(input);
+  assert.deepEqual(quiet, [{ kind: "line", text: "y" }], "a watcher that stops because the chat is closing isn't news");
+});
+
+test("a chat that's closing doesn't say it stopped watching ears when its watcher stops with it", { timeout: 5_000 }, async () => {
+  const closing = new AbortController();
+  const chat = wakeChat({}, [], { closing: closing.signal });
+  closing.abort();
+  chat.wake.close();
+  await settled();
+  assert.equal(chat.output().includes("stopped watching"), false, chat.output());
+  chat.lines.close();
+  await chat.running;
+  const open = wakeChat({});
+  open.wake.close();
+  await settled();
+  assert.ok(open.output().includes(stoppedWatchingLine("it stopped with no reason given")), open.output());
+  open.lines.close();
+  await open.running;
+});
+
+test("a wake word ears ignored as too late is noted on a line of its own, with how far behind it was", { timeout: 5_000 }, async () => {
+  const chat = wakeChat({});
+  chat.wake.push({ kind: "late", behindMs: 2909 });
+  await settled();
+  assert.ok(chat.output().endsWith(`You:   (${lateNote(2909)})\nYou: `), chat.output());
+  assert.equal(lateNote(2909), "heard Hey Jarvis, but 2.91 s behind the sound, so ears ignored it rather than record from the wrong moment. If this keeps happening, docker compose logs ears shows each one");
+  assert.equal(lateNote(null), "heard Hey Jarvis, but ears couldn't match it to the sound, so ears ignored it rather than record from the wrong moment. If this keeps happening, docker compose logs ears shows each one");
+  assert.deepEqual(chat.events, ["interrupt"]);
+  chat.lines.close();
+  await chat.running;
 });
 
 test("a wake-word status is shown on a line of its own, clearing what was half typed, and the prompt comes back", { timeout: 5_000 }, async () => {

@@ -339,7 +339,7 @@ test("with the wake word on, a waiting chat opens the microphone and sends it to
   const base = `http://127.0.0.1:${(service.server.address() as AddressInfo).port}`;
   const call = async (method: string, path: string) => (await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}` } })).json();
   const first = await call("GET", "/wait");
-  assert.deepEqual([first.state, first.wake, first.lastId, first.current, typeof first.run, typeof first.version], ["muted", { on: true, listening: false, held: false, problem: null }, null, null, "string", "number"]);
+  assert.deepEqual([first.state, first.wake, first.lastId, first.current, typeof first.run, typeof first.version], ["muted", { on: true, listening: false, held: false, problem: null, late: { count: 0, behindMs: null } }, null, null, "string", "number"]);
   assert.match(first.run, /^[0-9a-f]{16}$/);
   const began = performance.now();
   const elsewhere = await call("GET", "/wait?after=1000000&run=0123456789abcdef");
@@ -496,7 +496,7 @@ test("with no chat waiting, the microphone closes a moment later, and with the w
   await writeFile(switchAt, "unmuted 2\n");
   await until(() => off.ears.view().state === "idle");
   const view = await (await fetch(`${offBase}/wait?after=100`, { headers: { authorization: `Bearer ${token}` } })).json();
-  assert.deepEqual(view.wake, { on: false, listening: false, held: false, problem: null });
+  assert.deepEqual(view.wake, { on: false, listening: false, held: false, problem: null, late: { count: 0, behindMs: null } });
   assert.equal((await fetch(`${offBase}/wake/hold?by=aa`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).status, 409);
   const follow = await fetch(`${offBase}/wake/follow?within=5000`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
   assert.deepEqual([follow.status, (await follow.json()).error, off.ears.view().state], [409, wakeOffError, "idle"]);

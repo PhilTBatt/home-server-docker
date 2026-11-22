@@ -298,6 +298,16 @@ test("asking for a follow-up keeps only the latest, and a watcher that starts li
   assert.equal(poked, 2, "a watcher that stopped listening isn't poked");
 });
 
+test("a rise in the wake words ears ignored as late is passed on with the latest one's lateness, but not the count found at the start or after a restart, nor anything from an older ears", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const plain = { on: true, listening: true, held: false, problem: null };
+  const at = (version: number, count: number | null, behindMs: number | null, run = "aa") => ({ ...view({ version, run }), wake: count === null ? plain : { ...plain, late: { count, behindMs } } });
+  const ears = pretendEars([at(1, 4, 2900), at(2, 4, 2900), at(3, 5, 2909), at(4, 7, null), at(5, 9, 3100, "bb"), at(6, 10, 3200, "bb"), at(7, null, null, "bb"), at(8, 11, 3300, "bb"), view({ version: 9, state: "muted", run: "bb" })]);
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis" });
+  assert.deepEqual(await take(events, 5), [{ kind: "late", behindMs: 2909 }, { kind: "late", behindMs: null }, { kind: "late", behindMs: 3200 }, { kind: "late", behindMs: 3300 }, { kind: "status", line: "off while ears is muted, so unmute it on the server with bash host/ears.sh unmute" }]);
+  signal.abort();
+});
+
 test("a watcher whose recording is done, or lost to a restart, has nothing to cancel when it's called off, and a cancel that fails is let go", { timeout: 5_000 }, async () => {
   const signal = new AbortController();
   const posts: string[] = [];

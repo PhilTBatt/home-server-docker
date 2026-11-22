@@ -99,6 +99,14 @@ export function wakeStatusNote(line: string): string {
   return `wake word ${line}`;
 }
 
+export function lateNote(behindMs: number | null): string {
+  return `heard Hey Jarvis, but ${behindMs === null ? "ears couldn't match it to the sound" : `${seconds(behindMs)} behind the sound`}, so ears ignored it rather than record from the wrong moment. If this keeps happening, docker compose logs ears shows each one`;
+}
+
+export function stoppedWatchingLine(why: string): string {
+  return `off: this chat stopped watching ears (${why}), so start the chat again to use it`;
+}
+
 export function noListeningNote(why: string): string {
   return `couldn't start listening: ${why}`;
 }
@@ -582,14 +590,14 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
 
 export type ChatInput = { kind: "line"; text: string } | WakeEvent;
 
-export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>): AsyncGenerator<ChatInput> {
+export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal): AsyncGenerator<ChatInput> {
   if (events === undefined) {
     for await (const text of lines) yield { kind: "line", text };
     return;
   }
   const typed = lines[Symbol.asyncIterator]();
   const heard = events[Symbol.asyncIterator]();
-  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent> };
+  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent>; why?: string };
   let nextLine: Promise<Got> | null = null;
   let nextEvent: Promise<Got> | null = null;
   let eventsOver = false;
@@ -599,7 +607,7 @@ export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIt
       if (!eventsOver) {
         nextEvent ??= heard.next().then(
           (result): Got => ({ from: "event", result }),
-          (): Got => ({ from: "event", result: { done: true, value: undefined } }),
+          (error: unknown): Got => ({ from: "event", result: { done: true, value: undefined }, why: error instanceof Error ? error.message : String(error) }),
         );
       }
       const got = await Promise.race(eventsOver || nextEvent === null ? [nextLine] : [nextLine, nextEvent]);
@@ -609,8 +617,11 @@ export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIt
         yield { kind: "line", text: got.result.value };
       } else {
         nextEvent = null;
-        if (got.result.done === true) eventsOver = true;
-        else yield got.result.value;
+        if (got.result.done !== true) yield got.result.value;
+        else {
+          eventsOver = true;
+          if (closing?.aborted !== true) yield { kind: "status", line: stoppedWatchingLine(got.why ?? "it stopped with no reason given") };
+        }
       }
     }
   } finally {
@@ -673,6 +684,12 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
     deps.prompt();
     return "go";
   }
+  if (event.kind === "late") {
+    deps.interrupt?.();
+    deps.write(`  (${lateNote(event.behindMs)})\n`);
+    deps.prompt();
+    return "go";
+  }
   if (event.kind === "no follow-up") {
     if (state.followTurn !== state.turn) return "go";
     state.followTurn = null;
@@ -725,7 +742,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
     current.prompt();
-    for await (const input of readied(chatInputs(current.lines, current.wake), deps.ready)) {
+    for await (const input of readied(chatInputs(current.lines, current.wake, current.closing), deps.ready)) {
       if (input.kind !== "line") {
         if ((await onWake(current, state, input)) === "stop") break;
         continue;

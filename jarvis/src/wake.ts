@@ -7,7 +7,7 @@ export const retryMs = 2_000;
 export const holdEveryMs = 5_000;
 export const busyClaimMs = 1_000;
 
-export type WakeEvent = { kind: "wake"; id: number; follow?: true } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string };
+export type WakeEvent = { kind: "wake"; id: number; follow?: true } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string } | { kind: "late"; behindMs: number | null };
 
 export const oldEarsLine = "off: this ears doesn't know the wake word yet, so start it again with bash host/ears.sh start, which rebuilds it";
 export const oldFollowWhy = "this ears doesn't know follow-ups yet, so start it again with bash host/ears.sh start, which rebuilds it";
@@ -84,6 +84,7 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
   let after = -1;
   let run: string | null = null;
   let status = deps.first ?? null;
+  let lateSeen: { run: string | null; count: number } | null = null;
   let taken: { id: number; endedAt: number | null } | null = null;
   try {
     while (!deps.signal.aborted) {
@@ -139,6 +140,11 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
         }
       }
       after = answer.version;
+      const late = answer.wake?.late;
+      if (late !== undefined) {
+        if (lateSeen !== null && lateSeen.run === run && late.count > lateSeen.count) yield { kind: "late", behindMs: late.behindMs };
+        lateSeen = { run, count: late.count };
+      }
       if (taken === null && answer.current?.by === "wake" && !answer.current.claimed) {
         const id: number = answer.current.id;
         let claimed: EarsAnswer | null = null;

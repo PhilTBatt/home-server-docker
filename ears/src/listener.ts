@@ -21,9 +21,9 @@ export const lateMs = 2_000;
 
 const format = { rate: recordingRate, width: 2, channels: 1 };
 
-export type WakeView = { on: boolean; listening: boolean; held: boolean; problem: string | null };
+export type WakeView = { on: boolean; listening: boolean; held: boolean; problem: string | null; late: { count: number; behindMs: number | null } };
 
-export const wakeOff: WakeView = { on: false, listening: false, held: false, problem: null };
+export const wakeOff: WakeView = { on: false, listening: false, held: false, problem: null, late: { count: 0, behindMs: null } };
 
 export type ListenerEars = { state(): EarsState; start(by: By): { ok: true } | { ok: false; error: string }; fail(why: string): void };
 
@@ -100,6 +100,7 @@ export function createListener(deps: ListenerDeps): Listener {
   let sentBytes = 0;
   let carry: number | null = null;
   let unsent = new Uint8Array(0);
+  let ignored: WakeView["late"] = { count: 0, behindMs: null };
   let before: Uint8Array[] = [];
   let beforeBytes = 0;
   let levels: number[] = [];
@@ -172,7 +173,9 @@ export function createListener(deps: ListenerDeps): Listener {
     }
     const late = (sentBytes / bytesPerSecond) * 1000 - (typeof timestamp === "number" && Number.isFinite(timestamp) ? timestamp : Number.NaN);
     if (!(late >= 0 && late <= (deps.lateMs ?? lateMs))) {
-      deps.log(`Heard the wake word, but too late to trust (${Number.isNaN(late) ? "no time given" : `${Math.round(late)} ms behind`}), so it was ignored.`);
+      deps.log(`Heard the wake word, but too late to trust (${Number.isNaN(late) ? "no time given" : late < 0 ? `its time is ${Math.round(-late)} ms ahead of the sound sent` : `${Math.round(late)} ms behind`}), so it was ignored.`);
+      ignored = { count: ignored.count + 1, behindMs: late >= 0 ? Math.round(late) : null };
+      deps.changed();
       return;
     }
     const background = backgroundLevel(levels);
@@ -332,7 +335,7 @@ export function createListener(deps: ListenerDeps): Listener {
   }
 
   return {
-    view: () => ({ on: true, listening: feeding, held: held(), problem }),
+    view: () => ({ on: true, listening: feeding, held: held(), problem, late: ignored }),
     tap(by) {
       const follow = by === "follow" ? pendingFollow : null;
       const wake = by === "wake" ? pendingWake : follow === null ? null : { before: undefined, background: follow.background };

@@ -170,7 +170,7 @@ function setUp(options: Partial<ListenerDeps> & { failConnects?: number; slowSto
 test("ears listens for hey_jarvis on openwakeword's port 10400, and these are its timings", () => {
   assert.deepEqual([wakeWord, wakeHost, wakePort], ["hey_jarvis", "openwakeword", 10400]);
   assert.deepEqual([retryMs, presenceMs, holdMs, gapMs, beforeMs, backgroundMs, behindBytes, lateMs], [5000, 5000, 15000, 500, 500, 3000, 64000, 2000]);
-  assert.deepEqual(wakeOff, { on: false, listening: false, held: false, problem: null });
+  assert.deepEqual(wakeOff, { on: false, listening: false, held: false, problem: null, late: { count: 0, behindMs: null } });
 });
 
 test("nothing is opened until a Jarvis chat waits, and then the microphone opens and the wake-word server is asked for hey_jarvis", { timeout: 5_000 }, async () => {
@@ -178,7 +178,7 @@ test("nothing is opened until a Jarvis chat waits, and then the microphone opens
   listener.update();
   await pause(20);
   assert.deepEqual([streams.length, detectors.length], [0, 0]);
-  assert.deepEqual(listener.view(), { on: true, listening: false, held: false, problem: null });
+  assert.deepEqual(listener.view(), { on: true, listening: false, held: false, problem: null, late: { count: 0, behindMs: null } });
   const done = listener.waiting();
   await connected(1);
   assert.equal(streams.length, 1);
@@ -902,17 +902,29 @@ test("a microphone that dies during a recording isn't replaced by a spare one", 
 });
 
 test("a detection the server sends more than 2 seconds behind the sound, or with no time, or from before the last restart, is ignored and logged", { timeout: 5_000 }, async () => {
-  const { listener, connected, streams, detectors, started, lines, sound } = setUp();
+  const { listener, connected, streams, detectors, started, lines, sound, changes } = setUp();
   listener.waiting();
   await connected(1);
   for (let frame = 0; frame < 40; frame++) streams[0].onSound(sound(50));
+  const quiet = changes();
   detectors[0].detect(2001);
   await until(() => lines.some((line) => line.startsWith("Heard the wake word, but too late")));
   assert.match(lines.at(-1) ?? "", /^Heard the wake word, but too late to trust \(2\d\d\d ms behind\), so it was ignored\.$/);
+  const first = listener.view().late;
+  assert.equal(first.count, 1, "chats can see it was ignored, and how late it was");
+  assert.equal(changes(), quiet + 1, "and are told at once");
+  assert.ok(first.behindMs !== null && first.behindMs > 2000 && first.behindMs < 3000 && Number.isInteger(first.behindMs), String(first.behindMs));
   detectors[0].say({ type: "detection", data: { name: "hey_jarvis" }, payload: null });
   await until(() => lines.at(-1) === "Heard the wake word, but too late to trust (no time given), so it was ignored.");
+  assert.deepEqual(listener.view().late, { count: 2, behindMs: null });
+  const sentMs = detectors[0].sent.filter((event) => event.type === "audio-chunk").reduce((bytes, event) => bytes + (event.payload as Uint8Array).length, 0) / 32;
+  detectors[0].say({ type: "detection", data: { name: "hey_jarvis", timestamp: sentMs - 2500.4 }, payload: null });
+  await until(() => listener.view().late.count === 3);
+  assert.deepEqual(listener.view().late, { count: 3, behindMs: 2500 }, "rounded to a whole millisecond");
   detectors[0].say({ type: "detection", data: { name: "hey_jarvis", timestamp: 999_999 }, payload: null });
-  await until(() => lines.filter((line) => line.startsWith("Heard the wake word, but too late")).length === 3);
+  await until(() => lines.filter((line) => line.startsWith("Heard the wake word, but too late")).length === 4);
+  assert.match(lines.at(-1) ?? "", /^Heard the wake word, but too late to trust \(its time is \d+ ms ahead of the sound sent\), so it was ignored\.$/);
+  assert.deepEqual(listener.view().late, { count: 4, behindMs: null }, "a time ahead of the sound sent gives no lateness, rather than a negative one");
   assert.deepEqual(started, []);
   detectors[0].detect(1800);
   await until(() => started.length === 1);

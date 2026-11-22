@@ -6,7 +6,7 @@ export type Ender = "loudness" | "silero";
 
 export type EarsLast = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender; pauseMs?: number };
 export type EarsCurrent = { id: number; by: "push" | "wake" | "follow"; claimed: boolean };
-export type EarsWake = { on: boolean; listening: boolean; held: boolean; problem: string | null };
+export type EarsWake = { on: boolean; listening: boolean; held: boolean; problem: string | null; late?: { count: number; behindMs: number | null } };
 export type EarsAnswer = { status: number; state: string | null; reason: string | null; error: string | null; seconds: number | null; last: EarsLast | null; id?: number | null; version?: number | null; run?: string | null; lastId?: number | null; current?: EarsCurrent | null; wake?: EarsWake | null };
 export type EarsCall = (method: "GET" | "POST", path: string, ms: number, signal?: AbortSignal) => Promise<EarsAnswer>;
 
@@ -45,7 +45,11 @@ function wakeOf(value: unknown): EarsWake | null {
   const wake = value as Record<string, unknown>;
   if (typeof wake.on !== "boolean" || typeof wake.listening !== "boolean" || typeof wake.held !== "boolean") return null;
   if (wake.problem !== null && typeof wake.problem !== "string") return null;
-  return { on: wake.on, listening: wake.listening, held: wake.held, problem: wake.problem === null ? null : tidy(wake.problem) };
+  const late = typeof wake.late === "object" && wake.late !== null ? (wake.late as Record<string, unknown>) : null;
+  const ignored = late === null ? null : count(late.count, 0);
+  const behindMs = late === null ? null : count(late.behindMs, 0);
+  const known = ignored !== null ? { late: { count: ignored, behindMs } } : {};
+  return { on: wake.on, listening: wake.listening, held: wake.held, problem: wake.problem === null ? null : tidy(wake.problem), ...known };
 }
 
 export function readEarsAnswer(status: number, body: unknown): EarsAnswer {

@@ -130,6 +130,12 @@ test("a wait's answer brings the version, which run of ears it was, the last rec
   assert.equal("version" in readEarsAnswer(200, { state: "idle" }), false, "a plain state answer has none of them");
   assert.deepEqual(readEarsAnswer(200, { version: 1, current: { id: 9, by: "follow", claimed: true } }).current, { id: 9, by: "follow", claimed: true }, "a follow-up recording is read too");
   assert.equal(readEarsAnswer(200, { last: { seconds: 1, reason: "x", text: "Hi.", textProblem: null, pauseMs: 2500 } }).last?.pauseMs, 2500, "the pause a recording was set to end on is read");
+  const plainWake = { on: true, listening: true, held: false, problem: null };
+  assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plainWake, late: { count: 3, behindMs: 2909 } } }).wake, { ...plainWake, late: { count: 3, behindMs: 2909 } }, "how many wake words ears ignored as late, and the last one's lateness, are read");
+  assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plainWake, late: { count: 1, behindMs: null } } }).wake, { ...plainWake, late: { count: 1, behindMs: null } });
+  assert.deepEqual(readEarsAnswer(200, { version: 1, wake: plainWake }).wake, plainWake, "an older ears without them is read as before");
+  for (const late of [{ count: -1, behindMs: 5 }, { count: 1.5, behindMs: 5 }, { count: "1", behindMs: 5 }, { behindMs: 5 }, null, 7]) assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plainWake, late } }).wake, plainWake, JSON.stringify(late));
+  for (const late of [{ count: 1, behindMs: -5 }, { count: 1, behindMs: 2.5 }, { count: 1, behindMs: "5" }, { count: 1 }]) assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plainWake, late } }).wake, { ...plainWake, late: { count: 1, behindMs: null } }, `a count with no usable lateness is still read, so it isn't missed: ${JSON.stringify(late)}`);
   for (const pauseMs of [0, -1, 1.5, "2500", null, 2 ** 60]) assert.equal(readEarsAnswer(200, { last: { seconds: 1, reason: "x", text: "Hi.", textProblem: null, pauseMs } }).last !== null && "pauseMs" in readEarsAnswer(200, { last: { seconds: 1, reason: "x", text: "Hi.", textProblem: null, pauseMs } }).last!, false, String(pauseMs));
 });
 
