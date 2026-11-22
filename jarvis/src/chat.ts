@@ -1,6 +1,7 @@
 import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
+import { codeWordIn, earsStoppedWhy, hubOffNote, stopMyselfReply, stoppedReply, type CodeWord, type CodeWordReply } from "./code-words.js";
 import type { SpeechReport } from "./speech-queue.js";
 import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type SpeechStop, type ThinkingHistory } from "./config.js";
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
@@ -149,7 +150,12 @@ export type ChatDeps = {
   chime?: () => void;
   interrupt?: () => void;
   followUp?: { seconds: number; ask(): void; gapMs?: number };
+  codeWords?: CodeWordActions;
 };
+
+export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply> };
+
+export const neverMindNote = "left there, so nothing was asked";
 
 export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[] };
 
@@ -668,16 +674,52 @@ function unheard(answer: EarsAnswer): boolean {
 }
 
 async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise<"go" | "stop"> {
+  if (!sent.ok && sent.why === earsStoppedWhy) {
+    state.turn++;
+    await hush(deps, state);
+    await sayLine(deps, state, stoppedReply);
+    return "go";
+  }
   if (!sent.ok) {
     deps.write(`  (${notSentNote(printable(sent.why))})\n`);
     return "go";
   }
   deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
+  const word = codeWordIn(sent.heard.text);
+  if (word !== null) {
+    await onCodeWord(deps, state, word);
+    return "go";
+  }
   if (sent.heard.wake === true || sent.heard.button === true) state.followed = 0;
   if (sent.heard.follow === true) state.followed++;
   const going = await ask(deps, state, sent.heard.text, sent.heard);
   if (going === "answered" && (sent.heard.wake === true || sent.heard.follow === true || sent.heard.button === true)) openFollow(deps, state);
   return going === "stop" ? "stop" : "go";
+}
+
+async function sayLine(deps: ChatDeps, state: ChatState, reply: CodeWordReply): Promise<void> {
+  deps.write(`Jarvis: ${printable(reply.say)}\n`);
+  if (reply.note !== undefined) deps.write(`  (${printable(reply.note)})\n`);
+  const speech = deps.speak?.(state.finishing.length === 0 ? undefined : Promise.all(state.finishing.map((old) => old.done())).then(() => {})) ?? null;
+  state.speech = speech;
+  speech?.text(reply.say);
+  speech?.end();
+}
+
+async function onCodeWord(deps: ChatDeps, state: ChatState, word: CodeWord): Promise<void> {
+  state.turn++;
+  await hush(deps, state);
+  if (word.kind === "never mind") {
+    deps.write(`  (${neverMindNote})\n`);
+    return;
+  }
+  if (word.kind === "stop listening") {
+    await sayLine(deps, state, stopMyselfReply);
+    return;
+  }
+  const signal = deps.closing ?? new AbortController().signal;
+  const reply = deps.codeWords === undefined ? { say: word.kind === "note" ? "I couldn't save that note." : "I couldn't reach your phone.", note: hubOffNote } : word.kind === "note" ? await deps.codeWords.note(word.text, signal) : await deps.codeWords.phone(signal);
+  await sayLine(deps, state, reply);
 }
 
 async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promise<"go" | "stop"> {

@@ -57,6 +57,7 @@
  * @property {boolean} memoryInbox
  * @property {boolean} memoryUpload
  * @property {boolean} deals
+ * @property {boolean} findPhone
  */
 
 /**
@@ -217,7 +218,7 @@
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone" };
 
 /**
  * @param {string} id

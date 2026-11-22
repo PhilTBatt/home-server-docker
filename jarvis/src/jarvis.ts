@@ -10,6 +10,7 @@ import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.j
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
 import { chimeFor } from "./chime.js";
+import { findPhone, saveVoiceNote } from "./code-words.js";
 import { fillerFor } from "./filler.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, withSpokenStyle } from "./chat.js";
@@ -147,6 +148,7 @@ try {
     ready: (yes) => (chatReady = yes),
     chime: wake === undefined || speaking === null ? undefined : chimeFor(speaking),
     followUp: wake === undefined || follow === undefined || followSeconds === null ? undefined : { seconds: followSeconds, ask: () => follow.ask(followSeconds * 1000) },
+    codeWords: { note: (text, signal) => saveVoiceNote(text, config.hubToken, signal), phone: (signal) => findPhone(config.hubToken, signal) },
     interrupt: () => {
       if (!process.stdout.isTTY) return;
       cursorTo(process.stdout, 0);

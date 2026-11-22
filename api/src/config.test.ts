@@ -12,6 +12,7 @@ const complete = {
   MEMORY_INBOX: "on",
   MEMORY_UPLOAD: "on",
   DEALS: "on",
+  FIND_PHONE: "on",
   NTFY_TOPIC: "test-topic",
   HEALTHCHECK_URL: "https://hc-ping.com/test",
   DEALS_SEEN: "memory",
@@ -21,7 +22,7 @@ const complete = {
   DEALS_AI: "off",
 };
 
-const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off" };
+const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off", FIND_PHONE: "off" };
 const dealSettings = { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false };
 
 test("reads every setting into its own field", () => {
@@ -32,7 +33,7 @@ test("reads every setting into its own field", () => {
     ntfyTopic: "test-topic",
     healthcheckUrl: "https://hc-ping.com/test",
     deals: dealSettings,
-    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true },
+    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true },
   });
 });
 
@@ -68,12 +69,12 @@ test("an empty setting counts as missing", () => {
 
 test("with nothing set, the always-needed settings and every switch are named, in a fixed order", () => {
   assert.throws(() => readConfig({}), {
-    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS",
+    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE",
   });
 });
 
 test("with every switch on and nothing else set, every other setting is named, in a fixed order", () => {
-  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on" }), {
+  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on" }), {
     message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL, DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, DEALS_AI",
   });
 });
@@ -101,6 +102,7 @@ test("each switch can be turned off on its own", () => {
     memoryInbox: true,
     memoryUpload: true,
     deals: true,
+    findPhone: true,
   });
   assert.deepEqual(readConfig({ ...complete, HEARTBEAT: "off" }).features, {
     alerts: true,
@@ -109,6 +111,7 @@ test("each switch can be turned off on its own", () => {
     memoryInbox: true,
     memoryUpload: true,
     deals: true,
+    findPhone: true,
   });
   assert.deepEqual(readConfig({ ...complete, DAILY_SUMMARY: "off" }).features, {
     alerts: true,
@@ -117,6 +120,7 @@ test("each switch can be turned off on its own", () => {
     memoryInbox: true,
     memoryUpload: true,
     deals: true,
+    findPhone: true,
   });
   assert.deepEqual(readConfig({ ...complete, MEMORY_INBOX: "off" }).features, {
     alerts: true,
@@ -125,6 +129,7 @@ test("each switch can be turned off on its own", () => {
     memoryInbox: false,
     memoryUpload: true,
     deals: true,
+    findPhone: true,
   });
   assert.deepEqual(readConfig({ ...complete, MEMORY_UPLOAD: "off" }).features, {
     alerts: true,
@@ -133,6 +138,7 @@ test("each switch can be turned off on its own", () => {
     memoryInbox: true,
     memoryUpload: false,
     deals: true,
+    findPhone: true,
   });
 });
 
@@ -180,9 +186,21 @@ test("the ntfy topic is needed when the daily summary is on, even with alerts of
   });
 });
 
-test("the ntfy topic isn't needed when alerts, the daily summary and the deal watcher are all off", () => {
-  const config = readConfig({ ...complete, ALERTS: "off", DAILY_SUMMARY: "off", DEALS: "off", NTFY_TOPIC: undefined });
+test("the ntfy topic is needed when finding the phone is on, even with everything else that sends to it off", () => {
+  assert.throws(() => readConfig({ ...complete, ALERTS: "off", DAILY_SUMMARY: "off", DEALS: "off", NTFY_TOPIC: undefined }), {
+    message: "Missing settings in api/.env: NTFY_TOPIC",
+  });
+});
+
+test("the ntfy topic isn't needed when alerts, the daily summary, the deal watcher and finding the phone are all off", () => {
+  const config = readConfig({ ...complete, ALERTS: "off", DAILY_SUMMARY: "off", DEALS: "off", FIND_PHONE: "off", NTFY_TOPIC: undefined });
   assert.equal(config.ntfyTopic, "");
+});
+
+test("FIND_PHONE must be written out, as exactly on or off", () => {
+  assert.throws(() => readConfig({ ...complete, FIND_PHONE: undefined }), { message: "Missing settings in api/.env: FIND_PHONE" });
+  assert.throws(() => readConfig({ ...complete, FIND_PHONE: "yes" }), { message: "Settings in api/.env that must be on or off: FIND_PHONE" });
+  assert.equal(readConfig({ ...complete, FIND_PHONE: "off" }).features.findPhone, false);
 });
 
 test("a switch with a bad value doesn't make its settings required", () => {
@@ -200,28 +218,29 @@ test("the API token and service keys are needed even with every feature off", ()
 
 test("everything off still works when the feature settings are present", () => {
   const config = readConfig(allOff);
-  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false });
+  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false });
   assert.equal(config.ntfyTopic, "test-topic");
   assert.equal(config.healthcheckUrl, "https://hc-ping.com/test");
 });
 
 test("switchedOff lists nothing when everything is on", () => {
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true }), []);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true }), []);
 });
 
 test("switchedOff names each feature that's off, in plain words and a fixed order", () => {
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false }), [
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false }), [
     "alerts",
     "heartbeat",
     "daily summary",
     "brain inbox",
     "note uploads",
     "deal watcher",
+    "find my phone",
   ]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true, memoryUpload: true, deals: true }), ["daily summary"]);
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true }), ["alerts"]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true }), ["brain inbox"]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: false, deals: true }), ["note uploads"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true }), ["daily summary"]);
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true }), ["alerts"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true }), ["brain inbox"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: false, deals: true, findPhone: true }), ["note uploads"]);
 });
 
 test("switchedOff agrees with what readConfig reads", () => {
@@ -301,7 +320,7 @@ test("the deal watcher needs the ntfy topic even with alerts and the daily summa
   assert.throws(() => readConfig({ ...complete, ALERTS: "off", DAILY_SUMMARY: "off", NTFY_TOPIC: undefined }), {
     message: "Missing settings in api/.env: NTFY_TOPIC",
   });
-  assert.equal(readConfig({ ...dealsOff, ALERTS: "off", DAILY_SUMMARY: "off", NTFY_TOPIC: undefined }).ntfyTopic, "");
+  assert.equal(readConfig({ ...dealsOff, ALERTS: "off", DAILY_SUMMARY: "off", FIND_PHONE: "off", NTFY_TOPIC: undefined }).ntfyTopic, "");
 });
 
 test("the deal watcher's settings are read as given", () => {

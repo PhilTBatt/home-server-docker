@@ -5,6 +5,7 @@ export type Features = {
   memoryInbox: boolean;
   memoryUpload: boolean;
   deals: boolean;
+  findPhone: boolean;
 };
 
 export type DealSettings = {
@@ -32,6 +33,7 @@ const featureLabels: Record<keyof Features, string> = {
   memoryInbox: "brain inbox",
   memoryUpload: "note uploads",
   deals: "deal watcher",
+  findPhone: "find my phone",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -72,8 +74,9 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     memoryInbox: readSwitch("MEMORY_INBOX"),
     memoryUpload: readSwitch("MEMORY_UPLOAD"),
     deals: readSwitch("DEALS"),
+    findPhone: readSwitch("FIND_PHONE"),
   };
-  const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals);
+  const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
   const deals: DealSettings = {
     seen: readChoice("DEALS_SEEN", ["memory", "disk"], features.deals),

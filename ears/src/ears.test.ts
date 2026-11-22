@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cancelledBeforeText, claimMs, clearedByCancel, clearedByMute, createEars, failedBeforeText, flippedBeforeText, movedOn, mutedBeforeText, notTakenWhy, secondsText, speechLine, startsMuted, thatOneEnded } from "./ears.js";
+import { cancelledBeforeText, claimMs, clearedByCancel, clearedByMute, createEars, failedBeforeText, flippedBeforeText, movedOn, mutedBeforeText, notTakenWhy, saysStopListening, secondsText, speechLine, startsMuted, stopListeningWhy, stoppedListening, thatOneEnded } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { ToText } from "./whisper.js";
 
@@ -313,6 +313,34 @@ test("with Whisper, a stopped recording is turned into text: working meanwhile, 
   assert.deepEqual(lines.slice(-2), ["Recording stopped after 1.2 seconds: asked to stop.", "Turned into text in 2.3 seconds."]);
   assert.equal(lines.some((line) => line.includes("lights")), false);
   assert.equal(whisper.asked[0].signal.aborted, false);
+});
+
+test("when all it heard is stop listening, ears keeps no text, says why, and mutes itself until it's unmuted again", async () => {
+  const whisper = pretendWhisper();
+  const { ears, lines } = setUp("card", whisper.toText);
+  await ears.unmute();
+  ears.start();
+  const stopping = ears.stop();
+  await tick();
+  whisper.asked[0].answer("Hey Jarvis, stop listening.");
+  await stopping;
+  await until(() => ears.view().state === "muted");
+  assert.deepEqual(ears.view(), { state: "muted", reason: stopListeningWhy, microphone: "card", last: { seconds: 1.2, reason: "asked to stop", text: null, textProblem: stoppedListening } });
+  assert.deepEqual(lines.slice(-3), ["Turned into text in 0 seconds.", "Heard its spoken code word to stop, so ears is muting itself.", "Muted: it heard its spoken code word to stop."], "the log names the code word, never what was said");
+  assert.equal(stoppedListening, "you said stop listening, so ears muted itself. Unmute it on the server with bash host/ears.sh unmute");
+  assert.deepEqual(ears.start(), { ok: false, error: "ears is muted" });
+  await ears.unmute();
+  assert.equal(ears.view().state, "idle");
+  ears.start();
+  const next = ears.stop();
+  await tick();
+  whisper.asked[1].answer("Stop listening to the radio.");
+  assert.deepEqual([(await next).ok, ears.view().state, ears.view().last?.text], [true, "idle", "Stop listening to the radio."], "more than the code word isn't ears's to take, so it keeps the text");
+});
+
+test("stop listening is heard however it's written, with a greeting or a please, but only on its own", () => {
+  for (const said of ["Stop listening.", "stop listening", "STOP LISTENING!", "Hey Jarvis, stop listening.", "Jarvis, stop listening please.", "OK Jarvis stop listening now", "Stop listening, thanks.", "Stop listening, thank you, Jarvis.", " stop   listening ", "Stop. Listening.", "Please stop listening.", "Stop listening for now.", "Stop listening for a bit, thanks.", "Thanks, stop listening.", "...vis. Stop listening.", "Hey Jarvis, okay, stop listening.", "No, stop listening.", "Actually, stop listening.", "Stop listening, cheers.", "Stop listening then.", "Stop listening, OK.", "Thanks Jarvis, stop listening."]) assert.equal(saysStopListening(said), true, said);
+  for (const said of ["Stop listening to the radio.", "Don't stop listening.", "Can you stop listening?", "Stop.", "Listening.", "", "Hey Jarvis.", "Stop listening and play music.", "Stop listening please Jarvis do the lights."]) assert.equal(saysStopListening(said), false, said);
 });
 
 test("nothing new is recorded while the last recording is being turned into text", async () => {

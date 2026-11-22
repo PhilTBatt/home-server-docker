@@ -652,6 +652,11 @@ output=$(FAKE_EARS_ID=abc123 FAKE_TALK="$listening" with_fakes talk now)
 check "talk takes nothing after it" "1|0" "$?|$(wc -l < "$DOCKER_LOG")"
 check_has "and shows the usage, which lists talk" "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model" "$output"
 
+for name in fillersBefore fillersAfter; do
+  check "ears and Jarvis hear the same filler words around a code word: $name" "$(grep "^export const $name = " "$here/../ears/src/ears.ts")" "$(grep "^export const $name = " "$here/../jarvis/src/code-words.ts")"
+done
+check "Jarvis knows ears's reason for muting itself word for word" "1" "$(grep -cF "\"$(sed -n 's/^export const stoppedListening = "\(.*\)";$/\1/p' "$here/../ears/src/ears.ts")\"" "$here/../jarvis/src/code-words.ts")"
+
 mkdir -p "$work/micbin"
 cat > "$work/micbin/docker" <<'FAKE'
 #!/bin/bash

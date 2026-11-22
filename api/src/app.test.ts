@@ -11,7 +11,7 @@ const config: Config = {
   ntfyTopic: "test-topic",
   healthcheckUrl: "https://hc-ping.com/test",
   deals: { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true }
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -118,7 +118,8 @@ const protectedRoutes = [
   ["GET", "/deals/searches"],
   ["GET", "/deals/matches"],
   ["GET", "/deals/searches/optiplex/hidden"],
-  ["POST", "/deals/check"]
+  ["POST", "/deals/check"],
+  ["POST", "/phone/find"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -253,7 +254,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -426,4 +427,9 @@ test("the app passes the DEALS_AI switch on to the deal routes, and they still n
   for (const url of ["/deals/searches/optiplex/snooze", "/deals/searches/optiplex/wake"]) {
     assert.equal((await on.inject({ method: "POST", url })).statusCode, 401, url);
   }
+});
+test("finding the phone is a route of the hub's, which says when it's switched off", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, findPhone: false } } });
+  const response = await app.inject({ method: "POST", url: "/phone/find", headers: goodHeader });
+  assert.deepEqual([response.statusCode, response.json()], [404, { error: "Finding the phone is switched off" }]);
 });

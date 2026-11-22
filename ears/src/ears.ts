@@ -73,6 +73,17 @@ export const claimMs = 2_000;
 export const notTakenWhy = `no Jarvis chat took it within ${claimMs / 1000} seconds`;
 export const movedOn = "ears has moved on to a newer recording, so that one is gone";
 export const thatOneEnded = "that recording has already ended";
+export const stopListeningWhy = "it heard its spoken code word to stop";
+export const stoppedListening = "you said stop listening, so ears muted itself. Unmute it on the server with bash host/ears.sh unmute";
+
+export const fillersBefore = "please|oh|no|actually|thanks|thank you|okay|ok|jarvis";
+export const fillersAfter = "please|now|jarvis|thanks|thank you|cheers|then|ok|okay|for now|for a bit|for a while";
+
+export function saysStopListening(text: string): boolean {
+  const plain = text.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[^a-z0-9' ]+/g, " ").replace(/ {2,}/g, " ").trim();
+  const words = plain.replace(/^(?:(?:hey|hi|ok|okay) )?(?:[a-z']*vis )?/, "").replace(new RegExp(`^(?:(?:${fillersBefore}) )+`), "").replace(new RegExp(`(?: (?:${fillersAfter}))+$`), "");
+  return words === "stop listening";
+}
 
 export function createEars(deps: EarsDeps): Ears {
   let state: EarsState = "muted";
@@ -87,6 +98,7 @@ export function createEars(deps: EarsDeps): Ears {
   let underway: Current | null = null;
   let lastId: number | null = null;
   let claimTimer: ReturnType<typeof setTimeout> | null = null;
+  let muteSelf: (why: string) => Promise<void> = async () => {};
   const ids = new WeakMap<Recording, number>();
   const changed = () => deps.changed?.();
   const now = deps.now ?? (() => performance.now());
@@ -124,8 +136,14 @@ export function createEars(deps: EarsDeps): Ears {
       try {
         const text = await orCalledOff(turn(stopped.sound, calledOff.signal), calledOff.signal);
         if (calledOff.signal.aborted) return;
-        heard.text = text;
         deps.log(`Turned into text in ${secondsText(now() - began)}.`);
+        if (saysStopListening(text)) {
+          heard.textProblem = stoppedListening;
+          deps.log("Heard its spoken code word to stop, so ears is muting itself.");
+          void Promise.resolve().then(() => muteSelf(stopListeningWhy));
+          return;
+        }
+        heard.text = text;
       } catch (error) {
         if (calledOff.signal.aborted) return;
         heard.textProblem = problem(error);
@@ -182,7 +200,7 @@ export function createEars(deps: EarsDeps): Ears {
     return stopped;
   };
 
-  return {
+  const ears: Ears = {
     view,
     start(by = "push") {
       if (state === "muted") return refuse("ears is muted");
@@ -332,4 +350,6 @@ export function createEars(deps: EarsDeps): Ears {
     speechHeard: () => recording?.speechHeard?.() === true,
     stopping: () => state === "recording" && recording === null,
   };
+  muteSelf = (why) => ears.mute(why);
+  return ears;
 }
