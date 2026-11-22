@@ -5,7 +5,7 @@ import type { Features } from "../../config.js";
 import type { Notification } from "../notify/notifier.js";
 import { findAgainMs, findNotification, phone } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true };
 
 function buildApp(options: { features?: Features; fail?: boolean } = {}) {
   const sent: { topic: string; notification: Notification }[] = [];

@@ -21,7 +21,7 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_features",
-    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads, the deal watcher and finding the phone.",
+    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads, the deal watcher, finding the phone and train times.",
     path: "/system/features",
   },
   {

@@ -810,7 +810,7 @@ test("a spoken code word is handled without asking Claude: a note is saved and J
   const notes: string[] = [];
   const chat = followChat({}, 0, {
     speak: () => ({ ...fakeSpeech([]), text: (text: string) => void spoken.push(text) }),
-    codeWords: { note: async (text) => (notes.push(text), { say: "Noted.", note: "saved in the brain's inbox as 2026-11-22-voice-note.md" }), phone: async () => ({ say: "unused" }) },
+    codeWords: { note: async (text) => (notes.push(text), { say: "Noted.", note: "saved in the brain's inbox as 2026-11-22-voice-note.md" }), phone: async () => ({ say: "unused" }), trains: async () => ({ say: "unused" }) },
   });
   chat.wake.push({ kind: "wake", id: 4 });
   await settled();
@@ -824,7 +824,7 @@ test("a spoken code word is handled without asking Claude: a note is saved and J
 
 test("find my phone asks the hub through its action, and never mind just leaves it there, ending the follow-ups", { timeout: 5_000 }, async () => {
   let found = 0;
-  const chat = followChat({ "What's the time?": said("Ten past nine.") }, 0, { codeWords: { note: async () => ({ say: "unused" }), phone: async () => (found++, { say: "I've sent your phone a notification." }) } });
+  const chat = followChat({ "What's the time?": said("Ten past nine.") }, 0, { codeWords: { note: async () => ({ say: "unused" }), phone: async () => (found++, { say: "I've sent your phone a notification." }), trains: async () => ({ say: "unused" }) } });
   chat.wake.push({ kind: "wake", id: 4 });
   await settled();
   chat.wake.push({ kind: "done", id: 4, answer: earsDone("Hey Jarvis, find my phone."), textMs: 900 });
@@ -857,6 +857,22 @@ test("a code word in a chat with no way to the hub says how to get one, and type
   chat.lines.push("Find my phone.");
   await settled();
   assert.deepEqual(chat.events.filter((event) => event.startsWith("ask")), ["ask Find my phone."]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("train times are asked of the hub through their action and said like any code word, with the reasons as a note", { timeout: 5_000 }, async () => {
+  const spoken: string[] = [];
+  const chat = wakeChat({}, [], {
+    speak: () => ({ ...fakeSpeech([]), text: (text: string) => void spoken.push(text) }),
+    codeWords: { note: async () => ({ say: "unused" }), phone: async () => ({ say: "unused" }), trains: async () => ({ say: "Trains from Alpha to Beta: the 08:14 is on time, platform 16.", note: "08:44: a fault" }) },
+  });
+  chat.wake.push({ kind: "wake", id: 4, button: true });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("Train times."), textMs: 900 });
+  await pause(20);
+  assert.ok(chat.output().includes(`${heardPrefix}Train times.\nJarvis: Trains from Alpha to Beta: the 08:14 is on time, platform 16.\n  (08:44: a fault)\n`), chat.output());
+  assert.deepEqual([spoken, chat.events.filter((event) => event.startsWith("ask"))], [["Trains from Alpha to Beta: the 08:14 is on time, platform 16."], []]);
   chat.lines.close();
   await chat.running;
 });
@@ -899,6 +915,17 @@ test("a /talk recording ears muted itself on gets the same spoken reply when Ent
   await settled();
   assert.ok(chat.output().includes("Jarvis: I've stopped listening.\n"), chat.output());
   assert.deepEqual([spoken, chat.events.filter((event) => event.startsWith("ask"))], [["I've stopped listening."], []]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("train times in a chat with no way to the hub say how to get one", { timeout: 5_000 }, async () => {
+  const chat = wakeChat({});
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("Train times."), textMs: 900 });
+  await settled();
+  assert.ok(chat.output().includes(`Jarvis: I couldn't get the train times.\n  (${hubOffNote})\n`), chat.output());
   chat.lines.close();
   await chat.running;
 });

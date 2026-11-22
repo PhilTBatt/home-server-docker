@@ -13,6 +13,7 @@ const complete = {
   MEMORY_UPLOAD: "on",
   DEALS: "on",
   FIND_PHONE: "on",
+  TRAINS: "on",
   NTFY_TOPIC: "test-topic",
   HEALTHCHECK_URL: "https://hc-ping.com/test",
   DEALS_SEEN: "memory",
@@ -20,9 +21,13 @@ const complete = {
   EBAY_CLIENT_ID: "test-ebay-id",
   EBAY_CLIENT_SECRET: "test-ebay-secret",
   DEALS_AI: "off",
+  RAIL_DATA_KEY: "test-rail-key",
+  TRAINS_FROM: "AAA",
+  TRAINS_TO: "BBB",
+  TRAINS_BOARD_URL: "https://api1.raildata.org.uk/test-board/",
 };
 
-const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off", FIND_PHONE: "off" };
+const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off", FIND_PHONE: "off", TRAINS: "off" };
 const dealSettings = { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false };
 
 test("reads every setting into its own field", () => {
@@ -33,7 +38,8 @@ test("reads every setting into its own field", () => {
     ntfyTopic: "test-topic",
     healthcheckUrl: "https://hc-ping.com/test",
     deals: dealSettings,
-    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true },
+    trains: { key: "test-rail-key", from: "AAA", to: "BBB", boardUrl: "https://api1.raildata.org.uk/test-board" },
+    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true },
   });
 });
 
@@ -46,6 +52,7 @@ test("ignores anything else in the environment", () => {
     "ntfyTopic",
     "healthcheckUrl",
     "deals",
+    "trains",
     "features",
   ]);
 });
@@ -69,13 +76,13 @@ test("an empty setting counts as missing", () => {
 
 test("with nothing set, the always-needed settings and every switch are named, in a fixed order", () => {
   assert.throws(() => readConfig({}), {
-    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE",
+    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE, TRAINS",
   });
 });
 
 test("with every switch on and nothing else set, every other setting is named, in a fixed order", () => {
-  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on" }), {
-    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL, DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, DEALS_AI",
+  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on", TRAINS: "on" }), {
+    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL, DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, DEALS_AI, RAIL_DATA_KEY, TRAINS_FROM, TRAINS_TO, TRAINS_BOARD_URL",
   });
 });
 
@@ -103,6 +110,7 @@ test("each switch can be turned off on its own", () => {
     memoryUpload: true,
     deals: true,
     findPhone: true,
+    trains: true,
   });
   assert.deepEqual(readConfig({ ...complete, HEARTBEAT: "off" }).features, {
     alerts: true,
@@ -112,6 +120,7 @@ test("each switch can be turned off on its own", () => {
     memoryUpload: true,
     deals: true,
     findPhone: true,
+    trains: true,
   });
   assert.deepEqual(readConfig({ ...complete, DAILY_SUMMARY: "off" }).features, {
     alerts: true,
@@ -121,6 +130,7 @@ test("each switch can be turned off on its own", () => {
     memoryUpload: true,
     deals: true,
     findPhone: true,
+    trains: true,
   });
   assert.deepEqual(readConfig({ ...complete, MEMORY_INBOX: "off" }).features, {
     alerts: true,
@@ -130,6 +140,7 @@ test("each switch can be turned off on its own", () => {
     memoryUpload: true,
     deals: true,
     findPhone: true,
+    trains: true,
   });
   assert.deepEqual(readConfig({ ...complete, MEMORY_UPLOAD: "off" }).features, {
     alerts: true,
@@ -139,6 +150,7 @@ test("each switch can be turned off on its own", () => {
     memoryUpload: false,
     deals: true,
     findPhone: true,
+    trains: true,
   });
 });
 
@@ -218,17 +230,17 @@ test("the API token and service keys are needed even with every feature off", ()
 
 test("everything off still works when the feature settings are present", () => {
   const config = readConfig(allOff);
-  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false });
+  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false });
   assert.equal(config.ntfyTopic, "test-topic");
   assert.equal(config.healthcheckUrl, "https://hc-ping.com/test");
 });
 
 test("switchedOff lists nothing when everything is on", () => {
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true }), []);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true }), []);
 });
 
 test("switchedOff names each feature that's off, in plain words and a fixed order", () => {
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false }), [
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false }), [
     "alerts",
     "heartbeat",
     "daily summary",
@@ -236,11 +248,12 @@ test("switchedOff names each feature that's off, in plain words and a fixed orde
     "note uploads",
     "deal watcher",
     "find my phone",
+    "train times",
   ]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true }), ["daily summary"]);
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true }), ["alerts"]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true }), ["brain inbox"]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: false, deals: true, findPhone: true }), ["note uploads"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true }), ["daily summary"]);
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true }), ["alerts"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true }), ["brain inbox"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: false, deals: true, findPhone: true, trains: true }), ["note uploads"]);
 });
 
 test("switchedOff agrees with what readConfig reads", () => {
@@ -379,4 +392,38 @@ test("with the deal watcher off, DEALS_AI=on changes nothing that's switched on"
   const config = readConfig({ ...dealsOff, DEALS_AI: "on" });
   assert.equal(config.features.deals, false);
   assert.deepEqual(switchedOff(config.features), ["deal watcher"]);
+});
+
+test("train times need the rail key, both stations and the board's address while they're on, and not while they're off", () => {
+  assert.throws(() => readConfig({ ...complete, RAIL_DATA_KEY: undefined, TRAINS_FROM: undefined, TRAINS_TO: "", TRAINS_BOARD_URL: undefined }), {
+    message: "Missing settings in api/.env: RAIL_DATA_KEY, TRAINS_FROM, TRAINS_TO, TRAINS_BOARD_URL",
+  });
+  const off = readConfig({ ...complete, TRAINS: "off", RAIL_DATA_KEY: undefined, TRAINS_FROM: undefined, TRAINS_TO: undefined, TRAINS_BOARD_URL: undefined });
+  assert.deepEqual([off.features.trains, off.trains], [false, { key: "", from: "", to: "", boardUrl: "" }]);
+});
+
+test("a station must be three capital letters, and the board an https address on raildata.org.uk, even while train times are off", () => {
+  for (const station of ["aaa", "AAAA", "AA", "A1B", " AAA"]) {
+    assert.throws(() => readConfig({ ...complete, TRAINS_TO: station }), { message: "Settings in api/.env with a value that isn't allowed: TRAINS_TO (a station's three-letter code in capitals, like KGX)" }, station);
+  }
+  for (const url of ["http://api1.raildata.org.uk/board", "https://raildata.org.uk.example.com/board", "https://example.com/raildata.org.uk", "https://user:pass@api1.raildata.org.uk/board", "https://api1.raildata.org.uk/board?x=1", "https://api1.raildata.org.uk/board#x", "https://api1.raildata.org.uk/LDBWS/api/20220120/GetDepartureBoard/{crs}", "not a url"]) {
+    assert.throws(() => readConfig({ ...complete, TRAINS: "off", TRAINS_BOARD_URL: url }), { message: "Settings in api/.env with a value that isn't allowed: TRAINS_BOARD_URL (an https address on raildata.org.uk ending just before the station code, with no ?, # or {crs} part)" }, url);
+  }
+  assert.equal(readConfig({ ...complete, TRAINS_BOARD_URL: "https://raildata.org.uk/x//" }).trains.boardUrl, "https://raildata.org.uk/x");
+});
+
+test("an error about the train settings never includes the rail key", () => {
+  assert.throws(() => readConfig({ ...complete, RAIL_DATA_KEY: "secret-rail-key", TRAINS_FROM: "bad" }), (error: Error) => !error.message.includes("secret-rail-key"));
+});
+
+test("TRAINS must be written out, as exactly on or off", () => {
+  assert.throws(() => readConfig({ ...complete, TRAINS: undefined }), { message: "Missing settings in api/.env: TRAINS" });
+  assert.throws(() => readConfig({ ...complete, TRAINS: "yes" }), { message: "Settings in api/.env that must be on or off: TRAINS" });
+});
+
+test("the rail key must be printable with no spaces, said without its value, and the two stations must differ", () => {
+  for (const key of ["a key", "key\u0001", "k\u00e9y"]) {
+    assert.throws(() => readConfig({ ...complete, RAIL_DATA_KEY: key }), (error: Error) => error.message === "Settings in api/.env with a value that isn't allowed: RAIL_DATA_KEY (printable characters with no spaces)" && !error.message.includes(key), key);
+  }
+  assert.throws(() => readConfig({ ...complete, TRAINS_TO: "AAA" }), { message: "Settings in api/.env with a value that isn't allowed: TRAINS_TO (a different station from TRAINS_FROM)" });
 });

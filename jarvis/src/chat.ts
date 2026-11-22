@@ -153,7 +153,7 @@ export type ChatDeps = {
   codeWords?: CodeWordActions;
 };
 
-export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply> };
+export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply> };
 
 export const neverMindNote = "left there, so nothing was asked";
 
@@ -718,7 +718,8 @@ async function onCodeWord(deps: ChatDeps, state: ChatState, word: CodeWord): Pro
     return;
   }
   const signal = deps.closing ?? new AbortController().signal;
-  const reply = deps.codeWords === undefined ? { say: word.kind === "note" ? "I couldn't save that note." : "I couldn't reach your phone.", note: hubOffNote } : word.kind === "note" ? await deps.codeWords.note(word.text, signal) : await deps.codeWords.phone(signal);
+  const failed = { note: "I couldn't save that note.", phone: "I couldn't reach your phone.", trains: "I couldn't get the train times." } as const;
+  const reply = deps.codeWords === undefined ? { say: failed[word.kind], note: hubOffNote } : word.kind === "note" ? await deps.codeWords.note(word.text, signal) : word.kind === "phone" ? await deps.codeWords.phone(signal) : await deps.codeWords.trains(signal);
   await sayLine(deps, state, reply);
 }
 

@@ -1,6 +1,6 @@
 import { hubApiUrl } from "./hub-tools.js";
 
-export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "stop listening" };
+export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "trains" } | { kind: "stop listening" };
 
 const address = /^\s*(?:(?:hey|hi|ok|okay)\b[\s,.!?]*)?(?:\S*vis\b[\s,.!?]*)?/i;
 const noteStart = /^note this(?: down)?\b[\s,.:;!?\u2013\u2014\u2026-]*/i;
@@ -18,6 +18,7 @@ function trimmed(text: string): string {
 
 export const neverMindWords = ["never mind", "nevermind", "that's all", "that is all"];
 export const phoneWords = ["find my phone"];
+export const trainWords = ["train times", "train time", "trains", "next train", "next trains", "when's my train", "when is my train", "when's the next train", "when is the next train"];
 
 export function codeWordIn(said: string): CodeWord | null {
   const text = said.replace(/[\u2018\u2019]/g, "'").replace(address, "");
@@ -26,6 +27,7 @@ export function codeWordIn(said: string): CodeWord | null {
   const words = trimmed(text);
   if (phoneWords.includes(words)) return { kind: "phone" };
   if (neverMindWords.includes(words) && !/\?\s*$/.test(text)) return { kind: "never mind" };
+  if (trainWords.includes(words)) return { kind: "trains" };
   if (/^(?:(?:you can|can you|could you|would you|will you|just|please|now) )*stop listening(?: |$)/.test(words)) return { kind: "stop listening" };
   return null;
 }
@@ -36,7 +38,7 @@ export const stopMyselfReply: CodeWordReply = { say: "Say just stop listening, a
 export const stoppedReply: CodeWordReply = { say: "I've stopped listening.", note: "ears muted itself, so unmute it on the server with bash host/ears.sh unmute" };
 export const earsStoppedWhy = "you said stop listening, so ears muted itself. Unmute it on the server with bash host/ears.sh unmute";
 
-export const hubOffNote = "notes and finding your phone go through the hub, so set JARVIS_HUB_TOOLS=on in jarvis/.env and start Jarvis again with bash host/jarvis.sh";
+export const hubOffNote = "notes, finding your phone and train times go through the hub, so set JARVIS_HUB_TOOLS=on in jarvis/.env and start Jarvis again with bash host/jarvis.sh";
 export const noteTitle = "voice note";
 export const codeWordMs = 12_000;
 
@@ -90,5 +92,59 @@ export async function findPhone(token: string | null, signal: AbortSignal, url =
     return { say: "I couldn't reach your phone.", note: `the hub said: ${errorOf(fields, status)}` };
   } catch (error) {
     return { say: "I couldn't reach your phone.", note: `couldn't reach the hub: ${reasonOf(error)}` };
+  }
+}
+
+export type TrainBoard = { from: string; to: string; departures: { due: string; expected: string; platform: string | null; cancelled: boolean; reason: string | null }[]; buses: number; messages: string[] };
+
+export const spokenTrainsMost = 3;
+
+function plain(value: unknown, limit = 120): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, limit) : null;
+}
+
+function boardOf(fields: Record<string, unknown>): TrainBoard | null {
+  const from = plain(fields.from);
+  const to = plain(fields.to);
+  if (from === null || to === null || !Array.isArray(fields.departures) || !Array.isArray(fields.messages)) return null;
+  const departures = fields.departures.flatMap((item: unknown) => {
+    if (typeof item !== "object" || item === null) return [];
+    const train = item as Record<string, unknown>;
+    const due = plain(train.due, 10);
+    const expected = plain(train.expected, 20);
+    if (due === null || expected === null) return [];
+    return [{ due, expected, platform: plain(train.platform, 10), cancelled: train.cancelled === true, reason: plain(train.reason, 200) }];
+  });
+  return { from, to, departures, buses: typeof fields.buses === "number" && Number.isSafeInteger(fields.buses) && fields.buses > 0 ? fields.buses : 0, messages: fields.messages.flatMap((message: unknown) => (plain(message, 300) === null ? [] : [plain(message, 300) as string])) };
+}
+
+function trainLine(train: TrainBoard["departures"][number]): string {
+  if (train.cancelled) return `the ${train.due} is cancelled`;
+  const platform = train.platform === null ? "" : `, platform ${train.platform}`;
+  if (train.expected.toLowerCase() === "on time") return `the ${train.due} is on time${platform}`;
+  if (/^\d{1,2}:\d{2}$/.test(train.expected)) return `the ${train.due} is expected at ${train.expected}${platform}`;
+  if (train.expected.toLowerCase() === "delayed") return `the ${train.due} is delayed, with no time yet${platform}`;
+  return `the ${train.due} shows ${train.expected}${platform}`;
+}
+
+export function spokenTrains(board: TrainBoard): CodeWordReply {
+  const shown = board.departures.slice(0, spokenTrainsMost);
+  const reasons = shown.flatMap((train) => (train.reason === null || (!train.cancelled && train.expected.toLowerCase() === "on time") ? [] : [`${train.due}: ${train.reason}`]));
+  const buses = board.buses === 1 ? "a bus" : `${board.buses} buses`;
+  const notes = [...reasons, ...(board.buses === 0 || shown.length === 0 ? [] : [`the board also lists ${buses}`]), ...board.messages];
+  const say = shown.length > 0 ? `Trains from ${board.from} to ${board.to}: ${shown.map(trainLine).join("; ")}.` : board.buses > 0 ? `There are no trains from ${board.from} to ${board.to} on the board right now, but it lists ${buses}.` : `There are no trains from ${board.from} to ${board.to} on the board right now.`;
+  return notes.length === 0 ? { say } : { say, note: notes.join("; ") };
+}
+
+export async function trainTimes(token: string | null, signal: AbortSignal, url = hubApiUrl): Promise<CodeWordReply> {
+  if (token === null) return { say: "I couldn't get the train times.", note: hubOffNote };
+  try {
+    const { status, fields } = await hubAsk("/trains", { headers: { Authorization: `Bearer ${token}` } }, signal, url);
+    if (status === 404 && fields.error === "Train times are switched off") return { say: "I couldn't get the train times.", note: "train times are off in the hub, so set TRAINS=on and its settings in api/.env and restart the hub" };
+    if (status !== 200) return { say: "I couldn't get the train times.", note: `the hub said: ${errorOf(fields, status)}` };
+    const board = boardOf(fields);
+    return board === null ? { say: "I couldn't get the train times.", note: "the hub's reply wasn't a train board" } : spokenTrains(board);
+  } catch (error) {
+    return { say: "I couldn't get the train times.", note: `couldn't reach the hub: ${reasonOf(error)}` };
   }
 }

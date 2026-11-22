@@ -1,3 +1,5 @@
+import { safeBoardUrl, type TrainSettings } from "./modules/trains/board.js";
+
 export type Features = {
   alerts: boolean;
   heartbeat: boolean;
@@ -6,6 +8,7 @@ export type Features = {
   memoryUpload: boolean;
   deals: boolean;
   findPhone: boolean;
+  trains: boolean;
 };
 
 export type DealSettings = {
@@ -23,6 +26,7 @@ export type Config = {
   ntfyTopic: string;
   healthcheckUrl: string;
   deals: DealSettings;
+  trains: TrainSettings;
   features: Features;
 };
 
@@ -34,6 +38,7 @@ const featureLabels: Record<keyof Features, string> = {
   memoryUpload: "note uploads",
   deals: "deal watcher",
   findPhone: "find my phone",
+  trains: "train times",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -75,6 +80,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     memoryUpload: readSwitch("MEMORY_UPLOAD"),
     deals: readSwitch("DEALS"),
     findPhone: readSwitch("FIND_PHONE"),
+    trains: readSwitch("TRAINS"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
@@ -85,6 +91,19 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     ebayClientSecret: read("EBAY_CLIENT_SECRET", features.deals),
     ai: readSwitch("DEALS_AI", features.deals),
   };
+  const readStation = (name: string): string => {
+    const value = read(name, features.trains);
+    if (value !== "" && !/^[A-Z]{3}$/.test(value)) notAllowed.push(`${name} (a station's three-letter code in capitals, like KGX)`);
+    return value;
+  };
+  const railKey = read("RAIL_DATA_KEY", features.trains);
+  if (railKey !== "" && !/^[\x21-\x7E]{1,200}$/.test(railKey)) notAllowed.push("RAIL_DATA_KEY (printable characters with no spaces)");
+  const from = readStation("TRAINS_FROM");
+  const to = readStation("TRAINS_TO");
+  if (to !== "" && to === from) notAllowed.push("TRAINS_TO (a different station from TRAINS_FROM)");
+  const boardUrl = read("TRAINS_BOARD_URL", features.trains);
+  if (boardUrl !== "" && safeBoardUrl(boardUrl) === null) notAllowed.push("TRAINS_BOARD_URL (an https address on raildata.org.uk ending just before the station code, with no ?, # or {crs} part)");
+  const trains: TrainSettings = { key: railKey, from, to, boardUrl: safeBoardUrl(boardUrl) ?? "" };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -92,5 +111,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, features };
 }

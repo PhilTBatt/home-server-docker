@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { codeWordIn, codeWordMs, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, stopMyselfReply, voiceNoteText } from "./code-words.js";
+import { codeWordIn, codeWordMs, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText } from "./code-words.js";
 
 const stillOpen = new Set<() => unknown>();
 
@@ -93,7 +93,7 @@ test("a note that can't be saved says so with why, and an empty one or one with 
   assert.deepEqual(await saveVoiceNote("  ", token, signal, new Date(), asked.url), { say: "Say note this, then what to note." });
   assert.deepEqual(await saveVoiceNote("x", null, signal, new Date(), asked.url), { say: "I couldn't save that note.", note: hubOffNote });
   assert.equal(asked.asked.length, 0);
-  assert.equal(hubOffNote, "notes and finding your phone go through the hub, so set JARVIS_HUB_TOOLS=on in jarvis/.env and start Jarvis again with bash host/jarvis.sh");
+  assert.equal(hubOffNote, "notes, finding your phone and train times go through the hub, so set JARVIS_HUB_TOOLS=on in jarvis/.env and start Jarvis again with bash host/jarvis.sh");
   const gone = await saveVoiceNote("x", token, signal, new Date(), "http://127.0.0.1:1");
   assert.equal(gone.say, "I couldn't save that note.");
   assert.match(gone.note ?? "", /^couldn't reach the hub: /);
@@ -148,4 +148,49 @@ test("a saved note's name is shown with only plain file name characters, and a h
   const sent = await saveVoiceNote("x", token, signal, new Date(), `http://127.0.0.1:${(redirecting.address() as AddressInfo).port}`);
   assert.equal(sent.say, "I couldn't save that note.");
   assert.equal(elsewhere.asked.length, 0, "the token is never sent on to another address");
+});
+
+test("train times count on their own, in a few ways of asking", () => {
+  for (const said of ["Train times.", "Hey Jarvis, train times please.", "Trains?", "Next train.", "When's my train?", "When\u2019s the next train, Jarvis?", "Train time"]) assert.deepEqual(codeWordIn(said), { kind: "trains" }, said);
+  for (const said of ["Train times to London tomorrow?", "Are the trains running?", "Trains and buses."]) assert.equal(codeWordIn(said), null, said);
+  assert.deepEqual(trainWords, ["train times", "train time", "trains", "next train", "next trains", "when's my train", "when is my train", "when's the next train", "when is the next train"]);
+});
+
+test("the board is said as the next three trains, each on time, expected later, delayed or cancelled, with reasons and the board's messages as a note", () => {
+  const board = {
+    from: "Alpha",
+    to: "Beta",
+    departures: [
+      { due: "08:14", expected: "On time", platform: "16", cancelled: false, reason: null },
+      { due: "08:44", expected: "08:52", platform: null, cancelled: false, reason: "a fault" },
+      { due: "09:14", expected: "Cancelled", platform: "2", cancelled: true, reason: "a shortage of staff" },
+      { due: "09:44", expected: "Delayed", platform: null, cancelled: false, reason: null },
+    ],
+    buses: 2,
+    messages: ["Disruption between Alpha and Gamma."],
+  };
+  assert.deepEqual(spokenTrains(board), { say: "Trains from Alpha to Beta: the 08:14 is on time, platform 16; the 08:44 is expected at 08:52; the 09:14 is cancelled.", note: "08:44: a fault; 09:14: a shortage of staff; the board also lists 2 buses; Disruption between Alpha and Gamma." });
+  assert.deepEqual(spokenTrains({ ...board, departures: [], buses: 1, messages: ["No trains today."] }), { say: "There are no trains from Alpha to Beta on the board right now, but it lists a bus.", note: "No trains today." });
+  assert.equal(spokenTrainsMost, 3);
+  assert.deepEqual(spokenTrains({ ...board, departures: [{ ...board.departures[3], platform: "3" }], buses: 0, messages: [] }), { say: "Trains from Alpha to Beta: the 09:44 is delayed, with no time yet, platform 3." });
+  assert.deepEqual(spokenTrains({ ...board, departures: [{ due: "10:00", expected: "Starts here", platform: null, cancelled: false, reason: null }], buses: 0, messages: [] }), { say: "Trains from Alpha to Beta: the 10:00 shows Starts here." });
+  assert.deepEqual(spokenTrains({ ...board, departures: [], buses: 0, messages: [] }), { say: "There are no trains from Alpha to Beta on the board right now." });
+});
+
+test("train times are asked of the hub with the token, and a hub that's off, failing or odd is said plainly", async () => {
+  const hub = await standInHub(() => ({ status: 200, body: { from: "Alpha", to: "Beta", departures: [{ due: "08:14", expected: "On time", platform: "16", cancelled: false, reason: null, destination: "Beta" }, { due: 7 }], buses: 0, messages: [] } }));
+  assert.deepEqual(await trainTimes(token, signal, hub.url), { say: "Trains from Alpha to Beta: the 08:14 is on time, platform 16." });
+  assert.deepEqual(hub.asked.map((one) => [one.method, one.url, one.authorization]), [["GET", "/trains", `Bearer ${token}`]]);
+  const off = await standInHub(() => ({ status: 404, body: { error: "Train times are switched off" } }));
+  assert.deepEqual(await trainTimes(token, signal, off.url), { say: "I couldn't get the train times.", note: "train times are off in the hub, so set TRAINS=on and its settings in api/.env and restart the hub" });
+  const failing = await standInHub(() => ({ status: 502, body: { error: "Couldn't get the train times: the board refused the key (401)" } }));
+  assert.deepEqual(await trainTimes(token, signal, failing.url), { say: "I couldn't get the train times.", note: "the hub said: Couldn't get the train times: the board refused the key (401)" });
+  const old = await standInHub(() => ({ status: 404, body: { message: "Route GET:/trains not found", error: "Not Found", statusCode: 404 } }));
+  assert.deepEqual(await trainTimes(token, signal, old.url), { say: "I couldn't get the train times.", note: "the hub said: Not Found" });
+  const refused = await standInHub(() => ({ status: 401, body: { error: "Unauthorized" } }));
+  assert.deepEqual(await trainTimes(token, signal, refused.url), { say: "I couldn't get the train times.", note: "the hub said: Unauthorized" });
+  const odd = await standInHub(() => ({ status: 200, body: { from: "Alpha", departures: [] } }));
+  assert.deepEqual(await trainTimes(token, signal, odd.url), { say: "I couldn't get the train times.", note: "the hub's reply wasn't a train board" });
+  assert.deepEqual(await trainTimes(null, signal, hub.url), { say: "I couldn't get the train times.", note: hubOffNote });
+  assert.equal(hub.asked.length, 1);
 });

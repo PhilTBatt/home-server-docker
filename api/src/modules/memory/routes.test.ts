@@ -7,7 +7,7 @@ import Fastify from "fastify";
 import type { Features } from "../../config.js";
 import { countWaiting, memory, saveNote, slugFor } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true };
 const made: string[] = [];
 
 after(async () => {
@@ -168,7 +168,7 @@ test("with the inbox count switched off, the reply leaves the count out", async 
 
 test("switched off, uploads are refused and nothing is written", async () => {
   const dir = await inboxWith([]);
-  const response = await upload(buildApp(dir, { ...allOn, memoryUpload: false, deals: true, findPhone: true }), { title: "x", text: "y" });
+  const response = await upload(buildApp(dir, { ...allOn, memoryUpload: false, deals: true, findPhone: true, trains: true }), { title: "x", text: "y" });
   assert.equal(response.statusCode, 404);
   assert.deepEqual(response.json(), { error: "Note uploads are switched off" });
   assert.deepEqual(await readdir(dir), []);
