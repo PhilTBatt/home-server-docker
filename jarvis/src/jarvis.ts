@@ -10,6 +10,7 @@ import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.j
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
 import { chimeFor } from "./chime.js";
+import { fillerFor } from "./filler.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, withSpokenStyle } from "./chat.js";
 import { brainDir, readConfig, type VoiceMode } from "./config.js";
@@ -135,7 +136,7 @@ try {
       speaking === null
         ? undefined
         : (after) => {
-            const speech = startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after });
+            const speech = startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after, ...(config.filler ? { filler: fillerFor(speaking) } : {}) });
             hold?.during(spokenOf(speech));
             return speech;
           },

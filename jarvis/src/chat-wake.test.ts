@@ -100,6 +100,7 @@ function fakeSpeech(log: string[]): AnswerSpeech {
   return {
     text: () => {},
     gap: () => {},
+    tool: () => {},
     restart: () => {},
     end: () => {},
     stop: () => {

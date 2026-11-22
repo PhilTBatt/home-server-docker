@@ -42,6 +42,7 @@ export type SpeechQueue = {
   end(): void;
   stop(): void;
   finish(): boolean;
+  quiet(): boolean;
   done: Promise<void>;
   report(): SpeechReport;
 };
@@ -69,6 +70,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
   let makeFailures = 0;
   let playFailures = 0;
   let playing = false;
+  let makingPiece = false;
   let lastPiece = 0;
   let clear = deps.after === undefined;
   let waking: (() => void)[] = [];
@@ -123,6 +125,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
         while (!over && ((waiting.length === 0 && !ended) || ready.length >= ahead)) await change();
         const piece = over ? undefined : nextPiece();
         if (piece === undefined) return;
+        makingPiece = true;
         report.firstSentenceMs ??= sinceMs();
         report.requests++;
         report.requestedSentences += piece.sentences;
@@ -147,6 +150,8 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
             report.gaveUp = true;
             leaveWaiting();
           }
+        } finally {
+          makingPiece = false;
         }
         changed();
       }
@@ -240,6 +245,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
       changed();
       return playing;
     },
+    quiet: () => waiting.length === 0 && ready.length === 0 && !makingPiece && !playing,
     done,
     report: () => ({ ...report }),
   };

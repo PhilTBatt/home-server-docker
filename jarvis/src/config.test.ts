@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, ears: "off", earsToken: null, followUp: null, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, filler: false, ears: "off", earsToken: null, followUp: null, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, ears: "off", earsToken: null, followUp: null, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, filler: false, ears: "off", earsToken: null, followUp: null, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -392,6 +392,27 @@ test("JARVIS_SPOKEN_STYLE is checked after JARVIS_SPEECH_STOP and before JARVIS_
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_STOP: "word", JARVIS_SPOKEN_STYLE: "word" }), { message: 'JARVIS_SPEECH_STOP must be now or sentence, not "word"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPOKEN_STYLE: "word" }), { message: 'JARVIS_SPOKEN_STYLE must be on or off, not "word"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPOKEN_STYLE: "on" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
+});
+
+test("JARVIS_FILLER is off unless it's set to on", () => {
+  assert.equal(readConfig(base).filler, false);
+  for (const value of ["", "  ", "off", " off "]) assert.equal(readConfig({ ...base, JARVIS_FILLER: value }).filler, false, JSON.stringify(value));
+  assert.equal(readConfig({ ...base, JARVIS_FILLER: " on " }).filler, true);
+  assert.equal(readConfig({ ...base, JARVIS_FILLER: "on", JARVIS_SPOKEN_STYLE: "on" }).spokenStyle, true);
+});
+
+test("anything else in JARVIS_FILLER stops Jarvis and is named, voice on or off", () => {
+  for (const voice of ["off", "kokoro", "piper"]) {
+    for (const value of ["yes", "ON", "true", "1", "chime"]) {
+      assert.throws(() => readConfig({ ...base, JARVIS_VOICE: voice, JARVIS_FILLER: value }), { message: `JARVIS_FILLER must be on or off, not "${value}"` });
+    }
+  }
+});
+
+test("JARVIS_FILLER is checked after JARVIS_SPOKEN_STYLE and before JARVIS_EARS", () => {
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPOKEN_STYLE: "word", JARVIS_FILLER: "word" }), { message: 'JARVIS_SPOKEN_STYLE must be on or off, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_FILLER: "word", JARVIS_EARS: "word" }), { message: 'JARVIS_FILLER must be on or off, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_FILLER: "on" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
 });
 
 test("JARVIS_EARS is off unless it's set to push or wake, and both keep ears's token, which host/jarvis.sh passes in", () => {

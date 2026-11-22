@@ -257,6 +257,7 @@ test("/talk stops him talking at once before it listens, even when he'd usually 
   const speech: AnswerSpeech = {
     text: () => {},
     gap: () => {},
+    tool: () => {},
     restart: () => {},
     end: () => events.push("speech end"),
     stop: () => {

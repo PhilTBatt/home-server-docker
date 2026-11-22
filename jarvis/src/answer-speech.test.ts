@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { playerGoneMs, playLimitMs, playSpareMs, slowPlayerMessage, speakerParts, speechNotes, startAnswerSpeech, type AnswerSpeechDeps } from "./answer-speech.js";
+import { playerGoneMs, playLimitMs, playSpareMs, slowPlayerMessage, speakerParts, speechNotes, startAnswerSpeech, type AnswerSpeechDeps, type Filler } from "./answer-speech.js";
 import { killAfterMs, type Player } from "./player.js";
 import type { SpeechEngine } from "./speech.js";
 import type { SpeechReport } from "./speech-queue.js";
+import { spokenOf } from "./wake.js";
 
 function setUp(options: Partial<AnswerSpeechDeps> = {}) {
   const made: string[] = [];
@@ -577,4 +578,265 @@ test("the setting to skip code is kept when the answer starts again", async () =
   await skipping.speech.done();
   assert.deepEqual(skipping.made.slice(-2), ["Run to begin.", "Then rest."]);
   assert.equal(skipping.made.some((sentence) => sentence.includes("npm")), false);
+});
+
+function pretendFiller(waitMs = 1000) {
+  const plays: AbortSignal[] = [];
+  const state = { quiet: true, asked: 0 };
+  let release = () => {};
+  const filler: Filler = {
+    waitMs,
+    checkMs: 2,
+    quiet: () => {
+      state.asked++;
+      return state.quiet;
+    },
+    play: (signal) => {
+      plays.push(signal);
+      return new Promise<void>((resolve) => (release = resolve));
+    },
+  };
+  const until = async (done: () => boolean) => {
+    const by = Date.now() + 3000;
+    while (!done()) {
+      if (Date.now() > by) throw new Error("waited too long");
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+  };
+  const ticks = (count = 3) => {
+    const from = state.asked;
+    return until(() => state.asked >= from + count);
+  };
+  return { filler, plays, state, release: () => release(), until, ticks };
+}
+
+const checks = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+test("after a tool starts, a filler plays once his speech has been quiet for the filler's wait, and only once however long the tool runs", async () => {
+  const { filler, plays, state, release, until, ticks } = pretendFiller();
+  const { speech, made, clock } = setUp({ filler });
+  speech.text("Let me look.");
+  speech.tool();
+  await ticks();
+  assert.deepEqual(made, ["Let me look."], "what he said before the tool is spoken first");
+  clock.at = 9999;
+  await ticks();
+  assert.equal(plays.length, 0, "not before the wait is up");
+  clock.at = 10_000;
+  await until(() => plays.length === 1);
+  const asked = state.asked;
+  await checks();
+  assert.equal(state.asked, asked, "it stops checking once it has played");
+  clock.at = 30_000;
+  await checks();
+  assert.equal(plays.length, 1, "never twice for one tool");
+  speech.text("Found it.");
+  speech.end();
+  release();
+  await speech.done();
+  assert.deepEqual(made, ["Let me look.", "Found it."]);
+  assert.equal(plays[0].aborted, false, "an answer that ends normally lets the filler finish");
+});
+
+test("the filler's wait starts when his speech goes quiet, not when the tool starts", async () => {
+  const { filler, plays, release, until, ticks } = pretendFiller();
+  let made = () => {};
+  const { speech, played, clock } = setUp({ filler, make: () => new Promise<Uint8Array>((resolve) => (made = () => resolve(Uint8Array.of(7)))) });
+  speech.text("Let me look.");
+  speech.tool();
+  await checks();
+  clock.at = 20_000;
+  await checks();
+  assert.equal(plays.length, 0, "not while the sentence before the tool is still being made");
+  made();
+  await ticks();
+  assert.deepEqual(played, [[7]]);
+  clock.at = 20_999;
+  await ticks();
+  assert.equal(plays.length, 0);
+  clock.at = 21_000;
+  await until(() => plays.length === 1);
+  speech.stop();
+  release();
+});
+
+test("words arriving before the wait is up mean the answer is back, so no filler plays, but spaces alone don't", async () => {
+  const { filler, plays, ticks } = pretendFiller();
+  const { speech, clock } = setUp({ filler });
+  speech.tool();
+  await ticks();
+  clock.at += 500;
+  speech.text("Found");
+  clock.at += 5000;
+  await checks();
+  assert.equal(plays.length, 0);
+  speech.stop();
+  const spaces = pretendFiller();
+  const other = setUp({ filler: spaces.filler });
+  other.speech.tool();
+  await spaces.ticks();
+  other.speech.text(" \n ");
+  other.clock.at += 1000;
+  await spaces.until(() => spaces.plays.length === 1);
+  other.speech.stop();
+  spaces.release();
+});
+
+test("a gap, a restart, the end, a finish or a stop before the wait is up means no filler", async () => {
+  for (const action of ["gap", "restart", "end", "finish", "stop"] as const) {
+    const { filler, plays, ticks } = pretendFiller();
+    const { speech, clock } = setUp({ filler });
+    speech.tool();
+    await ticks();
+    speech[action]();
+    clock.at += 5000;
+    await checks();
+    assert.equal(plays.length, 0, action);
+    speech.stop();
+  }
+});
+
+test("a stop while the filler plays cuts it off", async () => {
+  const { filler, plays, release, until, ticks } = pretendFiller();
+  const { speech, clock } = setUp({ filler });
+  speech.tool();
+  await ticks();
+  clock.at += 1000;
+  await until(() => plays.length === 1);
+  assert.equal(plays[0].aborted, false);
+  speech.stop();
+  assert.equal(plays[0].aborted, true);
+  release();
+});
+
+test("each tool gets one chance: one that starts before the last one's filler played starts the wait again, and one after it can have its own", async () => {
+  const { filler, plays, release, until, ticks } = pretendFiller();
+  const { speech, clock } = setUp({ filler });
+  speech.tool();
+  await ticks();
+  clock.at = 9600;
+  speech.tool();
+  await ticks();
+  clock.at = 10_500;
+  await ticks();
+  assert.equal(plays.length, 0);
+  clock.at = 10_600;
+  await until(() => plays.length === 1);
+  release();
+  speech.tool();
+  await ticks();
+  clock.at = 11_600;
+  await until(() => plays.length === 2);
+  speech.stop();
+  release();
+});
+
+test("no filler plays while another sound is still playing or the last answer is still being spoken, and the wait starts once both are done", async () => {
+  const { filler, plays, state, release, until, ticks } = pretendFiller();
+  const { speech, clock } = setUp({ filler });
+  speech.tool();
+  await ticks();
+  clock.at += 500;
+  state.quiet = false;
+  await ticks();
+  clock.at += 5000;
+  await ticks();
+  assert.equal(plays.length, 0);
+  state.quiet = true;
+  await ticks();
+  assert.equal(plays.length, 0, "a sound in between starts the wait again");
+  clock.at += 1000;
+  await until(() => plays.length === 1);
+  speech.stop();
+  release();
+  const behind = pretendFiller();
+  let finished = () => {};
+  const after = new Promise<void>((resolve) => (finished = resolve));
+  const later = setUp({ filler: behind.filler, after });
+  later.speech.tool();
+  await checks();
+  later.clock.at += 5000;
+  await checks();
+  assert.equal(behind.plays.length, 0);
+  assert.equal(behind.state.asked, 0, "not even asked while the last answer is being spoken");
+  finished();
+  await behind.ticks();
+  later.clock.at += 1000;
+  await behind.until(() => behind.plays.length === 1);
+  later.speech.stop();
+  behind.release();
+});
+
+test("without a filler, or once the answer has ended, a tool only hands over what was held back", async () => {
+  const { speech, made } = setUp();
+  speech.text("Let me look");
+  speech.tool();
+  await turn();
+  assert.deepEqual(made, ["Let me look"]);
+  speech.end();
+  await speech.done();
+  const { filler, plays, state } = pretendFiller();
+  const ended = setUp({ filler });
+  ended.speech.end();
+  ended.speech.tool();
+  await checks();
+  ended.clock.at += 5000;
+  await checks();
+  assert.equal(plays.length, 0);
+  assert.equal(state.asked, 0);
+});
+
+test("once his speech has been given up, as after two sentences that couldn't be made, no filler plays, since the wake word is no longer held", async () => {
+  const { filler, plays, state } = pretendFiller();
+  const failing = setUp({ filler, make: async () => Promise.reject(new Error("Kokoro timed out")) });
+  failing.speech.text("One. Two. Three.");
+  failing.speech.tool();
+  await failing.speech.done();
+  assert.equal(failing.speech.report().gaveUp, true);
+  failing.speech.tool();
+  await checks();
+  failing.clock.at += 5000;
+  await checks();
+  assert.equal(plays.length, 0);
+  assert.equal(state.asked, 0);
+  const later = pretendFiller();
+  let fail = (_error: Error) => {};
+  const giving = setUp({ filler: later.filler, make: (sentence) => (sentence === "Fine." ? Promise.resolve(Uint8Array.of(1)) : new Promise<Uint8Array>((_resolve, reject) => (fail = reject))) });
+  giving.speech.text("Fine.");
+  giving.speech.tool();
+  await later.ticks();
+  giving.speech.text("One. Two.");
+  giving.speech.tool();
+  await checks();
+  assert.equal(later.plays.length, 0);
+  fail(new Error("Kokoro timed out"));
+  await turn();
+  fail(new Error("Kokoro timed out"));
+  await giving.speech.done();
+  const asked = later.state.asked;
+  giving.clock.at += 5000;
+  await checks();
+  assert.equal(later.plays.length, 0, "a wait already under way is called off too");
+  assert.ok(later.state.asked <= asked + 1);
+});
+
+test("done waits for a filler that's playing, and gives the same promise while nothing changes, so the wake word's hold can wait on it", async () => {
+  const { filler, release, until, ticks, plays } = pretendFiller();
+  const { speech, clock } = setUp({ filler });
+  assert.equal(speech.done(), speech.done());
+  speech.tool();
+  await ticks();
+  clock.at += 1000;
+  await until(() => plays.length === 1);
+  speech.end();
+  const done = speech.done();
+  assert.equal(speech.done(), done);
+  const spoken = spokenOf(speech)();
+  let over = false;
+  void spoken.then(() => (over = true));
+  await checks();
+  assert.equal(over, false);
+  release();
+  await spoken;
+  await done;
 });

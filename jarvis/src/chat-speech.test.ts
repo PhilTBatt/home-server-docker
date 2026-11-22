@@ -51,6 +51,7 @@ function speaker(events: string[] = [], each: (number: number) => { talking?: bo
     const speech: AnswerSpeech = {
       text: (delta) => note(`text ${delta}`),
       gap: () => note("gap"),
+      tool: () => note("tool"),
       restart: () => note("restart"),
       end: () => note("end"),
       stop: () => {
@@ -178,10 +179,10 @@ test("only the answer's own words are spoken: not the tool notes, other notes, t
     },
   });
   await chat(session, linesOf("Tools"), { speak }).run();
-  assert.deepEqual(made[0].calls, ["made", "text Let me look. ", "gap", "gap", "text Found it.", "end", "stop"]);
+  assert.deepEqual(made[0].calls, ["made", "text Let me look. ", "tool", "gap", "text Found it.", "end", "stop"]);
 });
 
-test("a tool, a note or a yes-or-no question marks a gap, so what he said before it is spoken then and isn't run into what follows", async () => {
+test("a tool, a note or a yes-or-no question marks a gap, so what he said before it is spoken then and isn't run into what follows, and a tool that asks nothing is told apart so a filler can follow it", async () => {
   const events: string[] = [];
   const { speak, made } = speaker(events);
   const session = fakeSession({
@@ -216,9 +217,9 @@ test("a tool, a note or a yes-or-no question marks a gap, so what he said before
     return "no";
   };
   await chat(session, linesOf("Tool", "Action", "Note", "Ask"), { speak, confirm }, events).run();
-  assert.deepEqual(made[0].calls, ["made", "text Let me look.", "gap", "text Found it.", "end", "stop"]);
-  assert.equal(events.indexOf("speech 1 gap") < events.indexOf("tool running"), true);
-  assert.deepEqual(made[1].calls, ["made", "text I'll stop it.", "gap", "text Done.", "end", "stop"]);
+  assert.deepEqual(made[0].calls, ["made", "text Let me look.", "tool", "text Found it.", "end", "stop"]);
+  assert.equal(events.indexOf("speech 1 tool") < events.indexOf("tool running"), true);
+  assert.deepEqual(made[1].calls, ["made", "text I'll stop it.", "gap", "text Done.", "end", "stop"], "a hub action asks first, so it's only a gap");
   assert.deepEqual(made[2].calls, ["made", "text One moment.", "gap", "text No luck.", "end", "stop"]);
   assert.deepEqual(made[3].calls, ["made", "text Shall I?", "gap", "text Left alone.", "end", "stop"]);
   assert.equal(events.indexOf("speech 4 gap") < events.indexOf("question asked"), true);
@@ -398,7 +399,7 @@ test("after an answer that failed, the next question isn't sent until its speech
   const typed = typing();
   let over = () => {};
   const done = new Promise<void>((resolve) => (over = resolve));
-  const speak = (): AnswerSpeech => ({ text: () => {}, gap: () => {}, restart: () => {}, end: () => {}, stop: () => void events.push("stop"), finish: () => false, done: () => (events.includes("ask Again") ? Promise.resolve() : done), report: () => quiet });
+  const speak = (): AnswerSpeech => ({ text: () => {}, gap: () => {}, tool: () => {}, restart: () => {}, end: () => {}, stop: () => void events.push("stop"), finish: () => false, done: () => (events.includes("ask Again") ? Promise.resolve() : done), report: () => quiet });
   const session = fakeSession({ Hello: () => Promise.reject(new Error("the engine fell over")), Again: hello }, events);
   const { run } = chat(session, typed.lines, { speak }, events);
   const running = run();
@@ -604,7 +605,7 @@ test("a new question stops the speech, and that speech is logged before the next
   const speak = (): AnswerSpeech => {
     let release = () => {};
     const done = new Promise<void>((resolve) => (release = resolve));
-    return { text: () => {}, gap: () => {}, restart: () => {}, end: () => {}, stop: () => release(), finish: () => false, done: () => done, report: () => ({ ...quiet, stopped: true }) };
+    return { text: () => {}, gap: () => {}, tool: () => {}, restart: () => {}, end: () => {}, stop: () => release(), finish: () => false, done: () => done, report: () => ({ ...quiet, stopped: true }) };
   };
   const log = { record: async (outcome: Outcome) => void events.push(`recorded ${"answer" in outcome ? outcome.answer.text : "error"}`), recordSpeech: async (report: Promise<SpeechReport>) => void events.push(`speech logged, stopped ${(await report).stopped}`) };
   const { run } = chat(fakeSession({ Hello: hello, Again: hello }, events), linesOf("Hello", "Again"), { speak, ...log }, events);

@@ -59,6 +59,7 @@ export type Config = {
   speechStop: SpeechStop;
   speechBundle: boolean;
   spokenStyle: boolean;
+  filler: boolean;
   ears: EarsMode;
   earsToken: string | null;
   followUp: number | null;
@@ -165,6 +166,8 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (speechBundle !== "on" && speechBundle !== "off") throw new Error(`JARVIS_SPEECH_BUNDLE must be on or off, not "${speechBundle}"`);
   const spokenStyle = env.JARVIS_SPOKEN_STYLE?.trim() || "off";
   if (spokenStyle !== "on" && spokenStyle !== "off") throw new Error(`JARVIS_SPOKEN_STYLE must be on or off, not "${spokenStyle}"`);
+  const filler = env.JARVIS_FILLER?.trim() || "off";
+  if (filler !== "on" && filler !== "off") throw new Error(`JARVIS_FILLER must be on or off, not "${filler}"`);
   const ears = env.JARVIS_EARS?.trim() || "off";
   if (ears !== "off" && ears !== "push" && ears !== "wake") throw new Error(`JARVIS_EARS must be off, push or wake, not "${ears}"`);
   const earsToken = env.EARS_TOKEN?.trim() ?? "";
@@ -176,5 +179,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, log: log === "on" };
 }
