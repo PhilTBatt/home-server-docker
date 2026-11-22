@@ -94,12 +94,39 @@ if [ "$1" = wake-report ]; then
     /^Couldn.t record after the wake word: / { unstarted++ }
     /^A Jarvis chat took the wake-word recording\.$/ { taken++ }
     /^Recording (stopped|failed) after / && kind != "" {
+      cut = 0
       if (/, so it wasn.t sent to Whisper\.$/) quiet[kind]++
-      else if (/: no Jarvis chat took it within /) untaken[kind]++
-      else if (/^Recording failed after / || /: asked to cancel\.$/ || /: muted\.$/ || /: the switch was flipped while it was recording/) off[kind]++
+      else if (/: no Jarvis chat took it within /) { untaken[kind]++; cut = 1 }
+      else if (/^Recording failed after / || /: asked to cancel\.$/ || /: muted\.$/ || /: the switch was flipped while it was recording/) { off[kind]++; cut = 1 }
+    }
+    /^Speech in it: first heard after [0-9.]+ seconds?, [0-9.]+ seconds? of speech, longest pause between words [0-9.]+ seconds?\.$/ && kind != "" && !cut {
+      measured[kind]++
+      first[kind, measured[kind]] = $7 + 0
+      amount[kind, measured[kind]] = $9 + 0
+      pause[kind, measured[kind]] = $17 + 0
     }
     /^Turned into text in / && kind != "" { text[kind]++ }
     /^(Not turned into text|Couldn.t turn it into text): / && kind != "" { untext[kind]++ }
+    function sort(k, which, count,   i, j, value) {
+      for (i = 1; i <= count; i++) {
+        value = which == "first" ? first[k, i] : which == "amount" ? amount[k, i] : pause[k, i]
+        for (j = i - 1; j >= 1 && list[j] > value; j--) list[j + 1] = list[j]
+        list[j + 1] = value
+      }
+    }
+    function median(count) {
+      return count % 2 == 1 ? list[(count + 1) / 2] : (list[count / 2] + list[count / 2 + 1]) / 2
+    }
+    function speech(k, name,   count, line) {
+      count = measured[k] + 0
+      if (count == 0) return sprintf("- Speech in %s: none measured yet.", name)
+      sort(k, "first", count)
+      line = sprintf("- Speech in %s, from %d with speech (leaving out any cut short): first heard after a median of %.1f s (%.1f to %.1f s)", name, count, median(count), list[1], list[count])
+      sort(k, "amount", count)
+      line = line sprintf("; a median of %.1f s of speech", median(count))
+      sort(k, "pause", count)
+      return line sprintf("; longest pause between words a median of %.1f s, at most %.1f s.", median(count), list[count])
+    }
     function outcomes(k) {
       return sprintf("cancelled, muted or failed, %d; turned into text, %d; not turned into text after all, %d.", off[k], text[k], untext[k])
     }
@@ -109,6 +136,8 @@ if [ "$1" = wake-report ]; then
       printf "- Wake recordings: %d, and %d that failed to start. A chat took %d, and no chat took %d in time. Of them: no speech in time, so not sent to Whisper (a false wake, or nothing said after it), %d; %s\n", started["wake"], unstarted, taken, untaken["wake"], quiet["wake"], outcomes("wake")
       printf "- Follow-up windows: %d. Of them: no speech in time, %d; %s\n", started["follow"], quiet["follow"], outcomes("follow")
       printf "- Other recordings (/talk, or ask.js start): %d. Of them: %s\n", started["other"], outcomes("other")
+      print speech("wake", "wake recordings")
+      print speech("follow", "follow-up windows")
     }' <<< "$log"
   exit 0
 fi

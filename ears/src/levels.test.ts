@@ -66,6 +66,27 @@ test("frames are cut from sound however it arrives, and the leftover waits for t
   assert.deepEqual(whole.push(steady(250, 800)), [250]);
 });
 
+test("the speech check measures when speech was first heard, how much there was and the longest pause between words, leaving out the stretch it ignores and the quiet that ended it", () => {
+  const end = createSpeechEnd({ settleMs: 0, quietForMs: 1500 });
+  assert.equal(end.heard(), null);
+  for (const speech of [false, false, false, true, true, false, false, false, false, true, false]) end.push(speech);
+  assert.deepEqual(end.heard(), { firstMs: 400, speechMs: 300, longestPauseMs: 400 });
+  const ignoring = createSpeechEnd();
+  for (const speech of [true, true, true, true, true, true, true, true, false, true, true]) ignoring.push(speech);
+  assert.deepEqual(ignoring.heard(), { firstMs: 1000, speechMs: 200, longestPauseMs: 0 });
+  const ended = createSpeechEnd({ settleMs: 0, quietForMs: 300 });
+  let over = null;
+  for (const speech of [true, false, true, false, false, false]) over ??= ended.push(speech);
+  assert.equal(over?.spoke, true);
+  assert.deepEqual(ended.heard(), { firstMs: 100, speechMs: 200, longestPauseMs: 100 });
+  const silent = createSpeechEnd({ settleMs: 0 });
+  for (let frame = 0; frame < 60; frame++) silent.push(false);
+  assert.equal(silent.heard(), null);
+  const louder = createQuietEnd({ speakingAbove: 300, settleMs: 0 });
+  for (const level of [100, 400, 200, 300, 500]) louder.push(level);
+  assert.deepEqual(louder.heard(), { firstMs: 200, speechMs: 200, longestPauseMs: 200 });
+});
+
 function run(quiet: ReturnType<typeof createQuietEnd>, levels: number[]): { at: number | null; why: string | null; spoke?: boolean } {
   for (const [index, level] of levels.entries()) {
     const ended = quiet.push(level);

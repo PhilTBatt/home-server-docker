@@ -1,5 +1,5 @@
 import type { Microphone } from "./config.js";
-import type { Ender } from "./levels.js";
+import type { Ender, SpeechHeard } from "./levels.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { By } from "./tap.js";
 import type { ToText } from "./whisper.js";
@@ -42,6 +42,10 @@ export function secondsText(ms: number): string {
 
 function stoppedLine(stopped: Stopped): string {
   return `Recording ${stopped.failed ? "failed" : "stopped"} after ${secondsText(stopped.ms)}: ${stopped.reason}.`;
+}
+
+export function speechLine(speech: SpeechHeard): string {
+  return `Speech in it: first heard after ${secondsText(speech.firstMs)}, ${secondsText(speech.speechMs)} of speech, longest pause between words ${secondsText(speech.longestPauseMs)}.`;
 }
 
 function problem(error: unknown): string {
@@ -100,6 +104,7 @@ export function createEars(deps: EarsDeps): Ears {
       claimTimer = null;
     }
     deps.log(stoppedLine(stopped));
+    if (stopped.speech !== undefined) deps.log(speechLine(stopped.speech));
     changed();
   };
   const toText = (stopped: Stopped): Promise<void> => {

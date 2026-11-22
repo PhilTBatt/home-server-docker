@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cancelledBeforeText, claimMs, clearedByCancel, clearedByMute, createEars, failedBeforeText, flippedBeforeText, movedOn, mutedBeforeText, notTakenWhy, secondsText, startsMuted, thatOneEnded } from "./ears.js";
+import { cancelledBeforeText, claimMs, clearedByCancel, clearedByMute, createEars, failedBeforeText, flippedBeforeText, movedOn, mutedBeforeText, notTakenWhy, secondsText, speechLine, startsMuted, thatOneEnded } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { ToText } from "./whisper.js";
 
@@ -73,6 +73,22 @@ test("ears starts muted, says why, and refuses to record", () => {
   assert.deepEqual(ears.view(), { state: "muted", reason: startsMuted, microphone: "pretend", last: null });
   assert.deepEqual(ears.start(), { ok: false, error: "ears is muted" });
   assert.deepEqual([lines, recordings.length], [[], 0]);
+});
+
+test("a recording whose speech was measured logs a line of its own after the stop, with when speech was first heard, how much and the longest pause, never the words", async () => {
+  const lines: string[] = [];
+  let end: (stopped: Stopped) => void = () => {};
+  const ears = createEars({
+    microphone: "pretend",
+    record: () => ({ pid: 1, ended: new Promise<Stopped>((resolve) => (end = resolve)), stop: () => new Promise<Stopped>(() => {}) }),
+    log: (line) => lines.push(line),
+  });
+  ears.unmute();
+  ears.start();
+  end({ reason: "it went quiet for 1.5 seconds after you spoke", failed: false, bytes: 2, ms: 4200, sound: Uint8Array.of(1, 2), speech: { firstMs: 1300, speechMs: 2100, longestPauseMs: 900 } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(lines.slice(-2), ["Recording stopped after 4.2 seconds: it went quiet for 1.5 seconds after you spoke.", "Speech in it: first heard after 1.3 seconds, 2.1 seconds of speech, longest pause between words 0.9 seconds."]);
+  assert.equal(speechLine({ firstMs: 1000, speechMs: 100, longestPauseMs: 0 }), "Speech in it: first heard after 1 second, 0.1 seconds of speech, longest pause between words 0 seconds.");
 });
 
 test("unmuted, it records when asked and stops when asked, logging the start, the stop, why and how long, never the sound", async () => {

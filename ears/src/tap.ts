@@ -1,4 +1,4 @@
-import { createCutter, createFrames, frameLevel, type Ender, type QuietEnd, type SpeechEnd } from "./levels.js";
+import { createCutter, createFrames, frameLevel, type Ender, type QuietEnd, type SpeechEnd, type SpeechHeard } from "./levels.js";
 import { bytesPerSecond, recordingLimitMs, type Recording, type Stopped } from "./recorder.js";
 import { heardSpeech, type Detector } from "./silero.js";
 
@@ -15,6 +15,11 @@ export type TapOptions = { by: By; limitMs?: number; maxBytes?: number; before?:
 function reasonOf(error: unknown): string {
   const text = (error instanceof Error ? error.message : String(error)).replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/ {2,}/g, " ").trim();
   return text.length > 200 ? `${text.slice(0, 199)}…` : text;
+}
+
+function speechOf(options: TapOptions): { speech?: SpeechHeard } {
+  const speech = options.judged?.end.heard() ?? options.quiet?.heard() ?? null;
+  return speech === null ? {} : { speech };
 }
 
 export function startTap(options: TapOptions): Tap {
@@ -47,7 +52,7 @@ export function startTap(options: TapOptions): Tap {
       at += piece.length;
     }
     pieces.length = 0;
-    over = { reason, failed, bytes, ms: now() - began, sound: sound.subarray(0, sound.length - (sound.length % 2)), ...(unheard ? { unheard: true as const } : {}), ...(options.ender === undefined ? {} : { ender: options.ender }), ...(options.pauseMs === undefined ? {} : { pauseMs: options.pauseMs }) };
+    over = { reason, failed, bytes, ms: now() - began, sound: sound.subarray(0, sound.length - (sound.length % 2)), ...(unheard ? { unheard: true as const } : {}), ...(options.ender === undefined ? {} : { ender: options.ender }), ...(options.pauseMs === undefined ? {} : { pauseMs: options.pauseMs }), ...speechOf(options) };
     finish(over);
     return ended;
   }

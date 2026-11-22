@@ -64,11 +64,13 @@ export type Ender = (typeof enders)[number];
 
 export type QuietEnded = { reason: string; spoke: boolean };
 
-export type SpeechEnd = { push(speech: boolean, by?: Ender): QuietEnded | null };
+export type SpeechHeard = { firstMs: number; speechMs: number; longestPauseMs: number };
+
+export type SpeechEnd = { push(speech: boolean, by?: Ender): QuietEnded | null; heard(): SpeechHeard | null };
 
 export type SpeechEndOptions = { by?: Ender; settleMs?: number; startWithinMs?: number; quietForMs?: number };
 
-export type QuietEnd = { push(level: number): QuietEnded | null };
+export type QuietEnd = { push(level: number): QuietEnded | null; heard(): SpeechHeard | null };
 
 export type QuietOptions = { speakingAbove: number; settleMs?: number; startWithinMs?: number; quietForMs?: number };
 
@@ -83,19 +85,28 @@ export function createSpeechEnd(options: SpeechEndOptions = {}): SpeechEnd {
   const quietFor = options.quietForMs ?? quietForMs;
   let heard = 0;
   let lastSpeech: number | null = null;
+  let firstSpeech: number | null = null;
+  let speechFrames = 0;
+  let longestPause = 0;
   return {
     push(speech, by = options.by) {
       const detector = by === "silero";
       heard += frameMs;
-      if (heard > settle && speech) lastSpeech = heard;
+      if (heard > settle && speech) {
+        if (lastSpeech !== null) longestPause = Math.max(longestPause, heard - lastSpeech - frameMs);
+        firstSpeech ??= heard;
+        speechFrames++;
+        lastSpeech = heard;
+      }
       if (lastSpeech !== null && heard - lastSpeech >= quietFor) return { reason: detector ? `the speech detector heard no speech for ${secondsOf(quietFor)} after you spoke` : `it went quiet for ${secondsOf(quietFor)} after you spoke`, spoke: true };
       if (lastSpeech === null && heard >= startWithin) return { reason: detector ? `the speech detector heard no speech within ${secondsOf(startWithin)}, so it wasn't sent to Whisper` : `nothing loud enough to be speech came within ${secondsOf(startWithin)}, so it wasn't sent to Whisper`, spoke: false };
       return null;
     },
+    heard: () => (firstSpeech === null ? null : { firstMs: firstSpeech, speechMs: speechFrames * frameMs, longestPauseMs: longestPause }),
   };
 }
 
 export function createQuietEnd(options: QuietOptions): QuietEnd {
   const end = createSpeechEnd(options);
-  return { push: (level) => end.push(level > options.speakingAbove) };
+  return { push: (level) => end.push(level > options.speakingAbove), heard: end.heard };
 }

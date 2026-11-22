@@ -87,6 +87,28 @@ test("a wake tap ends itself when its quiet check says so, keeping the sound up 
   assert.equal((await tap.ended).sound.length, frameBytes * 6);
 });
 
+test("a wake tap's stop carries what its speech check measured, only once it has heard speech, and a push tap's carries none", { timeout: 5_000 }, async () => {
+  const tap = startTap({ by: "wake", quiet: createQuietEnd({ speakingAbove: 300, settleMs: 0, quietForMs: 300 }) });
+  tap.push(loud(0));
+  tap.push(loud(1000, 2));
+  tap.push(loud(0));
+  tap.push(loud(1000));
+  tap.push(loud(0, 3));
+  assert.deepEqual((await tap.ended).speech, { firstMs: 200, speechMs: 300, longestPauseMs: 100 });
+  const silent = startTap({ by: "follow", quiet: createQuietEnd({ speakingAbove: 300, settleMs: 0, startWithinMs: 300 }) });
+  silent.push(loud(0, 3));
+  assert.equal("speech" in (await silent.ended), false);
+  const early = startTap({ by: "wake", quiet: createQuietEnd({ speakingAbove: 300, settleMs: 0 }) });
+  early.push(loud(0, 2));
+  assert.equal("speech" in (await early.stop("asked to stop")), false);
+  const spoken = startTap({ by: "wake", quiet: createQuietEnd({ speakingAbove: 300, settleMs: 0 }) });
+  spoken.push(loud(1000));
+  assert.deepEqual((await spoken.stop("asked to cancel")).speech, { firstMs: 100, speechMs: 100, longestPauseMs: 0 });
+  const push = startTap({ by: "push" });
+  push.push(loud(1000, 3));
+  assert.equal("speech" in (await push.stop("asked to stop")), false);
+});
+
 test("a tap's quiet check sees frames cut across pushes, and a push tap has no quiet check", { timeout: 5_000 }, async () => {
   const tap = startTap({ by: "wake", quiet: createQuietEnd({ speakingAbove: 300, settleMs: 0, quietForMs: 200 }) });
   const sound = new Uint8Array([...loud(1000), ...loud(0, 2)]);
@@ -143,6 +165,7 @@ test("a wake tap with the speech detector ends when it hears no speech for long 
   const stopped = await tap.ended;
   assert.deepEqual([stopped.reason, stopped.unheard, stopped.ender, stopped.sound.length], ["the speech detector heard no speech for 0.3 seconds after you spoke", undefined, "silero", frameBytes * 5]);
   assert.deepEqual(judged, [1000, 1000, 5, 5, 5]);
+  assert.deepEqual(stopped.speech, { firstMs: 100, speechMs: 200, longestPauseMs: 0 }, "the detector's tenths are measured too");
 });
 
 test("the speech detector judges loud sound that isn't speech as quiet, so a fan or the kettle doesn't keep a recording going", { timeout: 5_000 }, async () => {

@@ -506,7 +506,8 @@ The microphone is open.
 Heard the wake word. The room's background is 258, so speech is anything above 774.
 Recording started by the wake word.
 A Jarvis chat took the wake-word recording.
-Recording stopped after 3.2 seconds: the speech detector heard no speech for 2.5 seconds after you spoke.
+Recording stopped after 6.8 seconds: the speech detector heard no speech for 2.5 seconds after you spoke.
+Speech in it: first heard after 1.3 seconds, 2.1 seconds of speech, longest pause between words 0.9 seconds.
 Turned into text in 0.8 seconds.
 Recording started to hear a follow-up.
 Recording stopped after 5.1 seconds: the speech detector heard no speech within 5 seconds, so it wasn't sent to Whisper.
@@ -517,6 +518,7 @@ Recording stopped after 5.8 seconds: nothing loud enough to be speech came withi
 Heard the wake word. The room's background is 300, so speech is anything above 900.
 Recording started by the wake word.
 Recording stopped after 2 seconds: no Jarvis chat took it within 2 seconds.
+Speech in it: first heard after 0.9 seconds, 0.5 seconds of speech, longest pause between words 0 seconds.
 Heard the wake word, but too late to trust (2909 ms behind), so it was ignored.
 Heard the wake word, but too late to trust (no time given), so it was ignored.
 Heard the wake word, but too late to trust (its time is 995999 ms ahead of the sound sent), so it was ignored.
@@ -526,17 +528,21 @@ Couldn't record after the wake word: ears is already recording.
 Heard the wake word. The room's background is 200, so speech is anything above 600.
 Recording started by the wake word.
 A Jarvis chat took the wake-word recording.
-Recording stopped after 6 seconds: the speech detector heard no speech for 2.5 seconds after you spoke.
+Recording stopped after 7 seconds: the speech detector heard no speech for 2.5 seconds after you spoke.
+Speech in it: first heard after 0.9 seconds, 2.9 seconds of speech, longest pause between words 0.3 seconds.
 Couldn't turn it into text: Whisper sent no text.
 Recording started to hear a follow-up.
 Recording stopped after 4 seconds: the speech detector heard no speech for 2.5 seconds after you spoke.
+Speech in it: first heard after 1 second, 0.4 seconds of speech, longest pause between words 0 seconds.
 Turned into text in 0.9 seconds.
 Recording started to hear a follow-up.
 Recording stopped after 1.2 seconds: asked to cancel.
+Speech in it: first heard after 0.6 seconds, 0.4 seconds of speech, longest pause between words 0.2 seconds.
 Heard the wake word. The room's background is 200, so speech is anything above 600.
 Recording started by the wake word.
 A Jarvis chat took the wake-word recording.
 Recording stopped after 2.4 seconds: muted.
+Speech in it: first heard after 0.9 seconds, 1.2 seconds of speech, longest pause between words 0.3 seconds.
 Muted.
 The microphone is closed: ears is muted.
 Unmuted.
@@ -565,7 +571,9 @@ LOG
 expected_report='- "Hey Jarvis" heard: 8. Ignored: 3 as too late to trust (or with no usable time), 1 that came after ears stopped listening.
 - Wake recordings: 7, and 1 that failed to start. A chat took 6, and no chat took 1 in time. Of them: no speech in time, so not sent to Whisper (a false wake, or nothing said after it), 1; cancelled, muted or failed, 3; turned into text, 1; not turned into text after all, 1.
 - Follow-up windows: 3. Of them: no speech in time, 1; cancelled, muted or failed, 1; turned into text, 1; not turned into text after all, 0.
-- Other recordings (/talk, or ask.js start): 4. Of them: cancelled, muted or failed, 1; turned into text, 1; not turned into text after all, 2.'
+- Other recordings (/talk, or ask.js start): 4. Of them: cancelled, muted or failed, 1; turned into text, 1; not turned into text after all, 2.
+- Speech in wake recordings, from 2 with speech (leaving out any cut short): first heard after a median of 1.1 s (0.9 to 1.3 s); a median of 2.5 s of speech; longest pause between words a median of 0.6 s, at most 0.9 s.
+- Speech in follow-up windows, from 1 with speech (leaving out any cut short): first heard after a median of 1.0 s (1.0 to 1.0 s); a median of 0.4 s of speech; longest pause between words a median of 0.0 s, at most 0.0 s.'
 fresh
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report)
 check "wake-report counts what ears's log says about the wake word, its recordings and follow-ups, in the whole log" "0|In ears's whole log, which goes back to when its container was last made:
@@ -584,6 +592,8 @@ done
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/empty-log.txt" with_fakes wake-report)
 check "an empty log reports nothing heard" "0|In ears's whole log, which goes back to when its container was last made:
 - \"Hey Jarvis\" heard: 0. Ignored: 0 as too late to trust (or with no usable time), 0 that came after ears stopped listening." "$?|$(head -2 <<< "$output")"
+check "and says no speech has been measured yet" "- Speech in wake recordings: none measured yet.
+- Speech in follow-up windows: none measured yet." "$(tail -2 <<< "$output")"
 output=$(FAKE_EARS_LOG="$report_log" with_fakes wake-report)
 check "with no ears container, it says to start ears, and doesn't ask for a log" "1|Ears has no log yet. Start it with bash host/ears.sh start.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" DOCKER_EXIT=1 with_fakes wake-report)
