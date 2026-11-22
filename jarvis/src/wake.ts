@@ -7,7 +7,7 @@ export const retryMs = 2_000;
 export const holdEveryMs = 5_000;
 export const busyClaimMs = 1_000;
 
-export type WakeEvent = { kind: "wake"; id: number; follow?: true } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string } | { kind: "late"; behindMs: number | null };
+export type WakeEvent = { kind: "wake"; id: number; follow?: true; button?: true } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string } | { kind: "late"; behindMs: number | null };
 
 export const oldEarsLine = "off: this ears doesn't know the wake word yet, so start it again with bash host/ears.sh start, which rebuilds it";
 export const oldFollowWhy = "this ears doesn't know follow-ups yet, so start it again with bash host/ears.sh start, which rebuilds it";
@@ -145,8 +145,9 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
         if (lateSeen !== null && lateSeen.run === run && late.count > lateSeen.count) yield { kind: "late", behindMs: late.behindMs };
         lateSeen = { run, count: late.count };
       }
-      if (taken === null && answer.current?.by === "wake" && !answer.current.claimed) {
+      if (taken === null && (answer.current?.by === "wake" || answer.current?.by === "button") && !answer.current.claimed) {
         const id: number = answer.current.id;
+        const button = answer.current.by === "button";
         let claimed: EarsAnswer | null = null;
         if (deps.busy?.() === true) {
           await wait(deps.busyClaimMs ?? busyClaimMs, deps.signal);
@@ -159,14 +160,14 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
         }
         if (claimed?.status === 200) {
           taken = { id, endedAt: null };
-          yield { kind: "wake", id };
+          yield button ? { kind: "wake", id, button: true } : { kind: "wake", id };
           answer = claimed;
         }
       }
       if (taken === null) continue;
       if (answer.state === "recording" && answer.current?.id === taken.id) continue;
       taken.endedAt ??= now();
-      if (answer.state === "working") continue;
+      if (answer.state === "working" || (answer.state === "recording" && answer.lastId === taken.id && (answer.current ?? null) === null)) continue;
       const done = taken;
       taken = null;
       yield { kind: "done", id: done.id, answer, textMs: now() - (done.endedAt ?? now()) };

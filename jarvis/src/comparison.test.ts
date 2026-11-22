@@ -853,6 +853,17 @@ test("the ears line counts follow-ups beside the wake word's questions, and spli
   for (const follow of [false, "yes", 1, null]) assert.equal(isLogLine({ ...line(), heard: { recordedMs: 1, textMs: 1, follow } }), false, JSON.stringify(follow));
 });
 
+test("the ears line counts talk-button questions beside the wake word's and follow-ups, calls them all spoken questions in the splits, and a button that isn't exactly true makes the line untrusted", () => {
+  const asked = (question: number, recordedMs: number, how: { wake?: true; follow?: true; button?: true }, ender: "loudness" | "silero", pauseMs = 2500) => line({ question, heard: { recordedMs, textMs: 900, ...how, ender, pauseMs } });
+  const all = compareReport({ lines: [asked(1, 3000, { wake: true }, "loudness", 1500), asked(2, 2000, { button: true }, "silero"), asked(3, 4000, { button: true }, "silero"), asked(4, 5000, { follow: true }, "silero")], skipped: 0 });
+  assert.equal(all.includes("\n4 questions were asked through ears, 1 with the wake word, 2 with the talk button, 1 follow-up. Recording"), true, all);
+  assert.equal(all.includes(" Split by how ears was set to end them: 1 spoken question on loudness, recording 3.00 s (3.00 s); 3 spoken questions on the speech detector, recording 4.00 s (5.00 s). Split by the pause that ends them: 1 spoken question at 1.5 s, recording 3.00 s (3.00 s); 3 spoken questions at 2.5 s, recording 4.00 s (5.00 s).\n"), true, all);
+  const pressed = compareReport({ lines: [asked(1, 3000, { button: true }, "silero")], skipped: 0 });
+  assert.equal(pressed.includes("\n1 question was asked through ears, 1 with the talk button. Recording 3.00 s"), true, pressed);
+  assert.equal(isLogLine(line({ heard: { recordedMs: 1, textMs: 1, button: true, ender: "silero" } })), true);
+  for (const button of [false, "yes", 1, null]) assert.equal(isLogLine({ ...line(), heard: { recordedMs: 1, textMs: 1, button } }), false, JSON.stringify(button));
+});
+
 test("spoken questions are split by the pause that ended them once two pauses appear, after the split by ender, and a pause that isn't a whole number of milliseconds above 0 makes the line untrusted", () => {
   const asked = (question: number, recordedMs: number, pauseMs: number | undefined, how: { wake?: true; follow?: true } = { wake: true }) => line({ question, heard: { recordedMs, textMs: 900, ...how, ender: "silero", ...(pauseMs === undefined ? {} : { pauseMs }) } });
   const two = compareReport({ lines: [asked(1, 6000, 2500), asked(2, 3000, 1500), asked(3, 5000, 1500), asked(4, 4000, undefined)], skipped: 0 });

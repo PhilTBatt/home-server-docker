@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
 import { createEars, type Ears } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
-import { earsPort, followWithinMs, startEarsServer, tokenMatches, wakeOffError, type WakeApi } from "./server.js";
+import { alreadyListening, earsHandler, earsPort, followWithinMs, notTakenAtAll, notTakenYet, stillSending, startEarsServer, takenWithinMs, tokenMatches, wakeOffError, type WakeApi } from "./server.js";
 
 const token = "t".repeat(64);
 
@@ -158,12 +158,13 @@ function wakeApi(ears: Ears, on = true) {
     hold: (by) => (calls.push(`hold ${by}`), on),
     release: (by) => (calls.push(`release ${by}`), on),
     follow: (withinMs) => (calls.push(`follow ${withinMs}`), on ? ears.start("follow") : { ok: false, error: wakeOffError }),
+    press: () => (calls.push("press"), on ? ears.start("button") : { ok: false, error: wakeOffError }),
   };
   return { api, calls, waits, bump: () => (version++, release()) };
 }
 
-async function serveWake(on = true) {
-  const ears = createEars({ microphone: "pretend", record: quickRecording, log: () => {} });
+async function serveWake(on = true, heard = { now: true }, claimAfterMs?: number) {
+  const ears = createEars({ microphone: "pretend", record: () => ({ ...quickRecording(), speechHeard: () => heard.now }), log: () => {}, claimMs: claimAfterMs });
   const wake = wakeApi(ears, on);
   const server = await startEarsServer(ears, token, 0, "127.0.0.1", wake.api);
   stillOpen.add(() => closed(server));
@@ -177,13 +178,13 @@ async function serveWake(on = true) {
 
 test("without the wake word's routes, they don't exist", async () => {
   const { server, call } = await serve();
-  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold"], ["POST", "/wake/release"], ["POST", "/wake/follow?within=5000"]]) assert.equal((await call(method, path)).status, 404, path);
+  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold"], ["POST", "/wake/release"], ["POST", "/wake/follow?within=5000"], ["POST", "/wake/talk"]]) assert.equal((await call(method, path)).status, 404, path);
   await closed(server);
 });
 
 test("the wake word's routes need the token too", async () => {
   const { server, base } = await serveWake();
-  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold?by=aa"], ["POST", "/wake/release?by=aa"], ["POST", "/wake/follow?within=5000"]]) {
+  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold?by=aa"], ["POST", "/wake/release?by=aa"], ["POST", "/wake/follow?within=5000"], ["POST", "/wake/talk"]]) {
     const response = await fetch(`${base}${path}`, { method });
     assert.equal(response.status, 401, path);
     await response.body?.cancel();
@@ -296,4 +297,140 @@ test("hold and release pass on who holds, and with the wake word off they're ref
   assert.equal(wakeOffError, "ears has the wake word off, so set EARS_WAKE=on in ears/.env and start it again with bash host/ears.sh start");
   assert.equal((await off.call("POST", "/wake/release?by=a")).status, 409);
   await closed(off.server);
+});
+
+test("a talk-button press starts a recording a chat can take, and a second press once it's taken and has heard speech sends it", async () => {
+  const heard = { now: false };
+  const { server, ears, wake, call } = await serveWake(true, heard);
+  await ears.unmute();
+  const pressing = call("POST", "/wake/talk");
+  for (let tries = 0; ears.current() === null && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(ears.current(), { id: 1, by: "button", claimed: false });
+  const early = await call("POST", "/wake/talk");
+  assert.deepEqual([early.status, early.body.error, early.body.version, ears.view().state], [409, notTakenYet, 3, "recording"], "a press before a chat has taken it changes nothing");
+  assert.equal(notTakenYet, "no Jarvis chat has taken the recording yet, so there's nothing to send it to. Press again in a moment");
+  assert.equal((await call("POST", "/wake/claim?id=1")).status, 200);
+  const first = await pressing;
+  assert.deepEqual([first.status, first.body.sent, first.body.id, first.body.state, first.body.lastId], [200, false, 1, "recording", null], "the first press answers once a chat has taken it");
+  const quiet = await call("POST", "/wake/talk");
+  assert.deepEqual([quiet.status, quiet.body.error, ears.view().state], [409, alreadyListening, "recording"], "before any speech, a press just says it's listening");
+  heard.now = true;
+  const second = await call("POST", "/wake/talk");
+  assert.deepEqual([second.status, second.body.sent, second.body.seconds, second.body.state, second.body.lastId, second.body.last.reason], [200, true, 2, "idle", 1, "asked to stop"]);
+  assert.deepEqual(wake.calls, ["press"], "only the first press asked for a new recording");
+  await closed(server);
+});
+
+test("a press during a wake or follow-up recording says it's already listening and changes nothing, during /talk's own recording is refused by ears, and with the wake word off says so", async () => {
+  const { server, ears, wake, call } = await serveWake();
+  await ears.unmute();
+  assert.equal(ears.start("follow").ok, true);
+  const following = await call("POST", "/wake/talk");
+  assert.deepEqual([following.status, following.body.error, ears.view().state, ears.current()?.id], [409, alreadyListening, "recording", 1]);
+  assert.equal(alreadyListening, "ears is already listening, so just speak: it sends what you say when you stop talking");
+  await ears.stop(1);
+  assert.equal(ears.start("wake").ok, true);
+  ears.claim(2);
+  const woken = await call("POST", "/wake/talk");
+  assert.deepEqual([woken.status, woken.body.error, ears.view().state, ears.current()?.id], [409, alreadyListening, "recording", 2]);
+  await ears.stop(2);
+  assert.equal(ears.start("push").ok, true);
+  const pushed = await call("POST", "/wake/talk");
+  assert.deepEqual([pushed.status, pushed.body.error, ears.view().state, wake.calls], [409, "ears is already recording", "recording", ["press"]]);
+  await ears.stop(3);
+  await closed(server);
+  const off = await serveWake(false);
+  await off.ears.unmute();
+  const refused = await off.call("POST", "/wake/talk");
+  assert.deepEqual([refused.status, refused.body.error, off.ears.view().state], [409, wakeOffError, "idle"]);
+  assert.equal((await off.call("GET", "/wake/talk")).status, 405);
+  await closed(off.server);
+});
+
+test("a press while ears is still sending the last recording says so, and starts nothing", async () => {
+  let finish: (stopped: Stopped) => void = () => {};
+  const slow: Recording = { pid: 7, ended: new Promise<Stopped>((resolve) => (finish = resolve)), stop: (reason) => (finish({ reason, failed: false, bytes: 64000, ms: 2000, sound: Uint8Array.of(1, 2) }), slow.ended) };
+  let release: (text: string) => void = () => {};
+  const ears = createEars({ microphone: "pretend", record: () => slow, log: () => {}, toText: () => new Promise<string>((resolve) => (release = resolve)) });
+  const wake = wakeApi(ears);
+  const server = await startEarsServer(ears, token, 0, "127.0.0.1", wake.api);
+  stillOpen.add(() => closed(server));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const call = async () => {
+    const response = await fetch(`${base}/wake/talk`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+    return { status: response.status, body: await response.json() };
+  };
+  await ears.unmute();
+  assert.equal(ears.start("push").ok, true);
+  const stopping = ears.stop(1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ears.view().state, "working");
+  const pressed = await call();
+  assert.deepEqual([pressed.status, pressed.body.error, wake.calls], [409, stillSending, []]);
+  assert.equal(stillSending, "ears is still sending the last recording, so press again in a moment");
+  release("Hi.");
+  await stopping;
+  await closed(server);
+});
+
+test("a press no chat takes is answered once ears has dropped it, saying so, and ears waits about a second longer than its claim time at most", async () => {
+  const { server, ears, call } = await serveWake(true, { now: true }, 60);
+  await ears.unmute();
+  const began = performance.now();
+  const pressed = await call("POST", "/wake/talk");
+  assert.deepEqual([pressed.status, pressed.body.error, ears.view().state, ears.view().last?.reason], [409, notTakenAtAll, "idle", "no Jarvis chat took it within 2 seconds"]);
+  assert.ok(performance.now() - began < 1000, "it answers as soon as ears drops it");
+  assert.equal(notTakenAtAll, "no Jarvis chat took the recording, so it was dropped. A chat needs JARVIS_EARS=wake, and one started before the talk button was added needs starting again");
+  assert.equal(takenWithinMs, 3000);
+  await closed(server);
+});
+
+test("a press while a sent recording is still ending says ears is still sending, and starts nothing", async () => {
+  let finish: (stopped: Stopped) => void = () => {};
+  const slow: Recording = { pid: 7, ended: new Promise<Stopped>((resolve) => (finish = resolve)), stop: () => slow.ended, speechHeard: () => true };
+  const ears = createEars({ microphone: "pretend", record: () => slow, log: () => {} });
+  const wake = wakeApi(ears);
+  const server = await startEarsServer(ears, token, 0, "127.0.0.1", wake.api);
+  stillOpen.add(() => closed(server));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const call = async () => {
+    const response = await fetch(`${base}/wake/talk`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+    return { status: response.status, body: await response.json() };
+  };
+  await ears.unmute();
+  assert.equal(ears.start("button").ok, true);
+  ears.claim(1);
+  const sending = call();
+  for (let tries = 0; !ears.stopping() && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual([ears.stopping(), ears.view().state, ears.current()?.id], [true, "recording", 1]);
+  const pressed = await call();
+  assert.deepEqual([pressed.status, pressed.body.error, wake.calls], [409, stillSending, []]);
+  finish({ reason: "asked to stop", failed: false, bytes: 3200, ms: 1000, sound: Uint8Array.of(1, 2) });
+  assert.equal((await sending).body.sent, true);
+  assert.equal(ears.stopping(), false);
+  await closed(server);
+});
+
+test("a press nobody takes is given up on after the time set, even if ears hasn't dropped it, and once a chat takes it, it's answered at once", async () => {
+  const ears = createEars({ microphone: "pretend", record: quickRecording, log: () => {}, claimMs: 60_000 });
+  const wake = wakeApi(ears);
+  const server = createServer(earsHandler(ears, token, wake.api, { takenWithinMs: 150, everyMs: 5 }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  stillOpen.add(() => closed(server));
+  const press = async () => {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/wake/talk`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+    return { status: response.status, body: await response.json() };
+  };
+  await ears.unmute();
+  const began = performance.now();
+  const lonely = await press();
+  assert.deepEqual([lonely.status, lonely.body.error, ears.current()?.claimed], [409, notTakenAtAll, false]);
+  assert.ok(performance.now() - began >= 140);
+  await ears.cancel(1);
+  const pressing = press();
+  for (let tries = 0; ears.current() === null && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 2));
+  ears.claim(2);
+  assert.deepEqual([(await pressing).status, ears.current()?.claimed], [200, true]);
+  await ears.cancel(2);
+  await closed(server);
 });

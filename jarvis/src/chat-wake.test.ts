@@ -3,10 +3,10 @@ import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import { logLine, type LogContext, type Outcome } from "./answer-log.js";
 import type { AnswerSpeech } from "./answer-speech.js";
-import { chatInputs, droppedNote, lateNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
+import { buttonListeningNote, chatInputs, droppedNote, lateNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
 import type { EarsAnswer } from "./ears-client.js";
 import type { SpeechReport } from "./speech-queue.js";
-import type { Heard, Sent, Talk } from "./talk.js";
+import type { Heard, HeardBy, Sent, Talk } from "./talk.js";
 import type { Answer } from "./timing.js";
 import type { WakeEvent } from "./wake.js";
 
@@ -68,7 +68,7 @@ function fakeSession(scripts: Record<string, Script>, events: string[]): AgentSe
 const typedHeard: Heard = { text: "Turn the lights on.", recordedMs: 2500, textMs: 1300 };
 
 function fakeTalk(events: string[], sends: Sent[] = []) {
-  const sent: { signal: AbortSignal | undefined; wake: boolean | "follow" | undefined }[] = [];
+  const sent: { signal: AbortSignal | undefined; wake: HeardBy | undefined }[] = [];
   const named: string[] = [];
   const talk: Talk = {
     check: async () => "Ears: ready",
@@ -80,7 +80,7 @@ function fakeTalk(events: string[], sends: Sent[] = []) {
       events.push("talk send");
       sent.push({ signal, wake });
       named.push(`send ${id}`);
-      return sends.shift() ?? { ok: true, heard: wake === true ? { ...typedHeard, wake: true } : wake === "follow" ? { ...typedHeard, follow: true } : typedHeard };
+      return sends.shift() ?? { ok: true, heard: wake === true ? { ...typedHeard, wake: true } : wake === "follow" ? { ...typedHeard, follow: true } : wake === "button" ? { ...typedHeard, button: true } : typedHeard };
     },
     drop: async (_signal, id) => {
       events.push("talk drop");
@@ -276,6 +276,31 @@ test("a wake starts listening with a note and a chime, and when ears has the tex
   await chat.running;
 });
 
+test("a talk-button recording is taken like a wake, with its own note and the chime, and what's heard is asked and logged as the button's", { timeout: 5_000 }, async () => {
+  const chat = wakeChat({ "What's the time?": said("Ten past nine.") });
+  chat.wake.push({ kind: "wake", id: 6, button: true });
+  await settled();
+  assert.deepEqual(chat.events, ["interrupt", "chime"]);
+  assert.ok(chat.output().endsWith(`You:   (${buttonListeningNote})\nYou: `), chat.output());
+  assert.equal(buttonListeningNote, "the talk button was pressed, so listening: it sends when you stop talking, or press Enter on an empty line, or the button again once you've spoken, to send it now, or type anything else to drop it");
+  chat.wake.push({ kind: "done", id: 6, answer: earsDone("What's the time?", { last: { seconds: 2.1, reason: "it went quiet for 2.5 seconds after you spoke", text: "What's the time?", textProblem: null, ender: "loudness", pauseMs: 2500 } }), textMs: 800 });
+  await settled();
+  assert.deepEqual(chat.events, ["interrupt", "chime", "interrupt", "ask What's the time?"]);
+  assert.deepEqual(chat.recorded.map((outcome) => outcome.heard), [{ text: "What's the time?", recordedMs: 2100, textMs: 800, button: true, ender: "loudness", pauseMs: 2500 }]);
+  chat.wake.push({ kind: "wake", id: 7 });
+  await settled();
+  assert.ok(chat.output().endsWith(`You:   (${wakeListeningNote})\nYou: `), "a wake after a press is a wake again");
+  chat.lines.push("");
+  await settled();
+  chat.wake.push({ kind: "wake", id: 8, button: true });
+  await settled();
+  chat.lines.push("");
+  await settled();
+  assert.deepEqual(chat.sent.map((sent) => sent.wake), [true, "button"], "Enter sends each as what started it");
+  chat.lines.close();
+  await chat.running;
+});
+
 test("a wake's recording that comes back without text says why, and nothing is asked", { timeout: 5_000 }, async () => {
   const chat = wakeChat({});
   chat.wake.push({ kind: "wake", id: 1 });
@@ -427,6 +452,16 @@ test("a question asked through the wake word is logged with wake true and the ti
   assert.deepEqual(logLine(context, "c", 2, at, { answer, heard: typedHeard }).heard, { recordedMs: 2500, textMs: 1300 });
 });
 
+test("a question asked with the talk button is logged with button true and the times, never the words", () => {
+  const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
+  const at = new Date("2026-11-22T22:00:00Z");
+  const answer = { text: "Ten past nine.", firstWordsMs: 400, totalMs: 900 };
+  const pressed: Heard = { text: "What's the time?", recordedMs: 2100.4, textMs: 799.6, button: true, ender: "silero", pauseMs: 2500 };
+  const line = logLine(context, "c", 1, at, { answer, heard: pressed });
+  assert.deepEqual(line.heard, { recordedMs: 2100, textMs: 800, button: true, ender: "silero", pauseMs: 2500 });
+  assert.equal(JSON.stringify(line).includes("time?"), false);
+});
+
 test("a wake recording is sent or dropped by its own number, and one that takes over a /talk recording uses the wake's", { timeout: 5_000 }, async () => {
   const chat = wakeChat({ "Turn the lights on.": said("Done."), "stop that": said("OK.") });
   chat.wake.push({ kind: "wake", id: 4 });
@@ -520,6 +555,29 @@ test("what's heard in a follow-up is shown as said, asked, logged as a follow-up
   assert.ok(chat.output().includes(`${heardPrefix}And tomorrow?\nJarvis: Nine again.`), chat.output());
   assert.deepEqual(chat.recorded.map((outcome) => outcome.heard), [{ text: "What's the time?", recordedMs: 3400, textMs: 900, wake: true }, { text: "And tomorrow?", recordedMs: 2000, textMs: 700, follow: true, ender: "silero" }]);
   assert.deepEqual(chat.asks, ["ask", "ask"]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("an answer to a talk-button question opens a follow-up too, and a press starts the count of follow-ups in a row again", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "What's the time?": said("Ten past nine."), "And tomorrow?": said("Nine again.") });
+  chat.wake.push({ kind: "wake", id: 4, button: true });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  assert.deepEqual(chat.asks, ["ask"]);
+  for (let id = 5; id < 5 + followUpsInARow; id++) {
+    chat.wake.push({ kind: "wake", id, follow: true });
+    await settled();
+    chat.wake.push({ kind: "done", id, answer: earsDone("And tomorrow?"), textMs: 700 });
+    await pause(20);
+  }
+  assert.equal(chat.asks.length, followUpsInARow, "the follow-up after the fifth isn't asked for");
+  chat.wake.push({ kind: "wake", id: 20, button: true });
+  await settled();
+  chat.wake.push({ kind: "done", id: 20, answer: earsDone("What's the time?"), textMs: 900 });
+  await pause(20);
+  assert.equal(chat.asks.length, followUpsInARow + 1, "a press counts from nought again, as the wake word does");
   chat.lines.close();
   await chat.running;
 });

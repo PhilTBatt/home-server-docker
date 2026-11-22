@@ -2,8 +2,8 @@
 
 cd "$(dirname "$0")/.." || exit 1
 
-if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ] && [ "$1" != wake-report ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ] && [ "$1" != wake-report ]; }; then
-  echo "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model, bash host/ears.sh mic-test [seconds to wait], or bash host/ears.sh wake-report [hours]" >&2
+if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ] && [ "$1" != wake-report ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != talk ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ] && [ "$1" != wake-report ]; }; then
+  echo "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model, bash host/ears.sh mic-test [seconds to wait], or bash host/ears.sh wake-report [hours]" >&2
   exit 1
 fi
 
@@ -60,6 +60,30 @@ play_back() {
   }
 }
 
+if [ "$1" = talk ]; then
+  if ! running=$(docker compose ps --status running --quiet ears 2> /dev/null); then
+    echo "Couldn't ask Docker about ears, so nothing is listening. docker compose ps ears shows why." >&2
+    exit 1
+  fi
+  if [ -z "$running" ]; then
+    echo "Ears isn't running, so nothing is listening. Start it with bash host/ears.sh start." >&2
+    exit 1
+  fi
+  said=$(docker compose exec -T ears node dist/ask.js talk 2>&1)
+  code=$?
+  if [[ "$said" == *"Usage: node dist/ask.js"* ]]; then
+    echo "This ears doesn't know the talk button yet, so start it again with bash host/ears.sh start, which rebuilds it." >&2
+    exit 1
+  fi
+  if [ "$code" -ne 0 ]; then
+    [ -z "$said" ] && said="Docker couldn't run the talk command in ears."
+    echo "$said" >&2
+    exit "$code"
+  fi
+  echo "$said"
+  exit 0
+fi
+
 if [ "$1" = wake-report ]; then
   hours=${2-}
   if [ $# -eq 2 ] && { [[ ! "$hours" =~ ^[1-9][0-9]{0,2}$ ]] || [ "$hours" -gt 720 ]; }; then
@@ -87,6 +111,9 @@ if [ "$1" = wake-report ]; then
   awk -v span="$span" '
     /^Recording started by the wake word\.$/ { kind = "wake"; started[kind]++ }
     /^Recording started to hear a follow-up\.$/ { kind = "follow"; started[kind]++ }
+    /^Recording started by the talk button\.$/ { kind = "button"; started[kind]++ }
+    /^Couldn.t record after the talk button: / { unpressed++ }
+    /^A Jarvis chat took the talk-button recording\.$/ { pressTaken++ }
     /^Recording started\.$/ { kind = "other"; started[kind]++ }
     /^Heard the wake word\. / { heard++ }
     /^Heard the wake word, but too late to trust/ { late++ }
@@ -135,9 +162,11 @@ if [ "$1" = wake-report ]; then
       printf "- \"Hey Jarvis\" heard: %d. Ignored: %d as too late to trust (or with no usable time), %d that came after ears stopped listening.\n", heard, late, unlistened
       printf "- Wake recordings: %d, and %d that failed to start. A chat took %d, and no chat took %d in time. Of them: no speech in time, so not sent to Whisper (a false wake, or nothing said after it), %d; %s\n", started["wake"], unstarted, taken, untaken["wake"], quiet["wake"], outcomes("wake")
       printf "- Follow-up windows: %d. Of them: no speech in time, %d; %s\n", started["follow"], quiet["follow"], outcomes("follow")
+      printf "- Talk-button recordings: %d, and %d that failed to start. A chat took %d, and no chat took %d in time. Of them: no speech in time, so not sent to Whisper, %d; %s\n", started["button"], unpressed, pressTaken, untaken["button"], quiet["button"], outcomes("button")
       printf "- Other recordings (/talk, or ask.js start): %d. Of them: %s\n", started["other"], outcomes("other")
       print speech("wake", "wake recordings")
       print speech("follow", "follow-up windows")
+      print speech("button", "talk-button recordings")
     }' <<< "$log"
   exit 0
 fi

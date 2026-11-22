@@ -18,6 +18,7 @@ export const behindBytes = 2 * bytesPerSecond;
 export const wholeMsBytes = bytesPerSecond / 1000;
 export const longestPieceBytes = bytesPerSecond;
 export const lateMs = 2_000;
+export const roomFrames = 10;
 
 const format = { rate: recordingRate, width: 2, channels: 1 };
 
@@ -58,11 +59,14 @@ export type Listener = {
   hold(by: string): void;
   release(by: string): void;
   follow<T>(withinMs: number, start: () => T): T | { ok: false; error: string };
+  press<T extends { ok: boolean; error?: string }>(start: () => T): T | { ok: false; error: string };
   close(): Promise<void>;
 };
 
 export const stillSpeaking = "a Jarvis chat is still speaking, so ears can't listen for a follow-up yet";
 export const noRoomYet = "ears hasn't heard the room yet, so it couldn't tell speech from it";
+export const noChatWaiting = "no Jarvis chat is waiting with JARVIS_EARS=wake, so nothing would take what you say";
+export const stillSpeakingPress = "Jarvis is still speaking, so ears can't listen yet. Press again when he's finished";
 
 function reasonOf(error: unknown): string {
   const text = (error instanceof Error ? error.message : String(error)).replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/ {2,}/g, " ").trim();
@@ -106,6 +110,7 @@ export function createListener(deps: ListenerDeps): Listener {
   let levels: number[] = [];
   let pendingWake: { before: Uint8Array; background: number } | null = null;
   let pendingFollow: { withinMs: number; background: number } | null = null;
+  let pendingPress: { background: number } | null = null;
   let lastBackground: number | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
@@ -338,7 +343,8 @@ export function createListener(deps: ListenerDeps): Listener {
     view: () => ({ on: true, listening: feeding, held: held(), problem, late: ignored }),
     tap(by) {
       const follow = by === "follow" ? pendingFollow : null;
-      const wake = by === "wake" ? pendingWake : follow === null ? null : { before: undefined, background: follow.background };
+      const pressed = by === "button" ? pendingPress : null;
+      const wake = by === "wake" ? pendingWake : pressed !== null ? { before: undefined, background: pressed.background } : follow === null ? null : { before: undefined, background: follow.background };
       const timings = follow === null ? { settleMs: deps.settleMs, startWithinMs: deps.startWithinMs, quietForMs: deps.quietForMs } : { settleMs: 0, startWithinMs: follow.withinMs, quietForMs: deps.quietForMs };
       const detector = deps.detector;
       const started = startTap({
@@ -400,6 +406,23 @@ export function createListener(deps: ListenerDeps): Listener {
         return start();
       } finally {
         pendingFollow = null;
+      }
+    },
+    press(start) {
+      if (deps.ears().state() !== "idle") return start();
+      if (!present()) return { ok: false, error: noChatWaiting };
+      if (held()) return { ok: false, error: stillSpeakingPress };
+      const background = levels.length >= roomFrames ? backgroundLevel(levels) : (lastBackground ?? (levels.length === 0 ? null : backgroundLevel(levels)));
+      if (background === null) return { ok: false, error: noRoomYet };
+      deps.log(`The talk button was pressed. The room's background is ${background}, so speech is anything above ${speakingLevel(background)}.`);
+      lastBackground = background;
+      pendingPress = { background };
+      try {
+        const started = start();
+        if (!started.ok) deps.log(`Couldn't record after the talk button: ${started.error ?? "no reason given"}.`);
+        return started;
+      } finally {
+        pendingPress = null;
       }
     },
     async close() {

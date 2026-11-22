@@ -285,6 +285,7 @@ echo "docker $* | MIC_CARD_NUMBER=${MIC_CARD_NUMBER:-} AUDIO_GROUP_ID=${AUDIO_GR
 if [ -n "${WAKE_THRESHOLD+set}" ]; then echo "WAKE_THRESHOLD=$WAKE_THRESHOLD for: docker $*" >> "$DOCKER_LOG.wake"; fi
 if [ "$1 $2" = "compose ps" ] && [ -n "${FAKE_EARS_ID:-}" ]; then echo "$FAKE_EARS_ID"; fi
 if [ "$1 $2" = "compose logs" ] && [ -n "${FAKE_EARS_LOG:-}" ]; then cat "$FAKE_EARS_LOG"; exit "${FAKE_LOGS_EXIT:-0}"; fi
+if [ "$1 $2" = "compose exec" ] && [ -n "${FAKE_TALK+set}" ]; then [ -n "$FAKE_TALK" ] && echo "$FAKE_TALK"; exit "${FAKE_TALK_EXIT:-0}"; fi
 exit "${DOCKER_EXIT:-0}"
 FAKE
 cat > "$work/bin/curl" <<'FAKE'
@@ -566,14 +567,38 @@ Not turned into text: it was cancelled before it was turned into text.
 Recording started.
 Recording stopped after 30 seconds: it reached the 30-second limit.
 Not turned into text: it was muted before it was turned into text.
+The talk button was pressed. The room's background is 200, so speech is anything above 600.
+Recording started by the talk button.
+A Jarvis chat took the talk-button recording.
+Recording stopped after 3.5 seconds: it went quiet for 2.5 seconds after you spoke.
+Speech in it: first heard after 0.7 seconds, 0.3 seconds of speech, longest pause between words 0.1 seconds.
+Turned into text in 0.6 seconds.
+The talk button was pressed. The room's background is 200, so speech is anything above 600.
+Recording started by the talk button.
+Recording stopped after 2 seconds: no Jarvis chat took it within 2 seconds.
+The talk button was pressed. The room's background is 210, so speech is anything above 630.
+Recording started by the talk button.
+A Jarvis chat took the talk-button recording.
+Recording stopped after 2.2 seconds: asked to stop.
+Speech in it: first heard after 1.1 seconds, 0.9 seconds of speech, longest pause between words 0.3 seconds.
+Turned into text in 0.7 seconds.
+The talk button was pressed. The room's background is 210, so speech is anything above 630.
+Recording failed to start: the recorder couldn't start: spawn arecord ENOENT.
+Couldn't record after the talk button: ears failed (the recorder couldn't start: spawn arecord ENOENT).
+The talk button was pressed. The room's background is 220, so speech is anything above 660.
+Recording started by the talk button.
+A Jarvis chat took the talk-button recording.
+Recording stopped after 5.8 seconds: nothing loud enough to be speech came within 5 seconds, so it wasn't sent to Whisper.
 The microphone is closed: no Jarvis chat is listening for the wake word.
 LOG
 expected_report='- "Hey Jarvis" heard: 8. Ignored: 3 as too late to trust (or with no usable time), 1 that came after ears stopped listening.
 - Wake recordings: 7, and 1 that failed to start. A chat took 6, and no chat took 1 in time. Of them: no speech in time, so not sent to Whisper (a false wake, or nothing said after it), 1; cancelled, muted or failed, 3; turned into text, 1; not turned into text after all, 1.
 - Follow-up windows: 3. Of them: no speech in time, 1; cancelled, muted or failed, 1; turned into text, 1; not turned into text after all, 0.
+- Talk-button recordings: 4, and 1 that failed to start. A chat took 3, and no chat took 1 in time. Of them: no speech in time, so not sent to Whisper, 1; cancelled, muted or failed, 0; turned into text, 2; not turned into text after all, 0.
 - Other recordings (/talk, or ask.js start): 4. Of them: cancelled, muted or failed, 1; turned into text, 1; not turned into text after all, 2.
 - Speech in wake recordings, from 2 with speech (leaving out any cut short): first heard after a median of 1.1 s (0.9 to 1.3 s); a median of 2.5 s of speech; longest pause between words a median of 0.6 s, at most 0.9 s.
-- Speech in follow-up windows, from 1 with speech (leaving out any cut short): first heard after a median of 1.0 s (1.0 to 1.0 s); a median of 0.4 s of speech; longest pause between words a median of 0.0 s, at most 0.0 s.'
+- Speech in follow-up windows, from 1 with speech (leaving out any cut short): first heard after a median of 1.0 s (1.0 to 1.0 s); a median of 0.4 s of speech; longest pause between words a median of 0.0 s, at most 0.0 s.
+- Speech in talk-button recordings, from 2 with speech (leaving out any cut short): first heard after a median of 0.9 s (0.7 to 1.1 s); a median of 0.6 s of speech; longest pause between words a median of 0.2 s, at most 0.3 s.'
 fresh
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report)
 check "wake-report counts what ears's log says about the wake word, its recordings and follow-ups, in the whole log" "0|In ears's whole log, which goes back to when its container was last made:
@@ -593,13 +618,39 @@ output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/empty-log.txt" with_fakes wake
 check "an empty log reports nothing heard" "0|In ears's whole log, which goes back to when its container was last made:
 - \"Hey Jarvis\" heard: 0. Ignored: 0 as too late to trust (or with no usable time), 0 that came after ears stopped listening." "$?|$(head -2 <<< "$output")"
 check "and says no speech has been measured yet" "- Speech in wake recordings: none measured yet.
-- Speech in follow-up windows: none measured yet." "$(tail -2 <<< "$output")"
+- Speech in follow-up windows: none measured yet.
+- Speech in talk-button recordings: none measured yet." "$(tail -3 <<< "$output")"
 output=$(FAKE_EARS_LOG="$report_log" with_fakes wake-report)
 check "with no ears container, it says to start ears, and doesn't ask for a log" "1|Ears has no log yet. Start it with bash host/ears.sh start.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" DOCKER_EXIT=1 with_fakes wake-report)
 check "if Docker can't be asked about ears, it says so and how to see why, and doesn't ask for a log" "1|Couldn't ask Docker about ears, so there's no report. docker compose ps -a ears shows why.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" FAKE_LOGS_EXIT=1 with_fakes wake-report)
 check "if the log can't be read, it says so and how to see why, and reports nothing" "1|Couldn't read ears's log, so there's no report. docker compose logs ears shows why." "$?|$output"
+
+listening="Listening, and a Jarvis chat has taken it. Speak after his chime: ears sends it when you stop talking, or press again once you've spoken to send it now."
+fresh
+output=$(FAKE_EARS_ID=abc123 FAKE_TALK="$listening" with_fakes talk)
+check "talk asks ears's own helper to start listening, and passes on what it says" "0|$listening" "$?|$output"
+check "it checks ears is running, then runs the helper in it, with no microphone settings" "docker compose ps --status running --quiet ears | MIC_CARD_NUMBER= AUDIO_GROUP_ID=
+docker compose exec -T ears node dist/ask.js talk | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$(cat "$DOCKER_LOG")"
+check "and writes no switch" "no folder" "$([ -e "$work/repo/ears/switch" ] && echo folder || echo "no folder")"
+output=$(FAKE_TALK="$listening" with_fakes talk)
+check "with ears not running, it says so and how to start it, and asks nothing of ears" "1|Ears isn't running, so nothing is listening. Start it with bash host/ears.sh start.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
+output=$(FAKE_EARS_ID=abc123 DOCKER_EXIT=1 FAKE_TALK="$listening" with_fakes talk)
+check "if Docker can't be asked about ears, it says so and how to see why" "1|Couldn't ask Docker about ears, so nothing is listening. docker compose ps ears shows why.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
+output=$(FAKE_EARS_ID=abc123 FAKE_TALK="Usage: node dist/ask.js state|start|stop|health" FAKE_TALK_EXIT=1 with_fakes talk)
+check "an ears built before the talk button is told to rebuild" "1|This ears doesn't know the talk button yet, so start it again with bash host/ears.sh start, which rebuilds it." "$?|$output"
+output=$(FAKE_EARS_ID=abc123 FAKE_TALK="WARN[0000] a warning from Docker
+Usage: node dist/ask.js state|start|stop|health" FAKE_TALK_EXIT=1 with_fakes talk)
+check "even after a warning from Docker" "1|This ears doesn't know the talk button yet, so start it again with bash host/ears.sh start, which rebuilds it." "$?|$output"
+output=$(FAKE_EARS_ID=abc123 FAKE_TALK="Not listening: ears is muted, so unmute it with bash host/ears.sh unmute." FAKE_TALK_EXIT=1 with_fakes talk)
+check "a refusal is passed on, and fails" "1|Not listening: ears is muted, so unmute it with bash host/ears.sh unmute." "$?|$output"
+output=$(FAKE_EARS_ID=abc123 FAKE_TALK="" FAKE_TALK_EXIT=137 with_fakes talk)
+check "a helper that says nothing and fails is reported, with its exit code" "137|Docker couldn't run the talk command in ears." "$?|$output"
+fresh
+output=$(FAKE_EARS_ID=abc123 FAKE_TALK="$listening" with_fakes talk now)
+check "talk takes nothing after it" "1|0" "$?|$(wc -l < "$DOCKER_LOG")"
+check_has "and shows the usage, which lists talk" "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model" "$output"
 
 mkdir -p "$work/micbin"
 cat > "$work/micbin/docker" <<'FAKE'
@@ -876,7 +927,7 @@ for args in "mic-test 5 6" "mute 5" "start 5" "whisper-model x" "wake-report 5 6
   read -r -a words <<< "$args"
   mic_test "${words[@]}"
   check "too many arguments are refused before anything runs: '$args'" "1|" "$mic_status|$(cat "$MIC_LOG")"
-  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model, bash host/ears.sh mic-test [seconds to wait], or bash host/ears.sh wake-report [hours]" "$mic_output"
+  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model, bash host/ears.sh mic-test [seconds to wait], or bash host/ears.sh wake-report [hours]" "$mic_output"
 done
 
 dockerfile="$here/../ears/Dockerfile"

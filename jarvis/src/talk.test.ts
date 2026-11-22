@@ -299,3 +299,8 @@ test("a follow-up is marked as one, not as the wake word's, and keeps what ended
   const plain = heardFrom(answer(200, { last: heardLast("And tomorrow?") }), 10, "follow");
   assert.deepEqual(plain.ok && plain.heard, { text: "And tomorrow?", recordedMs: 2500, textMs: 10, follow: true });
 });
+
+test("a talk-button question is marked as the button's, and keeps what ended its recording and its pause like a wake one", () => {
+  const sent = heardFrom(answer(200, { last: { ...heardLast("What's the time?"), ender: "loudness", pauseMs: 2000 } }), 10, "button");
+  assert.deepEqual(sent.ok && sent.heard, { text: "What's the time?", recordedMs: 2500, textMs: 10, button: true, ender: "loudness", pauseMs: 2000 });
+});

@@ -4,7 +4,7 @@ import { heardSpeech, type Detector } from "./silero.js";
 
 export const detectorBehindMs = 1_000;
 
-export type By = "push" | "wake" | "follow";
+export type By = "push" | "wake" | "follow" | "button";
 
 export type Tap = Recording & { readonly by: By; push(sound: Uint8Array): void; fail(reason: string): void };
 
@@ -63,6 +63,7 @@ export function startTap(options: TapOptions): Tap {
     ended,
     stop: (reason) => end(reason, false),
     fail: (reason) => void end(reason, true),
+    speechHeard: () => (options.judged?.end.heard() ?? options.quiet?.heard() ?? null) !== null,
     push(sound) {
       if (over !== null) return;
       bytes += sound.length;

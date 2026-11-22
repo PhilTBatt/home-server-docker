@@ -1,14 +1,24 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { Ears, EarsView, Refused } from "./ears.js";
+import { claimMs, type Ears, type EarsView, type Refused } from "./ears.js";
 
 export const earsPort = 8090;
 
-const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST", "/wait": "GET", "/wake/claim": "POST", "/wake/hold": "POST", "/wake/release": "POST", "/wake/follow": "POST" };
+const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST", "/wait": "GET", "/wake/claim": "POST", "/wake/hold": "POST", "/wake/release": "POST", "/wake/follow": "POST", "/wake/talk": "POST" };
 
-export type WakeApi = { full(): Record<string, unknown>; wait(after: number, run: string | null, signal: AbortSignal): Promise<Record<string, unknown>>; hold(by: string): boolean; release(by: string): boolean; follow(withinMs: number): { ok: true; view: EarsView; id: number } | Refused };
+export type WakeApi = { full(): Record<string, unknown>; wait(after: number, run: string | null, signal: AbortSignal): Promise<Record<string, unknown>>; hold(by: string): boolean; release(by: string): boolean; follow(withinMs: number): { ok: true; view: EarsView; id: number } | Refused; press(): { ok: true; view: EarsView; id: number } | Refused };
 
 export const followWithinMs = { least: 1_000, most: 20_000 };
+
+export const notTakenYet = "no Jarvis chat has taken the recording yet, so there's nothing to send it to. Press again in a moment";
+
+export const notTakenAtAll = "no Jarvis chat took the recording, so it was dropped. A chat needs JARVIS_EARS=wake, and one started before the talk button was added needs starting again";
+
+export const takenWithinMs = claimMs + 1_000;
+
+export const stillSending = "ears is still sending the last recording, so press again in a moment";
+
+export const alreadyListening = "ears is already listening, so just speak: it sends what you say when you stop talking";
 
 export const wakeOffError = "ears has the wake word off, so set EARS_WAKE=on in ears/.env and start it again with bash host/ears.sh start";
 
@@ -32,7 +42,11 @@ function send(response: ServerResponse, status: number, body: unknown, extra: Re
   response.end(`${JSON.stringify(body)}\n`);
 }
 
-export function earsHandler(ears: Ears, token: string, wake?: WakeApi) {
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function earsHandler(ears: Ears, token: string, wake?: WakeApi, timing = { takenWithinMs, everyMs: 20 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     request.resume();
     if (!tokenMatches(request.headers.authorization, token)) return send(response, 401, { error: "A valid token is needed" }, { "www-authenticate": "Bearer" });
@@ -62,6 +76,23 @@ export function earsHandler(ears: Ears, token: string, wake?: WakeApi) {
       if (within === null || within > followWithinMs.most) return send(response, 400, { error: `within must be a whole number of milliseconds from ${followWithinMs.least} to ${followWithinMs.most}` });
       const started = wake.follow(within);
       return started.ok ? send(response, 200, { ...started.view, lastId: ears.lastId(), id: started.id }) : send(response, 409, { error: started.error, ...wake.full() });
+    }
+    if (wake !== undefined && path === "/wake/talk") {
+      if (ears.view().state === "working" || ears.stopping()) return send(response, 409, { error: stillSending, ...wake.full() });
+      const current = ears.current();
+      if (current !== null && (current.by === "wake" || current.by === "follow")) return send(response, 409, { error: alreadyListening, ...wake.full() });
+      if (current !== null && current.by === "button") {
+        if (!current.claimed) return send(response, 409, { error: notTakenYet, ...wake.full() });
+        if (!ears.speechHeard()) return send(response, 409, { error: alreadyListening, ...wake.full() });
+        const sent = await ears.stop(current.id);
+        return sent.ok ? send(response, 200, { sent: true, seconds: sent.seconds, ...sent.view, lastId: ears.lastId() }) : send(response, 409, { error: sent.error, ...wake.full() });
+      }
+      const started = wake.press();
+      if (!started.ok) return send(response, 409, { error: started.error, ...wake.full() });
+      const giveUpAt = performance.now() + timing.takenWithinMs;
+      while (ears.current()?.id === started.id && ears.current()?.claimed !== true && performance.now() < giveUpAt) await pause(timing.everyMs);
+      const now = ears.current();
+      return now?.id === started.id && now.claimed ? send(response, 200, { sent: false, ...ears.view(), lastId: ears.lastId(), id: started.id }) : send(response, 409, { error: notTakenAtAll, ...wake.full() });
     }
     if (wake !== undefined && (path === "/wake/hold" || path === "/wake/release")) {
       const by = query.get("by") ?? "";

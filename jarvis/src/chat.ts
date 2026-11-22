@@ -82,6 +82,7 @@ export const listeningNote = "listening for up to 30 seconds: press Enter on an 
 export const droppedNote = "dropped that recording";
 export const heardPrefix = "You said: ";
 export const wakeListeningNote = "heard Hey Jarvis, so listening: it sends when you stop talking, or press Enter on an empty line to send it now, or type anything else to drop it";
+export const buttonListeningNote = "the talk button was pressed, so listening: it sends when you stop talking, or press Enter on an empty line, or the button again once you've spoken, to send it now, or type anything else to drop it";
 export const noFollowHeardNote = "no follow-up heard, so say Hey Jarvis to ask again";
 export const followGapMs = 500;
 export const followUpsInARow = 5;
@@ -156,7 +157,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; turn: number; followTurn: number | null; followed: number };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number };
 
 export type PromptLine = {
   prompt(preserveCursor?: boolean): void;
@@ -672,10 +673,10 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     return "go";
   }
   deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
-  if (sent.heard.wake === true) state.followed = 0;
+  if (sent.heard.wake === true || sent.heard.button === true) state.followed = 0;
   if (sent.heard.follow === true) state.followed++;
   const going = await ask(deps, state, sent.heard.text, sent.heard);
-  if (going === "answered" && (sent.heard.wake === true || sent.heard.follow === true)) openFollow(deps, state);
+  if (going === "answered" && (sent.heard.wake === true || sent.heard.follow === true || sent.heard.button === true)) openFollow(deps, state);
   return going === "stop" ? "stop" : "go";
 }
 
@@ -716,7 +717,8 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
     state.listening = true;
     state.wakeId = event.id;
     state.following = follow;
-    deps.write(`  (${follow ? followListeningNote(deps.followUp?.seconds ?? 0) : wakeListeningNote})\n`);
+    state.button = event.button === true;
+    deps.write(`  (${follow ? followListeningNote(deps.followUp?.seconds ?? 0) : state.button ? buttonListeningNote : wakeListeningNote})\n`);
     if (!follow) deps.chime?.();
     deps.prompt();
     return "go";
@@ -732,14 +734,14 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
     deps.prompt();
     return "go";
   }
-  const going = await heardOrNot(deps, state, heardFrom(event.answer, event.textMs, follow ? "follow" : true));
+  const going = await heardOrNot(deps, state, heardFrom(event.answer, event.textMs, follow ? "follow" : state.button ? "button" : true));
   if (going === "go") deps.prompt();
   return going;
 }
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, turn: 0, followTurn: null, followed: 0 };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0 };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
@@ -759,7 +761,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
           continue;
         }
         if (message === "") {
-          const wake = state.wakeId === null ? false : state.following ? "follow" : true;
+          const wake = state.wakeId === null ? false : state.following ? "follow" : state.button ? "button" : true;
           const id = state.wakeId ?? state.talkId;
           state.listening = false;
           state.wakeId = null;

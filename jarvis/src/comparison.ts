@@ -37,6 +37,7 @@ function isHeard(value: unknown): boolean {
   const heard = value as Record<string, unknown>;
   if (heard.wake !== undefined && heard.wake !== true) return false;
   if (heard.follow !== undefined && heard.follow !== true) return false;
+  if (heard.button !== undefined && heard.button !== true) return false;
   if (heard.ender !== undefined && heard.ender !== "loudness" && heard.ender !== "silero") return false;
   if (heard.pauseMs !== undefined && !(typeof heard.pauseMs === "number" && Number.isSafeInteger(heard.pauseMs) && heard.pauseMs > 0)) return false;
   return [heard.recordedMs, heard.textMs].every((time) => typeof time === "number" && Number.isFinite(time) && time >= 0);
@@ -440,18 +441,20 @@ function heardLine(lines: LogLine[]): string | null {
   if (recorded === null || text === null) return null;
   const woken = spoken.filter((heard) => heard.wake === true).length;
   const followed = spoken.filter((heard) => heard.follow === true).length;
-  const how = followed > 0 ? (spoken.length === 1 ? ", as a follow-up" : `, ${woken} with the wake word and ${plural(followed, "follow-up")}`) : woken === 0 ? "" : spoken.length === 1 ? ", with the wake word" : `, ${woken === spoken.length ? "all" : woken} of them with the wake word`;
+  const pressed = spoken.filter((heard) => heard.button === true).length;
+  const kind = pressed > 0 ? "spoken question" : followed === 0 ? "wake question" : "wake or follow-up question";
+  const how = pressed > 0 ? `, ${[...(woken > 0 ? [`${woken} with the wake word`] : []), `${pressed} with the talk button`, ...(followed > 0 ? [plural(followed, "follow-up")] : [])].join(", ")}` : followed > 0 ? (spoken.length === 1 ? ", as a follow-up" : `, ${woken} with the wake word and ${plural(followed, "follow-up")}`) : woken === 0 ? "" : spoken.length === 1 ? ", with the wake word" : `, ${woken === spoken.length ? "all" : woken} of them with the wake word`;
   const line = `${plural(spoken.length, "question")} ${spoken.length === 1 ? "was" : "were"} asked through ears${how}. Recording ${seconds(recorded.median)} (${seconds(recorded.max)}), and the text back once it ended ${seconds(text.median)} (${seconds(text.max)}): the median, with the slowest in brackets.`;
   const ended = enderNames.flatMap(([ender, name]) => {
     const these = spoken.filter((heard) => heard.ender === ender);
     const times = summarise(these.map((heard) => heard.recordedMs));
-    return times === null ? [] : [`${plural(these.length, followed === 0 ? "wake question" : "wake or follow-up question")} ${name}, recording ${seconds(times.median)} (${seconds(times.max)})`];
+    return times === null ? [] : [`${plural(these.length, kind)} ${name}, recording ${seconds(times.median)} (${seconds(times.max)})`];
   });
   const pauses = [...new Set(spoken.flatMap((heard) => (heard.pauseMs === undefined ? [] : [heard.pauseMs])))].sort((a, b) => a - b);
   const paused = pauses.flatMap((pause) => {
     const these = spoken.filter((heard) => heard.pauseMs === pause);
     const times = summarise(these.map((heard) => heard.recordedMs));
-    return times === null ? [] : [`${plural(these.length, followed === 0 ? "wake question" : "wake or follow-up question")} at ${pause / 1000} s, recording ${seconds(times.median)} (${seconds(times.max)})`];
+    return times === null ? [] : [`${plural(these.length, kind)} at ${pause / 1000} s, recording ${seconds(times.median)} (${seconds(times.max)})`];
   });
   const byEnder = ended.length < 2 ? line : `${line} Split by how ears was set to end them: ${ended.join("; ")}.`;
   return paused.length < 2 ? byEnder : `${byEnder} Split by the pause that ends them: ${paused.join("; ")}.`;

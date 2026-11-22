@@ -340,6 +340,59 @@ test("a claim that loses to another chat, or fails, is left alone", { timeout: 5
   signal.abort();
 });
 
+test("a talk-button recording nobody has taken is claimed the same way, and is a wake marked as the button's", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const ears = pretendEars(
+    [view({ version: 1 }), view({ version: 2, state: "recording", current: { id: 9, by: "button", claimed: false }, lastId: 8 }), view({ version: 4, state: "idle", lastId: 9, last: last("What's the time?") })],
+    [view({ version: 3, state: "recording", current: { id: 9, by: "button", claimed: true }, lastId: 8 })],
+  );
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis" });
+  const got = await take(events, 2);
+  assert.deepEqual(got.map((event) => (event.kind === "done" ? [event.kind, event.id, event.answer.last?.text] : event)), [{ kind: "wake", id: 9, button: true }, ["done", 9, "What's the time?"]]);
+  assert.deepEqual(ears.asked.filter((one) => one.method === "POST").map((one) => one.path), ["/wake/claim?id=9"]);
+  signal.abort();
+});
+
+test("a recording that something else stopped, seen between its end and Whisper starting, isn't done until ears has its text", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const clock = { at: 1000 };
+  const ears = pretendEars(
+    [
+      view({ version: 1 }),
+      view({ version: 2, state: "recording", current: { id: 5, by: "button", claimed: false }, lastId: 4 }),
+      () => {
+        clock.at = 3000;
+        return Promise.resolve(view({ version: 4, state: "recording", current: null, lastId: 5, last: last(null) }));
+      },
+      () => {
+        clock.at = 3500;
+        return Promise.resolve(view({ version: 5, state: "working", lastId: 5, last: last(null) }));
+      },
+      () => {
+        clock.at = 4300;
+        return Promise.resolve(view({ version: 6, state: "idle", lastId: 5, last: last("What's the time?") }));
+      },
+    ],
+    [view({ version: 3, state: "recording", current: { id: 5, by: "button", claimed: true }, lastId: 4 })],
+  );
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, now: () => clock.at, first: "on: say Hey Jarvis" });
+  const got = await take(events, 2);
+  assert.deepEqual(got[1], { kind: "done", id: 5, answer: view({ version: 6, state: "idle", lastId: 5, last: last("What's the time?") }), textMs: 1300 }, "the text's time counts from when the recording was first seen to have ended");
+  signal.abort();
+});
+
+test("a recording seen as ended while ears has already started a newer one is done with what ears says", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const ears = pretendEars(
+    [view({ version: 1 }), view({ version: 2, state: "recording", current: { id: 5, by: "wake", claimed: false }, lastId: 4 }), view({ version: 4, state: "recording", current: { id: 6, by: "push", claimed: true }, lastId: 5, last: last(null) })],
+    [view({ version: 3, state: "recording", current: { id: 5, by: "wake", claimed: true }, lastId: 4 })],
+  );
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, first: "on: say Hey Jarvis" });
+  const got = await take(events, 2);
+  assert.deepEqual(got[1].kind === "done" && [got[1].id, got[1].answer.version], [5, 4]);
+  signal.abort();
+});
+
 test("push recordings, follow-ups and claimed ones aren't claimed", { timeout: 5_000 }, async () => {
   const signal = new AbortController();
   const ears = pretendEars([view({ version: 1, state: "recording", current: { id: 1, by: "push", claimed: false } }), view({ version: 2, state: "recording", current: { id: 2, by: "wake", claimed: true } }), view({ version: 3, state: "recording", current: { id: 3, by: "follow", claimed: false } }), view({ version: 4, state: "muted" })]);

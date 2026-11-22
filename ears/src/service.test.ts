@@ -483,6 +483,51 @@ test("with the wake word on, a chat can ask for a follow-up: refused while a cha
   await keepWaiting.catch(() => {});
 });
 
+test("with the wake word on, a talk-button press starts a recording that waits for a chat to take it, judged like a wake one, and a second press before any speech just says it's listening", { timeout: 20_000 }, async (t) => {
+  const stand = await standInWakeServer();
+  t.after(() => stand.close());
+  const switchAt = await quietSwitch();
+  const lines: string[] = [];
+  const service = await startService({
+    config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: true, wakeEnd: "loudness", wakePauseMs: 900 },
+    log: (line) => lines.push(line),
+    switchAt,
+    everyMs: 20,
+    port: 0,
+    host: "127.0.0.1",
+    toText: async () => "What's the time?",
+    wake: { connect: stand.connect, settleMs: 0, presenceMs: 200 },
+  });
+  services.push(service);
+  const base = `http://127.0.0.1:${(service.server.address() as AddressInfo).port}`;
+  const call = async (method: string, path: string) => {
+    const response = await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}` } });
+    return { status: response.status, body: await response.json() };
+  };
+  await writeFile(switchAt, "unmuted 1\n");
+  await until(() => service.ears.view().state === "idle");
+  const keepWaiting = (async () => {
+    for (let round = 0; round < 40; round++) await call("GET", "/wait?after=1000000");
+  })();
+  await until(() => stand.heard.bytes > 64000, 5000);
+  const pressing = call("POST", "/wake/talk");
+  await until(() => service.ears.current() !== null);
+  const id = service.ears.current()?.id;
+  assert.deepEqual(service.ears.current(), { id, by: "button", claimed: false });
+  assert.deepEqual(lines.slice(-2).map((line) => line.replace(/[0-9]+/g, "N")), ["The talk button was pressed. The room's background is N, so speech is anything above N.", "Recording started by the talk button."]);
+  assert.equal((await call("POST", `/wake/claim?id=${id}`)).status, 200);
+  const pressed = await pressing;
+  assert.deepEqual([pressed.status, pressed.body.sent, pressed.body.id], [200, false, id]);
+  const again = await call("POST", "/wake/talk");
+  assert.deepEqual([again.status, again.body.error, service.ears.view().state], [409, "ears is already listening, so just speak: it sends what you say when you stop talking", "recording"], "the pretend microphone's steady tone is the room, not speech");
+  const ended = await call("POST", `/recording/cancel?id=${id}`);
+  assert.deepEqual([ended.status, ended.body.lastId, ended.body.last.reason, ended.body.last.ender, ended.body.last.pauseMs], [200, id, "asked to cancel", "loudness", 900]);
+  await writeFile(switchAt, "muted\n");
+  await until(() => recorders().length === 0);
+  await service.close();
+  await keepWaiting.catch(() => {});
+});
+
 test("with no chat waiting, the microphone closes a moment later, and with the wake word off nothing opens and holds are refused", { timeout: 20_000 }, async (t) => {
   const stand = await standInWakeServer();
   t.after(() => stand.close());
@@ -507,6 +552,8 @@ test("with no chat waiting, the microphone closes a moment later, and with the w
   assert.equal((await fetch(`${offBase}/wake/hold?by=aa`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).status, 409);
   const follow = await fetch(`${offBase}/wake/follow?within=5000`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
   assert.deepEqual([follow.status, (await follow.json()).error, off.ears.view().state], [409, wakeOffError, "idle"]);
+  const press = await fetch(`${offBase}/wake/talk`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+  assert.deepEqual([press.status, (await press.json()).error, off.ears.view().state], [409, wakeOffError, "idle"]);
   assert.deepEqual(recorders(), []);
   await off.close();
 });

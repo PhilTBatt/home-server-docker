@@ -5,7 +5,7 @@ export const earsStopMs = 70_000;
 export type Ender = "loudness" | "silero";
 
 export type EarsLast = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender; pauseMs?: number };
-export type EarsCurrent = { id: number; by: "push" | "wake" | "follow"; claimed: boolean };
+export type EarsCurrent = { id: number; by: "push" | "wake" | "follow" | "button"; claimed: boolean };
 export type EarsWake = { on: boolean; listening: boolean; held: boolean; problem: string | null; late?: { count: number; behindMs: number | null } };
 export type EarsAnswer = { status: number; state: string | null; reason: string | null; error: string | null; seconds: number | null; last: EarsLast | null; id?: number | null; version?: number | null; run?: string | null; lastId?: number | null; current?: EarsCurrent | null; wake?: EarsWake | null };
 export type EarsCall = (method: "GET" | "POST", path: string, ms: number, signal?: AbortSignal) => Promise<EarsAnswer>;
@@ -36,7 +36,7 @@ function currentOf(value: unknown): EarsCurrent | null {
   if (typeof value !== "object" || value === null) return null;
   const current = value as Record<string, unknown>;
   const id = count(current.id, 1);
-  if (id === null || (current.by !== "push" && current.by !== "wake" && current.by !== "follow") || typeof current.claimed !== "boolean") return null;
+  if (id === null || (current.by !== "push" && current.by !== "wake" && current.by !== "follow" && current.by !== "button") || typeof current.claimed !== "boolean") return null;
   return { id, by: current.by, claimed: current.claimed };
 }
 

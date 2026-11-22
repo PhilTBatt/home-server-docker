@@ -27,6 +27,8 @@ export type Ears = {
   fail(why: string): void;
   current(): Current | null;
   lastId(): number | null;
+  speechHeard(): boolean;
+  stopping(): boolean;
 };
 
 export const startsMuted = "ears starts muted after every start, and waits to be unmuted";
@@ -202,12 +204,12 @@ export function createEars(deps: EarsDeps): Ears {
       count++;
       const id = count;
       ids.set(started, id);
-      underway = { id, by, claimed: by !== "wake" };
+      underway = { id, by, claimed: by !== "wake" && by !== "button" };
       recording = started;
       state = "recording";
       reason = null;
-      deps.log(by === "wake" ? "Recording started by the wake word." : by === "follow" ? "Recording started to hear a follow-up." : "Recording started.");
-      if (by === "wake") {
+      deps.log(by === "wake" ? "Recording started by the wake word." : by === "follow" ? "Recording started to hear a follow-up." : by === "button" ? "Recording started by the talk button." : "Recording started.");
+      if (by === "wake" || by === "button") {
         claimTimer = setTimeout(() => {
           claimTimer = null;
           if (underway?.id === id && !underway.claimed && recording === started) void drop(started, notTakenWhy);
@@ -312,7 +314,7 @@ export function createEars(deps: EarsDeps): Ears {
     claim(id) {
       if (underway === null || underway.id !== id || underway.claimed || recording === null) return refuse("that wake-word recording isn't waiting to be taken");
       underway.claimed = true;
-      deps.log("A Jarvis chat took the wake-word recording.");
+      deps.log(underway.by === "button" ? "A Jarvis chat took the talk-button recording." : "A Jarvis chat took the wake-word recording.");
       changed();
       return { ok: true, view: view() };
     },
@@ -327,5 +329,7 @@ export function createEars(deps: EarsDeps): Ears {
     },
     current: () => (underway === null ? null : { ...underway }),
     lastId: () => lastId,
+    speechHeard: () => recording?.speechHeard?.() === true,
+    stopping: () => state === "recording" && recording === null,
   };
 }

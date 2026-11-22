@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { ask, askCommand, askUsage, questions } from "./ask-api.js";
+import { alreadyLine, ask, askCommand, askUsage, listeningLine, questions } from "./ask-api.js";
 import { createEars } from "./ears.js";
 import { startEarsServer } from "./server.js";
 import { textLimitMs } from "./whisper.js";
@@ -22,12 +22,13 @@ async function closed(server: Server) {
   await new Promise((resolve) => server.close(resolve));
 }
 
-test("ask knows four questions: the state, start, stop and health, and waits 4 seconds for an answer, or 70 for a stop, which waits for the text", () => {
-  assert.deepEqual(Object.keys(questions), ["state", "start", "stop", "health"]);
-  assert.deepEqual(Object.values(questions).map((question) => question.waitMs), [4_000, 4_000, 70_000, 4_000]);
+test("ask knows five questions: the state, start, stop, health and talk, and waits 4 seconds for an answer, or 70 for a stop or a talk, which can wait for the text", () => {
+  assert.deepEqual(Object.keys(questions), ["state", "start", "stop", "health", "talk"]);
+  assert.deepEqual(Object.values(questions).map((question) => question.waitMs), [4_000, 4_000, 70_000, 4_000, 70_000]);
   assert.ok(questions.stop.waitMs > textLimitMs + 5_000);
   assert.deepEqual(questions.health, { method: "GET", path: "/state", waitMs: 4_000 });
-  assert.equal(askUsage, "Usage: node dist/ask.js state|start|stop|health");
+  assert.deepEqual(questions.talk, { method: "POST", path: "/wake/talk", waitMs: 70_000 });
+  assert.equal(askUsage, "Usage: node dist/ask.js state|start|stop|health|talk");
 });
 
 test("health prints only the status and the state's one word, never the last recording's text, since Docker keeps what a health check prints", async () => {
@@ -96,4 +97,78 @@ test("as a command, it prints the answer and exits 0 for a yes and 1 for a refus
   said.length = 0;
   assert.equal(await askCommand("state", token, out, base), 1);
   assert.match(said[0], /fetch failed/);
+});
+
+test("talk prints one plain line for each answer, never the recording's text, and exits 1 unless ears is listening or sent it", async () => {
+  const answers: { status: number; body: unknown }[] = [];
+  const fake = createServer((request, response) => {
+    const next = answers.shift() ?? { status: 500, body: {} };
+    response.writeHead(next.status, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ...((next.body as object) ?? {}), asked: `${request.method} ${request.url}` }));
+  });
+  await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", resolve));
+  stillOpen.add(() => closed(fake));
+  const base = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
+  const said: string[] = [];
+  const out = (line: string) => said.push(line);
+  answers.push({ status: 200, body: { sent: false, id: 3, last: { text: "Turn the lights on." } } });
+  answers.push({ status: 200, body: { sent: true, seconds: 3.4, last: { text: "Turn the lights on.", textProblem: null } } });
+  answers.push({ status: 409, body: { error: "Jarvis is still speaking, so ears can't listen yet. Press again when he's finished" } });
+  answers.push({ status: 409, body: { error: "a\nb\u0007c" } });
+  answers.push({ status: 409, body: {} });
+  answers.push({ status: 404, body: { error: "No such route" } });
+  answers.push({ status: 401, body: { error: "A valid token is needed" } });
+  answers.push({ status: 200, body: { id: 4 } });
+  answers.push({ status: 200, body: { sent: true, seconds: 0.6, last: { text: null, textProblem: "Whisper heard no\nwords" } } });
+  answers.push({ status: 200, body: { sent: true, seconds: 0.6, last: { text: "  ", textProblem: null } } });
+  answers.push({ status: 409, body: { error: "ears is muted" } });
+  answers.push({ status: 409, body: { error: "ears is already listening, so just speak: it sends what you say when you stop talking" } });
+  answers.push({ status: 409, body: { error: "no Jarvis chat has taken the recording yet, so there's nothing to send it to. Press again in a moment" } });
+  const codes = [];
+  for (let asked = 0; asked < 13; asked++) codes.push(await askCommand("talk", token, out, base));
+  assert.deepEqual(codes, [0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1]);
+  assert.deepEqual(said, [
+    listeningLine,
+    "Sent after 3.4 seconds of recording, to the Jarvis chat that took it.",
+    "Not listening: Jarvis is still speaking, so ears can't listen yet. Press again when he's finished.",
+    "Not listening: a b c.",
+    "Not listening: ears answered 409.",
+    "This ears doesn't know the talk button yet, so start it again with bash host/ears.sh start, which rebuilds it.",
+    "Ears didn't accept the token, so nothing happened.",
+    listeningLine,
+    "Stopped after 0.6 seconds of recording, but there's no text to send: Whisper heard no words.",
+    "Stopped after 0.6 seconds of recording, but there's no text to send: Whisper heard no words.",
+    "Not listening: ears is muted, so unmute it with bash host/ears.sh unmute.",
+    "Already listening, so just speak: ears sends it when you stop talking.",
+    "Not sent yet: no Jarvis chat has taken the recording, so there's nothing to send it to. Press again in a moment.",
+  ]);
+  assert.equal(listeningLine, "Listening, and a Jarvis chat has taken it. Speak after his chime: ears sends it when you stop talking, or press again once you've spoken to send it now.");
+  assert.equal(alreadyLine, "Already listening, so just speak: ears sends it when you stop talking.");
+  assert.equal(said.some((line) => line.includes("lights")), false);
+});
+
+test("talk reaches ears's own talk-button route", async () => {
+  let asked = "";
+  const fake = createServer((request, response) => {
+    asked = `${request.method} ${request.url} ${request.headers.authorization}`;
+    response.end(JSON.stringify({ sent: false }));
+  });
+  await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", resolve));
+  stillOpen.add(() => closed(fake));
+  await ask("talk", token, `http://127.0.0.1:${(fake.address() as AddressInfo).port}`);
+  assert.equal(asked, `POST /wake/talk Bearer ${token}`);
+});
+
+test("talk that can't reach ears says so in a line of its own, and other questions keep the plain error", async () => {
+  const said: string[] = [];
+  const out = (line: string) => said.push(line);
+  const gone = createServer();
+  await new Promise<void>((resolve) => gone.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(gone.address() as AddressInfo).port}`;
+  await closed(gone);
+  assert.deepEqual([await askCommand("talk", token, out, base), await askCommand("state", token, out, base)], [1, 1]);
+  assert.deepEqual(said, ["Not listening: couldn't reach ears (fetch failed).", "fetch failed"]);
+  said.length = 0;
+  assert.equal(await askCommand("talks", token, out, base), 1);
+  assert.deepEqual(said, [askUsage]);
 });

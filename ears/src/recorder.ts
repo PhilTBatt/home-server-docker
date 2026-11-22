@@ -10,7 +10,7 @@ export type Recorder = { command: string; args: string[] };
 
 export type Stopped = { reason: string; failed: boolean; bytes: number; ms: number; sound: Uint8Array; unheard?: true; ender?: Ender; pauseMs?: number; speech?: SpeechHeard };
 
-export type Recording = { readonly pid: number | undefined; stop(reason: string): Promise<Stopped>; readonly ended: Promise<Stopped> };
+export type Recording = { readonly pid: number | undefined; stop(reason: string): Promise<Stopped>; readonly ended: Promise<Stopped>; speechHeard?(): boolean };
 
 export type RecordingOptions = { recorder: Recorder; limitMs?: number | null; maxBytes?: number; killAfterMs?: number; now?: () => number; spawn?: typeof spawnChild; onSound?: (sound: Buffer) => void; keep?: boolean };
 

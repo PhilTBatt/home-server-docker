@@ -779,6 +779,36 @@ test("a wake-word recording that no chat claims within 2 seconds is dropped with
   assert.equal(lines.at(-1), `Recording stopped after 1.2 seconds: ${notTakenWhy}.`);
 });
 
+test("a talk-button recording waits to be taken like a wake-word one, says so in the log, and is dropped if no chat takes it", { timeout: 5_000 }, async () => {
+  const { ears, lines, asked, recordings } = setUpCounted(undefined, 50);
+  await ears.unmute();
+  ears.start("button");
+  assert.deepEqual([asked, ears.current(), lines.at(-1)], [["button"], { id: 1, by: "button", claimed: false }, "Recording started by the talk button."]);
+  assert.equal(ears.speechHeard(), false, "a recording that can't tell has heard none");
+  assert.equal(ears.claim(1).ok, true);
+  assert.equal(lines.at(-1), "A Jarvis chat took the talk-button recording.");
+  assert.deepEqual(ears.current(), { id: 1, by: "button", claimed: true });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepEqual([ears.view().state, recordings[0].asked], ["recording", []], "a taken one isn't dropped");
+  await ears.stop();
+  ears.start("button");
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepEqual([recordings[1].asked, ears.view().state, ears.view().last?.reason], [[notTakenWhy], "idle", notTakenWhy]);
+});
+
+test("ears passes on whether the recording under way has heard speech yet, and none when nothing is recording", { timeout: 5_000 }, async () => {
+  const heard = { now: false };
+  const ears = createEars({ microphone: "card", record: () => ({ ...pretendRecording(), speechHeard: () => heard.now }), log: () => {} });
+  assert.equal(ears.speechHeard(), false);
+  await ears.unmute();
+  ears.start("button");
+  assert.equal(ears.speechHeard(), false);
+  heard.now = true;
+  assert.equal(ears.speechHeard(), true);
+  await ears.stop();
+  assert.equal(ears.speechHeard(), false, "once it has ended, nothing is under way");
+});
+
 test("a claimed one, or one that ends or is stopped first, isn't dropped later", { timeout: 5_000 }, async () => {
   const { ears, recordings } = setUpCounted(undefined, 50);
   await ears.unmute();

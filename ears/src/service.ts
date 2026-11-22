@@ -109,6 +109,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
       return hearing !== null;
     },
     follow: (withinMs) => (hearing === null ? { ok: false, error: wakeOffError } : hearing.follow(withinMs, () => ears.start("follow"))),
+    press: () => (hearing === null ? { ok: false, error: wakeOffError } : hearing.press(() => ears.start("button"))),
   };
   const watch = await watchSwitch({ read: () => readFile(options.switchAt ?? switchFile, "utf8"), everyMs: options.everyMs ?? switchEveryMs, onMute: () => void ears.mute(null), onUnmute: () => void ears.unmute() });
   let server: Server;
