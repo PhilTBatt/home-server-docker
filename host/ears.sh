@@ -2,8 +2,8 @@
 
 cd "$(dirname "$0")/.." || exit 1
 
-if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ]; }; then
-  echo "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model, or bash host/ears.sh mic-test [seconds to wait]" >&2
+if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ] && [ "$1" != wake-report ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ] && [ "$1" != wake-report ]; }; then
+  echo "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model, bash host/ears.sh mic-test [seconds to wait], or bash host/ears.sh wake-report [hours]" >&2
   exit 1
 fi
 
@@ -59,6 +59,59 @@ play_back() {
     return "$code"
   }
 }
+
+if [ "$1" = wake-report ]; then
+  hours=${2-}
+  if [ $# -eq 2 ] && { [[ ! "$hours" =~ ^[1-9][0-9]{0,2}$ ]] || [ "$hours" -gt 720 ]; }; then
+    echo "The hours must be a whole number from 1 to 720, like 6, not \"$hours\"." >&2
+    exit 1
+  fi
+  if ! container=$(docker compose ps -a --quiet ears 2> /dev/null); then
+    echo "Couldn't ask Docker about ears, so there's no report. docker compose ps -a ears shows why." >&2
+    exit 1
+  fi
+  if [ -z "$container" ]; then
+    echo "Ears has no log yet. Start it with bash host/ears.sh start." >&2
+    exit 1
+  fi
+  since=()
+  span="In ears's whole log, which goes back to when its container was last made"
+  if [ -n "$hours" ]; then
+    since=(--since "${hours}h")
+    span="In the last $hours hours of ears's log"
+  fi
+  if ! log=$(docker compose logs --no-log-prefix "${since[@]}" ears 2> /dev/null); then
+    echo "Couldn't read ears's log, so there's no report. docker compose logs ears shows why." >&2
+    exit 1
+  fi
+  awk -v span="$span" '
+    /^Recording started by the wake word\.$/ { kind = "wake"; started[kind]++ }
+    /^Recording started to hear a follow-up\.$/ { kind = "follow"; started[kind]++ }
+    /^Recording started\.$/ { kind = "other"; started[kind]++ }
+    /^Heard the wake word\. / { heard++ }
+    /^Heard the wake word, but too late to trust/ { late++ }
+    /^Heard the wake word while it wasn.t being listened for/ { unlistened++ }
+    /^Couldn.t record after the wake word: / { unstarted++ }
+    /^A Jarvis chat took the wake-word recording\.$/ { taken++ }
+    /^Recording (stopped|failed) after / && kind != "" {
+      if (/, so it wasn.t sent to Whisper\.$/) quiet[kind]++
+      else if (/: no Jarvis chat took it within /) untaken[kind]++
+      else if (/^Recording failed after / || /: asked to cancel\.$/ || /: muted\.$/ || /: the switch was flipped while it was recording/) off[kind]++
+    }
+    /^Turned into text in / && kind != "" { text[kind]++ }
+    /^(Not turned into text|Couldn.t turn it into text): / && kind != "" { untext[kind]++ }
+    function outcomes(k) {
+      return sprintf("cancelled, muted or failed, %d; turned into text, %d; not turned into text after all, %d.", off[k], text[k], untext[k])
+    }
+    END {
+      print span ":"
+      printf "- \"Hey Jarvis\" heard: %d. Ignored: %d as too late to trust (or with no usable time), %d that came after ears stopped listening.\n", heard, late, unlistened
+      printf "- Wake recordings: %d, and %d that failed to start. A chat took %d, and no chat took %d in time. Of them: no speech in time, so not sent to Whisper (a false wake, or nothing said after it), %d; %s\n", started["wake"], unstarted, taken, untaken["wake"], quiet["wake"], outcomes("wake")
+      printf "- Follow-up windows: %d. Of them: no speech in time, %d; %s\n", started["follow"], quiet["follow"], outcomes("follow")
+      printf "- Other recordings (/talk, or ask.js start): %d. Of them: %s\n", started["other"], outcomes("other")
+    }' <<< "$log"
+  exit 0
+fi
 
 if [ "$1" = mic-test ]; then
   if [ ! -t 0 ]; then

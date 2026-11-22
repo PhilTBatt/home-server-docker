@@ -283,6 +283,8 @@ cat > "$work/bin/docker" <<'FAKE'
 #!/bin/bash
 echo "docker $* | MIC_CARD_NUMBER=${MIC_CARD_NUMBER:-} AUDIO_GROUP_ID=${AUDIO_GROUP_ID:-}" >> "$DOCKER_LOG"
 if [ -n "${WAKE_THRESHOLD+set}" ]; then echo "WAKE_THRESHOLD=$WAKE_THRESHOLD for: docker $*" >> "$DOCKER_LOG.wake"; fi
+if [ "$1 $2" = "compose ps" ] && [ -n "${FAKE_EARS_ID:-}" ]; then echo "$FAKE_EARS_ID"; fi
+if [ "$1 $2" = "compose logs" ] && [ -n "${FAKE_EARS_LOG:-}" ]; then cat "$FAKE_EARS_LOG"; exit "${FAKE_LOGS_EXIT:-0}"; fi
 exit "${DOCKER_EXIT:-0}"
 FAKE
 cat > "$work/bin/curl" <<'FAKE'
@@ -494,6 +496,100 @@ fresh
 output=$(with_fakes stop)
 check "stop stops ears, Whisper and openWakeWord" "0|docker compose stop ears whisper openwakeword | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
 check "start, stop and whisper-model write no switch" "no folder" "$([ -e "$work/repo/ears/switch" ] && echo folder || echo "no folder")"
+
+report_log="$work/ears-log.txt"
+cat > "$report_log" <<'LOG'
+Ears is ready and muted, with sound card 1's microphone (Capture set to 100%). Unmute it with bash host/ears.sh unmute.
+The wake word is on: ears listens for it whenever it's unmuted and a Jarvis chat with JARVIS_EARS=wake is open. A recording after it ends when the speech detector hears no speech for 2.5 seconds after you speak.
+Unmuted.
+The microphone is open.
+Heard the wake word. The room's background is 258, so speech is anything above 774.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 3.2 seconds: the speech detector heard no speech for 2.5 seconds after you spoke.
+Turned into text in 0.8 seconds.
+Recording started to hear a follow-up.
+Recording stopped after 5.1 seconds: the speech detector heard no speech within 5 seconds, so it wasn't sent to Whisper.
+Heard the wake word. The room's background is 300, so speech is anything above 900.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 5.8 seconds: nothing loud enough to be speech came within 5 seconds, so it wasn't sent to Whisper.
+Heard the wake word. The room's background is 300, so speech is anything above 900.
+Recording started by the wake word.
+Recording stopped after 2 seconds: no Jarvis chat took it within 2 seconds.
+Heard the wake word, but too late to trust (2909 ms behind), so it was ignored.
+Heard the wake word, but too late to trust (no time given), so it was ignored.
+Heard the wake word, but too late to trust (its time is 995999 ms ahead of the sound sent), so it was ignored.
+Heard the wake word while it wasn't being listened for, so it was ignored.
+Heard the wake word. The room's background is 250, so speech is anything above 750.
+Couldn't record after the wake word: ears is already recording.
+Heard the wake word. The room's background is 200, so speech is anything above 600.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 6 seconds: the speech detector heard no speech for 2.5 seconds after you spoke.
+Couldn't turn it into text: Whisper sent no text.
+Recording started to hear a follow-up.
+Recording stopped after 4 seconds: the speech detector heard no speech for 2.5 seconds after you spoke.
+Turned into text in 0.9 seconds.
+Recording started to hear a follow-up.
+Recording stopped after 1.2 seconds: asked to cancel.
+Heard the wake word. The room's background is 200, so speech is anything above 600.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 2.4 seconds: muted.
+Muted.
+The microphone is closed: ears is muted.
+Unmuted.
+The microphone is open.
+Heard the wake word. The room's background is 200, so speech is anything above 600.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording failed after 1.1 seconds: the microphone stopped (arecord exited with code 1).
+Heard the wake word. The room's background is 200, so speech is anything above 600.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 4 seconds: the switch was flipped while it was recording, so a mute may have come and gone.
+Recording started.
+Recording stopped after 3 seconds: asked to stop.
+Turned into text in 1 second.
+Recording started.
+Recording stopped after 1 second: asked to cancel.
+Recording started.
+Recording stopped after 4 seconds: asked to stop.
+Not turned into text: it was cancelled before it was turned into text.
+Recording started.
+Recording stopped after 30 seconds: it reached the 30-second limit.
+Not turned into text: it was muted before it was turned into text.
+The microphone is closed: no Jarvis chat is listening for the wake word.
+LOG
+expected_report='- "Hey Jarvis" heard: 8. Ignored: 3 as too late to trust (or with no usable time), 1 that came after ears stopped listening.
+- Wake recordings: 7, and 1 that failed to start. A chat took 6, and no chat took 1 in time. Of them: no speech in time, so not sent to Whisper (a false wake, or nothing said after it), 1; cancelled, muted or failed, 3; turned into text, 1; not turned into text after all, 1.
+- Follow-up windows: 3. Of them: no speech in time, 1; cancelled, muted or failed, 1; turned into text, 1; not turned into text after all, 0.
+- Other recordings (/talk, or ask.js start): 4. Of them: cancelled, muted or failed, 1; turned into text, 1; not turned into text after all, 2.'
+fresh
+output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report)
+check "wake-report counts what ears's log says about the wake word, its recordings and follow-ups, in the whole log" "0|In ears's whole log, which goes back to when its container was last made:
+$expected_report" "$?|$output"
+check "it only asks Docker whether ears has a container and for its log, plain" "docker compose ps -a --quiet ears | MIC_CARD_NUMBER= AUDIO_GROUP_ID=
+docker compose logs --no-log-prefix ears | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$(cat "$DOCKER_LOG")"
+check "and writes no switch" "no folder" "$([ -e "$work/repo/ears/switch" ] && echo folder || echo "no folder")"
+output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report 6)
+check "given hours, it reads only that far back" "0|In the last 6 hours of ears's log:" "$?|$(head -1 <<< "$output")"
+check "with --since" "docker compose logs --no-log-prefix --since 6h ears | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$(sed -n 2p "$DOCKER_LOG")"
+for hours in 0 721 06 1.5 -3 six 1000 "6h" "" " 6"; do
+  output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report "$hours")
+  check "hours that aren't a whole number from 1 to 720 are refused before Docker: '$hours'" "1|The hours must be a whole number from 1 to 720, like 6, not \"$hours\".|" "$?|$output|$(cat "$DOCKER_LOG")"
+done
+: > "$work/empty-log.txt"
+output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/empty-log.txt" with_fakes wake-report)
+check "an empty log reports nothing heard" "0|In ears's whole log, which goes back to when its container was last made:
+- \"Hey Jarvis\" heard: 0. Ignored: 0 as too late to trust (or with no usable time), 0 that came after ears stopped listening." "$?|$(head -2 <<< "$output")"
+output=$(FAKE_EARS_LOG="$report_log" with_fakes wake-report)
+check "with no ears container, it says to start ears, and doesn't ask for a log" "1|Ears has no log yet. Start it with bash host/ears.sh start.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
+output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" DOCKER_EXIT=1 with_fakes wake-report)
+check "if Docker can't be asked about ears, it says so and how to see why, and doesn't ask for a log" "1|Couldn't ask Docker about ears, so there's no report. docker compose ps -a ears shows why.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
+output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" FAKE_LOGS_EXIT=1 with_fakes wake-report)
+check "if the log can't be read, it says so and how to see why, and reports nothing" "1|Couldn't read ears's log, so there's no report. docker compose logs ears shows why." "$?|$output"
 
 mkdir -p "$work/micbin"
 cat > "$work/micbin/docker" <<'FAKE'
@@ -765,12 +861,12 @@ rm -f "$STARTED"
 (cd "$work/repo" && SOUND_DIR="$snd" TMPDIR="$work/tmp" PATH="$work/micbin:$PATH" FAKE_PLAYER_INT=0 script -qec "bash -c 'bash host/ears.sh mic-test; echo after it'" /dev/null < <(for _ in $(seq 1 100); do [ -e "$STARTED" ] && break; sleep 0.05; done; sleep 0.2; printf '\003'; sleep 1) > "$work/out" 2>&1)
 check "and a script that ran it is stopped by the same Ctrl+C while it plays back, as by any other command's" "1|0" "$(grep -c '^player:' "$MIC_LOG")|$(grep -c 'after it' "$work/out")"
 
-for args in "mic-test 5 6" "mute 5" "start 5" "whisper-model x"; do
+for args in "mic-test 5 6" "mute 5" "start 5" "whisper-model x" "wake-report 5 6"; do
   mic_setup
   read -r -a words <<< "$args"
   mic_test "${words[@]}"
   check "too many arguments are refused before anything runs: '$args'" "1|" "$mic_status|$(cat "$MIC_LOG")"
-  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model, or bash host/ears.sh mic-test [seconds to wait]" "$mic_output"
+  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|whisper-model, bash host/ears.sh mic-test [seconds to wait], or bash host/ears.sh wake-report [hours]" "$mic_output"
 done
 
 dockerfile="$here/../ears/Dockerfile"
