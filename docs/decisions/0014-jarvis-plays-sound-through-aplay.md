@@ -1,7 +1,7 @@
 # 0014. Jarvis plays sound through aplay, with only his card's mixer and speakers
 
 - Date: 2026-11-18
-- Status: accepted, with the sound file also putting him on the `speech` network (0020)
+- Status: accepted, with the sound file also putting him on the `speech` network (0020); since 21 Nov `aplay` and `amixer` get only `PATH` from Jarvis's environment
 
 ## Context
 Jarvis is going to speak. A speech engine hands back raw sound (signed 16-bit, mono, at the engine's own rate), and something inside his container has to open the laptop's sound card and feed it those bytes. His container had no sound devices and runs on the stock `node:26-alpine`, which has no sound tools. Three things needed deciding: what plays the sound, how the devices reach his container while a voice-off Jarvis stays exactly as he was, and how the right card is found when card numbers can change between boots.

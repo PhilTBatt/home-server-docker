@@ -143,7 +143,15 @@ compose_file="$here/../docker-compose.yaml"
 ears=$(awk '/^  ears:$/ {on=1; next} on && /^  [a-z]/ {on=0} on && /^[a-z]/ {on=0} on' <(sed -n '/^services:$/,/^networks:$/p' "$compose_file"))
 check "ears is built from its own folder" "    build: ./ears" "$(grep '^    build:' <<< "$ears")"
 check "ears publishes no port" "0" "$(grep -c -e 'ports:' -e 'expose:' -e 'network_mode' <<< "$ears")"
-check "in the main file ears gets no devices and no extra rights: a microphone only comes with docker-compose.mic.yaml" "0" "$(grep -c -e 'devices:' -e 'privileged' -e 'cap_add' -e 'docker.sock' -e 'group_add' -e 'user:' -e 'pid:' -e 'ipc:' -e 'security_opt' -e 'extra_hosts' <<< "$ears")"
+check "in the main file ears gets no devices and no extra rights: a microphone only comes with docker-compose.mic.yaml" "0" "$(grep -c -e 'devices:' -e 'privileged' -e 'cap_add' -e 'docker.sock' -e 'group_add' -e 'user:' -e 'pid:' -e 'ipc:' -e 'extra_hosts' <<< "$ears")"
+check "ears runs with a tiny init that reaps the recorder's leftovers, a read-only filesystem, no Linux capabilities, and no way to gain privileges, with nothing else under security_opt or cap_drop" "    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m" "$(grep -A6 '^    init:' <<< "$ears")"
+check "and none of the four is set a second time" "4" "$(grep -c -e '^    security_opt:' -e '^    cap_drop:' -e '^    read_only:' -e '^    init:' <<< "$ears")"
 check "its settings and token come from its own git-ignored file" "    env_file:
       - ./ears/.env" "$(grep -A1 '^    env_file:$' <<< "$ears")"
 check "its one folder is the switch, read-only, and Docker won't make it if it's missing" "    volumes:

@@ -295,6 +295,12 @@ services:
         read_only: true
         bind:
           create_host_path: false
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     mem_limit: 256m
     networks:
       - ears

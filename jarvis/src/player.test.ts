@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { after, mock, test } from "node:test";
-import { killAfterMs, playerArgs, playerCommand, shortError, spawnPlayer, startPlayer, type PlayerExit, type PlayerProcess } from "./player.js";
+import { childEnv, killAfterMs, playerArgs, playerCommand, shortError, spawnPlayer, startPlayer, type PlayerExit, type PlayerProcess } from "./player.js";
 
 type Fake = Omit<PlayerProcess, "stderr"> & { stderr: PassThrough; written: Buffer[]; killed: number; kills: string[]; exit(exit: PlayerExit): void; ending: boolean; release(): void };
 
@@ -73,6 +73,18 @@ async function scratch(): Promise<string> {
 function realPlayer(script: string, args: string[] = []) {
   return (playerArgsGiven: readonly string[]) => spawnPlayer(["-e", script, "--", ...args, ...playerArgsGiven], process.execPath);
 }
+
+test("the player gets only PATH from Jarvis's environment, never his keys or tokens", async () => {
+  process.env.JARVIS_TEST_SECRET = "not for aplay";
+  try {
+    const child = realPlayer("process.exit(Object.keys(process.env).join(',') === 'PATH' && process.env.PATH === " + JSON.stringify(process.env.PATH) + " ? 0 : 3)")([]);
+    child.stdin.end();
+    assert.deepEqual(await child.ended, { code: 0, signal: null });
+  } finally {
+    delete process.env.JARVIS_TEST_SECRET;
+  }
+  assert.deepEqual(childEnv(), { PATH: process.env.PATH });
+});
 
 test("the player is aplay, given raw 16-bit little-endian mono at the engine's rate", () => {
   assert.equal(playerCommand, "aplay");

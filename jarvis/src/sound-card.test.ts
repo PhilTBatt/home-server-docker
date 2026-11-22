@@ -158,6 +158,15 @@ test("running a real command that works resolves", async () => {
   await runCommand(process.execPath, ["-e", "process.exit(0)"]);
 });
 
+test("the mixer gets only PATH from Jarvis's environment, never his keys or tokens", async () => {
+  process.env.JARVIS_TEST_SECRET = "not for amixer";
+  try {
+    await runCommand(process.execPath, ["-e", "process.exit(Object.keys(process.env).join(',') === 'PATH' && process.env.PATH === " + JSON.stringify(process.env.PATH) + " ? 0 : 3)"]);
+  } finally {
+    delete process.env.JARVIS_TEST_SECRET;
+  }
+});
+
 test("running a real command that fails reports what it said, tidied", async () => {
   await assert.rejects(runCommand(process.execPath, ["-e", "process.stderr.write('amixer: Invalid card number.\\n\\n');process.exit(1)"]), { message: "amixer: Invalid card number." });
 });

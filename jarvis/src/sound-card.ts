@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
-import { shortError } from "./player.js";
+import { childEnv, shortError } from "./player.js";
 
 export const soundDir = "/dev/snd";
 export const volumeControl = "Master";
@@ -48,7 +48,7 @@ export function volumeArgs(card: number, volume: number): string[] {
 
 export function runCommand(command: string, args: readonly string[], timeoutMs = mixerTimeoutMs): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { timeout: timeoutMs }, (error, _stdout, stderr) => {
+    execFile(command, args, { timeout: timeoutMs, env: childEnv() }, (error, _stdout, stderr) => {
       if (error === null) return resolve();
       const said = shortError(String(stderr));
       const code = (error as NodeJS.ErrnoException).code;

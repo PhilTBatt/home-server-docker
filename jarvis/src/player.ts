@@ -4,6 +4,10 @@ import type { Readable, Writable } from "node:stream";
 export const playerCommand = "aplay";
 export const killAfterMs = 2000;
 
+export function childEnv(): Record<string, string> {
+  return { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin" };
+}
+
 export type PlayerExit = { code: number | null; signal: NodeJS.Signals | null } | { error: NodeJS.ErrnoException };
 
 export type PlayerProcess = {
@@ -25,7 +29,7 @@ export function playerArgs(device: string, rate: number): string[] {
 }
 
 export function spawnPlayer(args: readonly string[], command = playerCommand): PlayerProcess {
-  const child = spawn(command, args, { stdio: ["pipe", "ignore", "pipe"] });
+  const child = spawn(command, args, { stdio: ["pipe", "ignore", "pipe"], env: childEnv() });
   if (child.stdin === null || child.stderr === null) throw new Error(`${command} started without its input and error pipes`);
   const ended = new Promise<PlayerExit>((resolve) => {
     child.once("error", (error) => resolve({ error }));
