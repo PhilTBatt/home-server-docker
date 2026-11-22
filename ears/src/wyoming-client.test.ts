@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { connectWyoming, describe, transcribe, transcribeChunkBytes, wyomingConnectMs, type WyomingConnection } from "./wyoming-client.js";
 import { createEventReader, encodeEvent, type WyomingEvent } from "./wyoming.js";
 
 type StandIn = { port: number; heard: WyomingEvent[]; closed: Promise<void>; server: Server };
 
 const open = new Map<Server, Set<Socket>>();
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 const pause = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -30,6 +38,7 @@ async function standIn(answer: (event: WyomingEvent, socket: Socket) => Promise<
     socket.on("error", () => {});
   });
   open.set(server, sockets);
+  stillOpen.add(() => stopped(server));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return { port: (server.address() as AddressInfo).port, heard, closed, server };
 }
@@ -186,6 +195,7 @@ test("a server that stops reading can't hold up a call-off: the sending stops at
     socket.on("error", () => {});
   });
   open.set(server, sockets);
+  stillOpen.add(() => stopped(server));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const connection = await connectWyoming({ host: "127.0.0.1", port: (server.address() as AddressInfo).port });
   const control = new AbortController();
@@ -346,6 +356,10 @@ test("a connection says how much it's still waiting to send, which grows when th
     socket.pause();
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  stillOpen.add(async () => {
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  });
   const connection = await connectWyoming({ host: "127.0.0.1", port: (server.address() as AddressInfo).port });
   assert.equal(connection.buffered(), 0);
   for (let index = 0; index < 400; index++) void connection.send({ type: "audio-chunk", data: format, payload: new Uint8Array(32_000) }).catch(() => {});

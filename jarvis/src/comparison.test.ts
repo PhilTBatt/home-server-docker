@@ -581,6 +581,20 @@ test("with nothing spoken in the log, there's no speech table at all", () => {
   assert.equal(compareReport({ lines: [voiced()], speech: [said({ firstSoundMs: null })], skipped: 0 }).includes("Speech, timed"), false);
 });
 
+test("a log line's Kokoro speed is checked against the setting's range, and an older line can be without one", () => {
+  for (const speed of [0.25, 0.85, 1, 4]) assert.equal(isLogLine(voiced({ kokoroSpeed: speed })), true, String(speed));
+  assert.equal(isLogLine(voiced()), true);
+  for (const speed of [0.2, 4.5, 0, -1, "1", null, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(isLogLine({ ...voiced(), kokoroSpeed: speed }), false, String(speed));
+});
+
+test("Kokoro's speeds are compared side by side, slowest first, after the voice and before how he stops, with older lines shown as not logged, and only when Kokoro's lines differ", () => {
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ kokoroSpeed: 1.2 }), voiced({ kokoroSpeed: 0.85 }), voiced(), line()], skipped: 0 }), ""), ["API, keep, no voice", "API, keep, Kokoro voice, speed not logged", "API, keep, Kokoro voice, speed 0.85", "API, keep, Kokoro voice, speed 1.2"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ kokoroSpeed: 0.85 }), voiced({ kokoroSpeed: 0.85 })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ kokoroSpeed: 0.85 }), voiced({ voice: "piper" }), voiced({ voice: "piper", kokoroSpeed: 1.5 })], skipped: 0 }), ""), ["API, keep, Kokoro voice", "API, keep, Piper voice"]);
+  assert.deepEqual(groupLines([voiced({ voice: "piper", kokoroSpeed: 1.5 }), voiced({ voice: "piper" }), line({ kokoroSpeed: 2 })]).map((group) => [group.voice, group.kokoroSpeed, group.lines.length]), [["off", null, 1], ["piper", null, 2]]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ kokoroSpeed: 1 }), voiced({ kokoroSpeed: 1, speechStop: "sentence" }), voiced({ kokoroSpeed: 0.85, speechStop: "sentence" })], skipped: 0 }), ""), ["API, keep, speed 0.85, finishes the sentence", "API, keep, speed 1, stops at once", "API, keep, speed 1, finishes the sentence"]);
+});
+
 test("a log line's bundle setting is checked like the other settings, and an older line without one counts as off", () => {
   assert.equal(isLogLine(voiced({ speechBundle: "on" })), true);
   assert.equal(isLogLine(voiced({ speechBundle: "off" })), true);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { bytesPerSecond, killAfterMs, recordingLimitMs, recordingRate, startRecording } from "./recorder.js";
 
@@ -19,12 +19,26 @@ function alive(pid: number | undefined): boolean {
   }
 }
 
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
+
+function recorded(...options: Parameters<typeof startRecording>): ReturnType<typeof startRecording> {
+  const recording = startRecording(...options);
+  stillOpen.add(() => recording.stop("the test is over"));
+  return recording;
+}
+
 test("a recording is 16-bit mono at 16,000 Hz, for at most 30 seconds, and a stuck recorder gets 1 second before it's killed", () => {
   assert.deepEqual([recordingRate, bytesPerSecond, recordingLimitMs, killAfterMs], [16_000, 32_000, 30_000, 1_000]);
 });
 
 test("stopping a recording ends its process, and says why, how long it ran and how much sound came", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: pretend });
+  const recording = recorded({ recorder: pretend });
   await pause(600);
   assert.equal(alive(recording.pid), true);
   const stopped = await recording.stop("asked to stop");
@@ -38,7 +52,7 @@ test("stopping a recording ends its process, and says why, how long it ran and h
 });
 
 test("stopping twice keeps the first reason and ends once", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: pretend });
+  const recording = recorded({ recorder: pretend });
   const first = recording.stop("muted");
   const second = recording.stop("asked to stop");
   assert.equal(await first, await second);
@@ -47,16 +61,16 @@ test("stopping twice keeps the first reason and ends once", { timeout: 10_000 },
 });
 
 test("a recording that reaches its time limit is stopped, and its process with it", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: pretend, limitMs: 300 });
+  const recording = recorded({ recorder: pretend, limitMs: 300 });
   const stopped = await recording.ended;
   assert.equal(alive(recording.pid), false);
   assert.deepEqual([stopped.reason, stopped.failed], ["it reached the 0.3-second limit", false]);
   assert.ok(stopped.ms >= 300 && stopped.ms < 1500, `${stopped.ms} ms`);
-  assert.equal(startRecording({ recorder: pretend, limitMs: 30_000 }).stop("x") instanceof Promise, true);
+  assert.equal(recorded({ recorder: pretend, limitMs: 30_000 }).stop("x") instanceof Promise, true);
 });
 
 test("a recorder sending more sound than the limit allows is stopped", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: node("setInterval(() => process.stdout.write(Buffer.alloc(64000)), 5)"), limitMs: 1000 });
+  const recording = recorded({ recorder: node("setInterval(() => process.stdout.write(Buffer.alloc(64000)), 5)"), limitMs: 1000 });
   const stopped = await recording.ended;
   assert.deepEqual([stopped.reason, stopped.failed], ["more sound came than the time limit allows", false]);
   assert.ok(stopped.bytes > 40_000);
@@ -64,14 +78,14 @@ test("a recorder sending more sound than the limit allows is stopped", { timeout
 });
 
 test("the sound a recording gets is kept in memory and handed back when it ends, as whole 16-bit samples", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: node("process.stdout.write(Buffer.from([1, 2, 3])); setTimeout(() => process.stdout.write(Buffer.from([4, 5])), 50); setInterval(() => {}, 1000)") });
+  const recording = recorded({ recorder: node("process.stdout.write(Buffer.from([1, 2, 3])); setTimeout(() => process.stdout.write(Buffer.from([4, 5])), 50); setInterval(() => {}, 1000)") });
   await pause(300);
   const stopped = await recording.stop("asked to stop");
   assert.deepEqual([[...stopped.sound], stopped.bytes], [[1, 2, 3, 4], 5]);
 });
 
 test("only the sound up to the limit is kept, however much more the recorder sends", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: node("setInterval(() => process.stdout.write(Buffer.alloc(1000, 7)), 5)"), limitMs: 1000, maxBytes: 4500 });
+  const recording = recorded({ recorder: node("setInterval(() => process.stdout.write(Buffer.alloc(1000, 7)), 5)"), limitMs: 1000, maxBytes: 4500 });
   const stopped = await recording.ended;
   assert.equal(stopped.reason, "more sound came than the time limit allows");
   assert.ok(stopped.bytes > 4500, String(stopped.bytes));
@@ -80,14 +94,14 @@ test("only the sound up to the limit is kept, however much more the recorder sen
 });
 
 test("a recorder that sends nothing hands back no sound", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: node("setInterval(() => {}, 1000)") });
+  const recording = recorded({ recorder: node("setInterval(() => {}, 1000)") });
   await pause(200);
   const stopped = await recording.stop("asked to stop");
   assert.deepEqual([stopped.sound.length, stopped.bytes], [0, 0]);
 });
 
 test("a recorder that ignores being asked to end is killed a second later", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: node("process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)"), killAfterMs: 300 });
+  const recording = recorded({ recorder: node("process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)"), killAfterMs: 300 });
   await pause(300);
   const began = performance.now();
   const stopped = await recording.stop("asked to stop");
@@ -98,17 +112,17 @@ test("a recorder that ignores being asked to end is killed a second later", { ti
 });
 
 test("a recorder that ends by itself counts as failed, with its code and the start of what it said", { timeout: 10_000 }, async () => {
-  const stopped = await startRecording({ recorder: node("process.stderr.write('arecord: main:850: audio open error: No such file or directory\\n'); process.exit(1)") }).ended;
+  const stopped = await recorded({ recorder: node("process.stderr.write('arecord: main:850: audio open error: No such file or directory\\n'); process.exit(1)") }).ended;
   assert.deepEqual([stopped.reason, stopped.failed], ["the recorder ended by itself with code 1: arecord: main:850: audio open error: No such file or directory", true]);
-  const quiet = await startRecording({ recorder: node("process.exit(0)") }).ended;
+  const quiet = await recorded({ recorder: node("process.exit(0)") }).ended;
   assert.deepEqual([quiet.reason, quiet.failed], ["the recorder ended by itself with code 0", true]);
-  const long = await startRecording({ recorder: node("process.stderr.write('\\u001b[31m' + 'x'.repeat(400)); process.exit(2)") }).ended;
+  const long = await recorded({ recorder: node("process.stderr.write('\\u001b[31m' + 'x'.repeat(400)); process.exit(2)") }).ended;
   assert.equal(long.reason.length, "the recorder ended by itself with code 2: ".length + 200);
   assert.equal(long.reason.includes("\u001b"), false);
 });
 
 test("a recorder killed from outside counts as failed, naming the signal", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: pretend });
+  const recording = recorded({ recorder: pretend });
   await pause(200);
   process.kill(recording.pid as number, "SIGKILL");
   const stopped = await recording.ended;
@@ -116,7 +130,7 @@ test("a recorder killed from outside counts as failed, naming the signal", { tim
 });
 
 test("a recorder that can't start counts as failed, saying why", { timeout: 10_000 }, async () => {
-  const recording = startRecording({ recorder: { command: "/no/such/recorder", args: [] } });
+  const recording = recorded({ recorder: { command: "/no/such/recorder", args: [] } });
   const stopped = await recording.ended;
   assert.equal(stopped.failed, true);
   assert.match(stopped.reason, /^the recorder couldn't start: spawn \/no\/such\/recorder ENOENT$/);
@@ -138,7 +152,7 @@ const quiet = (marker: string) => `"${process.execPath}" -e "setInterval(() => {
 
 test("a recorder's own children are ended with it, so nothing keeps recording after a stop, even one that never sends ears anything", { timeout: 10_000 }, async () => {
   const marker = `--ears-test-${process.pid}-a`;
-  const recording = startRecording({ recorder: { command: "/bin/sh", args: ["-c", `${quiet(marker)} & wait`] }, killAfterMs: 300 });
+  const recording = recorded({ recorder: { command: "/bin/sh", args: ["-c", `${quiet(marker)} & wait`] }, killAfterMs: 300 });
   await pause(500);
   assert.equal(anyAlive(marker).length, 1);
   const stopped = await recording.stop("asked to stop");
@@ -149,7 +163,7 @@ test("a recorder's own children are ended with it, so nothing keeps recording af
 
 test("a recorder that leaves a child running when it ends is finished anyway, and the child is ended at once", { timeout: 10_000 }, async () => {
   const marker = `--ears-test-${process.pid}-b`;
-  const recording = startRecording({ recorder: { command: "/bin/sh", args: ["-c", `${quiet(marker)} & sleep 0.3`] }, killAfterMs: 5_000 });
+  const recording = recorded({ recorder: { command: "/bin/sh", args: ["-c", `${quiet(marker)} & sleep 0.3`] }, killAfterMs: 5_000 });
   const stopped = await recording.ended;
   assert.deepEqual([stopped.reason, stopped.failed], ["the recorder ended by itself with code 0", true]);
   await pause(50);
@@ -158,7 +172,7 @@ test("a recorder that leaves a child running when it ends is finished anyway, an
 
 test("a recorder whose child escapes its group and keeps its output open is given up on a second after it ends", { timeout: 10_000 }, async () => {
   const marker = `--ears-test-${process.pid}-c`;
-  const recording = startRecording({ recorder: { command: "/bin/sh", args: ["-c", `setsid "${process.execPath}" "${pretend.args[0]}" ${marker} & sleep 0.3`] }, killAfterMs: 300 });
+  const recording = recorded({ recorder: { command: "/bin/sh", args: ["-c", `setsid "${process.execPath}" "${pretend.args[0]}" ${marker} & sleep 0.3`] }, killAfterMs: 300 });
   await pause(300);
   const began = performance.now();
   const stopped = await recording.ended;
@@ -171,7 +185,7 @@ test("a recorder whose child escapes its group and keeps its output open is give
 
 test("a recorder that ends by itself has failed, even if ears asks it to stop before its output closes", { timeout: 10_000 }, async () => {
   const marker = `--ears-test-${process.pid}-d`;
-  const recording = startRecording({ recorder: { command: "/bin/sh", args: ["-c", `setsid "${process.execPath}" -e "setInterval(() => {}, 1000)" -- ${marker} 2>/dev/null & echo "no such card" >&2; sleep 0.2; exit 1`] }, killAfterMs: 1_000 });
+  const recording = recorded({ recorder: { command: "/bin/sh", args: ["-c", `setsid "${process.execPath}" -e "setInterval(() => {}, 1000)" -- ${marker} 2>/dev/null & echo "no such card" >&2; sleep 0.2; exit 1`] }, killAfterMs: 1_000 });
   const fallback = setTimeout(() => anyAlive(marker).forEach((pid) => process.kill(pid, "SIGKILL")), 4_000);
   try {
     await pause(500);
@@ -190,7 +204,7 @@ test("the recorder is given no settings but PATH, so ears's token isn't passed t
   const before = process.env.EARS_TOKEN;
   process.env.EARS_TOKEN = "a-token-the-recorder-must-not-see";
   try {
-    const stopped = await startRecording({ recorder: node("process.stderr.write(Object.keys(process.env).sort().join(',') + ' ' + Object.values(process.env).join(',')); process.exit(3)") }).ended;
+    const stopped = await recorded({ recorder: node("process.stderr.write(Object.keys(process.env).sort().join(',') + ' ' + Object.values(process.env).join(',')); process.exit(3)") }).ended;
     assert.equal(stopped.reason.includes("a-token-the-recorder-must-not-see"), false);
     assert.match(stopped.reason, /^the recorder ended by itself with code 3: PATH /);
   } finally {
@@ -201,7 +215,7 @@ test("the recorder is given no settings but PATH, so ears's token isn't passed t
 
 test("with no limit and nothing kept, a recorder runs until it's stopped and hands each piece on as it comes", { timeout: 10_000 }, async () => {
   const pieces: number[] = [];
-  const recording = startRecording({ recorder: pretend, limitMs: null, keep: false, onSound: (sound) => pieces.push(sound.length) });
+  const recording = recorded({ recorder: pretend, limitMs: null, keep: false, onSound: (sound) => pieces.push(sound.length) });
   await pause(500);
   assert.equal(alive(recording.pid), true);
   assert.ok(pieces.length >= 3, `${pieces.length} pieces`);
@@ -216,7 +230,7 @@ test("with no limit and nothing kept, a recorder runs until it's stopped and han
 
 test("a recorder with no limit never stops for sending a lot", { timeout: 10_000 }, async () => {
   let bytes = 0;
-  const recording = startRecording({ recorder: node("setInterval(() => process.stdout.write(Buffer.alloc(64000)), 5)"), limitMs: null, keep: false, onSound: (sound) => (bytes += sound.length) });
+  const recording = recorded({ recorder: node("setInterval(() => process.stdout.write(Buffer.alloc(64000)), 5)"), limitMs: null, keep: false, onSound: (sound) => (bytes += sound.length) });
   await pause(400);
   const stopped = await recording.stop("asked to stop");
   assert.equal(stopped.reason, "asked to stop");
@@ -225,7 +239,7 @@ test("a recorder with no limit never stops for sending a lot", { timeout: 10_000
 
 test("pieces are handed on even when they're also kept", { timeout: 10_000 }, async () => {
   const pieces: number[] = [];
-  const recording = startRecording({ recorder: node("process.stdout.write(Buffer.from([1, 2, 3, 4])); setInterval(() => {}, 1000)"), onSound: (sound) => pieces.push(...sound) });
+  const recording = recorded({ recorder: node("process.stdout.write(Buffer.from([1, 2, 3, 4])); setInterval(() => {}, 1000)"), onSound: (sound) => pieces.push(...sound) });
   await pause(300);
   const stopped = await recording.stop("asked to stop");
   assert.deepEqual([[...stopped.sound], pieces], [[1, 2, 3, 4], [1, 2, 3, 4]]);

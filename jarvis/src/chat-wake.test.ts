@@ -417,7 +417,7 @@ test("an answer to a spoken question that stops the session ends the chat", { ti
 });
 
 test("a question asked through the wake word is logged with wake true and the times, never the words", () => {
-  const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
+  const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
   const at = new Date("2026-11-20T22:00:00Z");
   const answer = { text: "Ten past nine.", firstWordsMs: 400, totalMs: 900 };
   const spoken: Heard = { text: "What's the time?", recordedMs: 3400.4, textMs: 949.6, wake: true };
@@ -642,7 +642,7 @@ test("without follow-ups, a follow-up's events from ears are passed over safely,
 });
 
 test("a question asked as a follow-up is logged with follow true, how it was set to end and its pause, never the words", () => {
-  const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
+  const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
   const answer = { text: "Nine again.", firstWordsMs: 400, totalMs: 900 };
   const spoken: Heard = { text: "And tomorrow?", recordedMs: 2000.2, textMs: 700.4, follow: true, ender: "silero", pauseMs: 2500 };
   const line = logLine(context, "c", 2, new Date("2026-11-21T20:00:00Z"), { answer, heard: spoken });

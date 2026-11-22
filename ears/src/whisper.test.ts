@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { textLimitMs, whisperHost, whisperPort, whisperText } from "./whisper.js";
 import { createEventReader, encodeEvent, type WyomingEvent } from "./wyoming.js";
 
 type StandIn = { port: number; heard: WyomingEvent[]; closed: Promise<void>; server: Server; sockets: Set<Socket> };
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 async function standIn(answer: (event: WyomingEvent, socket: Socket) => void): Promise<StandIn> {
   const heard: WyomingEvent[] = [];
@@ -24,7 +32,9 @@ async function standIn(answer: (event: WyomingEvent, socket: Socket) => void): P
     socket.on("error", () => {});
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { port: (server.address() as AddressInfo).port, heard, closed, server, sockets };
+  const standing = { port: (server.address() as AddressInfo).port, heard, closed, server, sockets };
+  stillOpen.add(() => stopped(standing));
+  return standing;
 }
 
 async function stopped(standing: StandIn) {

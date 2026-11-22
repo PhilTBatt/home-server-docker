@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { createMuteSwitch, missing, readSwitch, switchEveryMs, switchFile, watchSwitch, type Reading } from "./mute.js";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -7,6 +7,14 @@ const says = (text: string | null): Reading => ({ text, readable: true });
 const unreadable: Reading = { text: null, readable: false };
 const gone = Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
 const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 test("the switch is the file /switch/mute, read every 200 ms", () => {
   assert.deepEqual([switchFile, switchEveryMs], ["/switch/mute", 200]);
@@ -75,6 +83,7 @@ test("watching reads the file now and then every interval, and says only when it
   let text = "unmuted 1\n";
   const heard: string[] = [];
   const watch = await watchSwitch({ read: async () => text, everyMs: 10, onMute: () => heard.push("mute"), onUnmute: () => heard.push("unmute") });
+  stillOpen.add(() => watch.stop());
   await pause(50);
   assert.deepEqual(heard, []);
   text = "unmuted 2\n";
@@ -105,6 +114,7 @@ test("a file that can't be read counts as muted, the same unmute after it doesn'
     onMute: () => heard.push("mute"),
     onUnmute: () => heard.push("unmute"),
   });
+  stillOpen.add(() => watch.stop());
   fail = true;
   await pause(40);
   assert.deepEqual(heard, ["mute"]);
@@ -131,6 +141,7 @@ test("a change read after the watch was stopped isn't reported", async () => {
     onMute: () => heard.push("mute"),
     onUnmute: () => heard.push("unmute"),
   });
+  stillOpen.add(() => watch.stop());
   hold = true;
   await pause(30);
   text = "unmuted 5\n";
@@ -152,6 +163,7 @@ test("with no file at the start, the first unmute after it counts", async () => 
     onMute: () => heard.push("mute"),
     onUnmute: () => heard.push("unmute"),
   });
+  stillOpen.add(() => watch.stop());
   text = "unmuted 1\n";
   await pause(50);
   assert.deepEqual(heard, ["unmute"]);
@@ -171,6 +183,7 @@ test("with a file that couldn't be read at the start, the unmute already in it d
     onMute: () => heard.push("mute"),
     onUnmute: () => heard.push("unmute"),
   });
+  stillOpen.add(() => watch.stop());
   await pause(40);
   blocked = false;
   await pause(50);

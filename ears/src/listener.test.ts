@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import type { EarsState } from "./ears.js";
 import { frameBytes, frameLevel } from "./levels.js";
 import { backgroundMs, beforeMs, behindBytes, createListener, gapMs, holdMs, lateMs, longestPieceBytes, noRoomYet, presenceMs, retryMs, stillSpeaking, wholeMsBytes, wakeHost, wakeOff, wakePort, wakeWord, type Listener, type ListenerDeps } from "./listener.js";
@@ -10,6 +10,14 @@ import type { WyomingEvent } from "./wyoming.js";
 import type { WyomingConnection } from "./wyoming-client.js";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 async function until(done: () => boolean, ms = 2000): Promise<void> {
   const began = performance.now();
@@ -144,6 +152,10 @@ function setUp(options: Partial<ListenerDeps> & { failConnects?: number; slowSto
     ...options,
   });
   listener = created;
+  stillOpen.add(() => {
+    for (const stream of streams) stream.finish();
+    return created.close();
+  });
   const closing = created.close.bind(created);
   created.close = async () => {
     for (const tap of taps) await tap.stop("the test is over");
@@ -831,6 +843,7 @@ test("a wake-word server that breaks the protocol is let go", { timeout: 5_000 }
     changed: () => {},
     retryMs: 10_000,
   });
+  stillOpen.add(() => listener.close());
   listener.waiting();
   await until(() => listener.view().problem !== null);
   assert.equal(listener.view().problem, "the wake-word server stopped answering (The Wyoming server sent a header that isn't JSON)");

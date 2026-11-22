@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { createEars, type Ears } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
 import { earsPort, followWithinMs, startEarsServer, tokenMatches, wakeOffError, type WakeApi } from "./server.js";
 
 const token = "t".repeat(64);
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 function quickRecording(): Recording {
   let finish: (stopped: Stopped) => void = () => {};
@@ -23,6 +31,7 @@ function quickRecording(): Recording {
 
 async function serve(ears: Ears = createEars({ microphone: "pretend", record: quickRecording, log: () => {} })) {
   const server = await startEarsServer(ears, token, 0, "127.0.0.1");
+  stillOpen.add(() => closed(server));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = async (method: string, path: string, headers: Record<string, string> = { authorization: `Bearer ${token}` }) => {
     const response = await fetch(`${base}${path}`, { method, headers });
@@ -157,6 +166,7 @@ async function serveWake(on = true) {
   const ears = createEars({ microphone: "pretend", record: quickRecording, log: () => {} });
   const wake = wakeApi(ears, on);
   const server = await startEarsServer(ears, token, 0, "127.0.0.1", wake.api);
+  stillOpen.add(() => closed(server));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = async (method: string, path: string, init: RequestInit = {}) => {
     const response = await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}` }, ...init });

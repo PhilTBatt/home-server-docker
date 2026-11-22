@@ -71,6 +71,7 @@ export type LogContext = {
   hubActions: HubActionsMode;
   sessionNotes: SessionNotesMode;
   voice: VoiceMode;
+  kokoroSpeed: number;
   speechStart: SpeechStart;
   speechStop: SpeechStop;
   speechBundle: SpeechBundleMode;
@@ -91,6 +92,7 @@ export type LogLine = {
   hubActions?: HubActionsMode;
   sessionNotes?: SessionNotesMode;
   voice?: VoiceMode;
+  kokoroSpeed?: number;
   speechStart?: SpeechStart;
   speechStop?: SpeechStop;
   speechBundle?: SpeechBundleMode;
@@ -166,6 +168,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     hubActions: context.hubActions,
     sessionNotes: context.sessionNotes,
     voice: context.voice,
+    ...(context.voice === "kokoro" ? { kokoroSpeed: context.kokoroSpeed } : {}),
     ...(context.voice === "off" ? {} : { speechStart: context.speechStart, speechStop: context.speechStop, speechBundle: context.speechBundle, spokenStyle: context.spokenStyle }),
     ok: answer !== null,
     error: "error" in outcome ? errorKind(outcome.error) : null,

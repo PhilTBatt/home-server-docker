@@ -1,13 +1,26 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { ask, askCommand, askUsage, questions } from "./ask-api.js";
 import { createEars } from "./ears.js";
 import { startEarsServer } from "./server.js";
 import { textLimitMs } from "./whisper.js";
 
 const token = "t".repeat(64);
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
+
+async function closed(server: Server) {
+  server.closeAllConnections();
+  await new Promise((resolve) => server.close(resolve));
+}
 
 test("ask knows four questions: the state, start, stop and health, and waits 4 seconds for an answer, or 70 for a stop, which waits for the text", () => {
   assert.deepEqual(Object.keys(questions), ["state", "start", "stop", "health"]);
@@ -20,6 +33,7 @@ test("ask knows four questions: the state, start, stop and health, and waits 4 s
 test("health prints only the status and the state's one word, never the last recording's text, since Docker keeps what a health check prints", async () => {
   const ears = createEars({ microphone: "pretend", record: () => ({ pid: 1, ended: Promise.resolve({ reason: "x", failed: false, bytes: 2, ms: 1000, sound: Uint8Array.of(1, 2) }), stop: () => new Promise(() => {}) }), log: () => {}, toText: async () => "Turn the lights on." });
   const server = await startEarsServer(ears, token, 0, "127.0.0.1");
+  stillOpen.add(() => closed(server));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   await ears.unmute();
   ears.start();
@@ -36,6 +50,7 @@ test("health prints only the status and the state's one word, never the last rec
   await new Promise((resolve) => server.close(resolve));
   const odd = createServer((_request, response) => response.end(JSON.stringify({ state: "Turn the lights on." })));
   await new Promise<void>((resolve) => odd.listen(0, "127.0.0.1", resolve));
+  stillOpen.add(() => closed(odd));
   said.length = 0;
   assert.equal(await askCommand("health", token, out, `http://127.0.0.1:${(odd.address() as AddressInfo).port}`), 0);
   assert.deepEqual(said, ["200 (no state)"], "a state that isn't one plain word isn't printed either");
@@ -46,6 +61,7 @@ test("health prints only the status and the state's one word, never the last rec
 test("ask sends the token and prints the status and the answer, refusals included", async () => {
   const ears = createEars({ microphone: null, record: () => assert.fail("nothing should record"), log: () => {} });
   const server = await startEarsServer(ears, token, 0, "127.0.0.1");
+  stillOpen.add(() => closed(server));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   assert.deepEqual(await ask("state", token, base), { status: 200, body: '{"state":"muted","reason":"ears starts muted after every start, and waits to be unmuted","microphone":null,"last":null,"lastId":null}' });
   assert.deepEqual(await ask("start", token, base), { status: 409, body: '{"error":"ears is muted","state":"muted","reason":"ears starts muted after every start, and waits to be unmuted","microphone":null,"last":null,"lastId":null}' });
@@ -66,6 +82,7 @@ test("anything else is refused with the usage, before anything is sent", async (
 test("as a command, it prints the answer and exits 0 for a yes and 1 for a refusal, a wrong token or no answer at all", async () => {
   const ears = createEars({ microphone: null, record: () => assert.fail("nothing should record"), log: () => {} });
   const server = await startEarsServer(ears, token, 0, "127.0.0.1");
+  stillOpen.add(() => closed(server));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const said: string[] = [];
   const out = (line: string) => said.push(line);

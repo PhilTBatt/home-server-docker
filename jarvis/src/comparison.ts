@@ -1,5 +1,5 @@
 import { logVersion, type LogLine, type NewChatLine, type Rating, type RatingLine, type SpeechLine } from "./answer-log.js";
-import { chatModes, engines, hubActionsModes, hubToolsModes, lengthHintModes, sessionNotesModes, speechBundleModes, speechStarts, speechStops, spokenStyleModes, thinkingHistories, voiceModes, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type SessionNotesMode, type SpeechBundleMode, type SpeechStart, type SpeechStop, type SpokenStyleMode, type ThinkingHistory, type VoiceMode } from "./config.js";
+import { chatModes, engines, hubActionsModes, hubToolsModes, kokoroSpeeds, lengthHintModes, sessionNotesModes, speechBundleModes, speechStarts, speechStops, spokenStyleModes, thinkingHistories, voiceModes, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type SessionNotesMode, type SpeechBundleMode, type SpeechStart, type SpeechStop, type SpokenStyleMode, type ThinkingHistory, type VoiceMode } from "./config.js";
 import { seconds, summarise } from "./timing.js";
 
 export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; speech?: SpeechLine[]; skipped: number };
@@ -15,6 +15,7 @@ export type Group = {
   hubActions: HubActionsMode;
   sessionNotes: SessionNotesMode;
   voice: VoiceMode;
+  kokoroSpeed: number | "not logged" | null;
   speechStart: SpeechStart | null;
   speechStop: SpeechStop | null;
   speechBundle: SpeechBundleMode | null;
@@ -59,6 +60,7 @@ export function isLogLine(value: unknown): value is LogLine {
     (line.hubActions === undefined || (hubActionsModes as readonly unknown[]).includes(line.hubActions)) &&
     (line.sessionNotes === undefined || (sessionNotesModes as readonly unknown[]).includes(line.sessionNotes)) &&
     (line.voice === undefined || (voiceModes as readonly unknown[]).includes(line.voice)) &&
+    (line.kokoroSpeed === undefined || (typeof line.kokoroSpeed === "number" && line.kokoroSpeed >= kokoroSpeeds.min && line.kokoroSpeed <= kokoroSpeeds.max)) &&
     (line.speechStart === undefined || (speechStarts as readonly unknown[]).includes(line.speechStart)) &&
     (line.speechStop === undefined || (speechStops as readonly unknown[]).includes(line.speechStop)) &&
     (line.speechBundle === undefined || (speechBundleModes as readonly unknown[]).includes(line.speechBundle)) &&
@@ -162,14 +164,14 @@ function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
   return thinking === null ? "API" : `API, ${thinking}`;
 }
 
-function order(group: Group): [number, number, string, number, number, number, number, number, number, number, number, number, number] {
-  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), hubActionsModes.indexOf(group.hubActions), sessionNotesModes.indexOf(group.sessionNotes), voiceModes.indexOf(group.voice), group.speechStart === null ? -1 : speechStarts.indexOf(group.speechStart), group.speechStop === null ? -1 : speechStops.indexOf(group.speechStop), group.speechBundle === null ? -1 : speechBundleModes.indexOf(group.speechBundle), group.spokenStyle === null ? -1 : spokenStyleModes.indexOf(group.spokenStyle)];
+function order(group: Group): [number, number, string, number, number, number, number, number, number, number, number, number, number, number] {
+  return [engines.indexOf(group.engine), group.thinking === null ? -1 : thinkingHistories.indexOf(group.thinking), group.model, chatModes.indexOf(group.chats), lengthHintModes.indexOf(group.lengthHints), hubToolsModes.indexOf(group.hubTools), hubActionsModes.indexOf(group.hubActions), sessionNotesModes.indexOf(group.sessionNotes), voiceModes.indexOf(group.voice), group.kokoroSpeed === null ? -2 : group.kokoroSpeed === "not logged" ? -1 : group.kokoroSpeed, group.speechStart === null ? -1 : speechStarts.indexOf(group.speechStart), group.speechStop === null ? -1 : speechStops.indexOf(group.speechStop), group.speechBundle === null ? -1 : speechBundleModes.indexOf(group.speechBundle), group.spokenStyle === null ? -1 : spokenStyleModes.indexOf(group.spokenStyle)];
 }
 
 function compareGroups(a: Group, b: Group): number {
-  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, actionsA, notesA, voiceA, startA, stopA, bundleA, styleA] = order(a);
-  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, actionsB, notesB, voiceB, startB, stopB, bundleB, styleB] = order(b);
-  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || actionsA - actionsB || notesA - notesB || voiceA - voiceB || startA - startB || stopA - stopB || bundleA - bundleB || styleA - styleB;
+  const [engineA, thinkingA, modelA, chatsA, hintsA, hubA, actionsA, notesA, voiceA, speedA, startA, stopA, bundleA, styleA] = order(a);
+  const [engineB, thinkingB, modelB, chatsB, hintsB, hubB, actionsB, notesB, voiceB, speedB, startB, stopB, bundleB, styleB] = order(b);
+  return engineA - engineB || thinkingA - thinkingB || (modelA < modelB ? -1 : modelA > modelB ? 1 : 0) || chatsA - chatsB || hintsA - hintsB || hubA - hubB || actionsA - actionsB || notesA - notesB || voiceA - voiceB || speedA - speedB || startA - startB || stopA - stopB || bundleA - bundleB || styleA - styleB;
 }
 
 const chatNames: Record<ChatMode, string> = { fresh: "fresh", resume: "resumed" };
@@ -194,12 +196,13 @@ export function groupLines(lines: LogLine[]): Group[] {
     const hubActions = line.hubActions ?? "off";
     const sessionNotes = line.sessionNotes ?? "off";
     const voice = line.voice ?? "off";
+    const kokoroSpeed = voice === "kokoro" ? (line.kokoroSpeed ?? "not logged") : null;
     const speechStart = voice === "off" ? null : (line.speechStart ?? "sentence");
     const speechStop = voice === "off" ? null : (line.speechStop ?? "now");
     const speechBundle = voice === "off" ? null : (line.speechBundle ?? "off");
     const spokenStyle = voice === "off" ? null : (line.spokenStyle ?? "off");
-    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, speechStop, speechBundle, spokenStyle]);
-    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, speechStart, speechStop, speechBundle, spokenStyle, lines: [] };
+    const key = JSON.stringify([line.engine, thinking, line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, kokoroSpeed, speechStart, speechStop, speechBundle, spokenStyle]);
+    const group = groups.get(key) ?? { label: "", engine: line.engine, thinking, model: line.model, chats, lengthHints, hubTools, hubActions, sessionNotes, voice, kokoroSpeed, speechStart, speechStop, speechBundle, spokenStyle, lines: [] };
     group.lines.push(line);
     groups.set(key, group);
   }
@@ -210,6 +213,7 @@ export function groupLines(lines: LogLine[]): Group[] {
   const actionSettings = new Set(lines.map((line) => line.hubActions ?? "off"));
   const notesSettings = new Set(lines.map((line) => line.sessionNotes ?? "off"));
   const voiceSettings = new Set(lines.map((line) => line.voice ?? "off"));
+  const speedSettings = new Set(lines.flatMap((line) => (line.voice === "kokoro" ? [line.kokoroSpeed ?? "not logged"] : [])));
   const startSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.speechStart ?? "sentence"])));
   const stopSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.speechStop ?? "now"])));
   const bundleSettings = new Set(lines.flatMap((line) => ((line.voice ?? "off") === "off" ? [] : [line.speechBundle ?? "off"])));
@@ -223,6 +227,7 @@ export function groupLines(lines: LogLine[]): Group[] {
       ...(actionSettings.size > 1 ? [actionNames[group.hubActions]] : []),
       ...(notesSettings.size > 1 ? [notesNames[group.sessionNotes]] : []),
       ...(voiceSettings.size > 1 ? [voiceNames[group.voice]] : []),
+      ...(speedSettings.size > 1 && group.kokoroSpeed !== null ? [group.kokoroSpeed === "not logged" ? "speed not logged" : `speed ${group.kokoroSpeed}`] : []),
       ...(startSettings.size > 1 && group.speechStart !== null ? [startNames[group.speechStart]] : []),
       ...(stopSettings.size > 1 && group.speechStop !== null ? [stopNames[group.speechStop]] : []),
       ...(bundleSettings.size > 1 && group.speechBundle !== null ? [bundleNames[group.speechBundle]] : []),

@@ -74,7 +74,7 @@ try {
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, speechStart: config.speechStart, speechStop: config.speechStop, speechBundle: config.speechBundle ? "on" : "off", spokenStyle: config.spokenStyle ? "on" : "off" },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, kokoroSpeed: config.kokoroSpeed, speechStart: config.speechStart, speechStop: config.speechStop, speechBundle: config.speechBundle ? "on" : "off", spokenStyle: config.spokenStyle ? "on" : "off" },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
