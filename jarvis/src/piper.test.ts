@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { after, afterEach, test } from "node:test";
 import { createPiper, piperCheckMs, piperHost, piperName, piperPort, piperRate, piperSpeakMs } from "./piper.js";
 import { startPlayer } from "./player.js";
 import { setVolume } from "./sound-card.js";
@@ -14,6 +14,14 @@ import { createEventReader, encodeEvent, type WyomingEvent } from "./wyoming.js"
 type StandIn = { port: number; heard: WyomingEvent[][]; closed: () => number; server: Server };
 
 const open = new Map<Server, Set<Socket>>();
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 const folders: string[] = [];
 
 after(async () => {
@@ -42,6 +50,7 @@ async function standIn(answer: (event: WyomingEvent, socket: Socket) => Promise<
     socket.on("error", () => {});
   });
   open.set(server, sockets);
+  stillOpen.add(() => stopped(server));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return { port: (server.address() as AddressInfo).port, heard, closed: () => closed, server };
 }

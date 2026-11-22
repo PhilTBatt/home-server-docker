@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { connectWyoming, describe, synthesize, wyomingConnectMs, type AudioPiece, type WyomingConnection } from "./wyoming-client.js";
 import { createEventReader, encodeEvent, type WyomingEvent } from "./wyoming.js";
 
 type StandIn = { port: number; heard: WyomingEvent[]; closed: Promise<void>; server: Server };
 
 const open = new Map<Server, Set<Socket>>();
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 const pause = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -29,6 +37,7 @@ async function standIn(answer: (event: WyomingEvent, socket: Socket) => Promise<
     socket.on("error", () => {});
   });
   open.set(server, sockets);
+  stillOpen.add(() => stopped(server));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return { port: (server.address() as AddressInfo).port, heard, closed, server };
 }

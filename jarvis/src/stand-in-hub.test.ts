@@ -4,8 +4,16 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { hubActionToolNames, hubAnswer, hubReadToolNames, hubReply, standInHubFile, type HubCall } from "./stand-in-hub.js";
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 test("the stand-in hub offers the seven read tools, plus the three actions only when MCP_ACTIONS is on", () => {
   const listed = (env: Record<string, string | undefined>) => (hubReply({ id: 1, method: "tools/list" }, env, () => {})?.result as { tools: { name: string }[] }).tools.map((tool) => tool.name);
@@ -29,11 +37,12 @@ test("the stand-in hub answers a call and records what it was started with; unkn
   assert.deepEqual(hubReply({ id: 5, method: "initialize", params: { protocolVersion: "2099-01-01" } }, env, () => {})?.result, { protocolVersion: "2099-01-01", capabilities: { tools: {} }, serverInfo: { name: "stand-in-hub", version: "1.0.0" } });
 });
 
-test("run as a program, the stand-in hub speaks JSON lines on stdin and stdout, and logs calls to the file it's given", async () => {
+test("run as a program, the stand-in hub speaks JSON lines on stdin and stdout, and logs calls to the file it's given", { timeout: 10_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), "jarvis-hub-test-"));
   try {
     const log = join(dir, "calls.jsonl");
     const child = spawn(process.execPath, [standInHubFile, log], { env: { API_TOKEN: "hub-token", MCP_ACTIONS: "off" }, stdio: ["pipe", "pipe", "inherit"] });
+    stillOpen.add(() => child.kill());
     const replies = createInterface({ input: child.stdout });
     const next = () => new Promise<Record<string, unknown>>((resolve) => replies.once("line", (line) => resolve(JSON.parse(line))));
     child.stdin.write("not json\n");

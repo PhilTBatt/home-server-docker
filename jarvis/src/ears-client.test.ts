@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { earsCaller, earsQuickMs, earsStopMs, earsUrl, readEarsAnswer } from "./ears-client.js";
 
 type Seen = { method: string; path: string; authorization: string | undefined };
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 async function standIn(answer: (request: IncomingMessage, response: ServerResponse) => void) {
   const seen: Seen[] = [];
@@ -13,6 +21,7 @@ async function standIn(answer: (request: IncomingMessage, response: ServerRespon
     answer(request, response);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  stillOpen.add(() => closed(server));
   return { server, seen, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
 }
 

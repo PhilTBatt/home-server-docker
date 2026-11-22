@@ -2,13 +2,21 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import type { BrainTools } from "./brain-tools.js";
 import { connectOverStdio, hubStartMs, startHubTools, withHubTools, type HubConnection } from "./hub-client.js";
 import { hubProblemNote } from "./hub-tools.js";
 import { hubActionToolNames, hubReadToolNames, standInHubFile, type HubCall } from "./stand-in-hub.js";
 
 const server = { command: "node", args: ["/mcp/dist/server.js"], token: "hub-token" };
+
+const stillOpen = new Set<() => unknown>();
+
+afterEach(async () => {
+  const closing = [...stillOpen];
+  stillOpen.clear();
+  for (const close of closing) await Promise.resolve().then(close).catch(() => {});
+});
 
 function fakeConnection(overrides: Partial<HubConnection> = {}) {
   const calls: { name: string; arguments: Record<string, unknown> }[] = [];
@@ -140,6 +148,7 @@ test("over a real pipe, the MCP server gets the token and read-only mode but not
   try {
     const log = join(dir, "calls.jsonl");
     const hub = await startHubTools({ command: process.execPath, args: [standInHubFile, log], token: "hub-token" }, () => assert.fail("no note expected"), connectOverStdio, 10_000);
+    stillOpen.add(() => hub?.close());
     assert.deepEqual(hub?.definitions.map((tool) => tool.name), hubReadToolNames);
     assert.match((await hub?.run("get_alerts", {}))?.content ?? "", /"tool":"get_alerts"/);
     await hub?.close();
@@ -164,6 +173,7 @@ test("over a real pipe, an MCP server that never answers is stopped once the tim
     assert.ok(Date.now() - started < 5000);
     assert.deepEqual(notes, [hubProblemNote("failed")]);
     const pid = Number(await readFile(pidFile, "utf8"));
+    stillOpen.add(() => process.kill(pid, "SIGKILL"));
     const alive = () => {
       try {
         process.kill(pid, 0);
@@ -216,6 +226,7 @@ test("over a real pipe with the actions on, the MCP server is started with them 
   try {
     const log = join(dir, "calls.jsonl");
     const hub = await startHubTools({ command: process.execPath, args: [standInHubFile, log], token: "hub-token", actions: true }, () => assert.fail("no note expected"), connectOverStdio, 10_000);
+    stillOpen.add(() => hub?.close());
     assert.deepEqual(hub?.definitions.map((tool) => tool.name), [...hubReadToolNames, ...hubActionToolNames]);
     await hub?.run("stop_download", { hash: "abc" });
     await hub?.close();

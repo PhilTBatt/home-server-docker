@@ -19,6 +19,12 @@ after(async () => {
   for (const folder of folders) await rm(folder, { recursive: true, force: true });
 });
 
+async function started(...options: Parameters<typeof startService>): Promise<Service> {
+  const service = await startService(...options);
+  services.push(service);
+  return service;
+}
+
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function recorders(): number[] {
@@ -195,11 +201,12 @@ test("a restarted ears numbers its recordings after the ones it made before, so 
   }
 });
 
-test("if the port is taken, starting fails and leaves nothing running", { timeout: 15_000 }, async () => {
+test("if the port is taken, starting fails and leaves nothing running", { timeout: 15_000 }, async (t) => {
   const taken = createServer();
   await new Promise<void>((resolve) => taken.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => taken.close(resolve)));
   const port = (taken.address() as AddressInfo).port;
-  await assert.rejects(startService({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500 }, log: () => {}, switchAt: "/no/such/switch", everyMs: 20, port, host: "127.0.0.1" }), { code: "EADDRINUSE" });
+  await assert.rejects(started({ config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500 }, log: () => {}, switchAt: "/no/such/switch", everyMs: 20, port, host: "127.0.0.1" }), { code: "EADDRINUSE" });
   await new Promise((resolve) => taken.close(resolve));
 });
 
@@ -236,9 +243,9 @@ test("each microphone setting says what ears records from: nothing, the pretend 
 test("with the card microphone, the card is found and its level set before anything listens, and either failing stops ears starting", { timeout: 15_000 }, async () => {
   const switchAt = await quietSwitch();
   const base = { log: () => {}, switchAt, everyMs: 20, port: 0, host: "127.0.0.1", config: { token, microphone: "card" as const, micLevel: 80, micControl: "Capture", micBoost: "keep" as const, micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness" as const, wakePauseMs: 1500 } };
-  await assert.rejects(startService({ ...base, findCard: async () => Promise.reject(new Error("No sound devices were passed in")) }), { message: "No sound devices were passed in" });
-  await assert.rejects(startService({ ...base, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => Promise.reject(new Error("Couldn't set Capture on sound card 1")) }), { message: "Couldn't set Capture on sound card 1" });
-  await assert.rejects(startService({ ...base, config: { ...base.config, micBoost: 2 }, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => {}, setBoost: async () => Promise.reject(new Error("Couldn't set Internal Mic Boost on sound card 1")) }), { message: "Couldn't set Internal Mic Boost on sound card 1" });
+  await assert.rejects(started({ ...base, findCard: async () => Promise.reject(new Error("No sound devices were passed in")) }), { message: "No sound devices were passed in" });
+  await assert.rejects(started({ ...base, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => Promise.reject(new Error("Couldn't set Capture on sound card 1")) }), { message: "Couldn't set Capture on sound card 1" });
+  await assert.rejects(started({ ...base, config: { ...base.config, micBoost: 2 }, findCard: async () => ({ number: 1, device: "plughw:1,0", capture: "pcmC1D0c", mixer: "controlC1" }), setLevel: async () => {}, setBoost: async () => Promise.reject(new Error("Couldn't set Internal Mic Boost on sound card 1")) }), { message: "Couldn't set Internal Mic Boost on sound card 1" });
 });
 
 test("with the card microphone and nothing pretend given, ears records with arecord on that card", { timeout: 15_000 }, async () => {
@@ -518,7 +525,7 @@ test("with the wake word on and EARS_WAKE_END=silero, the speech detector is loa
     const service = await startService({ ...base, config, loadSilero: async () => assert.fail("it loaded the detector") });
     services.push(service);
   }
-  await assert.rejects(startService({ ...base, config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: true, wakeEnd: "silero", wakePauseMs: 1500 }, loadSilero: async () => Promise.reject(new Error("no such file")) }), {
+  await assert.rejects(started({ ...base, config: { token, microphone: "pretend", micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: true, wakeEnd: "silero", wakePauseMs: 1500 }, loadSilero: async () => Promise.reject(new Error("no such file")) }), {
     message: "the speech detector couldn't load: no such file. Set EARS_WAKE_END=loudness to go back to the loudness check",
   });
 });
