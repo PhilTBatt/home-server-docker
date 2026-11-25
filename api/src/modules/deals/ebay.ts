@@ -107,12 +107,12 @@ export function cutSteps(search: Search): CutStep[] {
 
 export function countUrl(host: string, search: Search, refine: CutStep["refine"]): string {
   const withDetails = search.details !== null && search.detailsMode === "only";
-  const parts = [...searchParts(search, withDetails, withDetails ? search.details : null), `fieldgroups=${refine === null ? "MATCHING_ITEMS" : `MATCHING_ITEMS,${refine}`}`, "limit=1"];
+  const parts = [...searchParts(search, withDetails, withDetails ? search.details : null), `fieldgroups=${refine === null ? "MATCHING_ITEMS" : `MATCHING_ITEMS,${refine}`}`, "sort=newlyListed", "limit=1"];
   return `https://${host}/buy/browse/v1/item_summary/search?${parts.join("&")}`;
 }
 
 export function wordsUrl(host: string, query: string): string {
-  return `https://${host}/buy/browse/v1/item_summary/search?q=${encodeURIComponent(query)}&fieldgroups=CATEGORY_REFINEMENTS&limit=1`;
+  return `https://${host}/buy/browse/v1/item_summary/search?q=${encodeURIComponent(query)}&fieldgroups=MATCHING_ITEMS,CATEGORY_REFINEMENTS&sort=newlyListed&limit=1`;
 }
 
 const buyingWords: Record<string, string> = { FIXED_PRICE: "buy it now", AUCTION: "auction", BEST_OFFER: "best offer", CLASSIFIED_AD: "classified ad" };

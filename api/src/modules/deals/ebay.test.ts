@@ -1702,19 +1702,22 @@ test("every filter a search sets has its own cut, named in plain words, with the
   assert.deepEqual(cutSteps(collecting).at(-1), { filter: "collection within 10 miles", change: { sellerType: null, returnsOnly: false, freePostage: false, collection: null }, refine: null });
 });
 
-test("a cut's count asks eBay for one listing with the search's filters, and a refinement when it wants a breakdown", () => {
+test("a cut's count asks eBay for one listing with the search's filters, newest first like a check, and a refinement when it wants a breakdown", () => {
   const plain = new URL(countUrl(apiHost, search({ categoryId: 27386 }), null));
   assert.equal(plain.origin + plain.pathname, searchPath);
   assert.deepEqual([plain.searchParams.get("q"), plain.searchParams.get("category_ids"), plain.searchParams.get("limit"), plain.searchParams.get("fieldgroups")], ["optiplex 7070 sff", "27386", "1", "MATCHING_ITEMS"]);
   assert.equal(plain.searchParams.get("filter"), filterOf(searchUrl(apiHost, search({ categoryId: 27386 }), 0)));
-  assert.equal(plain.searchParams.has("sort") || plain.searchParams.has("offset"), false);
+  assert.equal(plain.searchParams.get("sort"), new URL(searchUrl(apiHost, search({ categoryId: 27386 }), 0)).searchParams.get("sort"));
+  assert.equal(plain.searchParams.get("sort"), "newlyListed");
+  assert.equal(plain.searchParams.has("offset"), false);
+  assert.equal(new URL(countUrl(apiHost, search(), "BUYING_OPTION_REFINEMENTS")).searchParams.get("sort"), "newlyListed");
   assert.equal(new URL(countUrl(apiHost, search(), "CONDITION_REFINEMENTS")).searchParams.get("fieldgroups"), "MATCHING_ITEMS,CONDITION_REFINEMENTS");
   const only = new URL(countUrl(apiHost, search({ ...withDetails, detailsMode: "only" }), null));
   assert.equal(only.searchParams.get("aspect_filter"), "categoryId:179,Form Factor:{SFF|Small Form Factor},RAM Size:{16 GB}");
   assert.equal(new URL(countUrl(apiHost, search({ ...withDetails, detailsMode: "prefer" }), null)).searchParams.has("aspect_filter"), false);
   const words = new URL(wordsUrl(apiHost, "quadro p620 & more"));
-  assert.deepEqual([...words.searchParams.keys()].sort(), ["fieldgroups", "limit", "q"]);
-  assert.deepEqual([words.searchParams.get("q"), words.searchParams.get("fieldgroups"), words.searchParams.get("limit")], ["quadro p620 & more", "CATEGORY_REFINEMENTS", "1"]);
+  assert.deepEqual([...words.searchParams.keys()].sort(), ["fieldgroups", "limit", "q", "sort"]);
+  assert.deepEqual([words.searchParams.get("q"), words.searchParams.get("fieldgroups"), words.searchParams.get("sort"), words.searchParams.get("limit")], ["quadro p620 & more", "MATCHING_ITEMS,CATEGORY_REFINEMENTS", "newlyListed", "1"]);
 });
 
 test("a cut reads eBay's total and, when asked, its breakdown by buying option or condition, biggest first", () => {
@@ -1741,10 +1744,12 @@ test("a search's cuts ask eBay once as watched, once for each filter dropped, an
   const calls = fakeEbay((call, n) => {
     const url = new URL(call.url);
     if (n === steps.length + 1) {
-      assert.equal(url.searchParams.get("fieldgroups"), "CATEGORY_REFINEMENTS");
+      assert.equal(url.searchParams.get("fieldgroups"), "MATCHING_ITEMS,CATEGORY_REFINEMENTS");
+      assert.equal(url.searchParams.get("sort"), "newlyListed");
       return Response.json({ total: 4409, refinement: { dominantCategoryId: "27386", categoryDistributions: [{ categoryId: "171957", categoryName: "Desktops & All-in-Ones", matchCount: 4291 }, { categoryId: "27386", categoryName: "Graphics/Video Cards", matchCount: 117 }] } });
     }
     const step = steps[n - 1];
+    assert.equal(url.searchParams.get("sort"), "newlyListed", step);
     return Response.json({ total: totals[step], refinement: step === "buy it now only" ? { buyingOptionDistributions: [{ buyingOption: "AUCTION", matchCount: 40 }] } : {} });
   });
   const { cuts, calls: used } = await source().cuts!(wanted);
