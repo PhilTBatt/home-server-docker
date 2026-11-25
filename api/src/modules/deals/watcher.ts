@@ -174,6 +174,7 @@ export type ExplainedItem = {
   categoryIds: string[];
   options: number | null;
   inStock: boolean | null;
+  note: string | null;
 };
 
 export type Explained = {
@@ -1172,7 +1173,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         if (outcome.gone) markEnded(itemNumber, now.getTime());
         return { status: "failed", ...outcome };
       }
-      const { full, categoryIds, options: choices } = outcome.item;
+      const { full, categoryIds, options: choices, tooManyOptions } = outcome.item;
       const listing = full.listing;
       if (full.inStock === false) markEnded(listing.id, now.getTime());
       const candidates = named === null ? pickSearches(known.filter((search) => search.source === sourceName), listing.title) : [named];
@@ -1197,8 +1198,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
             url: listing.url,
             categoryPath: full.categoryPath,
             categoryIds: [...categoryIds],
-            options: choices === null ? null : choices.length,
+            options: choices === null ? (tooManyOptions ?? null) : choices.length,
             inStock: full.inStock,
+            note: tooManyOptions === undefined ? null : `It has ${grouped(tooManyOptions)} options, more than a check reads, so it's judged at its cheapest option not marked out of stock; a check keeps eBay's own price for it.`,
           },
           searches: candidates.map((search) => explainOne(search, full, categoryIds, choices, now)),
           about: explainNote,

@@ -151,6 +151,7 @@
  * @property {string | null} [country]
  * @property {string} url
  * @property {boolean | null} inStock
+ * @property {string | null} [note]
  */
 
 /**
@@ -976,6 +977,7 @@ function explainedItems(explained) {
   if (listing.country && listing.country !== "GB") details.push(`in ${listing.country}`);
   first.append(`: ${details.join(", ")}`);
   const items = [first];
+  if (typeof listing.note === "string" && listing.note !== "") items.push(listItem(listing.note));
   for (const search of explained.searches) {
     const option = typeof search.option === "string" ? ` (at option: ${search.option})` : "";
     const state = search.on === false ? " (switched off)" : search.snoozed === true ? " (snoozed)" : "";

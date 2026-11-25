@@ -1817,6 +1817,24 @@ test("a listing with options is read through its item group, at its cheapest opt
   assert.deepEqual([sold.full.listing.price, sold.full.inStock], [1500, false]);
 });
 
+test("a listing with more options than a check reads is still read through its group, at its cheapest option in stock, with its options counted instead of handed back", async () => {
+  const items = Array.from({ length: 101 }, (_, n) => ({ ...option(n + 1, [["Capacity", `${n + 1} GB`]], `${30 + n}.00`, n === 0 ? "OUT_OF_STOCK" : "IN_STOCK"), legacyItemId: "226543210987" }));
+  const group = (count: number) => fakeEbay((_call, n) => (n === 1 ? Response.json({ errors: [{ errorId: 11006 }] }, { status: 400 }) : Response.json({ items: items.slice(0, count) })));
+  group(101);
+  const { item: many, calls } = await source().item!("226543210987");
+  assert.equal(calls, 2);
+  assert.deepEqual([many.full.listing.price, many.full.listing.variations, many.full.inStock, many.options, many.tooManyOptions], [3100, true, true, null, 101]);
+  group(100);
+  const { item: hundred } = await source().item!("226543210987");
+  assert.deepEqual([hundred.options?.length, hundred.tooManyOptions, hundred.full.listing.price], [100, undefined, 3100]);
+  assert.equal(toOptions({ items }), null);
+  assert.equal(toOptions({ items: items.slice(0, 100) })?.length, 100);
+  const unpriced = [...items.slice(0, 100), { ...items[100], price: undefined }];
+  fakeEbay((_call, n) => (n === 1 ? Response.json({ errors: [{ errorId: 11006 }] }, { status: 400 }) : Response.json({ items: unpriced })));
+  const { item: counted } = await source().item!("226543210987");
+  assert.deepEqual([counted.options, counted.tooManyOptions], [null, 101], "a check counts every option, priced or not");
+});
+
 test("a listing read by number that's gone, refused, unreadable or not a number says which, counting its calls", async () => {
   fakeEbay(() => new Response("", { status: 404 }));
   assert.deepEqual(await failure(source().item!("110000000001")).then((error) => [error.reason, error.calls]), ["gone", 1]);

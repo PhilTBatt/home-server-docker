@@ -3049,6 +3049,26 @@ test("explaining a listing with options judges it at the option the search would
   assert.deepEqual(none.status === "ok" ? none.value.searches[0].reasons.map((reason) => reason.setting) : [], ["hideVariations"]);
 });
 
+test("explaining a listing with more options than a check reads judges it at its cheapest option in stock, and says so", async () => {
+  const { watcher, items } = explainSetup([{ ...drive, maxWithPostage: 60 }]);
+  await watcher.run(at(0));
+  const group = { ...fullOf(grouped(1, "201", { id: "226543210987", price: 1500 })), inStock: true };
+  items.reply = { full: group, categoryIds: [], options: null, tooManyOptions: 1400 };
+  const many = await watcher.explain("226543210987", "drive", at(1));
+  assert.deepEqual(many.status === "ok" ? [many.value.item.options, many.value.item.note, many.value.item.price, many.value.searches[0].option] : [], [
+    1400,
+    "It has 1,400 options, more than a check reads, so it's judged at its cheapest option not marked out of stock; a check keeps eBay's own price for it.",
+    1500,
+    null,
+  ]);
+  items.reply = { full: group, categoryIds: [], options: sizes("201", ["1 TB", 1500], ["4 TB", 8000]) };
+  const fewer = await watcher.explain("226543210987", "drive", at(2));
+  assert.deepEqual(fewer.status === "ok" ? [fewer.value.item.options, fewer.value.item.note, fewer.value.searches[0].option] : [], [2, null, "Storage Capacity: 4 TB"]);
+  items.reply = itemOf(listing(1));
+  const single = await watcher.explain("110000000001", "drive", at(3));
+  assert.deepEqual(single.status === "ok" ? [single.value.item.options, single.value.item.note] : [], [null, null]);
+});
+
 test("explaining gives times in UK time, which is an hour ahead of UTC in summer", async () => {
   const summer = Date.parse("2026-07-01T12:00:00.000Z");
   const { world, watcher, items } = explainSetup([optiplex]);

@@ -101,6 +101,7 @@ export type ItemRead = {
   full: FullListing;
   categoryIds: string[];
   options: ListingOption[] | null;
+  tooManyOptions?: number;
 };
 
 export type Cut = {

@@ -321,7 +321,7 @@ For each search, `verdict` is one of:
 - `missed`: it fits every filter and rule that can be checked, but eBay didn't send it: eBay has more than the watcher reads for that search, a setting that can't be checked from outside eBay (item details, collection distance, or posting to the UK for a listing abroad when the search isn't UK only), or, most often, eBay's own word matching.
 - `off`: it fits, but the search is switched off or snoozed.
 
-A listing with options is judged at the option the search would pick, as a check does with `readOptions`, and `option` names it. A search whose last check failed says so, with the failure.
+A listing with options is judged at the option the search would pick, as a check does with `readOptions`, and `option` names it. A check can't read the options of a listing with more than 100, so it keeps eBay's own price for it (see "Listings with several options"). Explain judges such a listing at its cheapest option not marked out of stock instead; whether that's the price eBay shows isn't known. `options` gives how many options it has, and the listing's `note` says so (it's `null` otherwise). A search whose last check failed says so, with the failure.
 
 `reasons` lists every filter and rule it fails, each with the setting (`minPrice`, `categoryId`, `exclude` and so on), who drops it (`eBay` or `watcher`) and plain words. The reply also gives the listing's price, postage, condition, seller, place, category path and category ids, so it shows seller text: like `/deals/listing`, it answers anything with the API token, and Claude's tool for it only works while `DEALS_AI=on`. It's one of the day's 150 full reads (two calls for a listing with options). The hub page has a box for it.
 

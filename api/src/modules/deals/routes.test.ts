@@ -104,6 +104,7 @@ const explainedValue: Explained = {
     categoryIds: ["58058", "171957"],
     options: null,
     inStock: true,
+    note: null,
   },
   searches: [{ id: "optiplex", name: "OptiPlex", on: true, snoozed: false, option: null, verdict: "match", says: "It's a current match.", reasons: [] }],
   about: "This checks the search's filters and rules.",

@@ -450,3 +450,10 @@ test("get_deal_search_cuts says what lastCheck is for and that eBay calls its to
   assert.match(description, /null when the search hasn't been checked with its current settings since the API started/);
   assert.match(description, /"just an indicator"/);
 });
+
+test("explain_deal_listing says how a listing with options, or with too many to read, is judged", async () => {
+  const { listTools } = await connect(fakeApi());
+  const description = (await listTools()).find((tool) => tool.name === "explain_deal_listing")?.description ?? "";
+  assert.match(description, /names the option it was judged at/);
+  assert.match(description, /more options than a check reads is judged at its cheapest option not marked out of stock/);
+});

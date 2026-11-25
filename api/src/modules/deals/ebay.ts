@@ -279,8 +279,8 @@ export function toListing(raw: unknown, siteHost: string): Listing | null {
 
 const maxOptions = 100;
 
-export function toOptions(raw: unknown): ListingOption[] | null {
-  if (!isObject(raw) || !Array.isArray(raw.items) || raw.items.length > maxOptions) return null;
+export function toOptions(raw: unknown, most = maxOptions): ListingOption[] | null {
+  if (!isObject(raw) || !Array.isArray(raw.items) || raw.items.length > most) return null;
   const read = raw.items
     .filter(isObject)
     .map((item) => {
@@ -756,16 +756,18 @@ export function createEbaySource(options: EbayOptions): Source {
           if (error instanceof SourceError && error.message.endsWith("(eBay error 11003)")) throw failure("gone");
           if (!(error instanceof SourceError && error.message.endsWith("(eBay error 11006)"))) throw error;
           const group = await getPage(optionsUrl(apiHost, itemNumber), countCall, "gone");
-          const first = isObject(group) && Array.isArray(group.items) ? group.items[0] : undefined;
+          const items: unknown[] = isObject(group) && Array.isArray(group.items) ? group.items : [];
+          const first = items[0];
           const full = toFull(first, siteHost);
-          const options = toOptions(group);
+          const options = toOptions(group, Number.POSITIVE_INFINITY);
           if (full === null || options === null) throw failure("reply");
           const inStock = options.filter((option) => option.inStock !== false);
           const prices = (inStock.length > 0 ? inStock : options).map((option) => option.price);
           const price = prices.length > 0 ? Math.min(...prices) : full.listing.price;
           const listing = { ...full.listing, id: itemNumber, url: `https://${siteHost}/itm/${itemNumber}`, price, variations: true, groupId: itemNumber };
           const stock = options.some((option) => option.inStock === true) ? true : options.length > 0 && options.every((option) => option.inStock === false) ? false : null;
-          return { full: { ...full, listing, inStock: stock }, categoryIds: categoryIdsOf(first), options };
+          const read = { full: { ...full, listing, inStock: stock }, categoryIds: categoryIdsOf(first) };
+          return items.length > maxOptions ? { ...read, options: null, tooManyOptions: items.length } : { ...read, options };
         }
         const full = toFull(body, siteHost);
         if (full === null) throw failure("reply");
