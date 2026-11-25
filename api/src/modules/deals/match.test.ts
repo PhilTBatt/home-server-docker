@@ -512,6 +512,33 @@ test("the catalogue's USB Wi-Fi search keeps adapters by any of its model names 
   assert.deepEqual([wifi.guidePrice, wifi.greatPercent], [3500, 50]);
 });
 
+test("the catalogue's powerline search keeps gigabit kits and drops the slower classes, kits named as having 100Mbps ports, single adapters and faulty ones", async () => {
+  const text = await readFile(new URL("../../../src/modules/deals/catalogue.example.json", import.meta.url), "utf8");
+  const raw = (JSON.parse(text) as { searches: Record<string, unknown>[] }).searches.find((entry) => entry.id === "powerline-gigabit-kit");
+  assert.ok(raw !== undefined && raw.switch === "off" && raw.group === "network");
+  const powerline = search({ ...raw, switch: "on" });
+  assert.equal(powerline.query, "powerline (kit, pair, twin, starter, 2x, x2)");
+  const cheap = { price: 2000, postage: 0 };
+  for (const title of ["TP-Link TL-PA7017 KIT AV1000 Gigabit Powerline Starter Kit", "TP-Link TL-PA7017P KIT AV1000 Gigabit Passthrough Powerline Pair", "devolo Magic 2 LAN Powerline Starter Kit", "2x TP-Link AV2000 Powerline adapters TL-PA9020P"]) {
+    assert.equal(whyNot(powerline, listing({ title, ...cheap }), now), null, title);
+  }
+  for (const title of ["TP-Link AV1200 Gigabit Powerline Kit 1200Mbps", "TP-Link AV1000 Gigabit Powerline Kit, Single Port"]) {
+    assert.equal(whyNot(powerline, listing({ title, ...cheap }), now), null, title);
+  }
+  const slower = ["av200", "av 200", "av500", "av 500", "av600", "av 600", "200mbps", "200 mbps", "500mbps", "500 mbps", "600mbps", "600 mbps", "pa4010*", "dlan 550", "single adapter", "single unit"];
+  assert.deepEqual(powerline.exclude, slower);
+  for (const word of slower) {
+    assert.equal(whyNot(powerline, listing({ title: `Powerline Starter Kit ${word.replace("*", "kit")}`, ...cheap }), now), "words", word);
+  }
+  for (const title of ["TP-Link TL-PA4010KIT AV600 Nano Powerline Starter Kit", "TP-Link TL-PA4010P KIT Powerline pair", "devolo dLAN 550 duo+ Powerline Starter Kit", "Powerline kit 600 Mbps homeplug", "Netgear AV500 Powerline pair", "TP-Link AV1000 Powerline kit, single adapter from a pair"]) {
+    assert.equal(whyNot(powerline, listing({ title, ...cheap }), now), "words", title);
+  }
+  assert.equal(whyNot(powerline, listing({ title: "TP-Link AV1000 Powerline Kit faulty", ...cheap }), now), "avoid");
+  assert.equal(whyNot(powerline, listing({ title: "TP-Link TL-PA7017 KIT", price: 4000, postage: 0 }), now), null);
+  assert.equal(whyNot(powerline, listing({ title: "TP-Link TL-PA7017 KIT", price: 3600, postage: 401 }), now), "price");
+  assert.deepEqual([powerline.guidePrice, powerline.guideDate, powerline.everyMinutes], [1800, "2026-11-25", 240]);
+});
+
 function choice(text: string, price: number, inStock: boolean | null = true, ref: string | null = `v1|226543210987|${price}`): ListingOption {
   return { ref, price, text, inStock };
 }

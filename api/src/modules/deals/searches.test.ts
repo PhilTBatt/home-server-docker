@@ -538,7 +538,7 @@ test("the catalogue in the repo loads beside the example list, every search off 
   const hiders = (search: Search) => [...search.exclude, ...search.avoid.flatMap((name) => avoidLists[name] ?? [])];
   assert.deepEqual(list.searches.filter((search) => hiders(search).some((word) => search.mustInclude.some((must) => alwaysExcluded(must, word)))).map((search) => search.id), []);
   const fromEbay = added.filter((search) => search.source === "ebay");
-  assert.ok(fromEbay.every((search) => search.guidePrice !== null && ["2026-11-19", "2026-11-20"].includes(search.guideDate ?? "")));
+  assert.ok(fromEbay.every((search) => search.guidePrice !== null && ["2026-11-19", "2026-11-20", "2026-11-25"].includes(search.guideDate ?? "")));
   assert.ok(added.filter((search) => search.source === "hotukdeals").length >= 5);
   assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["motherboard 1244", "ram 170083", "ram 11210", "graphics 27386"]);
   assert.deepEqual(fromEbay.filter((search) => search.categoryId === "1244").map((search) => search.id), ["b660-motherboard"], "only the B660 board search looks in eBay's Motherboards category, which keeps Mazda parts numbered B660 out");

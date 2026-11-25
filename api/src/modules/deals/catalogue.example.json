@@ -1741,6 +1741,22 @@
       "everyMinutes": 240
     },
     {
+      "id": "powerline-gigabit-kit",
+      "name": "Gigabit powerline kit",
+      "group": "network",
+      "switch": "off",
+      "query": "powerline (kit, pair, twin, starter, 2x, x2)",
+      "minPrice": 8,
+      "maxWithPostage": 40,
+      "conditions": ["new", "opened", "used"],
+      "exclude": ["av200", "av 200", "av500", "av 500", "av600", "av 600", "200mbps", "200 mbps", "500mbps", "500 mbps", "600mbps", "600 mbps", "pa4010*", "dlan 550", "single adapter", "single unit"],
+      "avoid": ["faulty", "lots"],
+      "sellerMinPercent": 97,
+      "guidePrice": 18,
+      "guideDate": "2026-11-25",
+      "everyMinutes": 240
+    },
+    {
       "id": "asm1166-sata-card",
       "name": "ASM1166 SATA card",
       "group": "expansion",
