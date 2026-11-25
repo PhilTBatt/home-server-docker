@@ -46,7 +46,7 @@ For each change, give the evidence (the numbers from the tools), your confidence
 3. Phil's own searches in `deals/searches.json`: don't edit them. Give him the exact lines to change, with their line numbers.
 4. Never commit, stage or push. Never edit `CLAUDE.md`, `docs/decisions/`, `api/.env` or anything in `deals/` apart from what step 4.5 says.
 5. The watcher reads `deals/catalogue.json`, a copy, so give Phil these two commands to run himself, one at a time:
-   - `git show HEAD:api/src/modules/deals/catalogue.example.json | diff - deals/catalogue.json | grep -c '^>'` checks his copy holds nothing of his own: it must print `0`.
+   - `git show HEAD:api/src/modules/deals/catalogue.example.json | diff - deals/catalogue.json && echo same` checks his copy is the last committed catalogue, with nothing of his own: it must print only `same`. If he has already committed your change, `HEAD~1` instead of `HEAD`. If it prints lines, his copy has changes of its own (searches switched on in it, or taken out to make room for his), and copying would lose them, so stop and show him the lines.
    - `cp api/src/modules/deals/catalogue.example.json deals/catalogue.new.json && mv deals/catalogue.new.json deals/catalogue.json` copies the new one in. The watcher reads it within five minutes, and each changed search starts fresh at its next check with one "now watching" message.
 
 ## 5. Answer
