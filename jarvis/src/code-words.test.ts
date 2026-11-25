@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { codeWordIn, codeWordMs, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText } from "./code-words.js";
+import { codeWordIn, codeWordMs, lastSentenceOf, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText } from "./code-words.js";
 
 const stillOpen = new Set<() => unknown>();
 
@@ -78,6 +78,51 @@ test("note this can be asked politely, and make a note or take a note start one 
 
 test("anything more is a question like any other", () => {
   for (const said of ["Find my phone number.", "Never mind the weather, what's on tonight?", "That's all the downloads?", "What's a good note this time of year?", "I said note this.", "", "Jarvis.", "Find my phone 2."]) assert.equal(codeWordIn(said), null, said);
+});
+
+test("a code word also counts as the last sentence of what was said, as Whisper split it", () => {
+  assert.deepEqual(codeWordIn("I love this. Find my phone."), { kind: "phone" });
+  assert.deepEqual(codeWordIn("I just did say that out loud. This is me speaking out loud. Can you please find my phone?"), { kind: "phone" });
+  assert.deepEqual(codeWordIn("I've had an idea. Note this: buy milk."), { kind: "note", text: "buy milk." });
+  assert.deepEqual(codeWordIn("Okay then. Make a note of that for me."), { kind: "note", text: "" });
+  assert.deepEqual(codeWordIn("Morning! Train times please."), { kind: "trains" });
+  assert.deepEqual(codeWordIn("I'm running late\u2026 Is my train on time?"), { kind: "trains" });
+  assert.deepEqual(codeWordIn("What's the weather tomorrow? Never mind."), { kind: "never mind" });
+  assert.deepEqual(codeWordIn("That's enough for now. Stop listening."), { kind: "stop listening" });
+  assert.deepEqual(codeWordIn("Hey Jarvis. Sorry. Find my phone."), { kind: "phone" });
+  assert.deepEqual(codeWordIn("Sorry, one sec. Find my phone."), { kind: "phone" });
+  assert.deepEqual(codeWordIn("That's enough. Stop listening."), { kind: "stop listening" });
+  assert.deepEqual(codeWordIn("Right... Train times."), { kind: "trains" });
+});
+
+test("the whole of what was said wins, so a note keeps every sentence after note this", () => {
+  assert.deepEqual(codeWordIn("Note this. Buy milk. And eggs."), { kind: "note", text: "Buy milk. And eggs." });
+  assert.deepEqual(codeWordIn("Can you note this: the bins go out on Thursday. Don't forget."), { kind: "note", text: "the bins go out on Thursday. Don't forget." });
+});
+
+test("only the last sentence is tried, so a code word earlier on, or one inside a longer last sentence, still goes to Claude", () => {
+  for (const said of [
+    "Find my phone. What's the weather?",
+    "I had an idea. Note this. Buy milk.",
+    "What happens if I say find my phone?",
+    "Earlier you said. Find my phone number?",
+    "Is that it? That's all?",
+    "Trains. Why are they always late?",
+    "I asked. Find my phone and check the trains.",
+    "Okay. Where's my phone charger?",
+    "Right. Should I stop listening to podcasts?",
+    "Wait, find my phone.",
+    "Okay so, train times.",
+  ]) assert.equal(codeWordIn(said), null, said);
+});
+
+test("the last sentence is the text after the last full stop, question mark, exclamation mark or ellipsis followed by a space, ignoring pieces with no letters", () => {
+  assert.equal(lastSentenceOf("Find my phone."), null);
+  assert.equal(lastSentenceOf("  One. Two.  "), "Two.");
+  assert.equal(lastSentenceOf("One? Two! Three\u2026 Four"), "Four");
+  assert.equal(lastSentenceOf("One. Two. ..."), "Two.");
+  assert.equal(lastSentenceOf("v1.2 is out.Two"), null);
+  assert.equal(lastSentenceOf(""), null);
 });
 
 test("anything with stop listening in it that ears didn't take as its code word is caught, so Claude never answers it and nothing listens again", () => {

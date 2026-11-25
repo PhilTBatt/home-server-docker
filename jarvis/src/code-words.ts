@@ -27,7 +27,7 @@ export const neverMindWords = ["never mind", "nevermind", "that's all", "that is
 export const phoneWords = ["find my phone", "help me find my phone", "where's my phone", "where is my phone", "ring my phone", "ping my phone"];
 export const trainWords = ["train times", "train time", "trains", "next train", "next trains", "when's my train", "when is my train", "when's the next train", "when is the next train", "what time's my train", "what time is my train", "what time's the next train", "what time is the next train", "is my train on time", "are my trains on time", "are the trains on time", "how are the trains", "how are the trains looking"];
 
-export function codeWordIn(said: string): CodeWord | null {
+function codeWordAlone(said: string): CodeWord | null {
   const text = said.replace(/[\u2018\u2019]/g, "'").replace(address, "");
   const note = noteStart.exec(text);
   if (note !== null) return { kind: "note", text: text.slice(note[0].length).trim() };
@@ -38,6 +38,18 @@ export function codeWordIn(said: string): CodeWord | null {
   if (trainWords.includes(request) || trainWords.includes(request.replace(trainAsking, ""))) return { kind: "trains" };
   if (/^(?:(?:you can|can you|could you|would you|will you|just|please|now) )*stop listening(?: |$)/.test(words)) return { kind: "stop listening" };
   return null;
+}
+
+export function lastSentenceOf(said: string): string | null {
+  const sentences = said.split(/(?<=[.!?\u2026])\s+/).filter((sentence) => /[a-z0-9]/i.test(sentence));
+  return sentences.length > 1 ? sentences[sentences.length - 1] : null;
+}
+
+export function codeWordIn(said: string): CodeWord | null {
+  const whole = codeWordAlone(said);
+  if (whole !== null) return whole;
+  const last = lastSentenceOf(said);
+  return last === null ? null : codeWordAlone(last);
 }
 
 export type CodeWordReply = { say: string; note?: string };

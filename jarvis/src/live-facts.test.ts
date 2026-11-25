@@ -38,12 +38,13 @@ test("they say whether he has the hub's tools, and its actions, which only come 
   assert.ok(liveFacts({ ...typed, hubActions: true }).includes("You don't have the hub's tools in this chat."));
 });
 
-test("with ears on, they list the code words his own code handles, and tell him to give Phil the words rather than claim he did it", () => {
+test("with ears on, they list the code words his own code handles, and tell him to give Phil the words without guessing whether he typed or spoke, or claiming he did it", () => {
   for (const ears of ["push", "wake"] as const) {
     const facts = liveFacts({ ...all, ears });
     for (const word of ["note this, followed by anything, saves it as a voice note in his brain's inbox", "find my phone sends his phone a notification", "train times reads out his next three trains", "never mind or that's all asks nothing", "stop listening, said on its own, makes ears mute itself until he unmutes it on the server"]) assert.ok(facts.includes(word), word);
-    assert.ok(facts.includes("Some things he says out loud never reach you, because your own code acts on them first"), facts);
-    assert.ok(facts.includes("Typed messages never count. If he asks you for one of those and it reaches you, he typed it or his words didn't match, so don't say you've done it: tell him the words to say out loud, for example say find my phone."), facts);
+    assert.ok(facts.includes("Some things he says out loud never reach you, because your own code acts on them first when they're all he says or the last sentence of it"), facts);
+    assert.ok(facts.includes("If he asks you for one of those and it reaches you, your code didn't catch it. Typed messages never count, but typed and spoken messages reach you the same way, so you can't tell which this was: never say he typed it or said it, and never say you've done it. Tell him to say the words out loud, on their own or as the last thing he says, for example: say find my phone."), facts);
+    assert.ok(!/he typed it or his words|didn't match|reached you as typed/.test(facts), "never offers typing as a likely reason");
     assert.ok(!facts.includes("won't work until"), facts);
   }
   assert.ok(!liveFacts(typed).includes("never reach you"));

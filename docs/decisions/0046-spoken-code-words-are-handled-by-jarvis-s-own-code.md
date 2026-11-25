@@ -1,7 +1,7 @@
 # 0046. Spoken code words are handled by Jarvis's own code
 
 - Date: 2026-11-22
-- Status: accepted; its wording rules widened by 0049
+- Status: accepted; its wording rules widened by 0049 and 0052
 
 ## Context
 Some things I say to Jarvis aren't questions: a note to keep, finding my phone, telling him to stop listening, or calling a question off. Sending those to Claude costs a call, takes a few seconds, and would need Claude to have tools that write notes or ping my phone. I asked for code words on 22 Nov, as a fixed list.

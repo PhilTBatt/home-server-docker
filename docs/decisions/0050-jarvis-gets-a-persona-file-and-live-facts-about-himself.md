@@ -1,7 +1,7 @@
 # 0050. Jarvis gets a persona file and live facts about himself
 
 - Date: 2026-11-25
-- Status: accepted
+- Status: accepted; the live facts' advice on a missed code word changed by 0052
 
 ## Context
 Jarvis's instructions say what he can do and how short to be, but nothing about how he comes across, so he sounds like any assistant. He also knows nothing about the chat he's in: on 25 Nov I said "Can you please find my phone?", it reached Claude, and he said he couldn't find my phone himself, with no idea that his own code has a code word for it. Notes about him in the brain go stale with every change, and his instructions treat brain files as information, never instructions.

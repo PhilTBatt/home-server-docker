@@ -1,7 +1,7 @@
 # 0049. Code words accept polite forms and a few more phrasings
 
 - Date: 2026-11-25
-- Status: accepted
+- Status: accepted; widened by 0052
 
 ## Context
 Record 0046 made the code words count only as the whole of what I said, give or take a greeting and a few filler words. On 25 Nov I said "Can you please find my phone?", and it went to Claude, who said he had no tool for it. Asking politely is how I talk, so the strict list missed the way I actually ask.
