@@ -1761,7 +1761,7 @@
       "name": "LSI 9207-8i HBA",
       "group": "expansion",
       "switch": "off",
-      "query": "lsi 9207-8i",
+      "query": "lsi 9207 8i",
       "minPrice": 15,
       "maxWithPostage": 60,
       "conditions": ["new", "opened", "used"],
