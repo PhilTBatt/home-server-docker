@@ -63,17 +63,17 @@ async function hubPost(path: string, body: unknown, token: string, signal: Abort
   return hubAsk(path, { method: "POST", headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) }, signal, url);
 }
 
-async function hubAsk(path: string, init: RequestInit, signal: AbortSignal, url: string): Promise<{ status: number; fields: Record<string, unknown> }> {
+export async function hubAsk(path: string, init: RequestInit, signal: AbortSignal, url: string): Promise<{ status: number; fields: Record<string, unknown> }> {
   const response = await fetch(`${url}${path}`, { ...init, redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(codeWordMs)]) });
   const parsed: unknown = await response.json().catch(() => null);
   return { status: response.status, fields: typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {} };
 }
 
-function errorOf(fields: Record<string, unknown>, status: number): string {
+export function errorOf(fields: Record<string, unknown>, status: number): string {
   return typeof fields.error === "string" ? fields.error.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").slice(0, 200) : `the hub replied ${status}`;
 }
 
-function reasonOf(error: unknown): string {
+export function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 

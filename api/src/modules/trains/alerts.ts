@@ -190,7 +190,7 @@ export function changeNotification(lines: string[], cancelled: boolean): Notific
   return { title: lines.length === 1 ? "Train change" : "Train changes", message: lines.join("\n"), tags: "warning", ...(cancelled ? { priority: 4 as const } : {}) };
 }
 
-export function createTrainAlerts(options: { settings: AlertSettings; board: () => Promise<Board>; send: (notification: Notification) => Promise<void>; warn?: (message: string) => void; info?: (message: string) => void }) {
+export function createTrainAlerts(options: { settings: AlertSettings; board: () => Promise<Board>; send: (notification: Notification) => Promise<void>; changed?: (lines: string[], at: Date) => void; warn?: (message: string) => void; info?: (message: string) => void }) {
   const { settings } = options;
   let day = "";
   let reminded = false;
@@ -248,6 +248,7 @@ export function createTrainAlerts(options: { settings: AlertSettings; board: () 
       failingSince = null;
     }
     const trains = board.departures.filter((departure) => inWindow(departure, settings));
+    let startedLate = false;
     if (!reminded) {
       if (time.minutes <= settings.end) {
         await options.send(reminderFor(board, settings, time.minutes));
@@ -257,11 +258,13 @@ export function createTrainAlerts(options: { settings: AlertSettings; board: () 
       }
       reminded = true;
       told = new Map();
+      startedLate = true;
     }
     const changes = changesFor(trains, told, { now: time.minutes, reach: boardReach(board.departures, time.minutes), full: board.departures.length >= alertRows });
     const lines = [...unsent, ...changes.lines];
     const cancelled = unsentCancelled || changes.cancelled;
     told = changes.next;
+    if (changes.lines.length > 0 && !startedLate) options.changed?.(changes.lines, now);
     if (lines.length > 0) {
       unsent = lines;
       unsentCancelled = cancelled;

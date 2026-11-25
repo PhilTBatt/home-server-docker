@@ -11,8 +11,9 @@ import { deals } from "./modules/deals/routes.js";
 import { phone } from "./modules/phone/routes.js";
 import { trains } from "./modules/trains/routes.js";
 import type { DealWatcher } from "./modules/deals/watcher.js";
+import type { ChangeFeed } from "./modules/trains/changes.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
 
@@ -35,7 +36,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   app.register(system, { prefix: "/system", features: options.config.features, moreProblems: () => dealWatcher?.problems() ?? [] });
   app.register(memory, { prefix: "/memory", features: options.config.features });
   app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic });
-  app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains });
+  app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains, changes: options.config.features.trainAlerts ? options.trainChanges : undefined });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,

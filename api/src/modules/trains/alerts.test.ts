@@ -238,6 +238,7 @@ test("changes are one notification, at high priority only when a train is cancel
 
 function harness(boards: Array<Board | Error>, sendFails = 0) {
   const sent: Notification[] = [];
+  const changed: { lines: string[]; at: string }[] = [];
   const warnings: string[] = [];
   const infos: string[] = [];
   let asked = 0;
@@ -257,10 +258,11 @@ function harness(boards: Array<Board | Error>, sendFails = 0) {
       }
       sent.push(notification);
     },
+    changed: (lines, when) => changed.push({ lines, at: when.toISOString() }),
     warn: (message) => warnings.push(message),
     info: (message) => infos.push(message),
   });
-  return { check, sent, warnings, infos, asked: () => asked };
+  return { check, sent, changed, warnings, infos, asked: () => asked };
 }
 
 const monday = (time: string) => at(`2026-11-23T${time.length === 5 ? `${time}:00` : time}Z`);
@@ -321,6 +323,47 @@ test("a change that couldn't be sent is sent with the next check", async () => {
   fail = false;
   assert.equal(await check(monday("06:49")), "changed");
   assert.deepEqual(sent.at(-1), { title: "Train change", message: "The 07:14 is cancelled.", tags: "warning", priority: 4 });
+});
+
+test("each check's new change lines are passed on once, as they're found, whether or not ntfy takes them, and never the reminder or outage notices", async () => {
+  const run = harness([board([train("07:14"), train("07:44")]), board([train("07:14", "Cancelled"), train("07:44")]), new Error("no board"), new Error("no board"), new Error("no board"), new Error("no board"), board([train("07:14", "Cancelled"), train("07:44", "07:54")])], 0);
+  await run.check(monday("06:45"));
+  assert.equal(run.changed.length, 0);
+  assert.equal(await run.check(monday("06:47")), "changed");
+  assert.deepEqual(run.changed, [{ lines: ["The 07:14 is cancelled."], at: "2026-11-23T06:47:00.000Z" }]);
+  for (const time of ["06:49", "06:51", "06:53", "06:55"]) assert.equal(await run.check(monday(time)), "failed");
+  assert.equal(await run.check(monday("06:57")), "changed");
+  assert.deepEqual(run.changed.map((change) => change.lines), [["The 07:14 is cancelled."], ["The 07:44 is now expected 07:54, 10 minutes late."]]);
+  assert.ok(run.sent.some((notification) => notification.message.includes("Couldn't check your trains")), JSON.stringify(run.sent));
+});
+
+test("after a restart past the window's end, what's still wrong is sent to the phone but not passed on, since it was found before; later changes are", async () => {
+  const run = harness([board([train("08:20", "Cancelled"), train("08:25", "08:40")]), board([train("08:20", "Cancelled"), train("08:25", "08:40", { platform: "2" }), train("08:28", "Cancelled")])], 0);
+  assert.equal(await run.check(monday("08:35")), "changed");
+  assert.equal(run.sent.length, 1);
+  assert.equal(run.changed.length, 0);
+  assert.equal(await run.check(monday("08:37")), "changed");
+  assert.deepEqual(run.changed.map((change) => change.lines), [["The 08:28 is cancelled."]]);
+});
+
+test("a change ntfy didn't take is sent again, but passed on only the once", async () => {
+  const changed: string[][] = [];
+  let fail = true;
+  const boards = [board([train("07:14")]), board([train("07:14", "Cancelled")])];
+  let asked = 0;
+  const check = createTrainAlerts({
+    settings,
+    board: async () => boards[Math.min(asked++, 1)],
+    send: async () => {
+      if (fail && asked > 1) throw new Error("ntfy replied 500");
+    },
+    changed: (lines) => changed.push(lines),
+  });
+  await check(monday("06:45"));
+  await assert.rejects(check(monday("06:47")));
+  fail = false;
+  assert.equal(await check(monday("06:49")), "changed");
+  assert.deepEqual(changed, [["The 07:14 is cancelled."]]);
 });
 
 test("a hub that starts after the reminder's time still reminds, until the window ends", async () => {

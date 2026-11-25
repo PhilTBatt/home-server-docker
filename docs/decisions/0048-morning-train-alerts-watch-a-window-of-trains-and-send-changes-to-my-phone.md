@@ -1,7 +1,7 @@
 # 0048. Morning train alerts watch a window of trains and send changes to my phone
 
 - Date: 2026-11-23
-- Status: accepted
+- Status: accepted; its change lines are also kept for the day at `GET /trains/changes`, for Jarvis to say aloud (0051)
 
 ## Context
 Record 0047 brought the departure board into the hub and left the morning check for later. I want the hub to remind me about my trains on the mornings I travel, and to tell me if they're delayed or cancelled, without a Jarvis chat open.

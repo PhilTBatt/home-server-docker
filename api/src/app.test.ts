@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
 import { buildApp as buildRealApp } from "./app.js";
+import { createChangeFeed } from "./modules/trains/changes.js";
 import type { Config } from "./config.js";
 import type { DealWatcher } from "./modules/deals/watcher.js";
 
@@ -122,7 +123,8 @@ const protectedRoutes = [
   ["GET", "/deals/searches/optiplex/hidden"],
   ["POST", "/deals/check"],
   ["POST", "/phone/find"],
-  ["GET", "/trains"]
+  ["GET", "/trains"],
+  ["GET", "/trains/changes"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -436,6 +438,17 @@ test("finding the phone is a route of the hub's, which says when it's switched o
   const app = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, findPhone: false } } });
   const response = await app.inject({ method: "POST", url: "/phone/find", headers: goodHeader });
   assert.deepEqual([response.statusCode, response.json()], [404, { error: "Finding the phone is switched off" }]);
+});
+
+test("train changes come from the feed the hub was given, only with train alerts on", async () => {
+  const feed = createChangeFeed("run-1");
+  feed.add(["The 07:14 is cancelled."], new Date());
+  const on = await buildRealApp({ logger: false, config, trainChanges: feed });
+  const given = await on.inject({ method: "GET", url: "/trains/changes", headers: goodHeader });
+  assert.deepEqual([given.statusCode, given.json().run, given.json().changes.length], [200, "run-1", 1]);
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, trainAlerts: false } }, trainChanges: feed });
+  const refused = await off.inject({ method: "GET", url: "/trains/changes", headers: goodHeader });
+  assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "Train alerts are switched off" }]);
 });
 
 test("train times are a route of the hub's, which says when they're switched off", async () => {

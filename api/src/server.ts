@@ -8,11 +8,14 @@ import { countWaiting } from "./modules/memory/routes.js";
 import { readBackupState } from "./modules/system/backup.js";
 import { dealWatcherFor } from "./modules/deals/setup.js";
 import { boardForAlerts, createTrainAlerts, tickMs } from "./modules/trains/alerts.js";
+import { createChangeFeed } from "./modules/trains/changes.js";
 
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher });
+const trainChanges = config.features.trainAlerts ? createChangeFeed() : undefined;
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges });
 app.log.info({ features: config.features }, "feature switches");
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
@@ -65,6 +68,7 @@ if (config.features.trainAlerts) {
     settings: config.trainAlerts,
     board: boardForAlerts(config.trains),
     send: (notification) => sendToNtfy(config.ntfyTopic, notification),
+    changed: (lines, at) => trainChanges?.add(lines, at),
     warn: (message) => app.log.warn(message),
     info: (message) => app.log.info(message),
   });

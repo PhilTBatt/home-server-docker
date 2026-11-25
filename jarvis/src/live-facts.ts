@@ -7,6 +7,7 @@ export type FactsInput = {
   hubTools: boolean;
   hubActions: boolean;
   codeWordsReachHub: boolean;
+  trainAlerts: boolean;
 };
 
 const voiceNames: Record<Exclude<VoiceMode, "off">, string> = { kokoro: "Kokoro", piper: "Piper" };
@@ -25,6 +26,7 @@ export function liveFacts(input: FactsInput): string {
     if (!input.codeWordsReachHub) facts.push("Notes, finding his phone and train times go through the hub, so they won't work until he turns your hub tools on.");
     facts.push("Typed messages never count. If he asks you for one of those and it reaches you, he typed it or his words didn't match, so don't say you've done it: tell him the words to say out loud, for example say find my phone.");
   }
+  if (input.trainAlerts) facts.push(`When the hub finds a change to his morning trains, your own code ${input.voice === "off" ? "shows it on screen" : "says it aloud"} once you're quiet. You don't see what it says, so if he asks about it, tell him to ${input.ears === "off" ? "check his phone, where the hub sends it too" : "say train times, or check his phone"}.`);
   facts.push("You can't run commands, change files, browse the web, or set reminders or timers.");
   return facts.join(" ");
 }

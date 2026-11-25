@@ -23,6 +23,7 @@ import { personaLine, readPersona } from "./persona.js";
 import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes } from "./session-notes.js";
 import { startTalk } from "./talk.js";
+import { askHubForChanges, watchTrainChanges } from "./train-news.js";
 import { voiceFor } from "./voice.js";
 import { createFollowAsk, eager, spokenOf, startWakeHold, watchWake } from "./wake.js";
 
@@ -61,7 +62,7 @@ try {
   const open = (setup: ChatSetup) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null }) : null;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts }) : null;
     const instructions = (base: string) => systemFor(base, { persona, facts, spoken, notes: notes ?? [] });
     const chat =
       config.engine === "api"
@@ -156,6 +157,7 @@ try {
     chime: wake === undefined || speaking === null ? undefined : chimeFor(speaking),
     followUp: wake === undefined || follow === undefined || followSeconds === null ? undefined : { seconds: followSeconds, ask: () => follow.ask(followSeconds * 1000) },
     codeWords: { note: (text, signal) => saveVoiceNote(text, config.hubToken, signal), phone: (signal) => findPhone(config.hubToken, signal), trains: (signal) => trainTimes(config.hubToken, signal) },
+    trains: config.trainAlerts && config.hubToken !== null ? watchTrainChanges({ ask: askHubForChanges(config.hubToken), signal: closing.signal }) : undefined,
     interrupt: () => {
       if (!process.stdout.isTTY) return;
       cursorTo(process.stdout, 0);
