@@ -7,6 +7,9 @@ import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, ty
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
 import type { Prices } from "./prices.js";
 import { withPausableTimeout } from "./run.js";
+import { withLiveFacts } from "./live-facts.js";
+import { withPersona } from "./persona.js";
+import { withNotes, type SessionNotes } from "./session-notes.js";
 import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { seconds, type Answer } from "./timing.js";
 import type { EarsAnswer } from "./ears-client.js";
@@ -54,6 +57,12 @@ export const spokenStyle = [
 
 export function withSpokenStyle(system: string, on: boolean): string {
   return on ? `${system}\n\n${spokenStyle}` : system;
+}
+
+export type SystemParts = { persona: string | null; facts: string | null; spoken: boolean; notes: SessionNotes[] };
+
+export function systemFor(base: string, parts: SystemParts): string {
+  return withNotes(withSpokenStyle(withLiveFacts(withPersona(base, parts.persona), parts.facts), parts.spoken), parts.notes);
 }
 export const engineNames: Record<Engine, string> = {
   sdk: "the Agent SDK",
@@ -373,8 +382,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "filler" | "ears" | "followUp" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {

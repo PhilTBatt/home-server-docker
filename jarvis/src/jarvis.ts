@@ -13,13 +13,15 @@ import { chimeFor } from "./chime.js";
 import { findPhone, saveVoiceNote, trainTimes } from "./code-words.js";
 import { fillerFor } from "./filler.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
-import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, withSpokenStyle } from "./chat.js";
+import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, systemFor } from "./chat.js";
 import { brainDir, readConfig, type VoiceMode } from "./config.js";
 import { earsCaller } from "./ears-client.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
+import { liveFacts } from "./live-facts.js";
+import { personaLine, readPersona } from "./persona.js";
 import { pricesPerMTok } from "./prices.js";
-import { notesFound, notesLine, readSessionNotes, withNotes } from "./session-notes.js";
+import { notesFound, notesLine, readSessionNotes } from "./session-notes.js";
 import { startTalk } from "./talk.js";
 import { voiceFor } from "./voice.js";
 import { createFollowAsk, eager, spokenOf, startWakeHold, watchWake } from "./wake.js";
@@ -53,16 +55,20 @@ try {
   const hubNotes: string[] = [];
   hubTools = hub !== undefined && config.engine === "api" ? await startHubTools(hub, (note) => hubNotes.push(note)) : undefined;
   const notes = config.sessionNotes ? await readSessionNotes() : null;
+  const persona = config.persona === null ? null : await readPersona(config.persona);
   let voice: VoiceMode = "off";
   let speaker: Speaker | null = null;
   const open = (setup: ChatSetup) => {
     const spoken = voice !== "off" && config.spokenStyle;
+    const hubOn = config.engine === "api" ? hubTools !== undefined : hub !== undefined;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null }) : null;
+    const instructions = (base: string) => systemFor(base, { persona, facts, spoken, notes: notes ?? [] });
     const chat =
       config.engine === "api"
         ? startApiSession({
             apiKey: config.apiKey,
             model: chatModel,
-            system: withNotes(withSpokenStyle(apiChatSystem, spoken), notes ?? []),
+            system: instructions(apiChatSystem),
             maxTokens: apiMaxTokens,
             timeoutMs: questionTimeoutMs,
             now,
@@ -71,11 +77,11 @@ try {
             history: setup.history,
             save: setup.save,
           })
-        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: withNotes(withSpokenStyle(chatSystem, spoken), notes ?? []), cwd: brainDir, now, savedChats: setup.savedChats, hub });
+        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: instructions(chatSystem), cwd: brainDir, now, savedChats: setup.savedChats, hub });
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) ? "on" : "off", hubActions: (config.engine === "api" ? hubTools !== undefined : hub !== undefined) && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, kokoroSpeed: config.kokoroSpeed, speechStart: config.speechStart, speechStop: config.speechStop, speechBundle: config.speechBundle ? "on" : "off", spokenStyle: config.spokenStyle ? "on" : "off" },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: hubOn ? "on" : "off", hubActions: hubOn && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, kokoroSpeed: config.kokoroSpeed, speechStart: config.speechStart, speechStop: config.speechStop, speechBundle: config.speechBundle ? "on" : "off", spokenStyle: config.spokenStyle ? "on" : "off", persona: config.persona ?? "off", liveFacts: config.liveFacts ? "on" : "off" },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -106,6 +112,7 @@ try {
   process.stdout.write(`${settingsLine(config)}\n`);
   for (const note of hubNotes) warn(note);
   if (notes !== null) process.stdout.write(`${notesLine(notes)}\n`);
+  if (config.persona !== null) process.stdout.write(`${personaLine(config.persona, persona)}\n`);
   const earsCall = config.earsToken === null ? null : earsCaller(config.earsToken);
   const hold = earsCall === null || config.voice === "off" ? undefined : startWakeHold(earsCall);
   wakeHold = hold;

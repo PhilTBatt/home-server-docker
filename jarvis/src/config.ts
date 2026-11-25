@@ -35,6 +35,9 @@ export type SpeechBundleMode = (typeof speechBundleModes)[number];
 
 export const spokenStyleModes = ["off", "on"] as const;
 export type SpokenStyleMode = (typeof spokenStyleModes)[number];
+export const liveFactsModes = ["off", "on"] as const;
+export type LiveFactsMode = (typeof liveFactsModes)[number];
+export const personaNamePattern = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 export const earsModes = ["off", "push", "wake"] as const;
 export type EarsMode = (typeof earsModes)[number];
@@ -59,6 +62,8 @@ export type Config = {
   speechStop: SpeechStop;
   speechBundle: boolean;
   spokenStyle: boolean;
+  persona: string | null;
+  liveFacts: boolean;
   filler: boolean;
   ears: EarsMode;
   earsToken: string | null;
@@ -166,6 +171,10 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (speechBundle !== "on" && speechBundle !== "off") throw new Error(`JARVIS_SPEECH_BUNDLE must be on or off, not "${speechBundle}"`);
   const spokenStyle = env.JARVIS_SPOKEN_STYLE?.trim() || "off";
   if (spokenStyle !== "on" && spokenStyle !== "off") throw new Error(`JARVIS_SPOKEN_STYLE must be on or off, not "${spokenStyle}"`);
+  const persona = env.JARVIS_PERSONA?.trim() || "off";
+  if (persona !== "off" && !personaNamePattern.test(persona)) throw new Error(`JARVIS_PERSONA must be off or the name of a file in jarvis/persona/ without the .md, in lowercase letters, numbers and dashes, like butler, not "${persona}"`);
+  const liveFacts = env.JARVIS_LIVE_FACTS?.trim() || "off";
+  if (liveFacts !== "on" && liveFacts !== "off") throw new Error(`JARVIS_LIVE_FACTS must be on or off, not "${liveFacts}"`);
   const filler = env.JARVIS_FILLER?.trim() || "off";
   if (filler !== "on" && filler !== "off") throw new Error(`JARVIS_FILLER must be on or off, not "${filler}"`);
   const ears = env.JARVIS_EARS?.trim() || "off";
@@ -179,5 +188,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, log: log === "on" };
 }

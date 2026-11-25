@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { brainDir, chatModes, defaultKokoroVoice, defaultPiperVoice, defaultVolume, engines, followUpSeconds, readConfig, readVolume, speechStarts, speechBundleModes, speechStops, spokenStyleModes, thinkingHistories, voiceModes } from "./config.js";
+import { brainDir, chatModes, defaultKokoroVoice, defaultPiperVoice, defaultVolume, engines, followUpSeconds, liveFactsModes, readConfig, readVolume, speechStarts, speechBundleModes, speechStops, spokenStyleModes, thinkingHistories, voiceModes } from "./config.js";
 
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, filler: false, ears: "off", earsToken: null, followUp: null, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, filler: false, ears: "off", earsToken: null, followUp: null, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -392,6 +392,36 @@ test("JARVIS_SPOKEN_STYLE is checked after JARVIS_SPEECH_STOP and before JARVIS_
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPEECH_STOP: "word", JARVIS_SPOKEN_STYLE: "word" }), { message: 'JARVIS_SPEECH_STOP must be now or sentence, not "word"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPOKEN_STYLE: "word" }), { message: 'JARVIS_SPOKEN_STYLE must be on or off, not "word"' });
   assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPOKEN_STYLE: "on" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
+});
+
+test("JARVIS_PERSONA is off unless it names a file in jarvis/persona/, without the .md", () => {
+  assert.equal(readConfig(base).persona, null);
+  for (const value of ["", "  ", "off", " off "]) assert.equal(readConfig({ ...base, JARVIS_PERSONA: value }).persona, null, JSON.stringify(value));
+  assert.equal(readConfig({ ...base, JARVIS_PERSONA: " butler " }).persona, "butler");
+  assert.equal(readConfig({ ...base, JARVIS_PERSONA: "quiet-butler-2" }).persona, "quiet-butler-2");
+  assert.equal(readConfig({ ...base, JARVIS_PERSONA: "9" }).persona, "9");
+  assert.equal(readConfig({ ...base, JARVIS_PERSONA: "a".repeat(40) }).persona, "a".repeat(40));
+});
+
+test("anything else in JARVIS_PERSONA stops Jarvis and is named, so it can never point outside jarvis/persona/", () => {
+  for (const value of ["Butler", "butler.md", "../butler", "persona/butler", "-butler", "butler bot", "butler_bot", "OFF", "a".repeat(41), "/etc/passwd"]) {
+    assert.throws(() => readConfig({ ...base, JARVIS_PERSONA: value }), { message: `JARVIS_PERSONA must be off or the name of a file in jarvis/persona/ without the .md, in lowercase letters, numbers and dashes, like butler, not "${value}"` });
+  }
+});
+
+test("JARVIS_LIVE_FACTS is off unless it's set to on", () => {
+  assert.deepEqual(liveFactsModes, ["off", "on"]);
+  assert.equal(readConfig(base).liveFacts, false);
+  for (const value of ["", "  ", "off", " off "]) assert.equal(readConfig({ ...base, JARVIS_LIVE_FACTS: value }).liveFacts, false, JSON.stringify(value));
+  assert.equal(readConfig({ ...base, JARVIS_LIVE_FACTS: " on " }).liveFacts, true);
+  for (const value of ["yes", "ON", "true", "1"]) assert.throws(() => readConfig({ ...base, JARVIS_LIVE_FACTS: value }), { message: `JARVIS_LIVE_FACTS must be on or off, not "${value}"` });
+});
+
+test("JARVIS_PERSONA and JARVIS_LIVE_FACTS are checked after JARVIS_SPOKEN_STYLE and before JARVIS_FILLER", () => {
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_SPOKEN_STYLE: "word", JARVIS_PERSONA: "Word" }), { message: 'JARVIS_SPOKEN_STYLE must be on or off, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_PERSONA: "Word", JARVIS_LIVE_FACTS: "word" }), { message: 'JARVIS_PERSONA must be off or the name of a file in jarvis/persona/ without the .md, in lowercase letters, numbers and dashes, like butler, not "Word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_LIVE_FACTS: "word", JARVIS_FILLER: "word" }), { message: 'JARVIS_LIVE_FACTS must be on or off, not "word"' });
+  assert.throws(() => readConfig({ ANTHROPIC_API_KEY: key, JARVIS_PERSONA: "butler", JARVIS_LIVE_FACTS: "on" }), { message: "Missing setting: JARVIS_LOG (on or off)" });
 });
 
 test("JARVIS_FILLER is off unless it's set to on", () => {

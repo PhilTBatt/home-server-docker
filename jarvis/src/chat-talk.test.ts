@@ -105,7 +105,7 @@ test("/talk starts listening and says how to send or drop it; Enter on an empty 
 });
 
 test("a typed question is logged with no heard times, a spoken one with them, and the log never holds the words that were heard", () => {
-  const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
+  const context: LogContext = { engine: "sdk", thinking: null, model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off", persona: "off", liveFacts: "off" };
   const at = new Date("2026-11-20T20:00:00Z");
   const answer = { text: "Done.", firstWordsMs: 400, totalMs: 900 };
   assert.equal(logLine(context, "c", 1, at, { answer }).heard, undefined);

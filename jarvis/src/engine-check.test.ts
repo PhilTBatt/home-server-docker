@@ -17,6 +17,7 @@ import {
   runActionsCheck,
   runHubCheck,
   runNotesCheck,
+  runPersonaCheck,
   runSavedChatsCheck,
   sdkRefused,
   sdkUnderTest,
@@ -783,14 +784,14 @@ const notesText = '- Building the hub\'s tools ("both engines")';
 
 type NotesFake = { leaveOut?: boolean; inMessage?: boolean; silent?: boolean; throws?: boolean; secondWithout?: boolean };
 
-function notesEngine(engine: Engine, fake: NotesFake = {}) {
+function notesEngine(engine: Engine, fake: NotesFake = {}, added = notesText) {
   const requests: SeenRequest[] = [];
   const session: AgentSession = {
     async ask(question) {
       if (fake.throws === true) throw new Error("engine fell over");
       if (fake.silent !== true) {
-        const systemText = fake.leaveOut === true ? systems[engine] : `${systems[engine]}\n\n${notesText}`;
-        requests.push({ ...goodRequestFor(engine), systemText, lastUserText: fake.inMessage === true ? `${question} ${notesText}` : question });
+        const systemText = fake.leaveOut === true ? systems[engine] : `${systems[engine]}\n\n${added}`;
+        requests.push({ ...goodRequestFor(engine), systemText, lastUserText: fake.inMessage === true ? `${question} ${added}` : question });
         if (fake.secondWithout === true) requests.push({ ...goodRequestFor(engine), lastUserText: question });
       }
       return { text: "Hi.", firstWordsMs: 1, totalMs: 2 };
@@ -842,6 +843,42 @@ test("the notes on a command line fail the notes check, and so does not being ab
     timeoutMs: 1000,
   });
   assert.deepEqual(unread, { name: `both engines: ${notesName}`, ok: false, detail: "command lines couldn't be read: no /proc" });
+});
+
+const personaText = '# Check\n- Calm and "dry"';
+const factsText = "What's switched on for you in this chat.";
+const personaName = "a persona and live facts reach the model in his instructions, quotes and all, and no command line";
+const bothParts = `${personaText}\n${factsText}`;
+
+test("engines that put the persona and live facts in his instructions pass their check, named for the engines checked", async () => {
+  assert.deepEqual(await runPersonaCheck({ engines: [notesEngine("sdk", {}, bothParts), notesEngine("api", {}, bothParts)], persona: personaText, facts: factsText, commandLines: quietLines, timeoutMs: 1000 }), [{ name: `both engines: ${personaName}`, ok: true, detail: "" }]);
+  assert.deepEqual(await runPersonaCheck({ engines: [notesEngine("sdk", {}, bothParts)], persona: personaText, facts: factsText, commandLines: quietLines, timeoutMs: 1000 }), [{ name: `Agent SDK: ${personaName}`, ok: true, detail: "" }]);
+});
+
+test("the persona or live facts missing from his instructions, or either sent as a message, fail their check, naming the engine; so do no engines", async () => {
+  const cases: [NotesFake, string, string][] = [
+    [{}, personaText, "0 of 1 requests had the persona and live facts in his instructions"],
+    [{}, factsText, "0 of 1 requests had the persona and live facts in his instructions"],
+    [{ leaveOut: true }, bothParts, "0 of 1 requests had the persona and live facts in his instructions"],
+    [{ secondWithout: true }, bothParts, "1 of 2 requests had the persona and live facts in his instructions"],
+    [{ inMessage: true }, bothParts, "1 of 1 requests had the persona and live facts in his instructions, and 1 in a message"],
+    [{ throws: true }, bothParts, "failed: engine fell over; 0 of 0 requests had the persona and live facts in his instructions"],
+  ];
+  for (const [fake, added, detail] of cases) {
+    for (const engine of ["sdk", "api"] as const) {
+      const engines = engine === "sdk" ? [notesEngine("sdk", fake, added), notesEngine("api", {}, bothParts)] : [notesEngine("sdk", {}, bothParts), notesEngine("api", fake, added)];
+      const [result] = await runPersonaCheck({ engines, persona: personaText, facts: factsText, commandLines: quietLines, timeoutMs: 1000 });
+      assert.deepEqual(result, { name: `both engines: ${personaName}`, ok: false, detail: `${checkNames[engine]}: ${detail}` }, `${engine} ${JSON.stringify(fake)} ${added}`);
+    }
+  }
+  assert.equal((await runPersonaCheck({ engines: [], persona: personaText, facts: factsText, commandLines: quietLines, timeoutMs: 1000 }))[0].ok, false);
+});
+
+test("the persona or live facts on a command line fail their check", async () => {
+  for (const text of [personaText, factsText]) {
+    const [shown] = await runPersonaCheck({ engines: [notesEngine("sdk", {}, bothParts), notesEngine("api", {}, bothParts)], persona: personaText, facts: factsText, commandLines: async () => ["node dist/jarvis.js", `claude --system-prompt ${text}`], timeoutMs: 1000 });
+    assert.deepEqual(shown, { name: `both engines: ${personaName}`, ok: false, detail: "1 command lines had the persona and live facts" });
+  }
 });
 
 type ActionsFake = { noAsk?: boolean; runsAfterNo?: boolean; notTold?: boolean; wrongInput?: boolean; asksOnRead?: boolean; missingAction?: boolean; throws?: boolean };

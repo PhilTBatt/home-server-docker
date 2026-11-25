@@ -524,7 +524,15 @@ export type NotesCheckDeps = {
   timeoutMs: number;
 };
 
-export async function runNotesCheck(deps: NotesCheckDeps): Promise<CheckResult[]> {
+export type PersonaCheckDeps = {
+  engines: NotesEngineUnderTest[];
+  persona: string;
+  facts: string;
+  commandLines: () => Promise<string[]>;
+  timeoutMs: number;
+};
+
+async function instructionsCheck(deps: { engines: NotesEngineUnderTest[]; texts: string[]; commandLines: () => Promise<string[]>; timeoutMs: number }, what: string, title: string): Promise<CheckResult[]> {
   const failures: string[] = [];
   for (const engine of deps.engines) {
     const from = engine.requests.length;
@@ -535,19 +543,27 @@ export async function runNotesCheck(deps: NotesCheckDeps): Promise<CheckResult[]
       problem = `failed: ${reason(error)}; `;
     }
     const sent = engine.requests.slice(from).filter((request) => request.path === "/v1/messages");
-    const carried = sent.filter((request) => request.systemText.includes(deps.notes)).length;
-    const elsewhere = sent.filter((request) => request.lastUserText.includes(deps.notes)).length;
+    const carried = sent.filter((request) => deps.texts.every((text) => request.systemText.includes(text))).length;
+    const elsewhere = sent.filter((request) => deps.texts.some((text) => request.lastUserText.includes(text))).length;
     if (problem !== "" || sent.length === 0 || carried < sent.length || elsewhere > 0) {
-      failures.push(`${checkNames[engine.engine]}: ${problem}${carried} of ${sent.length} requests had the notes in his instructions${elsewhere > 0 ? `, and ${elsewhere} in a message` : ""}`);
+      failures.push(`${checkNames[engine.engine]}: ${problem}${carried} of ${sent.length} requests had ${what} in his instructions${elsewhere > 0 ? `, and ${elsewhere} in a message` : ""}`);
     }
   }
   try {
-    const shown = (await deps.commandLines()).filter((line) => line.includes(deps.notes)).length;
-    if (shown > 0) failures.push(`${shown} command lines had the notes`);
+    const shown = (await deps.commandLines()).filter((line) => deps.texts.some((text) => line.includes(text))).length;
+    if (shown > 0) failures.push(`${shown} command lines had ${what}`);
   } catch (error) {
     failures.push(`command lines couldn't be read: ${reason(error)}`);
   }
-  return [{ name: `${scope(deps.engines)}: session notes reach the model in his instructions, quotes and all, and no command line`, ok: deps.engines.length > 0 && failures.length === 0, detail: failures.join(" | ") }];
+  return [{ name: `${scope(deps.engines)}: ${title}`, ok: deps.engines.length > 0 && failures.length === 0, detail: failures.join(" | ") }];
+}
+
+export async function runNotesCheck(deps: NotesCheckDeps): Promise<CheckResult[]> {
+  return instructionsCheck({ ...deps, texts: [deps.notes] }, "the notes", "session notes reach the model in his instructions, quotes and all, and no command line");
+}
+
+export async function runPersonaCheck(deps: PersonaCheckDeps): Promise<CheckResult[]> {
+  return instructionsCheck({ ...deps, texts: [deps.persona, deps.facts] }, "the persona and live facts", "a persona and live facts reach the model in his instructions, quotes and all, and no command line");
 }
 
 export function formatCheck(results: CheckResult[]): string[] {

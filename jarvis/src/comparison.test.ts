@@ -640,6 +640,28 @@ test("answers written for the ear are compared with the usual style side by side
   ]);
 });
 
+test("a log line's persona and live facts are checked like the other settings, and an older line without them counts as off", () => {
+  for (const persona of ["off", "butler", "quiet-butler-2"]) assert.equal(isLogLine(line({ persona })), true, persona);
+  for (const persona of ["Butler", "../butler", "butler.md", "", null, true]) assert.equal(isLogLine({ ...line(), persona }), false, String(persona));
+  for (const liveFacts of ["off", "on"] as const) assert.equal(isLogLine(line({ liveFacts })), true, liveFacts);
+  for (const liveFacts of ["yes", null, true]) assert.equal(isLogLine({ ...line(), liveFacts }), false, String(liveFacts));
+  assert.equal(isLogLine(line()), true);
+  assert.deepEqual(groupLines([line({ persona: "off", liveFacts: "off" }), line()]).map((group) => [group.persona, group.liveFacts, group.lines.length]), [["off", "off", 2]]);
+});
+
+test("answers with and without a persona or live facts are compared side by side, named only when both are in the log, voice on or off", () => {
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ persona: "butler" }), line()], skipped: 0 }), ""), ["API, keep, no persona", "API, keep, persona butler"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ persona: "butler" }), line({ persona: "quiet" })], skipped: 0 }), ""), ["API, keep, persona butler", "API, keep, persona quiet"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ persona: "butler" }), line({ persona: "butler" })], skipped: 0 }), ""), ["API, keep"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [line({ liveFacts: "on" }), line()], skipped: 0 }), ""), ["API, keep, no live facts", "API, keep, live facts"]);
+  assert.deepEqual(rowOf(compareReport({ lines: [voiced({ liveFacts: "on", persona: "butler" }), voiced({ liveFacts: "on" }), voiced({ persona: "butler" }), voiced()], skipped: 0 }), ""), [
+    "API, keep, no persona, no live facts",
+    "API, keep, no persona, live facts",
+    "API, keep, persona butler, no live facts",
+    "API, keep, persona butler, live facts",
+  ]);
+});
+
 const countsHeading = "Speech, added up for each setting: sentences played to the end, sentences that failed, and sentences not played in full (cut off or dropped when he stopped, or past the 40-sentence limit). Then how many answers made no sound, were stopped (before or after any sound), were given up on because two sentences in a row couldn't be made or couldn't be played, or went over 40 sentences.";
 
 test("a speech line's failures split into couldn't be made and couldn't be played are read when they add up, and older lines without the split still are", () => {

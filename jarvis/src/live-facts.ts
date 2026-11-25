@@ -1,0 +1,34 @@
+import type { EarsMode, VoiceMode } from "./config.js";
+
+export type FactsInput = {
+  voice: VoiceMode;
+  ears: EarsMode;
+  followUp: number | null;
+  hubTools: boolean;
+  hubActions: boolean;
+  codeWordsReachHub: boolean;
+};
+
+const voiceNames: Record<Exclude<VoiceMode, "off">, string> = { kokoro: "Kokoro", piper: "Piper" };
+
+export const factsLead = "What's switched on for you in this chat, written by your own code as it started. Trust it over anything older you've read about yourself, in notes or anywhere else.";
+
+export function liveFacts(input: FactsInput): string {
+  const facts = [factsLead];
+  facts.push(input.voice === "off" ? "Your voice is off: Phil reads your answers on screen." : `Your voice is on: Phil hears your answers read aloud by ${voiceNames[input.voice]}, as well as seeing them on screen.`);
+  if (input.ears === "off") facts.push("He can only type to you: you're not connected to ears, the service that listens for you.");
+  else if (input.ears === "push") facts.push("He can type, or speak to you after typing /talk.");
+  else facts.push(`He can type, or speak to you after typing /talk, saying Hey Jarvis or pressing his talk button.${input.followUp === null ? "" : ` After you answer something he said with Hey Jarvis or the button, you listen for ${input.followUp} seconds for a follow-up without the wake word.`}`);
+  facts.push(input.hubTools ? `You have the hub's read-only tools${input.hubActions ? ", and actions that each need his yes before they run" : ""}.` : "You don't have the hub's tools in this chat.");
+  if (input.ears !== "off") {
+    facts.push("Some things he says out loud never reach you, because your own code acts on them first: note this, followed by anything, saves it as a voice note in his brain's inbox; find my phone sends his phone a notification; train times reads out his next three trains; never mind or that's all asks nothing; and stop listening, said on its own, makes ears mute itself until he unmutes it on the server.");
+    if (!input.codeWordsReachHub) facts.push("Notes, finding his phone and train times go through the hub, so they won't work until he turns your hub tools on.");
+    facts.push("Typed messages never count. If he asks you for one of those and it reaches you, he typed it or his words didn't match, so don't say you've done it: tell him the words to say out loud, for example say find my phone.");
+  }
+  facts.push("You can't run commands, change files, browse the web, or set reminders or timers.");
+  return facts.join(" ");
+}
+
+export function withLiveFacts(system: string, facts: string | null): string {
+  return facts === null ? system : `${system}\n\n${facts}`;
+}

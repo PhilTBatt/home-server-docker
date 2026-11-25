@@ -5,7 +5,7 @@ import { answerLogFile, errorKind, logLine, logVersion, speechLine, startAnswerL
 import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
-const apiKeep: LogContext = { engine: "api", thinking: "keep", model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" };
+const apiKeep: LogContext = { engine: "api", thinking: "keep", model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off", persona: "off", liveFacts: "off" };
 const at = new Date("2026-11-16T18:30:00.000Z");
 
 const answered: Answer = {
@@ -37,6 +37,15 @@ test("the log lives in jarvis/data, next to src and dist", () => {
   assert.equal(answerLogFile, fileURLToPath(new URL("../data/answers.jsonl", import.meta.url)));
 });
 
+test("the log keeps which persona and whether live facts were on, voice on or off, but never the persona's words", () => {
+  for (const voice of ["off", "kokoro"] as const) {
+    const line = logLine({ ...apiKeep, voice, persona: "butler", liveFacts: "on" }, "chat-1", 1, at, { answer: answered });
+    assert.equal(line.persona, "butler");
+    assert.equal(line.liveFacts, "on");
+  }
+  assert.deepEqual([logLine(apiKeep, "chat-1", 1, at, { answer: answered })].map((line) => [line.persona, line.liveFacts]), [["off", "off"]]);
+});
+
 test("an answer becomes one line of numbers, with none of its words", () => {
   assert.deepEqual(logLine(apiKeep, "chat-1", 3, at, { answer: answered }), {
     v: logVersion,
@@ -52,6 +61,8 @@ test("an answer becomes one line of numbers, with none of its words", () => {
     hubActions: "off",
     sessionNotes: "off",
     voice: "off",
+    persona: "off",
+    liveFacts: "off",
     ok: true,
     error: null,
     firstWordsMs: 640,
@@ -101,7 +112,7 @@ test("an unknown largest request is logged as unknown, not zero", () => {
 
 test("a retry is logged as yes or no for the plain API call, and unknown for the Agent SDK", () => {
   assert.equal(logLine(apiKeep, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: false } } }).retried, false);
-  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
+  assert.equal(logLine({ engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off", persona: "off", liveFacts: "off" }, "chat-1", 1, at, { answer: { ...answered, stats: { ...answered.stats!, retried: null } } }).retried, null);
 });
 
 test("refused tools are counted, not named, and an answer with none counts zero", () => {
@@ -131,8 +142,8 @@ test("times are logged to the whole millisecond, and costs without floating-poin
 });
 
 test("the thinking setting is only logged for the plain API engine, which is the only one it changes", () => {
-  assert.equal(logLine({ engine: "sdk", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" }, "c", 1, at, { answer: answered }).thinking, null);
-  assert.equal(logLine({ engine: "api", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off" }, "c", 1, at, { answer: answered }).thinking, "drop");
+  assert.equal(logLine({ engine: "sdk", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off", persona: "off", liveFacts: "off" }, "c", 1, at, { answer: answered }).thinking, null);
+  assert.equal(logLine({ engine: "api", thinking: "drop", model: "m", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "off", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off", persona: "off", liveFacts: "off" }, "c", 1, at, { answer: answered }).thinking, "drop");
 });
 
 test("each line says whether the chat was fresh or resumed", () => {

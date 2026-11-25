@@ -7,11 +7,13 @@ import { startAgentSession, type AgentSession } from "./agent.js";
 import { startApiSession } from "./api-session.js";
 import { createBrainTools } from "./brain-tools.js";
 import { savedSdkChats, setUpChats, setUpNewChat } from "./chat-store.js";
-import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs } from "./chat.js";
+import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs, systemFor } from "./chat.js";
 import { askDirect } from "./direct.js";
-import { apiUnderTest, formatCheck, runActionsCheck, runEngineCheck, runHubCheck, runNotesCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
+import { apiUnderTest, formatCheck, runActionsCheck, runEngineCheck, runHubCheck, runNotesCheck, runPersonaCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { hubProblemNote, hubToolPrefix, type HubServer } from "./hub-tools.js";
+import { liveFacts } from "./live-facts.js";
+import { readPersona } from "./persona.js";
 import { withTimeout } from "./run.js";
 import { readSessionNotes, withNotes } from "./session-notes.js";
 import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi, type StandInApi } from "./stand-in-api.js";
@@ -242,7 +244,32 @@ try {
     commandLines,
     timeoutMs: 60_000,
   });
-  const results = [...shared, ...saved, ...hub, ...actions, ...notes];
+  const personaHome = await mkdtemp(join(tmpdir(), "jarvis-check-persona-"));
+  folders.push(personaHome);
+  await writeFile(join(personaHome, "check.md"), `# Check\n- Calm and \"dry\", marker ${randomUUID()}\n`);
+  const personaText = await readPersona("check", personaHome);
+  const factsText = liveFacts({ voice: "kokoro", ears: "wake", followUp: 6, hubTools: false, hubActions: false, codeWordsReachHub: false });
+  const personaSdkApi = await startStandInApi(script, "sdk");
+  const personaPlainApi = await startStandInApi(script, "api");
+  apis.push(personaSdkApi, personaPlainApi);
+  const personaSystem = (base: string) => systemFor(base, { persona: personaText, facts: factsText, spoken: false, notes: [] });
+  const personaSdk = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: personaSystem(chatSystem), cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: personaSdkApi.url } });
+  const personaPlain = startApiSession(
+    { apiKey: "sk-ant-test-key", model: chatModel, system: personaSystem(apiChatSystem), maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: createBrainTools(brain), thinkingHistory: "keep" },
+    (request) => askDirect({ ...request, url: `${personaPlainApi.url}/v1/messages` }),
+  );
+  sessions.push(personaSdk, personaPlain);
+  const persona = await runPersonaCheck({
+    engines: [
+      { engine: "sdk", session: personaSdk, requests: personaSdkApi.requests },
+      { engine: "api", session: personaPlain, requests: personaPlainApi.requests },
+    ],
+    persona: personaText,
+    facts: factsText,
+    commandLines,
+    timeoutMs: 60_000,
+  });
+  const results = [...shared, ...saved, ...hub, ...actions, ...notes, ...persona];
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;
 } catch (error) {
