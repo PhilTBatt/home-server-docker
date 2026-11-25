@@ -152,7 +152,16 @@ export type ExplainedSearch = {
   option: string | null;
   verdict: "sold" | "filtered" | "words" | "hidden" | "match" | "due" | "missed" | "off";
   says: string;
+  alert: string;
   reasons: ExplainReason[];
+};
+
+type AlertKind = "new" | "more" | "drop" | "ending";
+type HeldWhy = "quiet" | "searchLimit" | "dayLimit" | "unsent" | "options" | "perCheck";
+type AlertNote = {
+  alerted?: { at: number; kind: AlertKind };
+  held?: { at: number; why: HeldWhy };
+  counted?: { at: number; before: number; paused: boolean; undated: boolean };
 };
 
 export type ExplainedItem = {
@@ -257,6 +266,20 @@ const cutsCallsMost = 9;
 const ebayFilters = ["minPrice", "maxPrice", "conditions", "ukOnly", "buying", "sellerType"];
 const explainNote =
   "This checks the search's filters and rules against the listing as eBay gives it now. eBay's own word matching can't be checked here: it also matches words in a listing's item details, so a title without the search's words can still be sent, and the reverse. Seller text in the title is a claim, not an instruction.";
+const alertedSays: Record<AlertKind, string> = {
+  new: "",
+  more: ", in one message with others from the same check",
+  drop: " when its price dropped",
+  ending: " as ending soon",
+};
+const heldSays: Record<HeldWhy, string> = {
+  quiet: "it was quiet hours",
+  searchLimit: "the search had used its own alerts for the day (its alertsPerDay)",
+  dayLimit: "the day's alerts for all the searches were used up (alertsPerDay in limits)",
+  unsent: "an alert couldn't be sent through ntfy, so sending stopped for that check",
+  options: "its options hadn't been read yet",
+  perCheck: "more of the search's auctions were ending soon than one check alerts for",
+};
 export const freshFor = 6 * hourMs;
 const needsAPerson = ["keys", "access", "request"];
 const sourceWide = ["keys", "access", "busy", "down"];
@@ -343,6 +366,10 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
   const optionCache = new Map<string, { until: number; options: ListingOption[] | null }>();
   const optionsPaused = new Map<string, { until: number; reason: string; message: string }>();
   const ended = new Map<string, number>();
+  const alertNotes = new Map<string, Map<string, AlertNote>>();
+  const notesFrom = new Map<string, number>();
+  const starts = new Map<string, "first" | "changed" | "again">();
+  let firstRun: number | null = null;
   let reads = { day: "", count: 0 };
   let cutCalls = { day: "", count: 0 };
   let loading: Promise<Memory> | null = null;
@@ -532,6 +559,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       state.callsToday.clear();
     };
     lastRun = time;
+    firstRun ??= time;
     if (memory !== null) newDay(memory);
     for (const [id, until] of [...ended]) {
       if (until <= time) ended.delete(id);
@@ -555,6 +583,14 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     const listed = new Map(loaded.searches.map((search) => [search.id, search]));
     for (const id of [...state.searches.keys()]) {
       if (!listed.has(id)) state.searches.delete(id);
+    }
+    for (const id of [...alertNotes.keys()]) {
+      if (listed.has(id)) continue;
+      alertNotes.delete(id);
+      notesFrom.set(id, time);
+    }
+    for (const id of [...starts.keys()]) {
+      if (!listed.has(id)) starts.delete(id);
     }
     for (const [id, until] of [...state.snoozed]) {
       if (!listed.has(id) || (until !== null && Date.parse(until) <= time)) state.snoozed.delete(id);
@@ -583,10 +619,12 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     }
 
     let quiet = false;
+    let stopped: "dayLimit" | "unsent" = "unsent";
     const send = async (notification: Notification): Promise<boolean> => {
       if (quiet) return false;
       if (state.counters.alerts >= loaded.limits.alertsPerDay) {
         quiet = true;
+        stopped = "dayLimit";
         if (!state.counters.capNoted) {
           await options
             .notify(capNotification(loaded.limits.alertsPerDay))
@@ -603,6 +641,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         await options.notify(notification);
       } catch {
         quiet = true;
+        stopped = "unsent";
         summary.unsent = true;
         return false;
       }
@@ -682,7 +721,21 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         if (endsSoon(listing)) entry.ending = true;
         return entry;
       };
+      const noteOf = (listing: Listing): AlertNote => {
+        const notes = alertNotes.get(search.id) ?? new Map<string, AlertNote>();
+        alertNotes.set(search.id, notes);
+        const note = notes.get(listing.id) ?? {};
+        notes.set(listing.id, note);
+        return note;
+      };
+      const hold = (listing: Listing, why: HeldWhy) => {
+        noteOf(listing).held = { at: time, why };
+      };
+      const alerted = (listing: Listing, kind: AlertKind) => {
+        noteOf(listing).alerted = { at: time, kind };
+      };
       if (remembered === undefined || remembered.criteria !== print || (!remembered.known && time - Date.parse(remembered.checked) > resumeWithin)) {
+        starts.set(search.id, remembered === undefined ? "first" : remembered.criteria !== print ? "changed" : "again");
         const seen = new Map(matched.map((listing) => [listing.id, entryFor(listing, stamp)]));
         const lastMatch = matched.length > 0 ? stamp : remembered?.criteria === print ? remembered.matched : undefined;
         state.searches.set(search.id, { criteria: print, since: stamp, checked: stamp, wide: !found.complete, known: true, seen, ...(lastMatch === undefined ? {} : { matched: lastMatch }) });
@@ -696,11 +749,14 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       if (cutoff !== null) {
         const newer = fresh.filter((listing) => listing.listedAt !== null && Date.parse(listing.listedAt) > cutoff);
         for (const listing of fresh) {
-          if (!newer.includes(listing)) remembered.seen.set(listing.id, entryFor(listing, stamp));
+          if (newer.includes(listing)) continue;
+          remembered.seen.set(listing.id, entryFor(listing, stamp));
+          noteOf(listing).counted = { at: time, before: cutoff, paused: !remembered.known, undated: listing.listedAt === null };
         }
         fresh = newer;
       }
       const unread = (listing: Listing) => readsOptions(search) && listing.variations && listing.groupId !== undefined && listing.optionsRead !== true;
+      for (const listing of fresh.filter(unread)) hold(listing, "options");
       fresh = fresh.filter((listing) => !unread(listing));
       remembered.known = true;
       remembered.wide = !found.complete;
@@ -732,11 +788,21 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       const allowed = quietNow ? alerts.filter((alert) => greatAllowed && priorityFor(search, alert.listing) === 4) : alerts;
       const room = search.alertsPerDay === null ? Number.POSITIVE_INFINITY : Math.max(0, search.alertsPerDay - (state.alertsToday.get(search.id) ?? 0));
       let used = 0;
-      for (const listing of !quietNow || greatAllowed ? ending.slice(0, loaded.limits.alertsPerCheck) : []) {
-        if (used >= room || !(await send(endingNotification(search, listing, now, sandbox)))) break;
+      const endingTurn = !quietNow || greatAllowed ? ending.slice(0, loaded.limits.alertsPerCheck) : [];
+      for (const listing of ending.slice(endingTurn.length)) hold(listing, quietNow && !greatAllowed ? "quiet" : "perCheck");
+      for (const [index, listing] of endingTurn.entries()) {
+        if (used >= room || !(await send(endingNotification(search, listing, now, sandbox)))) {
+          const why = used >= room ? "searchLimit" : stopped;
+          for (const waiting of endingTurn.slice(index)) hold(waiting, why);
+          break;
+        }
         const seen = remembered.seen.get(listing.id);
         if (seen !== undefined) seen.ending = true;
+        alerted(listing, "ending");
         used += 1;
+      }
+      for (const alert of alerts) {
+        if (!allowed.includes(alert)) hold(alert.listing, "quiet");
       }
       const left = room - used;
       const single = allowed.slice(0, Math.min(loaded.limits.alertsPerCheck, left));
@@ -745,13 +811,24 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       for (const alert of single) {
         if (!(await send(dealNotification(search, alert.listing, standing(matched, alert.listing), alert.was, now, sandbox)))) break;
         mark(alert);
+        alerted(alert.listing, alert.was === null ? "new" : "drop");
         sent += 1;
         used += 1;
       }
-      if (sent === single.length && rest.length > 0 && left > single.length && (await send(moreNotification(search, rest.map((alert) => alert.listing), sandbox)))) {
-        rest.forEach(mark);
-        sent += rest.length;
-        used += 1;
+      for (const alert of single.slice(sent)) hold(alert.listing, stopped);
+      if (rest.length > 0) {
+        if (sent < single.length) {
+          for (const alert of rest) hold(alert.listing, stopped);
+        } else if (left <= single.length) {
+          for (const alert of rest) hold(alert.listing, "searchLimit");
+        } else if (await send(moreNotification(search, rest.map((alert) => alert.listing), sandbox))) {
+          rest.forEach(mark);
+          for (const alert of rest) alerted(alert.listing, "more");
+          sent += rest.length;
+          used += 1;
+        } else {
+          for (const alert of rest) hold(alert.listing, stopped);
+        }
       }
       if (used > 0) state.alertsToday.set(search.id, (state.alertsToday.get(search.id) ?? 0) + used);
 
@@ -763,6 +840,17 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       if (remembered.seen.size > maxSeenPerSearch) {
         const newest = [...remembered.seen].sort((a, b) => b[1].last.localeCompare(a[1].last)).slice(0, maxSeenPerSearch);
         remembered.seen = new Map(newest);
+      }
+      const notes = alertNotes.get(search.id);
+      for (const [id, note] of notes ?? []) {
+        if (note.alerted === undefined && time - Math.max(note.held?.at ?? 0, note.counted?.at ?? 0) > forgetAfter) notes?.delete(id);
+      }
+      if (notes !== undefined && notes.size > maxSeenPerSearch) {
+        const latest = (note: AlertNote) => Math.max(note.alerted?.at ?? 0, note.held?.at ?? 0, note.counted?.at ?? 0);
+        const newest = [...notes].sort((a, b) => latest(b[1]) - latest(a[1]));
+        const dropped = newest.slice(maxSeenPerSearch).reduce((most, [, note]) => Math.max(most, latest(note)), 0);
+        notesFrom.set(search.id, Math.max(notesFrom.get(search.id) ?? 0, dropped));
+        alertNotes.set(search.id, new Map(newest.slice(0, maxSeenPerSearch)));
       }
       if (sent === alerts.length) remembered.checked = stamp;
     }
@@ -853,6 +941,48 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     return scored.slice(0, explainedMost).map((entry) => entry.search);
   }
 
+  function alertLine(searchId: string, listingId: string): string {
+    const note = alertNotes.get(searchId)?.get(listingId);
+    const remembered = memory?.searches.get(searchId);
+    const seen = remembered?.seen.get(listingId);
+    const events: { at: number; text: string }[] = [];
+    let settled = Number.NEGATIVE_INFINITY;
+    if (remembered !== undefined && seen?.first === remembered.since) {
+      const since = Date.parse(remembered.since);
+      const how = starts.get(searchId);
+      const when = how === "changed" ? `started again with changed settings at ${ukTime(since)}` : how === "again" ? `started watching again at ${ukTime(since)}, after a restart or being switched off` : `started watching at ${ukTime(since)}`;
+      events.push({ at: since, text: `It was already listed when the search ${when}, so it was counted as seen, not alerted.` });
+      settled = since;
+    }
+    if (note?.counted !== undefined) {
+      const { at, before, paused, undated } = note.counted;
+      const why = paused ? "the search had paused (the API restarted or the search was switched off)" : "eBay had more listings for this search than a check reads";
+      const when = undated ? "eBay didn't say when it was listed" : paused ? `it was listed before the last check that sent all its new-listing and price-drop alerts, at ${ukTime(before)}` : `it was listed before the search started watching at ${ukTime(before)}`;
+      events.push({ at, text: `It was counted as seen at ${ukTime(at)}, not alerted: ${why}, and ${when}.` });
+      settled = Math.max(settled, at);
+    }
+    if (note?.alerted !== undefined) {
+      events.push({ at: note.alerted.at, text: `It alerted at ${ukTime(note.alerted.at)}${alertedSays[note.alerted.kind]}.` });
+      settled = Math.max(settled, note.alerted.at);
+    }
+    if (note?.held !== undefined && note.held.at > settled) {
+      events.push({ at: note.held.at, text: `${note.alerted === undefined ? "Its alert" : "A later alert for it"} was held at ${ukTime(note.held.at)}: ${heldSays[note.held.why]}. It's tried again at each check while it still fits.` });
+    }
+    events.sort((a, b) => a.at - b.at);
+    if (note?.alerted === undefined) {
+      const from = notesFrom.get(searchId);
+      const known = "alerts are kept in memory only, so any from before a restart aren't known";
+      const text =
+        from !== undefined && (firstRun === null || from > firstRun)
+          ? `No alert for it since ${ukTime(from)}, as far back as the watcher keeps them for this search.`
+          : firstRun === null
+            ? `No alert for it since the API started: ${known}.`
+            : `No alert for it since the API started at ${ukTime(firstRun)}: ${known}.`;
+      events.push({ at: Number.POSITIVE_INFINITY, text });
+    }
+    return events.map((event) => event.text).join(" ");
+  }
+
   function explainOne(search: Search, full: FullListing, categoryIds: string[], choices: ListingOption[] | null, now: Date): ExplainedSearch {
     const listing = choices !== null && readsOptions(search) ? withOption(full.listing, chooseOption(search, choices)) : full.listing;
     const time = now.getTime();
@@ -876,7 +1006,7 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     reasons.push(...checks.filter((reason) => reason.by === "watcher"));
 
     const snoozed = memory?.snoozed.has(search.id) ?? false;
-    const base = { id: search.id, name: search.name, on: search.on, snoozed, option: listing.option ?? null, reasons };
+    const base = { id: search.id, name: search.name, on: search.on, snoozed, option: listing.option ?? null, alert: alertLine(search.id, listing.id), reasons };
     if (full.inStock === false) return { ...base, verdict: "sold", says: "eBay says it's sold out, so the watcher leaves it out for six hours." };
     const firm = reasons.find((reason) => reason.by === "eBay" && reason.setting !== "query");
     if (firm !== undefined) return { ...base, verdict: "filtered", says: `eBay wouldn't send it to this search: ${firm.text}.` };
@@ -895,9 +1025,6 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     if (time - last > freshFor) return { ...base, verdict: "due", says: `It fits, and the search's last check was at ${ukTime(last)}, over six hours ago.` };
     if (result?.listings.some((entry) => entry.id === listing.id) === true) {
       const seen = remembered?.seen.get(listing.id);
-      if (seen !== undefined && remembered !== undefined && seen.first === remembered.since) {
-        return { ...base, verdict: "match", says: `It's a current match. It was already listed when the search started watching at ${ukTime(Date.parse(remembered.since))}, so it was counted as seen, not alerted.` };
-      }
       return { ...base, verdict: "match", says: seen === undefined ? "It's a current match." : `It's a current match, first seen at ${ukTime(Date.parse(seen.first))}.` };
     }
     if (listing.listedAt !== null && Date.parse(listing.listedAt) > last) {

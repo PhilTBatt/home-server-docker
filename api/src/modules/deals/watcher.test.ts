@@ -1255,6 +1255,7 @@ function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { 
     lookupReply: null as SourceError | null,
     groups: new Map<string, ListingOption[] | SourceError>(),
     groupCalls: [] as string[],
+    itemReply: null as ItemRead | null,
     ...fakeStore(options.keepSeen ?? true),
   };
   const ebay: Source = {
@@ -1269,6 +1270,9 @@ function richSetup(searches: Record<string, unknown>[] = [optiplex], options: { 
       if (world.fullReply instanceof Error) throw world.fullReply;
       const shown = [...world.found.values()].flatMap((reply) => (Array.isArray(reply) ? reply : [])).find((entry) => entry.ref === ref);
       return { full: world.fullReply ?? fullOf(shown ?? listing(999)), calls: 1 };
+    },
+    async item() {
+      return { item: world.itemReply ?? { full: fullOf(listing(1)), categoryIds: [], options: null }, calls: 1 };
     },
     async options(groupId) {
       world.groupCalls.push(groupId);
@@ -2896,7 +2900,8 @@ test("explaining a listing that fits a checked search says whether it's a match,
   const first = await watcher.explain("110000000001", "optiplex", at(5));
   assert.equal(first.status, "ok");
   if (first.status !== "ok") return;
-  assert.deepEqual(first.value.searches, [{ id: "optiplex", name: "OptiPlex", on: true, snoozed: false, option: null, verdict: "match", says: "It's a current match. It was already listed when the search started watching at 2026-11-18 12:00, so it was counted as seen, not alerted.", reasons: [] }]);
+  const sinceStart = "No alert for it since the API started at 2026-11-18 12:00: alerts are kept in memory only, so any from before a restart aren't known.";
+  assert.deepEqual(first.value.searches, [{ id: "optiplex", name: "OptiPlex", on: true, snoozed: false, option: null, verdict: "match", says: "It's a current match, first seen at 2026-11-18 12:00.", alert: `It was already listed when the search started watching at 2026-11-18 12:00, so it was counted as seen, not alerted. ${sinceStart}`, reasons: [] }]);
   assert.deepEqual(items.asked, ["110000000001"]);
   assert.equal(first.value.item.total, 9100);
   assert.match(first.value.about, /eBay's own word matching can't be checked here/);
@@ -2905,6 +2910,7 @@ test("explaining a listing that fits a checked search says whether it's a match,
   items.reply = itemOf(listing(2));
   const later = await watcher.explain("110000000002", "optiplex", at(35));
   assert.equal(later.status === "ok" ? later.value.searches[0].says : "", "It's a current match, first seen at 2026-11-18 12:30.");
+  assert.equal(later.status === "ok" ? later.value.searches[0].alert : "", "It alerted at 2026-11-18 12:30.");
 });
 
 test("explaining a listing that fits but isn't a match says whether it's newer than the last check, or eBay didn't send it", async () => {
@@ -3079,7 +3085,7 @@ test("explaining gives times in UK time, which is an hour ahead of UTC in summer
   assert.equal(reply.status === "ok" ? reply.value.searches[0].says : "", "It fits, and it was listed after the search's last check at 2026-07-01 13:00. The next check is due by 2026-07-01 13:30.");
   items.reply = itemOf(listing(1));
   const baseline = await watcher.explain("110000000001", "optiplex", new Date(summer + 6 * 60_000));
-  assert.match(baseline.status === "ok" ? baseline.value.searches[0].says : "", /started watching at 2026-07-01 13:00,/);
+  assert.match(baseline.status === "ok" ? baseline.value.searches[0].alert : "", /started watching at 2026-07-01 13:00,/);
 });
 
 test("explaining a current match from a check over six hours old says the check is old, not that it's a match", async () => {
@@ -3141,4 +3147,238 @@ test("a listing read in full gets the off-eBay caution from its description too"
   world.fullReply = { ...fullOf(shown), description: "Cash on collection, no time wasters." };
   const read = await watcher.full("110000000001", at(2));
   assert.deepEqual(read.status === "ok" ? read.listing.cautions : null, ["it mentions \"cash on collection\", a sign of paying or talking outside eBay, which loses eBay's Money Back Guarantee"]);
+});
+
+const sinceStart = (time: string) => `No alert for it since the API started at ${time}: alerts are kept in memory only, so any from before a restart aren't known.`;
+
+async function alertSaid(watcher: ReturnType<typeof createDealWatcher>, world: { itemReply: ItemRead | null }, shown: Listing, minutes: number, searchId = "optiplex") {
+  world.itemReply = itemOf(shown);
+  const reply = await watcher.explain(shown.id.split("|")[1], searchId, at(minutes));
+  return reply.status === "ok" ? reply.value.searches[0].alert : reply.status;
+}
+
+test("explaining says when a listing alerted: on its own, in one message with other new matches, on a price drop or as ending soon", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, dropPercent: 10 }], { limits: { alertsPerCheck: 1 } });
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2));
+  await watcher.run(at(30));
+  assert.deepEqual(titles(world.sent.slice(1)), ["Deal: OptiPlex", "Deals: 1 more for OptiPlex"]);
+  assert.equal(await alertSaid(watcher, world, listing(1), 31), "It alerted at 2026-11-18 12:30.");
+  assert.equal(await alertSaid(watcher, world, listing(2), 31), "It alerted at 2026-11-18 12:30, in one message with others from the same check.");
+  world.found.set("optiplex", [listing(1), listing(2, { price: 7000 })]);
+  await watcher.run(at(60));
+  assert.equal(world.sent.at(-1)?.title, "Price drop: OptiPlex");
+  assert.equal(await alertSaid(watcher, world, listing(2, { price: 7000 }), 61), "It alerted at 2026-11-18 13:00 when its price dropped.");
+
+  const ending = richSetup([bidding]);
+  ending.world.found.set("optiplex", [auction(1, 180)]);
+  await ending.watcher.run(at(0));
+  await ending.watcher.run(at(150));
+  assert.equal(await alertSaid(ending.watcher, ending.world, auction(1, 180), 151), "It was already listed when the search started watching at 2026-11-18 12:00, so it was counted as seen, not alerted. It alerted at 2026-11-18 14:30 as ending soon.");
+});
+
+test("explaining says why a listing's alert was held: quiet hours, the search's own limit, the day's limit, ntfy, or options not read yet", async () => {
+  const quiet = richSetup([optiplex], { quiet: { from: "12:10", to: "13:00" } });
+  await quiet.watcher.run(at(0));
+  quiet.world.found.set("optiplex", listings(1));
+  await quiet.watcher.run(at(30));
+  assert.equal(await alertSaid(quiet.watcher, quiet.world, listing(1), 31), `Its alert was held at 2026-11-18 12:30: it was quiet hours. It's tried again at each check while it still fits. ${sinceStart("2026-11-18 12:00")}`);
+  await quiet.watcher.run(at(60));
+  assert.equal(await alertSaid(quiet.watcher, quiet.world, listing(1), 61), "It alerted at 2026-11-18 13:00.");
+
+  const own = richSetup([{ ...optiplex, alertsPerDay: 1 }]);
+  await own.watcher.run(at(0));
+  own.world.found.set("optiplex", listings(1, 2));
+  await own.watcher.run(at(30));
+  assert.equal(await alertSaid(own.watcher, own.world, listing(1), 31), "It alerted at 2026-11-18 12:30.");
+  assert.equal(await alertSaid(own.watcher, own.world, listing(2), 31), `Its alert was held at 2026-11-18 12:30: the search had used its own alerts for the day (its alertsPerDay). It's tried again at each check while it still fits. ${sinceStart("2026-11-18 12:00")}`);
+
+  const day = richSetup([optiplex], { limits: { alertsPerDay: 1 } });
+  await day.watcher.run(at(0));
+  day.world.found.set("optiplex", listings(1, 2));
+  await day.watcher.run(at(30));
+  assert.match(await alertSaid(day.watcher, day.world, listing(2), 31), /^Its alert was held at 2026-11-18 12:30: the day's alerts for all the searches were used up \(alertsPerDay in limits\)\./);
+
+  const down = richSetup([optiplex]);
+  await down.watcher.run(at(0));
+  down.world.found.set("optiplex", listings(1));
+  down.world.failSend = true;
+  await down.watcher.run(at(30));
+  assert.match(await alertSaid(down.watcher, down.world, listing(1), 31), /^Its alert was held at 2026-11-18 12:30: an alert couldn't be sent through ntfy, so sending stopped for that check\./);
+  down.world.failSend = false;
+  await down.watcher.run(at(60));
+  assert.equal(await alertSaid(down.watcher, down.world, listing(1), 61), "It alerted at 2026-11-18 13:00.");
+
+  const options = richSetup([drive]);
+  options.world.found.set("drive", []);
+  await options.watcher.run(at(0));
+  const many = Array.from({ length: 11 }, (_, i) => grouped(i + 1, String(300 + i)));
+  for (let i = 0; i < 11; i++) options.world.groups.set(String(300 + i), sizes(String(300 + i), ["1 TB", 1500], ["4 TB", 6000 - i * 100]));
+  options.world.found.set("drive", many);
+  await options.watcher.run(at(31));
+  assert.match(await alertSaid(options.watcher, options.world, many[10], 32, "drive"), /^Its alert was held at 2026-11-18 12:31: its options hadn't been read yet\./);
+});
+
+test("explaining says when a listing was counted as seen without an alert, and that a restart forgets earlier alerts", async () => {
+  const { world, watcher, restart } = richSetup([optiplex], { keepSeen: false });
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2));
+  await watcher.run(at(30));
+  assert.equal(await alertSaid(watcher, world, listing(2), 31), "It alerted at 2026-11-18 12:30.");
+  const after = restart();
+  await after.run(at(60));
+  assert.equal(
+    await alertSaid(after, world, listing(2), 61),
+    `It was counted as seen at 2026-11-18 13:00, not alerted: the search had paused (the API restarted or the search was switched off), and it was listed before the last check that sent all its new-listing and price-drop alerts, at 2026-11-18 12:30. ${sinceStart("2026-11-18 13:00")}`,
+  );
+  const late = restart();
+  await late.run(at(26 * 60));
+  assert.equal(await alertSaid(late, world, listing(1), 26 * 60 + 1), `It was already listed when the search started watching again at 2026-11-19 14:00, after a restart or being switched off, so it was counted as seen, not alerted. ${sinceStart("2026-11-19 14:00")}`);
+  world.list = readSearches(JSON.stringify({ searches: [{ ...optiplex, maxPrice: 200 }] }), ["ebay"]);
+  await late.run(at(27 * 60));
+  assert.match(await alertSaid(late, world, listing(1), 27 * 60 + 1), /^It was already listed when the search started again with changed settings at 2026-11-19 15:00, so it was counted as seen, not alerted\. /);
+});
+
+test("explaining a listing counted as seen because eBay had more listings than a check reads says so", async () => {
+  const { world, watcher, items } = explainSetup([optiplex]);
+  world.found.set("optiplex", { listings: listings(1), total: 900, complete: false });
+  await watcher.run(at(0));
+  world.found.set("optiplex", { listings: listings(1, 2), total: 900, complete: false });
+  await watcher.run(at(30));
+  items.reply = itemOf(listing(2));
+  const reply = await watcher.explain("110000000002", "optiplex", at(31));
+  assert.equal(
+    reply.status === "ok" ? reply.value.searches[0].alert : "",
+    `It was counted as seen at 2026-11-18 12:30, not alerted: eBay had more listings for this search than a check reads, and it was listed before the search started watching at 2026-11-18 12:00. ${sinceStart("2026-11-18 12:00")}`,
+  );
+});
+
+test("a search's alerts are kept while it's switched off, but not once it's taken out of the list", async () => {
+  const { world, watcher } = richSetup([optiplex]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1));
+  await watcher.run(at(30));
+  world.list = readSearches(JSON.stringify({ searches: [{ ...optiplex, switch: "off" }] }), ["ebay"]);
+  await watcher.run(at(60));
+  world.list = readSearches(JSON.stringify({ searches: [optiplex] }), ["ebay"]);
+  await watcher.run(at(90));
+  assert.equal(
+    await alertSaid(watcher, world, listing(1), 91),
+    "It alerted at 2026-11-18 12:30. It was counted as seen at 2026-11-18 13:30, not alerted: the search had paused (the API restarted or the search was switched off), and it was listed before the last check that sent all its new-listing and price-drop alerts, at 2026-11-18 12:30.",
+  );
+  world.list = readSearches(JSON.stringify({ searches: [ram] }), ["ebay"]);
+  await watcher.run(at(120));
+  world.list = readSearches(JSON.stringify({ searches: [optiplex] }), ["ebay"]);
+  await watcher.run(at(150));
+  assert.equal(await alertSaid(watcher, world, listing(1), 151), "It was already listed when the search started watching at 2026-11-18 14:30, so it was counted as seen, not alerted. No alert for it since 2026-11-18 14:00, as far back as the watcher keeps them for this search.");
+});
+
+test("a search keeps what happened to its newest 2,000 listings, and says how far back it knows for the rest", async () => {
+  const { world, watcher, items } = explainSetup([optiplex]);
+  world.found.set("optiplex", { listings: listings(1), total: 5000, complete: false });
+  await watcher.run(at(0));
+  world.found.set("optiplex", { listings: Array.from({ length: 2002 }, (_, i) => listing(i + 1)), total: 5000, complete: false });
+  await watcher.run(at(30));
+  items.reply = itemOf(listing(2002));
+  const dropped = await watcher.explain("110000002002", "optiplex", at(31));
+  assert.equal(dropped.status === "ok" ? dropped.value.searches[0].alert : "", "No alert for it since 2026-11-18 12:30, as far back as the watcher keeps them for this search.");
+  items.reply = itemOf(listing(2));
+  const kept = await watcher.explain("110000000002", "optiplex", at(31));
+  assert.match(kept.status === "ok" ? kept.value.searches[0].alert : "", /^It was counted as seen at 2026-11-18 12:30, not alerted/);
+});
+
+test("explaining an auction whose ending-soon alert waited says why: one check's alerts, or quiet hours", async () => {
+  const { world, watcher } = richSetup([bidding], { limits: { alertsPerCheck: 1 } });
+  world.found.set("optiplex", [auction(1, 180), auction(2, 185)]);
+  await watcher.run(at(0));
+  await watcher.run(at(160));
+  assert.equal(await alertSaid(watcher, world, auction(1, 180), 161), "It was already listed when the search started watching at 2026-11-18 12:00, so it was counted as seen, not alerted. It alerted at 2026-11-18 14:40 as ending soon.");
+  assert.match(await alertSaid(watcher, world, auction(2, 185), 161), /^It was already listed when the search started watching at 2026-11-18 12:00, so it was counted as seen, not alerted\. Its alert was held at 2026-11-18 14:40: more of the search's auctions were ending soon than one check alerts for\. It's tried again at each check while it still fits\. No alert/);
+  const quiet = richSetup([bidding], { quiet: { from: "14:00", to: "15:00" } });
+  quiet.world.found.set("optiplex", [auction(1, 180)]);
+  await quiet.watcher.run(at(0));
+  await quiet.watcher.run(at(160));
+  assert.match(await alertSaid(quiet.watcher, quiet.world, auction(1, 180), 161), /Its alert was held at 2026-11-18 14:40: it was quiet hours\./);
+});
+
+test("explaining says why a roll-up's listings or an ending-soon alert over the search's limit were held, and a later alert held after one went", async () => {
+  const failed = richSetup([optiplex], { limits: { alertsPerCheck: 1 } });
+  await failed.watcher.run(at(0));
+  failed.world.found.set("optiplex", listings(1, 2));
+  failed.world.failSend = true;
+  await failed.watcher.run(at(30));
+  assert.match(await alertSaid(failed.watcher, failed.world, listing(2), 31), /^Its alert was held at 2026-11-18 12:30: an alert couldn't be sent through ntfy, so sending stopped for that check\./);
+
+  const capped = richSetup([optiplex], { limits: { alertsPerCheck: 1, alertsPerDay: 1 } });
+  await capped.watcher.run(at(0));
+  capped.world.found.set("optiplex", listings(1, 2, 3));
+  await capped.watcher.run(at(30));
+  assert.equal(await alertSaid(capped.watcher, capped.world, listing(1), 31), "It alerted at 2026-11-18 12:30.");
+  assert.match(await alertSaid(capped.watcher, capped.world, listing(3), 31), /^Its alert was held at 2026-11-18 12:30: the day's alerts for all the searches were used up/);
+
+  const ending = richSetup([{ ...bidding, alertsPerDay: 1 }]);
+  ending.world.found.set("optiplex", [auction(1, 180), auction(2, 185)]);
+  await ending.watcher.run(at(0));
+  await ending.watcher.run(at(160));
+  assert.match(await alertSaid(ending.watcher, ending.world, auction(1, 180), 161), /It alerted at 2026-11-18 14:40 as ending soon\.$/);
+  assert.match(await alertSaid(ending.watcher, ending.world, auction(2, 185), 161), /Its alert was held at 2026-11-18 14:40: the search had used its own alerts for the day \(its alertsPerDay\)\./);
+
+  const later = richSetup([{ ...optiplex, dropPercent: 10 }], { quiet: { from: "12:50", to: "13:30" } });
+  await later.watcher.run(at(0));
+  later.world.found.set("optiplex", listings(1));
+  await later.watcher.run(at(30));
+  later.world.found.set("optiplex", [listing(1, { price: 7000 })]);
+  await later.watcher.run(at(60));
+  assert.equal(await alertSaid(later.watcher, later.world, listing(1, { price: 7000 }), 61), "It alerted at 2026-11-18 12:30. A later alert for it was held at 2026-11-18 13:00: it was quiet hours. It's tried again at each check while it still fits.");
+  await later.watcher.run(at(90));
+  assert.equal(await alertSaid(later.watcher, later.world, listing(1, { price: 7000 }), 91), "It alerted at 2026-11-18 13:30 when its price dropped.");
+});
+
+test("a held alert isn't said to be tried again once the listing was counted as seen, and one with no listing time says eBay didn't give one", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, alertsPerDay: 1 }]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2));
+  await watcher.run(at(30));
+  assert.match(await alertSaid(watcher, world, listing(2), 31), /^Its alert was held at 2026-11-18 12:30: the search had used its own alerts/);
+  world.list = readSearches(JSON.stringify({ searches: [{ ...optiplex, alertsPerDay: 1, maxPrice: 200 }] }), ["ebay"]);
+  await watcher.run(at(60));
+  assert.equal(await alertSaid(watcher, world, listing(2), 61), `It was already listed when the search started again with changed settings at 2026-11-18 13:00, so it was counted as seen, not alerted. ${sinceStart("2026-11-18 12:00")}`);
+
+  const wide = explainSetup([optiplex]);
+  wide.world.found.set("optiplex", { listings: listings(1), total: 900, complete: false });
+  await wide.watcher.run(at(0));
+  wide.world.found.set("optiplex", { listings: [listing(1), listing(2, { listedAt: null })], total: 900, complete: false });
+  await wide.watcher.run(at(30));
+  wide.items.reply = itemOf(listing(2, { listedAt: null }));
+  const reply = await wide.watcher.explain("110000000002", "optiplex", at(31));
+  assert.match(reply.status === "ok" ? reply.value.searches[0].alert : "", /^It was counted as seen at 2026-11-18 12:30, not alerted: eBay had more listings for this search than a check reads, and eBay didn't say when it was listed\. /);
+});
+
+test("what happened to a listing's alert is forgotten two days after it was held or counted, but an alert is kept", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, alertsPerDay: 1 }]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2));
+  await watcher.run(at(30));
+  world.found.set("optiplex", []);
+  await watcher.run(at(60));
+  assert.match(await alertSaid(watcher, world, listing(2), 61), /^Its alert was held at 2026-11-18 12:30/);
+  await watcher.run(at(49 * 60 + 31));
+  assert.equal(await alertSaid(watcher, world, listing(2), 49 * 60 + 32), sinceStart("2026-11-18 12:00"));
+  assert.equal(await alertSaid(watcher, world, listing(1), 49 * 60 + 32), "It alerted at 2026-11-18 12:30.");
+});
+
+test("a held alert isn't said to be tried again once the listing was counted as seen after the search was switched off and on", async () => {
+  const { world, watcher } = richSetup([{ ...optiplex, alertsPerDay: 1 }]);
+  await watcher.run(at(0));
+  world.found.set("optiplex", listings(1, 2));
+  await watcher.run(at(30));
+  world.list = readSearches(JSON.stringify({ searches: [{ ...optiplex, alertsPerDay: 1, switch: "off" }] }), ["ebay"]);
+  await watcher.run(at(60));
+  world.list = readSearches(JSON.stringify({ searches: [{ ...optiplex, alertsPerDay: 1 }] }), ["ebay"]);
+  await watcher.run(at(90));
+  assert.equal(
+    await alertSaid(watcher, world, listing(2), 91),
+    `It was counted as seen at 2026-11-18 13:30, not alerted: the search had paused (the API restarted or the search was switched off), and it was listed before the last check that sent all its new-listing and price-drop alerts, at 2026-11-18 12:00. ${sinceStart("2026-11-18 12:00")}`,
+  );
 });

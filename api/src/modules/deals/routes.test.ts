@@ -106,7 +106,7 @@ const explainedValue: Explained = {
     inStock: true,
     note: null,
   },
-  searches: [{ id: "optiplex", name: "OptiPlex", on: true, snoozed: false, option: null, verdict: "match", says: "It's a current match.", reasons: [] }],
+  searches: [{ id: "optiplex", name: "OptiPlex", on: true, snoozed: false, option: null, verdict: "match", says: "It's a current match.", alert: "It alerted at 2026-11-18 12:30.", reasons: [] }],
   about: "This checks the search's filters and rules.",
 };
 

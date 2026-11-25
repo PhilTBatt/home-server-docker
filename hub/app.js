@@ -167,6 +167,7 @@
  * @property {boolean} snoozed
  * @property {string | null} [option]
  * @property {string} says
+ * @property {string} [alert]
  * @property {DealExplainReason[]} reasons
  */
 
@@ -981,7 +982,8 @@ function explainedItems(explained) {
   for (const search of explained.searches) {
     const option = typeof search.option === "string" ? ` (at option: ${search.option})` : "";
     const state = search.on === false ? " (switched off)" : search.snoozed === true ? " (snoozed)" : "";
-    const item = listItem(`${search.name}${option}${state}: ${search.says}`);
+    const alert = typeof search.alert === "string" && search.alert !== "" ? ` ${search.alert}` : "";
+    const item = listItem(`${search.name}${option}${state}: ${search.says}${alert}`);
     if (search.reasons.length > 0) {
       const reasons = document.createElement("ul");
       reasons.replaceChildren(...search.reasons.map((reason) => listItem(`${reason.by === "eBay" ? "eBay" : "Watcher"}: ${reason.text}`)));
