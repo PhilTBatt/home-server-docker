@@ -884,6 +884,7 @@
       "mustInclude": ["b660*"],
       "exclude": ["ddr5", "d5", "bundle", "combo", "itx", "mini itx"],
       "avoid": ["faulty", "lots"],
+      "categoryId": 1244,
       "sellerMinPercent": 97,
       "guidePrice": 70,
       "guideDate": "2026-11-19",

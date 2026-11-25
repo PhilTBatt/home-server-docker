@@ -540,7 +540,9 @@ test("the catalogue in the repo loads beside the example list, every search off 
   const fromEbay = added.filter((search) => search.source === "ebay");
   assert.ok(fromEbay.every((search) => search.guidePrice !== null && ["2026-11-19", "2026-11-20"].includes(search.guideDate ?? "")));
   assert.ok(added.filter((search) => search.source === "hotukdeals").length >= 5);
-  assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["ram 170083", "ram 11210", "graphics 27386"]);
+  assert.deepEqual([...new Set(added.filter((search) => search.categoryId !== null).map((search) => `${search.group} ${search.categoryId}`))], ["motherboard 1244", "ram 170083", "ram 11210", "graphics 27386"]);
+  assert.deepEqual(fromEbay.filter((search) => search.categoryId === "1244").map((search) => search.id), ["b660-motherboard"], "only the B660 board search looks in eBay's Motherboards category, which keeps Mazda parts numbered B660 out");
+  assert.equal(added.find((search) => search.id === "b660-bundle")?.categoryId, null, "the B660 bundle search isn't limited to boards, since bundles are often listed with the processor");
   const ram = fromEbay.filter((search) => search.group === "ram");
   assert.ok(ram.every((search) => search.unit === "GB" && (search.categoryId === "11210" || (search.categoryId === "170083" && search.hideDetails !== null))));
   assert.deepEqual(ram.filter((search) => search.categoryId === "11210").map((search) => search.id), ["ddr4-rdimm-32gb"]);
