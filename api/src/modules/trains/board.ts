@@ -57,7 +57,7 @@ function messagesOf(value: unknown): string[] {
   }).slice(0, 3);
 }
 
-export function readBoard(body: unknown, settings: Pick<TrainSettings, "from" | "to">): Board {
+export function readBoard(body: unknown, settings: Pick<TrainSettings, "from" | "to">, rows = boardRows): Board {
   if (typeof body !== "object" || body === null || Array.isArray(body)) throw new Error("the reply wasn't a departure board");
   const fields = body as Record<string, unknown>;
   if (fields.crs !== settings.from && typeof fields.generatedAt !== "string") throw new Error("the reply wasn't a departure board");
@@ -70,14 +70,14 @@ export function readBoard(body: unknown, settings: Pick<TrainSettings, "from" | 
     departures: list.flatMap((item) => {
       const departure = departureOf(item);
       return departure === null ? [] : [departure];
-    }).slice(0, boardRows),
+    }).slice(0, rows),
     buses: Array.isArray(fields.busServices) ? fields.busServices.length : 0,
     messages: messagesOf(fields.nrccMessages),
   };
 }
 
-export async function fetchBoard(settings: TrainSettings, signal?: AbortSignal, fetcher: typeof fetch = fetch, ms = boardMs): Promise<Board> {
-  const url = `${settings.boardUrl}/${settings.from}?numRows=${boardRows}&filterCrs=${settings.to}&filterType=to`;
+export async function fetchBoard(settings: TrainSettings, signal?: AbortSignal, fetcher: typeof fetch = fetch, ms = boardMs, rows = boardRows): Promise<Board> {
+  const url = `${settings.boardUrl}/${settings.from}?numRows=${rows}&filterCrs=${settings.to}&filterType=to`;
   let response: Response;
   try {
     response = await fetcher(url, { headers: { "x-apikey": settings.key, accept: "application/json" }, redirect: "error", signal: signal === undefined ? AbortSignal.timeout(ms) : AbortSignal.any([signal, AbortSignal.timeout(ms)]) });
@@ -93,5 +93,5 @@ export async function fetchBoard(settings: TrainSettings, signal?: AbortSignal, 
   const body: unknown = await response.json().catch((error: unknown) => {
     throw new Error(error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? `the board couldn't be reached (no answer within ${ms / 1000} seconds)` : "the board's reply wasn't JSON");
   });
-  return readBoard(body, settings);
+  return readBoard(body, settings, rows);
 }

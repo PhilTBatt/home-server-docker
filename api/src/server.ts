@@ -1,5 +1,5 @@
 import { buildApp } from "./app.js";
-import { createNotifier } from "./modules/notify/notifier.js";
+import { createNotifier, sendToNtfy } from "./modules/notify/notifier.js";
 import { currentProblems, readStatus } from "./modules/system/routes.js";
 import { sendHeartbeat } from "./modules/notify/heartbeat.js";
 import { createDailySummary } from "./modules/notify/daily.js";
@@ -7,6 +7,7 @@ import { readConfig } from "./config.js";
 import { countWaiting } from "./modules/memory/routes.js";
 import { readBackupState } from "./modules/system/backup.js";
 import { dealWatcherFor } from "./modules/deals/setup.js";
+import { boardForAlerts, createTrainAlerts, tickMs } from "./modules/trains/alerts.js";
 
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
@@ -58,3 +59,20 @@ function runCheck() {
 
 runCheck();
 setInterval(runCheck, 5 * 60 * 1000);
+
+if (config.features.trainAlerts) {
+  const checkTrains = createTrainAlerts({
+    settings: config.trainAlerts,
+    board: boardForAlerts(config.trains),
+    send: (notification) => sendToNtfy(config.ntfyTopic, notification),
+    warn: (message) => app.log.warn(message),
+    info: (message) => app.log.info(message),
+  });
+  const runTrainCheck = () => {
+    checkTrains(new Date()).catch((error: unknown) => {
+      app.log.error(error, "train check failed");
+    });
+  };
+  runTrainCheck();
+  setInterval(runTrainCheck, tickMs);
+}

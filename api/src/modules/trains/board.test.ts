@@ -72,6 +72,16 @@ test("the board is asked for the next five trains from one station to the other,
   assert.equal(boardMs, 8_000);
 });
 
+test("the board can be asked for more rows, and keeps that many", async () => {
+  const many = { crs: "AAA", trainServices: Array.from({ length: 12 }, (_unused, index) => ({ std: `07:${String(index).padStart(2, "0")}`, etd: "On time" })) };
+  const asked: string[] = [];
+  const fetcher = (async (url: string) => (asked.push(url), new Response(JSON.stringify(many), { status: 200 }))) as typeof fetch;
+  const board = await fetchBoard(settings, undefined, fetcher, boardMs, 10);
+  assert.equal(asked[0], "https://api1.raildata.org.uk/test-board/AAA?numRows=10&filterCrs=BBB&filterType=to");
+  assert.equal(board.departures.length, 10);
+  assert.equal(readBoard(many, settings).departures.length, 5);
+});
+
 test("a refused key, another status, a reply that isn't JSON, no connection or no answer in time are each said plainly, never with the key", async () => {
   const replying = (status: number, body: string) => (async () => new Response(body, { status })) as unknown as typeof fetch;
   await assert.rejects(fetchBoard(settings, undefined, replying(401, "test-rail-key is wrong")), { message: "the board refused the key, or the address isn't the product the key is for (401)" });

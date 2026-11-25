@@ -1,3 +1,4 @@
+import { boardAheadMinutes, clockMinutes, readDays, readWindow, type AlertSettings } from "./modules/trains/alerts.js";
 import { safeBoardUrl, type TrainSettings } from "./modules/trains/board.js";
 
 export type Features = {
@@ -9,6 +10,7 @@ export type Features = {
   deals: boolean;
   findPhone: boolean;
   trains: boolean;
+  trainAlerts: boolean;
 };
 
 export type DealSettings = {
@@ -27,6 +29,7 @@ export type Config = {
   healthcheckUrl: string;
   deals: DealSettings;
   trains: TrainSettings;
+  trainAlerts: AlertSettings;
   features: Features;
 };
 
@@ -39,6 +42,7 @@ const featureLabels: Record<keyof Features, string> = {
   deals: "deal watcher",
   findPhone: "find my phone",
   trains: "train times",
+  trainAlerts: "train alerts",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -81,8 +85,9 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     deals: readSwitch("DEALS"),
     findPhone: readSwitch("FIND_PHONE"),
     trains: readSwitch("TRAINS"),
+    trainAlerts: readSwitch("TRAIN_ALERTS"),
   };
-  const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone);
+  const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
   const deals: DealSettings = {
     seen: readChoice("DEALS_SEEN", ["memory", "disk"], features.deals),
@@ -104,6 +109,19 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const boardUrl = read("TRAINS_BOARD_URL", features.trains);
   if (boardUrl !== "" && safeBoardUrl(boardUrl) === null) notAllowed.push("TRAINS_BOARD_URL (an https address on raildata.org.uk ending just before the station code, with no ?, # or {crs} part)");
   const trains: TrainSettings = { key: railKey, from, to, boardUrl: safeBoardUrl(boardUrl) ?? "" };
+  if (features.trainAlerts && env.TRAINS === "off") notAllowed.push("TRAIN_ALERTS (on needs TRAINS=on too)");
+  const daysText = read("TRAIN_ALERT_DAYS", features.trainAlerts);
+  const days = daysText === "" ? [] : readDays(daysText);
+  if (days === null) notAllowed.push("TRAIN_ALERT_DAYS (days from mon, tue, wed, thu, fri, sat and sun, with commas between, like mon,wed)");
+  const windowText = read("TRAIN_ALERT_WINDOW", features.trainAlerts);
+  const alertWindow = windowText === "" ? null : readWindow(windowText);
+  if (windowText !== "" && alertWindow === null) notAllowed.push("TRAIN_ALERT_WINDOW (two 24-hour times with a dash between, the first earlier and the second no later than 22:59, like 07:00-08:30)");
+  const reminderText = read("TRAIN_ALERT_REMINDER", features.trainAlerts);
+  const reminder = reminderText === "" ? null : clockMinutes(reminderText);
+  if (reminderText !== "" && reminder === null) notAllowed.push("TRAIN_ALERT_REMINDER (a 24-hour time, like 06:45)");
+  if (reminder !== null && alertWindow !== null && reminder >= alertWindow.end) notAllowed.push("TRAIN_ALERT_REMINDER (a time before TRAIN_ALERT_WINDOW ends)");
+  if (reminder !== null && alertWindow !== null && reminder < alertWindow.end - boardAheadMinutes) notAllowed.push(`TRAIN_ALERT_REMINDER (no more than ${boardAheadMinutes / 60} hours before TRAIN_ALERT_WINDOW ends, since the board only looks about that far ahead)`);
+  const trainAlerts: AlertSettings = { days: days ?? [], start: alertWindow?.start ?? 0, end: alertWindow?.end ?? 0, reminder: reminder ?? 0 };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -111,5 +129,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, features };
 }

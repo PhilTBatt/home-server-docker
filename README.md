@@ -53,6 +53,25 @@ New features are built switched off. Each switch is a line in `api/.env` set to 
 
 The hub asks `TRAINS_BOARD_URL/TRAINS_FROM?numRows=5&filterCrs=TRAINS_TO&filterType=to`, sending the key in an `x-apikey` header. That's how community examples of the board's JSON version ask it; the official specification is behind the marketplace's login and wasn't checked, so `bash host/hub-get.sh /trains` is the first test. One copy of the specification describes `filterType=to` as trains starting or ending at `TRAINS_TO`; it's believed to mean trains that call there, which that first test should show with a train known to run on past it. It gives each train's booked and expected time, platform, whether it's cancelled (or cancelled at `TRAINS_TO`) and why, how many buses the board lists, and up to three of the board's own messages, which on a day with no trains may be all there is. The board covers about the next two hours, as far as community clients show (not checked), so "no trains" means none in that time. It says why when the board can't be reached, refuses the key, can't find the address (a 404 usually means `TRAINS_BOARD_URL` includes the station code), redirects or sends something that isn't a board, never with the key, and gives up after 8 seconds. Jarvis says the next three when you say "train times" (record 0046).
 
+### Morning train alerts
+`TRAIN_ALERTS` switches on a morning check of the trains between the same two stations, sent to your phone through `NTFY_TOPIC` (record 0048). It needs `TRAINS=on` too, and while it's on, `api/.env` also needs:
+- `TRAIN_ALERT_DAYS`: the days to check, from `mon`, `tue`, `wed`, `thu`, `fri`, `sat` and `sun`, with commas between, like `mon,wed`.
+- `TRAIN_ALERT_WINDOW`: the trains to watch, by the time they're due to leave, as two 24-hour times with a dash between, like `07:00-08:30`. Both ends count, and it must end by 22:59, so the hour after it is still the same day.
+- `TRAIN_ALERT_REMINDER`: when to send the reminder, a 24-hour time like `06:45`. It must be before the window ends, and no more than 2 hours before it ends, since the board only looks about that far ahead.
+
+London time throughout. On those days, at the reminder's time, the hub sends "Morning trains": each train in the window with whether it's on time, how late or cancelled and why, and its platform once the board has one, then any buses the board lists and its own messages. If the board's furthest train is due before the window ends, it says how far the board reaches, since it asks for only 10 trains. From then on it asks the board every 2 minutes and sends "Train change" when a train in the window:
+- is cancelled, at high priority;
+- becomes 5 minutes late or more, and again whenever that moves by 5 minutes or more;
+- is shown as delayed with no expected time, when it wasn't already 5 minutes late;
+- after one of those, is back to 2 minutes late or less, or is 5 minutes or more less late than last sent;
+- runs again after being cancelled;
+- moves from one platform to another (a platform appearing for the first time isn't sent);
+- leaves the board more than a minute before it's due, while the board lists later trains and has fewer than 10 on it, which may mean it was cancelled or replaced by a bus.
+
+So a train hovering around 5 minutes late, or flipping between a time and no time, doesn't send each flip. A train is known by the time it's due, so a change of destination (a train ending its journey early, say) doesn't make it a new train; only two trains due at the same time are told apart by destination. A train first seen after the reminder, as the board reaches further, is only sent if something's already wrong with it. It stops once the window has ended and none of its trains is still on the board, or an hour after the window ends, whichever comes first, and starts again the next set day.
+
+If the board fails for 5 minutes or more, whether it can't be reached, refuses the key or sends something that isn't a board, it says so with when it started failing (about 6 minutes after the first failure, since it asks every 2 minutes), and keeps trying every 2 minutes. When the board answers again it says so, unless the reminder follows straight away, and if it's still failing an hour after the window ends, it says it has stopped checking for the day. Each outage is sent once. The API's log says when it couldn't reach the board and when it can again, never with the key. A notification ntfy didn't take is sent with the next check, 2 minutes later. It keeps nothing on disk: if the API restarts before the window ends, the reminder comes again with the trains as they are then, and if it restarts after the window ends, it only sends what's wrong with the window's trains still on the board. The notifications pass through ntfy.sh like the other alerts. The hub adds no station or destination names to them, but the board's own reasons and messages go as they are, and those can name stations.
+
 ### Jarvis's settings
 Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he starts.
 - `ANTHROPIC_API_KEY`: required.
