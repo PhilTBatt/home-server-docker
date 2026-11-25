@@ -806,8 +806,8 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     if (result.read >= manyRead && junk * 2 >= result.read) {
       notes.push({ kind: "mostlyHidden", text: `${grouped(junk)} of the ${grouped(result.read)} listings eBay sent were hidden by their titles or item details, and every 200 read costs a call. A category or narrower words would keep them out before eBay counts.` });
     }
-    if (options.sources[search.source]?.noCalls !== true && result.total === 0) {
-      notes.push({ kind: "nothingFound", text: "eBay found nothing with its filters at the last check. Its cuts show which filter cuts most." });
+    if (options.sources[search.source]?.noCalls !== true && result.read === 0) {
+      notes.push({ kind: "nothingFound", text: "eBay sent no listings for its filters at the last check. Its cuts show which filter cuts most." });
     }
     const remembered = memory?.searches.get(search.id);
     if (remembered !== undefined) {

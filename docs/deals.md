@@ -292,7 +292,7 @@ Problems go through the same alerts as everything else on the server (`/system/a
 Problems are things that stop the watcher. A search can also run without failing and still be badly set: it reads only part of what eBay has, or spends calls on junk, or never finds anything. Each search in `GET /deals/searches` has `health`, a list of notes with a `kind` and a `text`, worked out from its last check (none while it's snoozed):
 - `incomplete`: eBay counted more listings than the watcher reads (600, the newest), so an older match can be missed.
 - `mostlyHidden`: of 200 or more listings read, at least half were hidden by their titles (`words`, `avoid`) or item details. Every 200 listings read is one call.
-- `nothingFound`: eBay found nothing with the search's filters (eBay searches only: a HotUKDeals search often finds nothing among the newest posts, and that's normal).
+- `nothingFound`: eBay sent no listings for the search's filters (eBay searches only: a HotUKDeals search often finds nothing among the newest posts, and that's normal). It goes by the listings eBay sent, not eBay's total, which eBay calls only an indicator.
 - `noMatch`: nothing has matched for 7 days, counting from the last match or, if there's never been one, from when the search started watching. The time of the last match is kept in `state.json` (a time, nothing from eBay), and it's forgotten when the search's settings change.
 
 `callsToday` is how many eBay calls the search has used since midnight UK time: its checks, and its option reads with `readOptions`. It's kept in `state.json` and starts again each day.

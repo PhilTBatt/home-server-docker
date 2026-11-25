@@ -2550,10 +2550,16 @@ test("a search whose titles or item details hide at least half of 200 or more li
 test("an eBay search that found nothing gets a health note, and a feed that found nothing doesn't", async () => {
   const { world, watcher } = setup();
   await watcher.run(at(0));
-  assert.deepEqual(watcher.searches(at(1))[0].health, [{ kind: "nothingFound", text: "eBay found nothing with its filters at the last check. Its cuts show which filter cuts most." }]);
+  assert.deepEqual(watcher.searches(at(1))[0].health, [{ kind: "nothingFound", text: "eBay sent no listings for its filters at the last check. Its cuts show which filter cuts most." }]);
   world.found.set("optiplex", listings(1));
   await watcher.run(at(31));
   assert.deepEqual(watcher.searches(at(32))[0].health, []);
+  world.found.set("optiplex", { listings: listings(2), total: 0 });
+  await watcher.run(at(61));
+  assert.deepEqual(watcher.searches(at(62))[0].health, [], "eBay sent listings though its total said 0");
+  world.found.set("optiplex", { listings: [], total: 12 });
+  await watcher.run(at(91));
+  assert.deepEqual(watcher.searches(at(92))[0].health.map((note) => note.kind), ["nothingFound"], "eBay sent none though its total said 12");
 
   const feed = createDealWatcher({
     loadSearches: async () => listOf([{ ...optiplex, source: "other" }]),
