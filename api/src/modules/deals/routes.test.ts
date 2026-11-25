@@ -80,6 +80,7 @@ const cutsValue: SearchCuts = {
     { filter: "items in the UK", total: 9, by: [] },
   ],
   wordsAlone: { total: 4409, categoryId: "27386", categories: [{ id: "27386", name: "Graphics/Video Cards", count: 117 }] },
+  lastCheck: { at: "2026-11-18T11:50:00.000Z", total: 6, read: 6, complete: true },
 };
 
 const explainedValue: Explained = {

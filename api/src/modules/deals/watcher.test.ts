@@ -2681,12 +2681,46 @@ test("a search's cuts are read from its source as one lookup, for switched-off s
   });
   assert.deepEqual(await watcher.cuts("optiplex", at(0)), { status: "unknown" });
   await watcher.run(at(0));
-  assert.deepEqual(await watcher.cuts("optiplex", at(1)), { status: "ok", value: { id: "optiplex", name: "OptiPlex", query: "optiplex 7070 sff", ...cuts } });
-  assert.deepEqual(await watcher.cuts("ram", at(2)), { status: "ok", value: { id: "ram", name: "DDR4 RAM", query: "ddr4 2x16gb", ...cuts } });
+  assert.deepEqual(await watcher.cuts("optiplex", at(1)), { status: "ok", value: { id: "optiplex", name: "OptiPlex", query: "optiplex 7070 sff", ...cuts, lastCheck: { at: at(0).toISOString(), total: 0, read: 0, complete: true } } });
+  assert.deepEqual(await watcher.cuts("ram", at(2)), { status: "ok", value: { id: "ram", name: "DDR4 RAM", query: "ddr4 2x16gb", ...cuts, lastCheck: null } });
   assert.deepEqual(await watcher.cuts("nope", at(3)), { status: "unknown" });
   assert.deepEqual(asked, ["optiplex", "ram"]);
   assert.equal(watcher.status().callsToday, 15);
   assert.equal(watcher.searches(at(4)).find((search) => search.id === "optiplex")?.callsToday, 1);
+});
+
+test("a search's cuts carry its last check's count from eBay only while the search's settings are the ones that check used", async () => {
+  let searches: Record<string, unknown>[] = [{ ...optiplex, maxPrice: 150 }];
+  const { world } = setup();
+  const watcher = createDealWatcher({
+    loadSearches: async () => listOf(searches),
+    sources: {
+      ebay: {
+        search: async () => ({ listings: [listing(1), listing(2)], total: 877, complete: false, calls: 3, skipped: 0 }),
+        cuts: async () => ({ cuts: { asWatched: 27, without: [], wordsAlone: { total: 0, categoryId: null, categories: [] } }, calls: 2 }),
+      },
+    },
+    store: world.store,
+    notify: async () => undefined,
+  });
+  await watcher.run(at(0));
+  const first = await watcher.cuts("optiplex", at(1));
+  assert.equal(first.status, "ok");
+  if (first.status === "ok") {
+    assert.equal(first.value.asWatched, 27);
+    assert.deepEqual(first.value.lastCheck, { at: at(0).toISOString(), total: 877, read: 2, complete: false });
+  }
+  searches = [{ ...optiplex, maxPrice: 200 }];
+  await watcher.run(at(5));
+  const changed = await watcher.cuts("optiplex", at(6));
+  assert.equal(changed.status === "ok" ? changed.value.lastCheck : "not ok", null);
+  await watcher.run(at(31));
+  const again = await watcher.cuts("optiplex", at(32));
+  assert.equal(again.status === "ok" ? again.value.lastCheck?.at : "not ok", at(31).toISOString());
+  searches = [{ ...optiplex, maxPrice: 200, switch: "off" }];
+  await watcher.run(at(40));
+  const off = await watcher.cuts("optiplex", at(41));
+  assert.equal(off.status === "ok" ? off.value.lastCheck : "not ok", null);
 });
 
 test("a search's cuts are refused when its source can't count them, when today's reads are used up, or while eBay asks for a wait", async () => {

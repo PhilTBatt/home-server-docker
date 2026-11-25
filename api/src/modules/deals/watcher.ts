@@ -134,7 +134,9 @@ export type NamesReply = { status: "ok"; names: DetailNames } | { status: "limit
 
 export type LookupReply<Value> = { status: "ok"; value: Value } | { status: "limit" } | { status: "waiting" } | { status: "failed"; message: string };
 
-export type SearchCuts = Cuts & { id: string; name: string; query: string };
+export type LastCheck = { at: string; total: number; read: number; complete: boolean };
+
+export type SearchCuts = Cuts & { id: string; name: string; query: string; lastCheck: LastCheck | null };
 
 export type ExplainReason = {
   by: "eBay" | "watcher";
@@ -209,6 +211,7 @@ type Result = {
   hidden: Record<string, number>;
   examples: Record<string, string[]>;
   options: OptionCounts | null;
+  print: string;
 };
 
 type Failure = {
@@ -651,9 +654,9 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         if (shown.length < examplesKept) shown.push(listing.title);
       }
       matched.sort((a, b) => totalPrice(a) - totalPrice(b));
-      results.set(search.id, { checkedAt: time, listings: matched, read: listings.length, total: found.total, complete: found.complete, hidden, examples, options: counts });
-
       const print = fingerprint(search);
+      results.set(search.id, { checkedAt: time, listings: matched, read: listings.length, total: found.total, complete: found.complete, hidden, examples, options: counts, print });
+
       const remembered = state.searches.get(search.id);
       const endsSoon = (listing: Listing) =>
         search.endingSoonMinutes !== null && isAuctionOnly(listing) && listing.endsAt !== null && Date.parse(listing.endsAt) - time <= search.endingSoonMinutes * minuteMs;
@@ -1136,7 +1139,10 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
         }
       });
       cutCalls.count += Math.max(used, 1);
-      return "cuts" in outcome ? { status: "ok", value: { id: search.id, name: search.name, query: search.query, ...outcome.cuts } } : { status: "failed", message: outcome.message };
+      if (!("cuts" in outcome)) return { status: "failed", message: outcome.message };
+      const checked = results.get(search.id);
+      const lastCheck = checked === undefined || checked.print !== fingerprint(search) ? null : { at: new Date(checked.checkedAt).toISOString(), total: checked.total, read: checked.read, complete: checked.complete };
+      return { status: "ok", value: { id: search.id, name: search.name, query: search.query, ...outcome.cuts, lastCheck } };
     },
 
     async explain(itemNumber, searchId, now = new Date()) {

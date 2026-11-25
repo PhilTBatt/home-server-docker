@@ -140,6 +140,7 @@
  * @property {number} asWatched
  * @property {DealCut[]} without
  * @property {{ total: number, categoryId: string | null, categories: { id: string, name: string, count: number }[] }} wordsAlone
+ * @property {{ at: string, total: number, read: number, complete: boolean } | null} [lastCheck]
  */
 
 /**
@@ -701,7 +702,9 @@ function isDealCuts(reply) {
   if (!isObject(reply) || typeof reply.asWatched !== "number" || !Array.isArray(reply.without) || !isObject(reply.wordsAlone)) return false;
   const alone = reply.wordsAlone;
   const cutsOk = reply.without.every((cut) => isObject(cut) && typeof cut.filter === "string" && typeof cut.total === "number" && Array.isArray(cut.by) && cut.by.every(isNamedCount));
-  return cutsOk && typeof alone.total === "number" && (alone.categoryId === null || typeof alone.categoryId === "string") && Array.isArray(alone.categories) && alone.categories.every(isNamedCount);
+  const last = reply.lastCheck;
+  const lastOk = last === undefined || last === null || (isObject(last) && typeof last.at === "string" && typeof last.total === "number" && typeof last.read === "number" && typeof last.complete === "boolean");
+  return cutsOk && lastOk && typeof alone.total === "number" && (alone.categoryId === null || typeof alone.categoryId === "string") && Array.isArray(alone.categories) && alone.categories.every(isNamedCount);
 }
 
 /**
@@ -710,6 +713,8 @@ function isDealCuts(reply) {
  */
 function cutLines(cuts) {
   const lines = [`As it's set: ${formatCount(cuts.asWatched)} listing${cuts.asWatched === 1 ? "" : "s"}`];
+  const last = cuts.lastCheck;
+  if (last !== undefined && last !== null) lines.push(`At its last check, ${new Date(last.at).toLocaleString()}: ${formatCount(last.total)}`);
   for (const cut of cuts.without) {
     const by = cut.by.length === 0 ? "" : ` (${cut.by.map((part) => `${part.name} ${formatCount(part.count)}`).join(", ")})`;
     lines.push(`Without ${cut.filter}: ${formatCount(cut.total)}${by}`);

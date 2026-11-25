@@ -442,3 +442,11 @@ test("get_deal_searches says what the health notes and calls today mean", async 
   for (const kind of ["incomplete", "mostlyHidden", "nothingFound", "noMatch", "callsToday"]) assert.match(description, new RegExp(kind));
   assert.match(description, /never includes the listings themselves/);
 });
+
+test("get_deal_search_cuts says what lastCheck is for and that eBay calls its totals just an indicator", async () => {
+  const { listTools } = await connect(fakeApi());
+  const description = (await listTools()).find((tool) => tool.name === "get_deal_search_cuts")?.description ?? "";
+  assert.match(description, /lastCheck is eBay's count at the search's last check/);
+  assert.match(description, /null when the search hasn't been checked with its current settings since the API started/);
+  assert.match(description, /"just an indicator"/);
+});
