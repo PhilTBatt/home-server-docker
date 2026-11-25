@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
 import { alwaysExcluded, ruleChecks, offEbaySign, cautions, chooseOption, guidePercent, hasPhrase, hiddenReasons, isAuctionOnly, isGreat, matches, plainWords, priorityFor, sizeInTitle, standing, totalPrice, underGuide, unitPrice, whyNot, withOption } from "./match.js";
+import { plainText } from "./ebay.js";
 import { readSearches, type Search } from "./searches.js";
 import type { Listing, ListingOption } from "./source.js";
 
@@ -752,4 +753,112 @@ test("a title, summary or description that mentions paying or talking outside eB
   ];
   for (const text of fine) assert.equal(offEbaySign(text), null, text);
   assert.deepEqual(cautions(search(), listing(), null), []);
+});
+
+test("the off-eBay caution never drops a phrase the seller seems to refuse, it only says so, and it catches plurals", () => {
+  const refused: [string, string][] = [
+    ["No bank transfers", "bank transfer"],
+    ["No bank transfer, sorry", "bank transfer"],
+    ["no paypal friends and family please", "paypal friends"],
+    ["I don't accept bank transfer", "bank transfer"],
+    ["We do not accept cash only buyers", "cash only"],
+    ["Won't take payment outside eBay", "payment outside"],
+    ["Bank transfer not accepted", "bank transfer"],
+    ["Bank transfers aren't accepted, PayPal only", "bank transfer"],
+    ["Bank transfers are not accepted", "bank transfer"],
+    ["Cash on collection isn't possible, posted only", "cash on collection"],
+    ["Cash on collection is not possible", "cash on collection"],
+    ["No WhatsApp messages, use eBay", "whatsapp"],
+    ["Never been used. No bank transfers", "bank transfer"],
+    ["Bank transfer not accepted, PayPal only", "bank transfer"],
+    ["Bank transfer not accepted at all", "bank transfer"],
+    ["Bank transfer: not accepted", "bank transfer"],
+  ];
+  for (const [text, sign] of refused) assert.deepEqual(offEbaySign(text), { sign: `"${sign}"`, refused: true }, text);
+  const meant: [string, string][] = [
+    ["Never been used, no offers, no bank transfers", '"bank transfer"'],
+    ["Price is firm no offer cash on collection only", '"cash on collection"'],
+    ["Firm price, no offer bank transfer only", '"bank transfer"'],
+    ["WhatsApp not available after 6pm", '"whatsapp"'],
+    ["Cash on collection not available until Saturday", '"cash on collection"'],
+    ["Bank transfer not accepted from new buyers", '"bank transfer"'],
+    ["Won't take bank transfer unless you collect", '"bank transfer"'],
+    ["I don't accept bank transfer for orders under £50", '"bank transfer"'],
+    ["Won't take bank transfer payments unless you collect", '"bank transfer"'],
+    ["Bank transfer not accepted, unless agreed beforehand", '"bank transfer"'],
+    ["Bank transfer not accepted at checkout, message me", '"bank transfer"'],
+    ["Cash on collection not possible, except at weekends", '"cash on collection"'],
+    ["No bank transfer, unless agreed beforehand", '"bank transfer"'],
+    ["No cash on collection (unless local)", '"cash on collection"'],
+    ["No PayPal friends and family, unless you're a regular buyer", '"paypal friends"'],
+    ["If you can't do bank transfer, PayPal is fine", '"bank transfer"'],
+    ["Unless agreed, we do not accept bank transfer", '"bank transfer"'],
+    ["Why not do bank transfer and save the fees", '"bank transfer"'],
+    ["Cash on collection not possible at weekends", '"cash on collection"'],
+    ["Cash on collection not available to buyers outside the town", '"cash on collection"'],
+    ["WhatsApp not available to new buyers", '"whatsapp"'],
+    ["Cash on collection is not possible while I'm at work", '"cash on collection"'],
+    ["Not cash only, PayPal also accepted", '"cash only"'],
+    ["Bank transfers accepted", '"bank transfer"'],
+    ["Happy to take bank transfers", '"bank transfer"'],
+    ["No returns. Bank transfer accepted.", '"bank transfer"'],
+    ["No returns, bank transfer accepted", '"bank transfer"'],
+    ["No returns; cash on collection", '"cash on collection"'],
+    ["Never used cash on collection", '"cash on collection"'],
+    ["Not bothered about cash on collection or posting", '"cash on collection"'],
+    ["No bank transfer, but cash on collection is fine", '"cash on collection"'],
+    ["No bank transfers. Bank transfer for collection only", '"bank transfer"'],
+    ["Cash on collection only not posted", '"cash on collection"'],
+    ["Cash on collection only, not posted", '"cash on collection"'],
+    ["Payments outside eBay get a discount", '"payments outside"'],
+    ["PayPal F.F. saves the fees", '"paypal f f"'],
+    ["Pay by bank transfer (no PayPal)", '"bank transfer"'],
+    ["No paypal friends - bank transfer instead", '"bank transfer"'],
+    ["Ring 07700 900 123. No bank transfers", "a phone number"],
+    ["No, bank transfer is fine", '"bank transfer"'],
+    ["Bank transfer. Not accepted: cheques or cash", '"bank transfer"'],
+    ["I don't accept bank transfer but bank transfer for collection is ok", '"bank transfer"'],
+    ["Payment via PayPal (friends and family)", '"paypal friends"'],
+    ["PayPal (F&F) only", '"paypal f f"'],
+    ["PayPal: friends and family only", '"paypal friends"'],
+    ["Payment: PayPal, friends & family", '"paypal friends"'],
+    ["PayPal F. F. only", '"paypal f f"'],
+    ["Postage: No Cash on collection only", '"cash on collection"'],
+    ["Returns: No Bank transfer accepted", '"bank transfer"'],
+    ["Offers? No WhatsApp me for details", '"whatsapp"'],
+    ["Postage? No - cash on collection only", '"cash on collection"'],
+    ["Returns: No Bank transfer", '"bank transfer"'],
+    ["Offers? No WhatsApp", '"whatsapp"'],
+    ["Strictly no bank transfers", '"bank transfer"'],
+    ["No bank transfer accepted", '"bank transfer"'],
+    ["No bank transfers, cash on collection only", '"cash on collection"'],
+    ["eBay doesn't allow bank transfer so message me", '"bank transfer"'],
+    ["Bank transfer isn't accepted by eBay, so message me", '"bank transfer"'],
+    ["Bank transfer not allowed by eBay so drop me a message", '"bank transfer"'],
+    ["WhatsApp not allowed by eBay so send me a message", '"whatsapp"'],
+    ["We don't do bank transfer through eBay, message me", '"bank transfer"'],
+    ["I can't take bank transfer via eBay, so message me", '"bank transfer"'],
+    ["Cash on collection is not possible through eBay so message me", '"cash on collection"'],
+    ["Money bank transferred same day", '"bank transfer"'],
+  ];
+  for (const [text, sign] of meant) assert.deepEqual(offEbaySign(text), { sign, refused: false }, text);
+  const caution = (sign: string) => [`it mentions ${sign}, a sign of paying or talking outside eBay, which loses eBay's Money Back Guarantee`];
+  const maybe = (sign: string) => [`it mentions ${sign}, maybe only to say no to it, but paying or talking outside eBay loses eBay's Money Back Guarantee`];
+  const described: [string, string][] = [
+    ["<ul><li>Postage: No</li><li>Cash on collection only</li></ul>", '"cash on collection"'],
+    ["<p>Returns: No</p><p>Bank transfer accepted</p>", '"bank transfer"'],
+    ["<p>Offers? No</p><p>WhatsApp me for details</p>", '"whatsapp"'],
+    ["<p>Returns: No</p><p>Bank transfer</p>", '"bank transfer"'],
+    ["<ul><li>Swaps - sorry, no</li><li>Bank transfer please</li></ul>", '"bank transfer"'],
+    ["<ul><li>Offers, no</li><li>PayPal friends and family please</li></ul>", '"paypal friends"'],
+    ["<p>Can you post it? Sorry, no</p><p>Cash on collection please</p>", '"cash on collection"'],
+    ["<p>Collection in person.<br>No bank transfers.</p><p>Bank transfer for postage is fine</p>", '"bank transfer"'],
+    ["<p>Payment through eBay checkout please.</p><p>Bank transfer not accepted (unless agreed in advance).</p>", '"bank transfer"'],
+  ];
+  const cleaned = (html: string) => plainText(html, 4000);
+  for (const [html, sign] of described) assert.deepEqual(cautions(search(), listing(), cleaned(html)), caution(sign), html);
+  assert.deepEqual(cautions(search(), listing(), cleaned("<p>Collected or posted.</p><p>No bank transfers, sorry.</p>")), maybe('"bank transfer"'));
+  assert.deepEqual(cautions(search(), listing({ summary: "Postage: No Cash on collection only" })), caution('"cash on collection"'));
+  assert.deepEqual(cautions(search(), listing({ title: "Dell OptiPlex 7070 SFF", summary: "No bank transfers" }), "Message me on WhatsApp"), caution('"whatsapp"'));
+  assert.deepEqual(cautions(search(), listing({ summary: "No bank transfers" }), "Cash on collection is not possible"), maybe('"bank transfer"'));
 });

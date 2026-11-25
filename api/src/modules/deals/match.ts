@@ -171,25 +171,85 @@ const offEbayPhrases = [
   "cash only",
   "cash on pick up",
   "cash on pickup",
-  "bank transfer",
+  "bank transfer*",
   "paypal friends",
   "paypal f f",
   "whatsapp",
   "pay outside",
   "payment outside",
+  "payments outside",
 ];
 const phoneNumber = /(?<![0-9])(?:\+44 ?7|07)[0-9]{3} ?[0-9]{3} ?[0-9]{3}(?![0-9])/;
+const sentenceBreak = /[!\n\r\u2022]+|\.(?=\s|$)/;
+const clauseBreak = /[,;()|]+/;
+const refusedBefore = / (?:not|never|cannot|cant|dont|wont|don t|won t|can t|do not|will not|does not|doesn t) (?:accept|take|offer|allow|do) $/;
+const refusedAfter = /^ (?:not|isn t|is not|aren t|are not) (?:accepted|allowed|available|possible|offered)((?: [a-z0-9]+){0,3})/;
+const bareNo = /^ (?:no|never) $/;
+const politeEnd = /^(?: (?:please|sorry|thanks|thank|you|and|family|messages|payments|payment))* $/;
+const qualifier = / (?:unless|except|if|when|from|for|after|before|until|till|on|during|over|under|without|between|at(?! all )|to|while|outside|by|via|through)(?= )/;
+const leadingCondition = / (?:if|unless|except|why)(?= )/;
+const blamesEbay = / ebay(?: [a-z0-9]+){1,3} $/;
 
-export function offEbaySign(text: string): string | null {
-  const phrase = offEbayPhrases.find((wanted) => hasPhrase(text, wanted));
-  if (phrase !== undefined) return `"${phrase}"`;
-  return phoneNumber.test(text) ? "a phone number" : null;
+type Spot = { before: string; after: string };
+
+function phraseSpots(text: string, phrase: string): Spot[] {
+  const prefix = phrase.trim().endsWith("*");
+  const wanted = prefix ? plainWords(phrase.trim().slice(0, -1)).trimEnd() : plainWords(phrase);
+  const spots: Spot[] = [];
+  for (let at = text.indexOf(wanted); at >= 0; at = text.indexOf(wanted, at + 1)) {
+    const end = prefix ? text.indexOf(" ", at + wanted.length) : at + wanted.length - 1;
+    spots.push({ before: text.slice(0, at + 1), after: text.slice(end) });
+  }
+  return spots;
+}
+
+function nextWords(text: string): string {
+  return `${text.split(" ").filter((word) => word !== "").slice(0, 3).map((word) => ` ${word}`).join("")} `;
+}
+
+function saidNoTo(spot: Spot, rest: Spot, opensSentence: boolean): boolean {
+  if (leadingCondition.test(rest.before)) return false;
+  if (refusedBefore.test(spot.before) && blamesEbay.test(spot.before)) return false;
+  if (refusedBefore.test(spot.before)) return !qualifier.test(nextWords(rest.after));
+  if (refusedAfter.test(spot.after)) return !qualifier.test(`${refusedAfter.exec(rest.after)?.[1] ?? ""} `);
+  return opensSentence && bareNo.test(spot.before) && politeEnd.test(spot.after) && !qualifier.test(nextWords(rest.after));
+}
+
+function phraseUse(text: string, phrase: string): "none" | "refused" | "plain" {
+  const whole = phraseSpots(plainWords(text), phrase);
+  if (whole.length === 0) return "none";
+  const inClauses = text.split(sentenceBreak).flatMap((sentence) => {
+    const rests = phraseSpots(plainWords(sentence), phrase);
+    return sentence
+      .split(clauseBreak)
+      .flatMap((clause, n) => phraseSpots(plainWords(clause), phrase).map((spot) => ({ spot, opensSentence: n === 0 })))
+      .map((entry, i) => ({ ...entry, rest: rests[i] ?? entry.spot }));
+  });
+  return inClauses.length < whole.length || inClauses.some(({ spot, rest, opensSentence }) => !saidNoTo(spot, rest, opensSentence)) ? "plain" : "refused";
+}
+
+export type OffEbaySign = { sign: string; refused: boolean };
+
+export function offEbaySign(text: string): OffEbaySign | null {
+  const uses = offEbayPhrases.map((phrase) => ({ sign: `"${phrase.replace(/\*$/, "")}"`, use: phraseUse(text, phrase) }));
+  const plain = uses.find(({ use }) => use === "plain");
+  if (plain !== undefined) return { sign: plain.sign, refused: false };
+  if (phoneNumber.test(text)) return { sign: "a phone number", refused: false };
+  const refused = uses.find(({ use }) => use === "refused");
+  return refused === undefined ? null : { sign: refused.sign, refused: true };
 }
 
 export function cautions(search: Search, listing: Listing, description: string | null = null): string[] {
   const found: string[] = [];
-  const sign = [listing.title, listing.summary ?? "", description ?? ""].map(offEbaySign).find((found) => found !== null);
-  if (sign !== undefined && sign !== null) found.push(`it mentions ${sign}, a sign of paying or talking outside eBay, which loses eBay's Money Back Guarantee`);
+  const signs = [listing.title, listing.summary ?? "", description ?? ""].map(offEbaySign).filter((sign) => sign !== null);
+  const sign = signs.find((found) => !found.refused) ?? signs[0];
+  if (sign !== undefined) {
+    found.push(
+      sign.refused
+        ? `it mentions ${sign.sign}, maybe only to say no to it, but paying or talking outside eBay loses eBay's Money Back Guarantee`
+        : `it mentions ${sign.sign}, a sign of paying or talking outside eBay, which loses eBay's Money Back Guarantee`,
+    );
+  }
   if (listing.sellerFeedback !== null && listing.sellerFeedback < 10) found.push("the seller has under 10 ratings");
   if (search.guidePrice !== null && !isAuctionOnly(listing) && totalPrice(listing) * 2 < search.guidePrice) found.push("it's under half your guide price");
   if (listing.variations) found.push(typeof listing.option === "string" ? `the listing has more than one option, and this is the price of ${listing.option}` : "the listing has more than one option, so this may be its lowest price");
