@@ -52,11 +52,32 @@ test("find my phone and never mind count only on their own, with a greeting, ple
   for (const said of ["Thanks Jarvis, that's all.", "That's all, OK.", "Never mind.", "Nevermind", "That's all, thanks.", "That\u2019s all.", "That is all, thank you Jarvis.", "Jarvis, never mind.", "Oh, never mind.", "No, never mind.", "Actually, never mind.", "Never mind then.", "That's all, cheers.", "That's all for now.", "Thanks, that's all."]) assert.deepEqual(codeWordIn(said), { kind: "never mind" }, said);
   for (const said of ["Please find my phone.", "Jarvis, please find my phone.", "...vis. Find my phone."]) assert.deepEqual(codeWordIn(said), { kind: "phone" }, said);
   for (const said of ["That's all?", "Never mind?", "Hey Jarvis, that's all?"]) assert.equal(codeWordIn(said), null, `${said} is a question`);
-  assert.deepEqual([phoneWords, neverMindWords], [["find my phone"], ["never mind", "nevermind", "that's all", "that is all"]]);
+  assert.deepEqual([phoneWords, neverMindWords], [["find my phone", "help me find my phone", "where's my phone", "where is my phone", "ring my phone", "ping my phone"], ["never mind", "nevermind", "that's all", "that is all"]]);
+});
+
+test("find my phone counts when asked politely or in a few other ways, and a question that's only about phones doesn't", () => {
+  for (const said of ["Can you please find my phone?", "Can you find my phone?", "Could you find my phone for me?", "Hey Jarvis, would you find my phone, please?", "Will you just find my phone?", "Can u find my phone", "Where's my phone?", "Jarvis, where is my phone?", "Ring my phone.", "Ping my phone please.", "Can you help me find my phone?", "Please, please find my phone"]) assert.deepEqual(codeWordIn(said), { kind: "phone" }, said);
+  for (const said of ["Can you find my phone number?", "Where's my phone charger?", "Could you find my phone's settings?", "Is my phone on silent?", "Can you find my phone case online?", "Why does my phone ring at night?", "Where's my phone bill from?", "Can you please never mind?", "Could you never mind."]) assert.equal(codeWordIn(said), null, said);
+});
+
+test("note this can be asked politely, and make a note or take a note start one too", () => {
+  assert.deepEqual(codeWordIn("Can you note this: buy milk."), { kind: "note", text: "buy milk." });
+  assert.deepEqual(codeWordIn("Hey Jarvis, could you please note this down, ring the garage"), { kind: "note", text: "ring the garage" });
+  assert.deepEqual(codeWordIn("Please note this."), { kind: "note", text: "" });
+  assert.deepEqual(codeWordIn("Make a note: the bins go out Thursday."), { kind: "note", text: "the bins go out Thursday." });
+  assert.deepEqual(codeWordIn("Jarvis, take a note of this - fix the shelf"), { kind: "note", text: "fix the shelf" });
+  assert.deepEqual(codeWordIn("Can you make a note of that?"), { kind: "note", text: "" });
+  assert.deepEqual(codeWordIn("Just note this. Two things."), { kind: "note", text: "Two things." });
+  assert.deepEqual(codeWordIn("Can you make a note of that for me?"), { kind: "note", text: "" });
+  assert.deepEqual(codeWordIn("Make a note of it."), { kind: "note", text: "" });
+  assert.deepEqual(codeWordIn("Note this down for me: buy milk"), { kind: "note", text: "buy milk" });
+  assert.deepEqual(codeWordIn("Take a note for me, the bins go out Thursday."), { kind: "note", text: "the bins go out Thursday." });
+  assert.deepEqual(codeWordIn("Note this downstairs light is broken."), { kind: "note", text: "downstairs light is broken." });
+  for (const said of ["I said note this.", "Can you make a notebook for me?", "How do I make a note on my phone?", "Did you take a note of that?", "Should I note this down?", "Could you make a note-taking app?", "Note this-time list."]) assert.equal(codeWordIn(said), null, said);
 });
 
 test("anything more is a question like any other", () => {
-  for (const said of ["Can you find my phone?", "Find my phone number.", "Never mind the weather, what's on tonight?", "That's all the downloads?", "What's a good note this time of year?", "Please note this.", "I said note this.", "", "Jarvis.", "Find my phone 2."]) assert.equal(codeWordIn(said), null, said);
+  for (const said of ["Find my phone number.", "Never mind the weather, what's on tonight?", "That's all the downloads?", "What's a good note this time of year?", "I said note this.", "", "Jarvis.", "Find my phone 2."]) assert.equal(codeWordIn(said), null, said);
 });
 
 test("anything with stop listening in it that ears didn't take as its code word is caught, so Claude never answers it and nothing listens again", () => {
@@ -153,7 +174,12 @@ test("a saved note's name is shown with only plain file name characters, and a h
 test("train times count on their own, in a few ways of asking", () => {
   for (const said of ["Train times.", "Hey Jarvis, train times please.", "Trains?", "Next train.", "When's my train?", "When\u2019s the next train, Jarvis?", "Train time"]) assert.deepEqual(codeWordIn(said), { kind: "trains" }, said);
   for (const said of ["Train times to London tomorrow?", "Are the trains running?", "Trains and buses."]) assert.equal(codeWordIn(said), null, said);
-  assert.deepEqual(trainWords, ["train times", "train time", "trains", "next train", "next trains", "when's my train", "when is my train", "when's the next train", "when is the next train"]);
+  assert.deepEqual(trainWords, ["train times", "train time", "trains", "next train", "next trains", "when's my train", "when is my train", "when's the next train", "when is the next train", "what time's my train", "what time is my train", "what time's the next train", "what time is the next train", "is my train on time", "are my trains on time", "are the trains on time", "how are the trains", "how are the trains looking"]);
+});
+
+test("train times count when asked politely or with tell me, check or what's", () => {
+  for (const said of ["Can you tell me the train times?", "Could you check the trains, please?", "What are the train times?", "What's the next train?", "What time's my train?", "Is my train on time?", "Are the trains on time, Jarvis?", "Hey Jarvis, how are the trains looking?", "Check my trains.", "Give me the next trains.", "Show me the train times please", "Can you get the train times for me?", "What's my next train?", "Please, the train times."]) assert.deepEqual(codeWordIn(said), { kind: "trains" }, said);
+  for (const said of ["What are trains?", "What's a train?", "Can you tell me about trains?", "What's the train like to Leeds?", "Check the trains to York tomorrow.", "Is my train ticket valid?", "What time is it?", "Could you check the train times in Japan?"]) assert.equal(codeWordIn(said), null, said);
 });
 
 test("the board is said as the next three trains, each on time, expected later, delayed or cancelled, with reasons and the board's messages as a note", () => {
