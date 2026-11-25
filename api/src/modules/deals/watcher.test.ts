@@ -1023,7 +1023,7 @@ test("searches reports each search's settings and how its last check went", asyn
   const { world, watcher } = setup([optiplex, { ...ram, switch: "off", everyMinutes: 60 }]);
   world.found.set("optiplex", listings(1, 2));
   await watcher.run(at(0));
-  assert.deepEqual(watcher.searches(), [
+  assert.deepEqual(watcher.searches(at(1)), [
     { id: "optiplex", name: "OptiPlex", group: null, on: true, source: "ebay", query: "optiplex 7070 sff", everyMinutes: 30, lastChecked: at(0).toISOString(), watchingSince: at(0).toISOString(), matches: 2, total: 2, complete: true, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: {}, options: null, notes: [] , callsToday: 1, health: [] },
     { id: "ram", name: "DDR4 RAM", group: null, on: false, source: "ebay", query: "ddr4 2x16gb", everyMinutes: 60, lastChecked: null, watchingSince: null, matches: null, total: null, complete: null, problem: null, snoozed: false, snoozedUntil: null, alertsToday: 0, alertsPerDay: null, guidePrice: null, hidden: null, options: null, notes: [] , callsToday: 0, health: [] },
   ]);
