@@ -127,6 +127,8 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
     categoriesReply: { status: "ok", value: { categories: [{ id: "170083", name: "Memory (RAM)", path: "Computers > Components > Memory (RAM)" }] } } as LookupReply<Categories>,
     categoryReply: { status: "ok", value: { categoryId: "170083", details: [{ name: "Form Factor", required: false, freeText: true, values: ["DIMM", "SO-DIMM"], moreValues: 0 }] } } as LookupReply<CategoryDetails>,
     cutsReply: { status: "ok", value: cutsValue } as LookupReply<SearchCuts> | { status: "unknown" } | { status: "unsupported" },
+    cutsRefusal: null as "unknown" | "unsupported" | "waiting" | "limit" | null,
+    refusalsAsked: [] as string[],
     explained: [] as [string, string | null][],
     explainReply: { status: "ok", value: explainedValue } as ExplainReply,
   };
@@ -178,6 +180,10 @@ function fakeWatcher(summary: RunSummary = { ran: true, checked: 2, alerts: 1, f
     cuts: async (id) => {
       seen.lookups.push(["cuts", id]);
       return seen.cutsReply;
+    },
+    cutsRefusal: (id) => {
+      seen.refusalsAsked.push(id);
+      return searches.some((search) => search.id === id) ? seen.cutsRefusal : "unknown";
     },
     explain: async (item, search) => {
       seen.explained.push([item, search]);
@@ -912,6 +918,33 @@ test("a search's cuts that are refused, waiting, out of reads or gone say which"
     const response = await app.inject({ method: "GET", url: "/deals/searches/optiplex/cuts" });
     assert.deepEqual([response.statusCode, response.json()], [code, { error }]);
   }
+});
+
+test("a cuts lookup that would be refused is refused before it waits its turn, and doesn't hold up the next lookup", async () => {
+  const { watcher, seen } = fakeWatcher();
+  const { app, clock, waits } = buildApp(watcher);
+  assert.equal((await app.inject({ method: "GET", url: "/deals/categories?q=ram" })).statusCode, 200);
+  clock.time = start + 2_000;
+  const cases: ["unsupported" | "waiting" | "limit", number, string][] = [
+    ["limit", 429, "Today's share of eBay calls for cuts, or today's eBay calls or reads, are used up"],
+    ["unsupported", 400, "That search's source can't show what each filter cuts"],
+    ["waiting", 429, "eBay asked the watcher to wait, so nothing is being read for now"],
+  ];
+  for (const [refusal, code, error] of cases) {
+    seen.cutsRefusal = refusal;
+    const response = await app.inject({ method: "GET", url: "/deals/searches/optiplex/cuts" });
+    assert.deepEqual([response.statusCode, response.json()], [code, { error }], refusal);
+  }
+  const unknown = await app.inject({ method: "GET", url: "/deals/searches/nope/cuts" });
+  assert.deepEqual([unknown.statusCode, unknown.json()], [404, { error: "That isn't one of the searches" }]);
+  assert.deepEqual(waits, []);
+  assert.deepEqual(seen.lookups, [["categories", "ebay", "ram"]]);
+  assert.deepEqual(seen.refusalsAsked, ["optiplex", "optiplex", "optiplex", "nope"]);
+  seen.cutsRefusal = null;
+  const counted = await app.inject({ method: "GET", url: "/deals/searches/optiplex/cuts" });
+  assert.equal(counted.statusCode, 200);
+  assert.deepEqual(waits, [8_000]);
+  assert.deepEqual(seen.lookups.at(-1), ["cuts", "optiplex"]);
 });
 
 test("an item number is taken as it is, or from a link to a listing on eBay's UK or US site, and nothing else", () => {

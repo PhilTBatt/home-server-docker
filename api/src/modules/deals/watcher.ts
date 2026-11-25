@@ -199,6 +199,7 @@ export type DealWatcher = {
   categories(source: string, query: string, now?: Date): Promise<LookupReply<Categories>>;
   categoryDetails(source: string, categoryId: string, now?: Date): Promise<LookupReply<CategoryDetails>>;
   cuts(id: string, now?: Date): Promise<LookupReply<SearchCuts> | { status: "unknown" } | { status: "unsupported" }>;
+  cutsRefusal(id: string, now?: Date): "unknown" | "unsupported" | "waiting" | "limit" | null;
   explain(itemNumber: string, searchId: string | null, now?: Date): Promise<ExplainReply>;
 };
 
@@ -387,6 +388,20 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
     const today = londonTime(new Date(now)).day;
     if (reads.day !== today) reads = { day: today, count: 0 };
     return outOfCalls() || reads.count >= readsPerDay ? "limit" : null;
+  }
+
+  function cutsReady(id: string, now: Date): { refused: "unknown" | "unsupported" | "waiting" | "limit" } | { search: Search; lookUp: NonNullable<Source["cuts"]> } {
+    const search = list?.searches.find((entry) => entry.id === id);
+    if (search === undefined) return { refused: "unknown" };
+    const lookUp = options.sources[search.source]?.cuts;
+    if (lookUp === undefined) return { refused: "unsupported" };
+    const stop = blocked(search.source, now.getTime());
+    if (stop !== null) return { refused: stop };
+    const today = londonTime(now).day;
+    if (cutCalls.day !== today) cutCalls = { day: today, count: 0 };
+    const callsBefore = (memory?.counters.calls ?? 0) + pendingCalls;
+    if (cutCalls.count + cutsCallsMost > Math.floor(limits().callsPerDay * cutsCallsShare) || callsBefore + cutsCallsMost > limits().callsPerDay) return { refused: "limit" };
+    return { search, lookUp };
   }
 
   async function read<Reply extends { calls: number }>(sourceName: string, now: number, work: () => Promise<Reply>): Promise<Reply | { message: string; gone: boolean }> {
@@ -1116,17 +1131,15 @@ export function createDealWatcher(options: WatcherOptions): DealWatcher {
       return "categories" in outcome ? { status: "ok", value: outcome.categories } : { status: "failed", message: outcome.message };
     },
 
+    cutsRefusal(id, now = new Date()) {
+      const ready = cutsReady(id, now);
+      return "refused" in ready ? ready.refused : null;
+    },
+
     async cuts(id, now = new Date()) {
-      const search = list?.searches.find((entry) => entry.id === id);
-      if (search === undefined) return { status: "unknown" };
-      const lookUp = options.sources[search.source]?.cuts;
-      if (lookUp === undefined) return { status: "unsupported" };
-      const stop = blocked(search.source, now.getTime());
-      if (stop !== null) return { status: stop };
-      const today = londonTime(now).day;
-      if (cutCalls.day !== today) cutCalls = { day: today, count: 0 };
-      const callsBefore = (memory?.counters.calls ?? 0) + pendingCalls;
-      if (cutCalls.count + cutsCallsMost > Math.floor(limits().callsPerDay * cutsCallsShare) || callsBefore + cutsCallsMost > limits().callsPerDay) return { status: "limit" };
+      const ready = cutsReady(id, now);
+      if ("refused" in ready) return { status: ready.refused };
+      const { search, lookUp } = ready;
       let used = 0;
       const outcome = await read(search.source, now.getTime(), async () => {
         try {

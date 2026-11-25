@@ -130,6 +130,13 @@ export function itemNumberFrom(text: string): string | null {
   return found === null ? null : found[1];
 }
 
+function cutsRefusedReply(status: "unknown" | "unsupported" | "waiting" | "limit"): { code: number; body: { error: string } } {
+  if (status === "unknown") return { code: 404, body: { error: "That isn't one of the searches" } };
+  if (status === "unsupported") return { code: 400, body: { error: "That search's source can't show what each filter cuts" } };
+  if (status === "waiting") return { code: 429, body: waiting };
+  return { code: 429, body: { error: "Today's share of eBay calls for cuts, or today's eBay calls or reads, are used up" } };
+}
+
 function fullReply(result: FullReply): { code: number; body: Record<string, unknown> } {
   if (result.status === "ok") {
     const { status: _status, ...body } = result;
@@ -301,15 +308,17 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
     const id = searchId(request.params);
     if (id === null) return reply.code(400).send({ error: "That isn't a search id" });
-    if (!watcher.searches(now()).some((search) => search.id === id)) return reply.code(404).send({ error: "That isn't one of the searches" });
+    const refused = watcher.cutsRefusal(id, now());
+    if (refused !== null) {
+      const { code, body } = cutsRefusedReply(refused);
+      return reply.code(code).send(body);
+    }
     if (!(await lookupTurn())) return reply.code(429).send(lookupWait);
     const result = await watcher.cuts(id, now());
     if (result.status === "ok") return result.value;
-    if (result.status === "unknown") return reply.code(404).send({ error: "That isn't one of the searches" });
-    if (result.status === "unsupported") return reply.code(400).send({ error: "That search's source can't show what each filter cuts" });
-    if (result.status === "limit") return reply.code(429).send({ error: "Today's share of eBay calls for cuts, or today's eBay calls or reads, are used up" });
-    if (result.status === "waiting") return reply.code(429).send(waiting);
-    return reply.code(502).send({ error: `Couldn't count what each filter cuts: ${result.message}` });
+    if (result.status === "failed") return reply.code(502).send({ error: `Couldn't count what each filter cuts: ${result.message}` });
+    const { code, body } = cutsRefusedReply(result.status);
+    return reply.code(code).send(body);
   });
 
   app.get("/categories/:id/details", async (request, reply) => {

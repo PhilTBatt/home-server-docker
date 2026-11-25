@@ -2733,6 +2733,7 @@ test("a search's cuts are refused when its source can't count them, when today's
   const { world, watcher } = setup([optiplex, { ...optiplex, id: "other-one", source: "other" }]);
   await watcher.run(at(0));
   assert.deepEqual(await watcher.cuts("other-one", at(1)), { status: "unsupported" });
+  assert.deepEqual([watcher.cutsRefusal("other-one", at(1)), watcher.cutsRefusal("nope", at(1))], ["unsupported", "unknown"]);
 
   let reply: Error | null = failed("busy", 3);
   const counting = createDealWatcher({
@@ -2751,11 +2752,14 @@ test("a search's cuts are refused when its source can't count them, when today's
   });
   await counting.run(at(0));
   assert.deepEqual(await counting.cuts("optiplex", at(1)), { status: "failed", message: ebayMessages.busy });
+  assert.equal(counting.cutsRefusal("optiplex", at(2)), "waiting");
   assert.deepEqual(await counting.cuts("optiplex", at(2)), { status: "waiting" });
   reply = null;
   let ok = 0;
   for (let n = 0; n < 200; n++) {
+    const refusal = counting.cutsRefusal("optiplex", at(120 + n));
     const result = await counting.cuts("optiplex", at(120 + n));
+    assert.equal(refusal ?? "ok", result.status);
     if (result.status === "ok") ok += 1;
     else {
       assert.deepEqual(result, { status: "limit" });
@@ -2784,7 +2788,12 @@ test("cuts use at most a quarter of the day's eBay calls, and only start with en
   const shared = build(100);
   await shared.run(at(0));
   const statuses: string[] = [];
-  for (let n = 0; n < 4; n++) statuses.push((await shared.cuts("optiplex", at(1 + n))).status);
+  for (let n = 0; n < 4; n++) {
+    const refusal = shared.cutsRefusal("optiplex", at(1 + n));
+    const status = (await shared.cuts("optiplex", at(1 + n))).status;
+    assert.equal(refusal ?? "ok", status);
+    statuses.push(status);
+  }
   assert.deepEqual(statuses, ["ok", "ok", "limit", "limit"]);
   calls = 3;
   const next = await shared.cuts("optiplex", at(24 * 60 + 1));
@@ -2793,15 +2802,18 @@ test("cuts use at most a quarter of the day's eBay calls, and only start with en
   const tight = build(30);
   await tight.run(at(0));
   calls = 9;
+  assert.equal(tight.cutsRefusal("optiplex", at(1)), "limit");
   assert.equal((await tight.cuts("optiplex", at(1))).status, "limit");
 
   searchCalls = 92;
   const busy = build(100);
   await busy.run(at(2 * 24 * 60));
+  assert.equal(busy.cutsRefusal("optiplex", at(2 * 24 * 60 + 1)), "limit");
   assert.equal((await busy.cuts("optiplex", at(2 * 24 * 60 + 1))).status, "limit");
   searchCalls = 91;
   const roomy = build(100);
   await roomy.run(at(3 * 24 * 60));
+  assert.equal(roomy.cutsRefusal("optiplex", at(3 * 24 * 60 + 1)), null);
   assert.equal((await roomy.cuts("optiplex", at(3 * 24 * 60 + 1))).status, "ok");
 });
 
