@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { lookUpServer } from "./look-up-sdk.js";
+import { createLookUpTool } from "./look-up-tool.js";
 import { test } from "node:test";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { actionHook, actionHookSeconds, agentOptions, closedMessage, createInputQueue, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
@@ -964,4 +966,29 @@ test("the session's hook asks whoever is waiting on the current question, and re
   await agent.emit(success("Done."));
   await quiet;
   assert.deepEqual(asked, ["scan_library"]);
+});
+
+test("with the look-up tool, the engine gets one more MCP server and may use its one tool, and still has no web tool of its own", () => {
+  const web = lookUpServer(createLookUpTool({ helper: async () => Promise.reject(new Error("unused")), now: () => 0 }));
+  const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, web });
+  assert.deepEqual(Object.keys(options.mcpServers ?? {}), ["web"]);
+  assert.equal(options.mcpServers?.web, web);
+  assert.deepEqual([web.type, web.name], ["sdk", "web"]);
+  assert.deepEqual(options.allowedTools, ["mcp__web__look_up"]);
+  assert.deepEqual(options.tools, ["Read", "Grep", "Glob"]);
+  assert.equal("hooks" in options, false);
+  assert.deepEqual([options.strictMcpConfig, options.permissionMode], [true, "dontAsk"]);
+});
+
+test("with the hub's tools and the look-up tool, both servers are there, the hub's tools come first, and only the hub's actions bring the yes hook", () => {
+  const web = lookUpServer(createLookUpTool({ helper: async () => Promise.reject(new Error("unused")), now: () => 0 }));
+  const both = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub, web });
+  assert.deepEqual(Object.keys(both.mcpServers ?? {}), ["hub", "web"]);
+  assert.deepEqual(both.mcpServers?.hub, agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub }).mcpServers?.hub);
+  assert.deepEqual(both.allowedTools?.slice(-2), ["mcp__hub__get_watchers", "mcp__web__look_up"]);
+  assert.equal(both.allowedTools?.length, 9);
+  assert.equal("hooks" in both, false);
+  const acting = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub: { ...hub, actions: true }, web });
+  assert.equal(acting.hooks?.PreToolUse?.length, 1);
+  assert.equal("hooks" in agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: {}, web }), false);
 });

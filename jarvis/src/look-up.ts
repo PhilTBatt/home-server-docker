@@ -1,4 +1,4 @@
-export const webModes = ["off", "ask"] as const;
+export const webModes = ["off", "ask", "auto"] as const;
 export type WebMode = (typeof webModes)[number];
 
 export const webHelpers = ["claude", "api"] as const;

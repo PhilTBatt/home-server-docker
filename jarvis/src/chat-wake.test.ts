@@ -1266,3 +1266,38 @@ test("a failed look-up's note says why in the helper's own words, and no other e
   assert.equal(lookUpFailedNote({ ended: "failed", say: "x", question: "q", ms: 1, helped: null }), undefined);
   for (const how of ["answered", "nothing", "timed out", "stopped"] as const) assert.equal(lookUpFailedNote(ended(how, "stopped")), undefined, how);
 });
+
+test("when Jarvis uses his look-up tool, the question he sent is shown and he says he's looking it up, on either engine's name for the tool", { timeout: 5_000 }, async () => {
+  for (const name of ["look_up", "mcp__web__look_up"]) {
+    const spoken: string[] = [];
+    const script: Script = async (listener) => {
+      listener.text?.("Let me check.");
+      listener.tool?.(name, { question: "latest Node.js version" });
+      listener.text?.("It's 26.");
+      return { text: "It's 26.", firstWordsMs: 300, totalMs: 2000 };
+    };
+    const chat = wakeChat({ "What's the latest Node?": script }, [], { speak: () => ({ ...fakeSpeech([]), text: (text: string) => void spoken.push(text), tool: () => void spoken.push("<tool>") }) });
+    chat.lines.push("What's the latest Node?");
+    await pause(20);
+    assert.ok(chat.output().includes("Jarvis: Let me check.\n  (looking up: latest Node.js version)\nIt's 26.\n"), chat.output());
+    assert.deepEqual(spoken, ["Let me check.", ` ${lookingUp} `, "<tool>", "It's 26."], name);
+    chat.lines.close();
+    await chat.running;
+  }
+});
+
+test("any other tool is noted as before and brings no spoken notice", { timeout: 5_000 }, async () => {
+  const spoken: string[] = [];
+  const script: Script = async (listener) => {
+    listener.tool?.("Read", { file_path: "/brain/index.md" });
+    listener.text?.("Done.");
+    return { text: "Done.", firstWordsMs: 300, totalMs: 2000 };
+  };
+  const chat = wakeChat({ "Read it": script }, [], { speak: () => ({ ...fakeSpeech([]), text: (text: string) => void spoken.push(text), tool: () => void spoken.push("<tool>") }) });
+  chat.lines.push("Read it");
+  await pause(20);
+  assert.ok(chat.output().includes("  (reading index.md)\n"), chat.output());
+  assert.deepEqual(spoken, ["<tool>", "Done."]);
+  chat.lines.close();
+  await chat.running;
+});

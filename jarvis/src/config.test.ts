@@ -545,10 +545,13 @@ test("JARVIS_CLOCK is off unless it's set to on, and anything else stops Jarvis 
   for (const value of ["yes", "On", "true", "1", "note"]) assert.throws(() => readConfig({ ...base, JARVIS_CLOCK: value }), { message: `JARVIS_CLOCK must be on or off, not "${value}"` });
 });
 
-test("JARVIS_WEB is off unless it's set to ask, and anything else stops Jarvis saying what it must be", () => {
+test("JARVIS_WEB is off unless it's set to ask or auto, and anything else stops Jarvis saying what it must be", () => {
   for (const value of [undefined, "", "  ", "off", " off "]) assert.deepEqual([readConfig({ ...base, JARVIS_WEB: value }).web, readConfig({ ...base, JARVIS_WEB: value }).webToken], ["off", null], JSON.stringify(value));
   assert.equal(readConfig({ ...base, JARVIS_WEB: " ask ", JARVIS_WEB_TOKEN: "plan-token" }).web, "ask");
-  for (const value of ["on", "Ask", "yes", "always", "auto"]) assert.throws(() => readConfig({ ...base, JARVIS_WEB: value, JARVIS_WEB_TOKEN: "plan-token" }), { message: `JARVIS_WEB must be off or ask, not "${value}"` });
+  assert.equal(readConfig({ ...base, JARVIS_WEB: "auto", JARVIS_WEB_TOKEN: "plan-token" }).web, "auto");
+  assert.throws(() => readConfig({ ...base, JARVIS_WEB: "auto" }), { message: "Missing setting: JARVIS_WEB_TOKEN (the token claude setup-token prints), which look-ups by Claude Code need" });
+  assert.equal(readConfig({ ...base, JARVIS_WEB: "auto", JARVIS_WEB_BY: "api" }).web, "auto");
+  for (const value of ["on", "Ask", "yes", "always", "Auto", "both"]) assert.throws(() => readConfig({ ...base, JARVIS_WEB: value, JARVIS_WEB_TOKEN: "plan-token" }), { message: `JARVIS_WEB must be off, ask or auto, not "${value}"` });
 });
 
 test("look-ups need the plan token, alone on its line, and an error about it never repeats it", () => {

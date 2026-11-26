@@ -20,8 +20,10 @@ import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, sta
 import { standInHubFile, type HubCall } from "./stand-in-hub.js";
 import { claudeHelper } from "./look-up-claude.js";
 import { startStandInWeb } from "./stand-in-web.js";
-import { runWebCheck } from "./web-check.js";
+import { runLookUpToolCheck, runWebCheck } from "./web-check.js";
 import { guardAllows } from "./web-guard.js";
+import { lookUpServer } from "./look-up-sdk.js";
+import { createLookUpTool, withLookUp } from "./look-up-tool.js";
 
 const folders: string[] = [];
 const apis: Array<{ close(): Promise<void> }> = [];
@@ -289,7 +291,24 @@ try {
       else process.env[name] = value;
     }
   });
-  const results = [...shared, ...saved, ...hub, ...actions, ...notes, ...persona, ...web];
+  const lookUpHelper = claudeHelper({ model: chatModel, credential: { ANTHROPIC_API_KEY: "sk-ant-test-key", ANTHROPIC_BASE_URL: webApi.url } });
+  const lookUpEngine = (engine: "sdk" | "api") => {
+    const asked: string[] = [];
+    return { engine, asked, tool: createLookUpTool({ helper: (question, signal) => (asked.push(question), lookUpHelper(question, signal)), now }) };
+  };
+  const lookSdkApi = await startStandInApi(script, "sdk");
+  const lookPlainApi = await startStandInApi(script, "api");
+  apis.push(lookSdkApi, lookPlainApi);
+  const lookSdk = lookUpEngine("sdk");
+  const lookPlain = lookUpEngine("api");
+  const lookSdkSession = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: chatSystem, cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: lookSdkApi.url }, web: lookUpServer(lookSdk.tool) });
+  const lookPlainSession = startApiSession(
+    { apiKey: "sk-ant-test-key", model: chatModel, system: apiChatSystem, maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: withLookUp(createBrainTools(brain), lookPlain.tool), thinkingHistory: "keep" },
+    (request) => askDirect({ ...request, url: `${lookPlainApi.url}/v1/messages` }),
+  );
+  sessions.push(lookSdkSession, lookPlainSession);
+  const lookUps = await runLookUpToolCheck({ engines: [{ ...lookSdk, session: lookSdkSession, requests: lookSdkApi.requests }, { ...lookPlain, session: lookPlainSession, requests: lookPlainApi.requests }], timeoutMs: 90_000 });
+  const results = [...shared, ...saved, ...hub, ...actions, ...notes, ...persona, ...web, ...lookUps];
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;
 } catch (error) {

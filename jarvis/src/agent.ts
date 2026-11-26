@@ -1,7 +1,8 @@
-import type { HookCallback, Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { HookCallback, McpSdkServerConfigWithInstance, Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { actionsEnv, hubProblemNote, hubReadTools, hubServerName, hubToolPrefix, isHubAction, notDoneNote, withHubToken, type HubServer } from "./hub-tools.js";
 import { answerCost, pricesPerMTok, type Prices, type TokenUse } from "./prices.js";
 import type { Answer } from "./timing.js";
+import { sdkLookUpTool, webServerName } from "./look-up-tool.js";
 
 export const closedMessage = "The agent was closed";
 
@@ -18,6 +19,7 @@ export type AgentSettings = {
   env?: Record<string, string | undefined>;
   savedChats?: string;
   hub?: HubServer;
+  web?: McpSdkServerConfigWithInstance;
 };
 
 export const privacyEnv = { DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" };
@@ -85,13 +87,16 @@ export function agentOptions(settings: AgentSettings, confirm: Confirm = async (
     title: "Jarvis",
     includePartialMessages: true,
     env: withHubToken({ ...(settings.env ?? process.env), ...privacyEnv, ...(settings.savedChats === undefined ? {} : { CLAUDE_CONFIG_DIR: settings.savedChats }) }, settings.hub),
-    ...(settings.hub === undefined
+    ...(settings.hub === undefined && settings.web === undefined
       ? {}
       : {
-          mcpServers: { [hubServerName]: { type: "stdio", command: settings.hub.command, args: settings.hub.args, env: actionsEnv(settings.hub), alwaysLoad: true } },
-          allowedTools: hubReadTools.map((tool) => `${hubToolPrefix}${tool}`),
-          ...(settings.hub.actions === true ? { hooks: { PreToolUse: [{ hooks: [actionHook(confirm)], timeout: actionHookSeconds, onFailure: "block" as const }] } } : {}),
+          mcpServers: {
+            ...(settings.hub === undefined ? {} : { [hubServerName]: { type: "stdio" as const, command: settings.hub.command, args: settings.hub.args, env: actionsEnv(settings.hub), alwaysLoad: true } }),
+            ...(settings.web === undefined ? {} : { [webServerName]: settings.web }),
+          },
+          allowedTools: [...(settings.hub === undefined ? [] : hubReadTools.map((tool) => `${hubToolPrefix}${tool}`)), ...(settings.web === undefined ? [] : [sdkLookUpTool])],
         }),
+    ...(settings.hub?.actions === true ? { hooks: { PreToolUse: [{ hooks: [actionHook(confirm)], timeout: actionHookSeconds, onFailure: "block" as const }] } } : {}),
   };
 }
 

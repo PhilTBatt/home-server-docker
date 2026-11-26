@@ -5,9 +5,11 @@ import { dirname } from "node:path";
 import { clearLine, createInterface, cursorTo } from "node:readline";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
-import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
+import { answerLogFile, loggingNote, startAnswerLog, type AnswerLog } from "./answer-log.js";
 import { lookUpsLine, type LookedUp } from "./look-up.js";
 import { apiHelper } from "./look-up-api.js";
+import { lookUpServer } from "./look-up-sdk.js";
+import { createLookUpTool, withLookUp } from "./look-up-tool.js";
 import { claudeHelper, findProgram, guardFile, noGuard, noProgram, planToken } from "./look-up-claude.js";
 import { lookUpLogFile, lookUpLoggingNote, lookUpNumbers, startLookUpLog, type LookUpMode } from "./look-up-log.js";
 import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.js";
@@ -83,6 +85,12 @@ try {
     const hubOn = config.engine === "api" ? hubTools !== undefined : hub !== undefined;
     const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts, web: config.web, brainQuestions: config.brainQuestions, clock: config.clock }) : null;
     const instructions = (base: string) => systemFor(base, { persona, facts, spoken, notes: notes ?? [], clock: config.clock });
+    const logged: { log?: AnswerLog } = {};
+    const recordLookUp = async (mode: LookUpMode, looked: LookedUp) => {
+      await lookUpLog?.(mode, config.webBy, looked);
+      await logged.log?.lookUp(lookUpNumbers(mode, config.webBy, looked));
+    };
+    const lookUpTool = config.web === "auto" && webHelper !== undefined ? createLookUpTool({ helper: webHelper, now, record: (looked) => recordLookUp("auto", looked), closing: closing.signal }) : undefined;
     const chat =
       config.engine === "api"
         ? startApiSession({
@@ -92,12 +100,12 @@ try {
             maxTokens: apiMaxTokens,
             timeoutMs: questionTimeoutMs,
             now,
-            tools: withHubTools(createBrainTools(brainDir), hubTools),
+            tools: withLookUp(withHubTools(createBrainTools(brainDir), hubTools), lookUpTool),
             thinkingHistory: config.thinkingHistory,
             history: setup.history,
             save: setup.save,
           })
-        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: instructions(chatSystem), cwd: brainDir, now, savedChats: setup.savedChats, hub });
+        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: instructions(chatSystem), cwd: brainDir, now, savedChats: setup.savedChats, hub, web: lookUpTool === undefined ? undefined : lookUpServer(lookUpTool) });
     session = chat;
     const log = config.log
       ? startAnswerLog(
@@ -114,6 +122,7 @@ try {
           },
         )
       : undefined;
+    logged.log = log;
     return {
       session: chat,
       record: log?.record,
@@ -126,10 +135,8 @@ try {
           : {
               helper: webHelper,
               now,
-              record: async (mode: LookUpMode, looked: LookedUp) => {
-                await lookUpLog?.(mode, config.webBy, looked);
-                await log?.lookUp(lookUpNumbers(mode, config.webBy, looked));
-              },
+              record: recordLookUp,
+              tool: lookUpTool,
             },
       failureHint: setup.failureHint ?? undefined,
       lengthNote: hints.newLengthNote(),

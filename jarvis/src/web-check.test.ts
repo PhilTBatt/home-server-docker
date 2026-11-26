@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { helperSystem, noNumbers, type Helped, type Helper } from "./look-up.js";
 import { hangWord, optionQuestion, privatePage, privatePageWord, publicPage, publicPageWord, startStandInWeb, webAnswer, type WebSeen } from "./stand-in-web.js";
-import { aloneCheck, answersCheck, guardCheck, optionCheck, quietCheck, runWebCheck, stopsCheck, toolsCheck, webCheckNames, yesCheck } from "./web-check.js";
+import { oneLookUp, webLabel } from "./look-up-tool.js";
+import { lookUpQuestion } from "./stand-in-api.js";
+import { aloneCheck, answeredProblems, answersCheck, guardCheck, offeredProblems, optionCheck, quietCheck, refusedProblems, runWebCheck, stopsCheck, toolsCheck, webCheckNames, yesCheck, type LookUpProbe } from "./web-check.js";
 import { bareNumber } from "./web-guard-rules.js";
 
 const good: Helped = { answer: webAnswer, error: null, numbers: { ...noNumbers, searches: 1, steps: 2, helperMs: 900, version: "2.1.327" }, found: ["example.org", "example.com"], opened: [], refused: [] };
@@ -163,4 +165,41 @@ test("the stand-in answers a search request with results, a first question with 
   } finally {
     await api.close();
   }
+});
+
+const labelled = `${webLabel}\n${webAnswer}\nSites: example.org, example.com`;
+const probe = (overrides: Partial<LookUpProbe> = {}): LookUpProbe => ({ used: ["look_up"], results: [{ text: labelled, isError: false }], offered: ["read_file", "look_up"], asked: [lookUpQuestion], threw: null, ...overrides });
+
+test("Jarvis's own look-up passes only when the right tool was used once, the helper got the question, and the answer came back marked", () => {
+  assert.deepEqual(answeredProblems("api", probe()), []);
+  assert.deepEqual(answeredProblems("sdk", probe({ used: ["mcp__web__look_up"] })), []);
+  assert.match(answeredProblems("sdk", probe()).join(), /tools used were \["look_up"\]/);
+  assert.match(answeredProblems("api", probe({ used: [] })).join(), /tools used were \[\]/);
+  assert.match(answeredProblems("api", probe({ used: ["look_up", "look_up"] })).join(), /tools used were/);
+  assert.match(answeredProblems("api", probe({ results: [] })).join(), /0 tool results came back/);
+  assert.match(answeredProblems("api", probe({ results: [{ text: labelled, isError: true }] })).join(), /came back as an error/);
+  assert.match(answeredProblems("api", probe({ results: [{ text: webAnswer, isError: false }] })).join(), /wasn't marked as text from the web/);
+  assert.match(answeredProblems("api", probe({ results: [{ text: `${webLabel}\nSomething else\nSites: example.org, example.com`, isError: false }] })).join(), /helper's answer didn't come back/);
+  assert.match(answeredProblems("api", probe({ results: [{ text: `${webLabel}\n${webAnswer}`, isError: false }] })).join(), /sites didn't come back/);
+  assert.match(answeredProblems("api", probe({ asked: [] })).join(), /helper was asked \[\]/);
+  assert.match(answeredProblems("api", probe({ asked: [lookUpQuestion, lookUpQuestion] })).join(), /helper was asked/);
+  assert.deepEqual(answeredProblems("api", probe({ threw: "timed out" })), ["it threw: timed out"]);
+});
+
+test("a look-up that isn't allowed passes only when it came back refused and the helper heard nothing", () => {
+  const refused = probe({ results: [{ text: oneLookUp, isError: true }], asked: [] });
+  assert.deepEqual(refusedProblems(refused), []);
+  assert.match(refusedProblems(probe({ asked: [] })).join(), /wasn't refused/);
+  assert.match(refusedProblems({ ...refused, results: [{ text: oneLookUp, isError: false }] }).join(), /wasn't refused/);
+  assert.match(refusedProblems({ ...refused, results: [{ text: "some other error", isError: true }] }).join(), /wasn't refused/);
+  assert.match(refusedProblems({ ...refused, results: [] }).join(), /0 tool results/);
+  assert.match(refusedProblems({ ...refused, asked: [lookUpQuestion] }).join(), /helper was asked/);
+  assert.deepEqual(refusedProblems({ ...refused, threw: "closed" }), ["it threw: closed"]);
+});
+
+test("the offered check wants the look-up tool there and no web tool of Jarvis's own under any name", () => {
+  assert.deepEqual(offeredProblems("api", probe()), []);
+  assert.deepEqual(offeredProblems("sdk", probe({ offered: ["Read", "Grep", "Glob", "mcp__web__look_up"] })), []);
+  assert.match(offeredProblems("sdk", probe()).join(), /look-up tool wasn't offered/);
+  for (const tool of ["WebSearch", "WebFetch", "web_search", "web_fetch", "websearch"]) assert.match(offeredProblems("api", probe({ offered: ["look_up", tool] })).join(), /web tools of his own were offered/, tool);
 });

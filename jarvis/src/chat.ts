@@ -7,6 +7,7 @@ import type { SpeechReport } from "./speech-queue.js";
 import { createEvents, merged } from "./events.js";
 import { capped, lookingUp, lookUp, noQuestion, questionCap, type Helper, type LookedUp } from "./look-up.js";
 import type { LookUpMode } from "./look-up-log.js";
+import { isLookUpTool, questionIn } from "./look-up-tool.js";
 import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type SpeechStop, type ThinkingHistory } from "./config.js";
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
 import type { Prices } from "./prices.js";
@@ -394,6 +395,7 @@ function shortPath(path: string): string {
 }
 
 export function toolNote(name: string, input: unknown): string {
+  if (isLookUpTool(name)) return lookingUpNote(questionIn(input) ?? "");
   const path = field(input, name === "Read" ? "file_path" : "path");
   if ((name === "Read" || name === "read_file") && path !== null) return `reading ${shortPath(path)}`;
   if (name === "list_folder") return path === null || path.trim() === "." || path.trim() === "" ? "looking in the top folder" : `looking in ${shortPath(path)}`;
@@ -491,6 +493,7 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
       },
       tool: (name, input) => {
         const action = isHubAction(shortName(name));
+        if (isLookUpTool(name)) speech?.text(` ${lookingUp} `);
         if (action) speech?.gap();
         else speech?.tool();
         if (!action) show(`${newLine()}  (${printable(toolNote(name, input))})\n`);
@@ -620,7 +623,8 @@ async function ask(deps: ChatDeps, state: ChatState, message: string, heard?: He
     return "go";
   }
   await hush(deps, state);
-  const outcome = await reply(deps, message, state, heard);
+  deps.web?.tool?.allow();
+  const outcome = await reply(deps, message, state, heard).finally(() => deps.web?.tool?.block());
   sounds(state, state.speech);
   if (deps.session.stoppedReason() === null) return outcome === "answered" ? "answered" : "go";
   if (outcome !== "stopped") deps.write(`${stoppedMessage}\n`);
@@ -787,7 +791,7 @@ async function sayLine(deps: ChatDeps, state: ChatState, reply: CodeWordReply): 
 
 export type LookedUpEvent = { kind: "looked up"; id: number; looked: LookedUp };
 
-export type WebDeps = { helper: Helper; now: () => number; record?: (mode: LookUpMode, looked: LookedUp) => Promise<void> };
+export type WebDeps = { helper: Helper; now: () => number; record?: (mode: LookUpMode, looked: LookedUp) => Promise<void>; tool?: { allow(): void; block(): void } };
 
 export const lookUpWord = "/lookup";
 export const lookUpsOffReply: CodeWordReply = { say: "Look-ups are off.", note: "JARVIS_WEB=ask in jarvis/.env turns them on" };
@@ -1010,6 +1014,7 @@ async function startQuestions(deps: ChatDeps, state: ChatState, voice: boolean):
     return "go";
   }
   deps.write(`  (${lookingNote})\n`);
+  deps.web?.tool?.block();
   const timer = withPausableTimeout(
     deps.session.ask(findInstruction(londonStamp(deps.questions.now?.() ?? new Date()).slice(0, 10)), {
       tool: (name, input) => deps.write(`  (${printable(toolNote(name, input))})\n`),

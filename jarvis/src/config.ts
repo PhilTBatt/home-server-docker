@@ -218,7 +218,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const clock = env.JARVIS_CLOCK?.trim() || "off";
   if (clock !== "on" && clock !== "off") throw new Error(`JARVIS_CLOCK must be on or off, not "${clock}"`);
   const web = env.JARVIS_WEB?.trim() || "off";
-  if (!isWebMode(web)) throw new Error(`JARVIS_WEB must be ${webModes.join(" or ")}, not "${web}"`);
+  if (!isWebMode(web)) throw new Error(`JARVIS_WEB must be ${webModes.slice(0, -1).join(", ")} or ${webModes[webModes.length - 1]}, not "${web}"`);
   const webBy = env.JARVIS_WEB_BY?.trim() || "claude";
   if (!isWebBy(webBy)) throw new Error(`JARVIS_WEB_BY must be ${webHelpers.join(" or ")}, not "${webBy}"`);
   const needsToken = web !== "off" && webBy === "claude";

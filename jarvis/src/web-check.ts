@@ -1,5 +1,10 @@
-import type { CheckResult } from "./engine-check.js";
+import type { AgentSession } from "./agent.js";
+import type { Engine } from "./config.js";
+import { checkNames, type CheckResult } from "./engine-check.js";
 import { helperSystem, type Helped, type Helper } from "./look-up.js";
+import { lookUpToolName, oneLookUp, sdkLookUpTool, webLabel, type LookUpTool } from "./look-up-tool.js";
+import { withTimeout } from "./run.js";
+import { lookUpQuestion, lookUpWord, type SeenRequest, type SeenToolResult } from "./stand-in-api.js";
 import { hangWord, optionQuestion, privatePage, privatePageWord, publicPage, publicPageWord, webAnswer, type WebSeen } from "./stand-in-web.js";
 import { bareNumber, siteOf } from "./web-guard-rules.js";
 
@@ -158,4 +163,79 @@ export async function runWebCheck(deps: WebCheckDeps): Promise<CheckResult[]> {
   clearTimeout(timer);
   results.push(stopsCheck(stopped.helped, stopped.threw, performance.now() - started - deps.stopAfterMs, deps.stopWithinMs));
   return results;
+}
+
+export type LookUpEngine = { engine: Engine; session: AgentSession; requests: SeenRequest[]; tool: LookUpTool; asked: string[] };
+
+export type LookUpProbe = { used: string[]; results: SeenToolResult[]; offered: string[]; asked: string[]; threw: string | null };
+
+export const lookUpCheckNames = {
+  answered: "both engines: Jarvis's own look-up goes through the helper and comes back marked as text from the web",
+  refused: "both engines: a look-up he isn't allowed is refused and never reaches the helper",
+  offered: "both engines: Jarvis is offered the look-up tool and no web tool of his own",
+};
+
+export const lookUpToolFor: Record<Engine, string> = { sdk: sdkLookUpTool, api: lookUpToolName };
+
+export function answeredProblems(engine: Engine, probe: LookUpProbe): string[] {
+  const problems: string[] = [];
+  if (probe.threw !== null) return [`it threw: ${probe.threw}`];
+  if (probe.used.join(",") !== lookUpToolFor[engine]) problems.push(`the tools used were ${JSON.stringify(probe.used)}`);
+  if (probe.results.length !== 1) problems.push(`${probe.results.length} tool results came back, not 1`);
+  else {
+    const [result] = probe.results;
+    if (result.isError) problems.push(`the look-up came back as an error: ${result.text.slice(0, 120)}`);
+    if (!result.text.includes(webLabel)) problems.push("the answer wasn't marked as text from the web");
+    if (!result.text.includes(webAnswer)) problems.push("the helper's answer didn't come back");
+    if (!result.text.includes("Sites: example.org, example.com")) problems.push("the sites didn't come back");
+  }
+  if (probe.asked.join("|") !== lookUpQuestion) problems.push(`the helper was asked ${JSON.stringify(probe.asked)}`);
+  return problems;
+}
+
+export function refusedProblems(probe: LookUpProbe): string[] {
+  const problems: string[] = [];
+  if (probe.threw !== null) return [`it threw: ${probe.threw}`];
+  if (probe.results.length !== 1) problems.push(`${probe.results.length} tool results came back, not 1`);
+  else if (!probe.results[0].isError || !probe.results[0].text.includes(oneLookUp)) problems.push(`the look-up wasn't refused: ${probe.results[0].text.slice(0, 120)}`);
+  if (probe.asked.length !== 0) problems.push(`the helper was asked ${JSON.stringify(probe.asked)}`);
+  return problems;
+}
+
+export function offeredProblems(engine: Engine, probe: LookUpProbe): string[] {
+  const problems: string[] = [];
+  if (!probe.offered.includes(lookUpToolFor[engine])) problems.push("the look-up tool wasn't offered");
+  const web = probe.offered.filter((tool) => /^web(search|fetch|_search|_fetch)/i.test(tool));
+  if (web.length > 0) problems.push(`web tools of his own were offered: ${web.join(", ")}`);
+  return problems;
+}
+
+async function lookUpProbe(engine: LookUpEngine, question: string, timeoutMs: number): Promise<LookUpProbe> {
+  const from = engine.requests.length;
+  const before = engine.asked.length;
+  const used: string[] = [];
+  let threw: string | null = null;
+  try {
+    await withTimeout(engine.session.ask(question, { tool: (name) => used.push(name) }), timeoutMs, () => engine.session.close());
+  } catch (error) {
+    threw = error instanceof Error ? error.message : String(error);
+  }
+  const seen = engine.requests.slice(from);
+  return { used, results: seen.flatMap((request) => request.toolResults), offered: [...new Set(seen.flatMap((request) => request.tools))], asked: engine.asked.slice(before), threw };
+}
+
+export async function runLookUpToolCheck(deps: { engines: LookUpEngine[]; timeoutMs: number }): Promise<CheckResult[]> {
+  const answered: string[] = [];
+  const refused: string[] = [];
+  const offered: string[] = [];
+  for (const engine of deps.engines) {
+    const named = (problems: string[]) => problems.map((problem) => `${checkNames[engine.engine]}: ${problem}`);
+    engine.tool.allow();
+    const first = await lookUpProbe(engine, `Please ${lookUpWord}`, deps.timeoutMs);
+    engine.tool.block();
+    answered.push(...named(answeredProblems(engine.engine, first)));
+    offered.push(...named(offeredProblems(engine.engine, first)));
+    refused.push(...named(refusedProblems(await lookUpProbe(engine, `Please ${lookUpWord} again`, deps.timeoutMs))));
+  }
+  return [check(lookUpCheckNames.answered, answered), check(lookUpCheckNames.refused, refused), check(lookUpCheckNames.offered, offered)];
 }
