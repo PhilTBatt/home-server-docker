@@ -1,7 +1,8 @@
 import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
-import { codeWordIn, earsStoppedWhy, hubOffNote, stopMyselfReply, stoppedReply, type CodeWord, type CodeWordReply } from "./code-words.js";
+import { answerMost, findInstruction, isEnd, isSkip, isYes, questionsNoteText, questionsOffNote, questionsWord, readQuestions, type BrainQuestions, type QuestionsRun } from "./brain-questions.js";
+import { codeWordIn, earsStoppedWhy, hubOffNote, londonStamp, stopMyselfReply, stoppedReply, type CodeWord, type CodeWordReply } from "./code-words.js";
 import type { SpeechReport } from "./speech-queue.js";
 import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type SpeechStop, type ThinkingHistory } from "./config.js";
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
@@ -169,6 +170,7 @@ export type ChatDeps = {
   followUp?: { seconds: number; ask(): void; gapMs?: number };
   codeWords?: CodeWordActions;
   trains?: TrainNews;
+  questions?: BrainQuestions;
 };
 
 export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply>; server?(signal: AbortSignal): Promise<CodeWordReply> };
@@ -181,7 +183,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null };
 
 function sounds(state: ChatState, speech: AnswerSpeech | null): void {
   if (speech === null || state.sounding.has(speech)) return;
@@ -402,8 +404,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -565,14 +567,20 @@ async function settle(deps: ChatDeps, state: ChatState, hushed = false, cut = fa
   return noted;
 }
 
-async function hush(deps: ChatDeps, state: ChatState): Promise<void> {
-  if (deps.speechStop !== "sentence") return void (await settle(deps, state, true));
+function letFinish(state: ChatState): AnswerSpeech | null {
   const speech = state.speech;
-  if (speech === null) return;
+  if (speech === null) return null;
   state.speech = null;
   state.finishing.push(speech);
   const letGo = () => (state.finishing = state.finishing.filter((old) => old !== speech));
   void speech.done().then(letGo, letGo);
+  return speech;
+}
+
+async function hush(deps: ChatDeps, state: ChatState): Promise<void> {
+  if (deps.speechStop !== "sentence") return void (await settle(deps, state, true));
+  const speech = letFinish(state);
+  if (speech === null) return;
   const going = !speech.report().stopped;
   const playing = speech.finish();
   const report = speech.report();
@@ -728,6 +736,7 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
   if (!sent.ok && sent.why === earsStoppedWhy) {
     state.turn++;
     await hush(deps, state);
+    await endQuestions(deps, state);
     await sayLine(deps, state, stoppedReply);
     return "go";
   }
@@ -737,7 +746,13 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
   }
   deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
   const word = codeWordIn(sent.heard.text);
-  if (word !== null) {
+  if (state.questions !== null && word?.kind !== "stop listening") return onAnswer(deps, state, sent.heard.text, "spoken", voiced(sent.heard));
+  if (word?.kind === "questions" && deps.questions !== undefined) {
+    state.turn++;
+    if (sent.heard.wake === true || sent.heard.button === true) state.followed = 0;
+    return startQuestions(deps, state, voiced(sent.heard));
+  }
+  if (word !== null && word.kind !== "questions") {
     await onCodeWord(deps, state, word);
     return "go";
   }
@@ -758,7 +773,7 @@ async function sayLine(deps: ChatDeps, state: ChatState, reply: CodeWordReply): 
   sounds(state, speech);
 }
 
-async function onCodeWord(deps: ChatDeps, state: ChatState, word: CodeWord): Promise<void> {
+async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWord, { kind: "questions" }>): Promise<void> {
   state.turn++;
   await hush(deps, state);
   if (word.kind === "never mind") {
@@ -766,6 +781,7 @@ async function onCodeWord(deps: ChatDeps, state: ChatState, word: CodeWord): Pro
     return;
   }
   if (word.kind === "stop listening") {
+    await endQuestions(deps, state);
     await sayLine(deps, state, stopMyselfReply);
     return;
   }
@@ -863,9 +879,161 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
   return going;
 }
 
+export const lookingNote = "looking through your brain for a gap question or two";
+export const questionsOpenNote = "you're already answering brain questions: answer the last one, or type skip or never mind";
+export const noQuestionsReply: CodeWordReply = { say: "I've no questions for you right now." };
+export const unreadableSay = "I couldn't read my own list of questions, so I've stopped there.";
+export const skippedNote = "skipped";
+export const fileItReply: CodeWordReply = { say: "Shall I file it as a suspected mistake, for you to check later?", note: "answer yes to file it, or anything else not to" };
+export const fileItNotes = { yes: "it'll be filed as a suspected mistake", no: "not filed" };
+export const nothingFiledReply: CodeWordReply = { say: "There's nothing to file.", note: "no answers, so nothing went to the brain's inbox" };
+export const keptHereNote = "nothing was filed, so here it is to keep:";
+export const tooLongNote = `that answer is over ${answerMost.toLocaleString("en-GB")} characters, too long to file, so give a shorter one, or type skip or never mind`;
+
+export function questionsCommandNote(talk: boolean): string {
+  return `Jarvis's / commands are ${talk ? `${talkWord} and ` : ""}${questionsWord}. To start a new chat, type new`;
+}
+
+export function questionNote(run: QuestionsRun): string {
+  const question = run.found[run.at];
+  const kind = question.kind === "gap" ? "a gap" : "a suspected mistake";
+  return `question ${run.at + 1} of ${run.found.length}, ${kind}, about ${question.files.join(", ")}. What looked wrong: ${question.wrong.replace(/[.\s]+$/, "")}. Answer it, or type or say skip or never mind`;
+}
+
+function voiced(heard: Heard): boolean {
+  return heard.wake === true || heard.follow === true || heard.button === true;
+}
+
+function takesAnswer(message: string): boolean {
+  const lower = message.toLowerCase();
+  return message !== "" && !exitWords.includes(lower) && !newWords.includes(lower) && !Object.hasOwn(ratingWords, message) && !looksLikeCommand(message);
+}
+
+async function askQuestion(deps: ChatDeps, state: ChatState, run: QuestionsRun, voice: boolean): Promise<void> {
+  await sayLine(deps, state, { say: run.found[run.at].ask, note: questionNote(run) });
+  if (voice) openFollow(deps, state);
+}
+
+async function startQuestions(deps: ChatDeps, state: ChatState, voice: boolean): Promise<"go" | "stop"> {
+  await hush(deps, state);
+  if (state.questions !== null) {
+    deps.write(`  (${questionsOpenNote})\n`);
+    return "go";
+  }
+  if (deps.questions === undefined) {
+    await sayLine(deps, state, { say: "Brain questions are off.", note: questionsOffNote });
+    return "go";
+  }
+  if (overCap(deps, state.lastRequestTokens)) {
+    deps.write(`  (${capNote(deps.lengthCap)})\n`);
+    return "go";
+  }
+  deps.write(`  (${lookingNote})\n`);
+  const timer = withPausableTimeout(
+    deps.session.ask(findInstruction(londonStamp(deps.questions.now?.() ?? new Date()).slice(0, 10)), {
+      tool: (name, input) => deps.write(`  (${printable(toolNote(name, input))})\n`),
+      note: (text) => deps.write(`  (${printable(text)})\n`),
+      confirm: async () => false,
+    }),
+    deps.questionTimeoutMs,
+    () => deps.session.close(),
+  );
+  let answer: Answer;
+  try {
+    answer = await timer.promise;
+  } catch (error) {
+    const reason = printable(error instanceof Error ? error.message : String(error));
+    if (reason === closedMessage) deps.write("  (stopped)\n");
+    else deps.write(`Jarvis couldn't look for questions: ${reason}\n`);
+    if (deps.session.stoppedReason() === null) return "go";
+    if (reason !== closedMessage) deps.write(`${stoppedMessage}\n`);
+    return "stop";
+  }
+  const size = answer.stats?.lastRequestTokens ?? null;
+  const length = size === null || overCap(deps, size) ? null : (deps.lengthNote?.(size) ?? null);
+  if (length !== null) deps.write(`  (${length})\n`);
+  if (overCap(deps, size)) deps.write(`  (${capReachedNote(deps.lengthCap)})\n`);
+  if (size !== null) {
+    state.lastRequestTokens = size;
+    await deps.rememberSize?.(size);
+  }
+  const found = await readQuestions(answer.text, deps.questions.exists);
+  if (typeof found === "string") {
+    await sayLine(deps, state, { say: unreadableSay, note: `the reply wasn't in the format asked for: ${found}` });
+    return "go";
+  }
+  if (found.length === 0) {
+    await sayLine(deps, state, noQuestionsReply);
+    return "go";
+  }
+  state.questions = { found, at: 0, asked: [], confirming: false };
+  await askQuestion(deps, state, state.questions, voice);
+  return "go";
+}
+
+async function nextQuestion(deps: ChatDeps, state: ChatState, run: QuestionsRun, voice: boolean): Promise<"go"> {
+  run.at++;
+  if (run.at < run.found.length) await askQuestion(deps, state, run, voice);
+  else await finishQuestions(deps, state);
+  return "go";
+}
+
+async function onAnswer(deps: ChatDeps, state: ChatState, text: string, by: "typed" | "spoken", voice: boolean): Promise<"go"> {
+  const run = state.questions;
+  if (run === null) return "go";
+  const question = run.found[run.at];
+  const at = deps.questions?.now?.() ?? new Date();
+  if (isEnd(text)) {
+    await finishQuestions(deps, state);
+    return "go";
+  }
+  if (run.confirming) {
+    run.confirming = false;
+    const yes = isYes(text);
+    if (yes) run.asked.push({ question, answer: null, at });
+    deps.write(`  (${yes ? fileItNotes.yes : fileItNotes.no})\n`);
+    return nextQuestion(deps, state, run, voice);
+  }
+  if (isSkip(text)) {
+    if (question.kind === "mistake") {
+      run.confirming = true;
+      await sayLine(deps, state, fileItReply);
+      if (voice) openFollow(deps, state);
+      return "go";
+    }
+    deps.write(`  (${skippedNote})\n`);
+    return nextQuestion(deps, state, run, voice);
+  }
+  if (text.trim().length > answerMost) {
+    deps.write(`  (${tooLongNote})\n`);
+    return "go";
+  }
+  run.asked.push({ question, answer: { text, by }, at });
+  return nextQuestion(deps, state, run, voice);
+}
+
+async function endQuestions(deps: ChatDeps, state: ChatState): Promise<void> {
+  await finishQuestions(deps, state);
+  letFinish(state);
+}
+
+async function finishQuestions(deps: ChatDeps, state: ChatState): Promise<void> {
+  const run = state.questions;
+  state.questions = null;
+  if (run === null) return;
+  if (run.asked.length === 0 || deps.questions === undefined) {
+    await sayLine(deps, state, nothingFiledReply);
+    return;
+  }
+  const text = questionsNoteText(run.asked, deps.questions.now?.() ?? new Date());
+  const filed = await deps.questions.file(text, new AbortController().signal);
+  await sayLine(deps, state, filed);
+  if (!filed.saved) deps.write(`  (${keptHereNote})\n\n${printable(text)}\n`);
+}
+
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0 };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   try {
@@ -900,18 +1068,26 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         }
         await dropListening(talking, state);
       }
+      if (state.questions !== null && takesAnswer(message)) {
+        await onAnswer(current, state, message, "typed", false);
+        current.prompt();
+        continue;
+      }
       if (exitWords.includes(message.toLowerCase())) break;
       const rating = Object.hasOwn(ratingWords, message) ? ratingWords[message] : undefined;
       if (message === "") {
         if (!early) await hush(current, state);
       } else if (newWords.includes(message.toLowerCase())) {
+        if (state.questions !== null) await finishQuestions(current, state);
         await settle(current, state);
         current = await startNewChat(current, state);
       } else if (message.toLowerCase() === talkWord) {
         if (talking === null) current.write(`  (${talkOffNote})\n`);
         else await startListening(talking, state);
+      } else if (message.toLowerCase() === questionsWord) {
+        if ((await startQuestions(current, state, false)) === "stop") break;
       } else if (looksLikeCommand(message)) {
-        current.write(`  (${talking === null ? commandNote : talkCommandNote})\n`);
+        current.write(`  (${current.questions !== undefined ? questionsCommandNote(talking !== null) : talking === null ? commandNote : talkCommandNote})\n`);
       } else if (rating !== undefined) {
         current.write(`  (${await rateLast(current, rating)})\n`);
       } else if ((await ask(current, state, message)) === "stop") {
@@ -920,6 +1096,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       current.prompt();
     }
   } finally {
+    if (state.questions !== null) await finishQuestions(current, state).catch(() => {});
     if (state.listening && current.talk !== undefined) await dropListening({ ...current, talk: current.talk }, state).catch(() => {});
     current.session.close();
     await settle(current, state);

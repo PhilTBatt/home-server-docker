@@ -8,6 +8,7 @@ export type FactsInput = {
   hubActions: boolean;
   codeWordsReachHub: boolean;
   trainAlerts: boolean;
+  brainQuestions: boolean;
 };
 
 const voiceNames: Record<Exclude<VoiceMode, "off">, string> = { kokoro: "Kokoro", piper: "Piper" };
@@ -27,6 +28,7 @@ export function liveFacts(input: FactsInput): string {
     facts.push("If he asks you for one of those and it reaches you, your code didn't catch it. Typed messages never count, but typed and spoken messages reach you the same way, so you can't tell which this was: never say he typed it or said it, and never say you've done it. Tell him to say the words out loud, on their own or as the last thing he says, for example: say find my phone.");
   }
   if (input.trainAlerts) facts.push(`When the hub finds a change to his morning trains, your own code ${input.voice === "off" ? "shows it on screen" : "says it aloud"} once you're quiet. You don't see what it says, so if he asks about it, tell him to ${input.ears === "off" ? "check his phone, where the hub sends it too" : "say train times, or check his phone"}.`);
+  if (input.brainQuestions) facts.push(`When he types /questions${input.ears === "off" ? "" : " or says brain questions or any questions for me"}, your own code asks you to find up to two gaps or suspected mistakes in his brain, in a fixed format, then asks him them one at a time and files his answers in his brain's inbox itself. You never write to his brain, and you never raise brain questions unless he asks that way.`);
   facts.push("You can't run commands, change files, browse the web, or set reminders or timers.");
   return facts.join(" ");
 }

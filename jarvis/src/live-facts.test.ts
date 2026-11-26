@@ -3,8 +3,8 @@ import { test } from "node:test";
 import { codeWordIn } from "./code-words.js";
 import { factsLead, liveFacts, withLiveFacts, type FactsInput } from "./live-facts.js";
 
-const typed: FactsInput = { voice: "off", ears: "off", followUp: null, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: false };
-const all: FactsInput = { voice: "kokoro", ears: "wake", followUp: 6, hubTools: true, hubActions: true, codeWordsReachHub: true, trainAlerts: true };
+const typed: FactsInput = { voice: "off", ears: "off", followUp: null, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: false, brainQuestions: false };
+const all: FactsInput = { voice: "kokoro", ears: "wake", followUp: 6, hubTools: true, hubActions: true, codeWordsReachHub: true, trainAlerts: true, brainQuestions: true };
 const sentences = (text: string) => text.split(/(?<=[.:;]) /);
 
 test("live facts start by saying they're from his own code, written as the chat started, and outrank older notes about him", () => {
@@ -87,7 +87,7 @@ test("they never use double quotes, and every sentence ends cleanly, whatever is
   for (const voice of ["off", "kokoro", "piper"] as const) {
     for (const ears of ["off", "push", "wake"] as const) {
       for (const [hubTools, hubActions, codeWordsReachHub, trainAlerts] of [[false, false, false, false], [true, false, true, true], [true, true, true, false], [false, false, true, false]] as const) {
-        const facts = liveFacts({ voice, ears, followUp: ears === "wake" ? 4 : null, hubTools, hubActions, codeWordsReachHub, trainAlerts });
+        const facts = liveFacts({ voice, ears, followUp: ears === "wake" ? 4 : null, hubTools, hubActions, codeWordsReachHub, trainAlerts, brainQuestions: trainAlerts });
         assert.ok(!facts.includes('"'), facts);
         assert.ok(facts.endsWith("."), facts);
         assert.ok(!/\s{2}|\.\./.test(facts), facts);
@@ -100,4 +100,20 @@ test("they never use double quotes, and every sentence ends cleanly, whatever is
 test("live facts go after the instructions, after a blank line, and nothing is added when they're off", () => {
   assert.equal(withLiveFacts("Base.", null), "Base.");
   assert.equal(withLiveFacts("Base.", "Facts."), "Base.\n\nFacts.");
+});
+
+test("with brain questions on, they say how Phil asks for them, that his own code asks and files, and that he never writes to the brain or raises them himself", () => {
+  const sentence = "your own code asks you to find up to two gaps or suspected mistakes in his brain, in a fixed format, then asks him them one at a time and files his answers in his brain's inbox itself. You never write to his brain, and you never raise brain questions unless he asks that way.";
+  assert.ok(liveFacts(all).includes(`When he types /questions or says brain questions or any questions for me, ${sentence}`), liveFacts(all));
+  assert.ok(liveFacts({ ...typed, hubTools: true, codeWordsReachHub: true, brainQuestions: true }).includes(`When he types /questions, ${sentence}`));
+  assert.ok(!liveFacts({ ...all, brainQuestions: false }).includes("/questions"));
+  assert.ok(liveFacts(all).indexOf("/questions") < liveFacts(all).indexOf("You can't run commands"));
+});
+
+test("every phrase the live facts give for brain questions is one his code really answers, when said out loud", () => {
+  const facts = liveFacts(all);
+  for (const said of ["brain questions", "any questions for me"]) {
+    assert.ok(facts.includes(`says ${said}`) || facts.includes(`or ${said}`), said);
+    assert.equal(codeWordIn(said)?.kind, "questions", said);
+  }
 });

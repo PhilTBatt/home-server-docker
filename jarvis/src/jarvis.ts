@@ -8,6 +8,7 @@ import { startAgentSession, type AgentSession } from "./agent.js";
 import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
 import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.js";
 import { startApiSession } from "./api-session.js";
+import { brainFileExists, fileBrainQuestions } from "./brain-questions.js";
 import { createBrainTools } from "./brain-tools.js";
 import { chimeFor } from "./chime.js";
 import { findPhone, saveVoiceNote, serverCheck, trainTimes } from "./code-words.js";
@@ -63,7 +64,7 @@ try {
   const open = (setup: ChatSetup) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts }) : null;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts, brainQuestions: config.brainQuestions }) : null;
     const instructions = (base: string) => systemFor(base, { persona, facts, spoken, notes: notes ?? [] });
     const chat =
       config.engine === "api"
@@ -162,6 +163,7 @@ try {
     chime: wake === undefined || speaking === null ? undefined : chimeFor(speaking),
     followUp: wake === undefined || follow === undefined || followSeconds === null ? undefined : { seconds: followSeconds, ask: () => follow.ask(followSeconds * 1000) },
     codeWords: { note: (text, signal) => saveVoiceNote(text, config.hubToken, signal), phone: (signal) => findPhone(config.hubToken, signal), trains: (signal) => trainTimes(config.hubToken, signal), server: (signal) => serverCheck(config.hubToken, signal) },
+    questions: config.brainQuestions && config.hubToken !== null ? { exists: brainFileExists(), file: (text, signal) => fileBrainQuestions(text, config.hubToken, signal) } : undefined,
     trains: config.trainAlerts && config.hubToken !== null ? watchTrainChanges({ ask: askHubForChanges(config.hubToken), signal: closing.signal }) : undefined,
     interrupt: () => {
       if (!process.stdout.isTTY) return;

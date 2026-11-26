@@ -70,6 +70,7 @@ export type Config = {
   followUp: number | null;
   turnCheck: boolean;
   trainAlerts: boolean;
+  brainQuestions: boolean;
   log: boolean;
 };
 
@@ -193,8 +194,11 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const trainAlerts = env.JARVIS_TRAIN_ALERTS?.trim() || "off";
   if (trainAlerts !== "on" && trainAlerts !== "off") throw new Error(`JARVIS_TRAIN_ALERTS must be on or off, not "${trainAlerts}"`);
   if (trainAlerts === "on" && hubTools !== "on") throw new Error("JARVIS_TRAIN_ALERTS is on, but train changes come from the hub, so it needs JARVIS_HUB_TOOLS=on too. Set that, or set JARVIS_TRAIN_ALERTS=off");
+  const brainQuestions = env.JARVIS_BRAIN_QUESTIONS?.trim() || "off";
+  if (brainQuestions !== "on" && brainQuestions !== "off") throw new Error(`JARVIS_BRAIN_QUESTIONS must be on or off, not "${brainQuestions}"`);
+  if (brainQuestions === "on" && hubTools !== "on") throw new Error("JARVIS_BRAIN_QUESTIONS is on, but your answers go to the brain's inbox through the hub, so it needs JARVIS_HUB_TOOLS=on too. Set that, or set JARVIS_BRAIN_QUESTIONS=off");
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", log: log === "on" };
 }

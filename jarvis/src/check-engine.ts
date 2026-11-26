@@ -248,7 +248,7 @@ try {
   folders.push(personaHome);
   await writeFile(join(personaHome, "check.md"), `# Check\n- Calm and \"dry\", marker ${randomUUID()}\n`);
   const personaText = await readPersona("check", personaHome);
-  const factsText = liveFacts({ voice: "kokoro", ears: "wake", followUp: 6, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: true });
+  const factsText = liveFacts({ voice: "kokoro", ears: "wake", followUp: 6, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: true, brainQuestions: false });
   const personaSdkApi = await startStandInApi(script, "sdk");
   const personaPlainApi = await startStandInApi(script, "api");
   apis.push(personaSdkApi, personaPlainApi);
