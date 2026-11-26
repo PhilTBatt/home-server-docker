@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mock, test } from "node:test";
-import { actionQuestion, actionsEnv, allowedHubTools, checkHubServer, describeAction, describeWithHub, fullHash, hubActionTools, hubApiUrl, hubNotBuilt, hubReadTools, hubServerEnv, hubServerFile, hubServerFor, hubToolPrefix, isHubAction, lookUpDownload, lookupMs, nameLimit, noTorrentError, notDoneNote, shownName, withHubToken, type Lookup } from "./hub-tools.js";
+import { actionQuestion, watchText, actionsEnv, allowedHubTools, checkHubServer, describeAction, describeWithHub, fullHash, hubActionTools, hubApiUrl, hubNotBuilt, hubReadTools, hubServerEnv, hubServerFile, hubServerFor, hubToolPrefix, isHubAction, lookUpDownload, lookupMs, nameLimit, noTorrentError, notDoneNote, shownName, withHubToken, type Lookup } from "./hub-tools.js";
 
 test("the hub's MCP server is the built one mounted from mcp/, run with this Node, and its tools are named mcp__hub__ on the Agent SDK", () => {
   assert.equal(hubServerFile, "/mcp/dist/server.js");
@@ -23,13 +23,13 @@ test("an MCP server started by Jarvis himself gets the token and the actions set
   assert.deepEqual(hubServerEnv(hubServerFor("hub-token", true)), { API_TOKEN: "hub-token", MCP_ACTIONS: "on" });
 });
 
-test("Jarvis knows the hub's seven read tools and three actions by name, and accepts the actions only when they're on", () => {
-  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup"]);
-  assert.deepEqual(hubActionTools, ["scan_library", "stop_download", "start_download"]);
+test("Jarvis knows the hub's eight read tools and five actions by name, and accepts the actions only when they're on", () => {
+  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers"]);
+  assert.deepEqual(hubActionTools, ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher"]);
   assert.deepEqual(allowedHubTools(hubServerFor("t")), hubReadTools);
   assert.deepEqual(allowedHubTools(hubServerFor("t", true)), [...hubReadTools, ...hubActionTools]);
-  assert.deepEqual(hubActionTools.map(isHubAction), [true, true, true]);
-  assert.deepEqual(["get_status", "read_file", "mcp__hub__scan_library", "Scan_library", ""].map(isHubAction), [false, false, false, false, false]);
+  assert.deepEqual(hubActionTools.map(isHubAction), [true, true, true, true, true]);
+  assert.deepEqual(["get_status", "get_watchers", "read_file", "mcp__hub__scan_library", "Scan_library", "mcp__hub__add_watcher", ""].map(isHubAction), [false, false, false, false, false, false, false]);
 });
 
 test("each action is put to Phil in plain words, with a download's hash cut short", () => {
@@ -42,6 +42,52 @@ test("each action is put to Phil in plain words, with a download's hash cut shor
   for (const input of [{}, null, "x", { hash: 5 }, { hash: "" }, { hash: "\u202eabc" }, { hash: "abc def" }, { hash: "gg" }]) assert.equal(actionQuestion("stop_download", input), "Jarvis wants to stop a download. Type yes to let him, or anything else to stop it");
   assert.equal(actionQuestion("reboot_server", {}), "Jarvis wants to use reboot_server. Type yes to let him, or anything else to stop it");
   assert.equal(notDoneNote, "Phil didn't say yes, so it wasn't done");
+});
+
+test("adding a watcher is put to Phil as exactly what will be watched and for how long", () => {
+  const ask = (input: unknown) => actionQuestion("add_watcher", input);
+  const typeYes = "Type yes to let him, or anything else to stop it";
+  assert.equal(ask({ kind: "download-finished", name: "alpha beta" }), `Jarvis wants to watch for a download matching "alpha beta" to finish, for up to 24 hours, and tell your phone once when it happens. ${typeYes}`);
+  assert.equal(ask({ kind: "disk-free-below", percent: 15, hours: 1 }), `Jarvis wants to watch for free disk space to fall below 15%, for up to an hour, and tell your phone once when it happens. ${typeYes}`);
+  assert.equal(ask({ kind: "service-answering", service: "jellyfin", hours: 168 }), `Jarvis wants to watch for Jellyfin to answer, for up to 168 hours, and tell your phone once when it happens. ${typeYes}`);
+  assert.equal(watchText({ kind: "service-answering", service: "qbittorrent" }), "watch for qBittorrent to answer, for up to 24 hours, and tell your phone once when it happens");
+  assert.equal(watchText({ kind: "disk-free-below", percent: 1, hours: 2 }), "watch for free disk space to fall below 1%, for up to 2 hours, and tell your phone once when it happens");
+  assert.equal(watchText({ kind: "disk-free-below", percent: 99 }), "watch for free disk space to fall below 99%, for up to 24 hours, and tell your phone once when it happens");
+  assert.equal(watchText({ kind: "download-finished", name: "Ab" }), "watch for a download matching \"Ab\" to finish, for up to 24 hours, and tell your phone once when it happens");
+  assert.notEqual(watchText({ kind: "download-finished", name: "a".repeat(40) }), null);
+});
+
+test("a watcher Jarvis can't describe exactly is put to Phil as one the hub won't accept, never with its raw details", () => {
+  const refused = "Jarvis wants to add a watcher with details the hub won't accept. Type yes to let him, or anything else to stop it";
+  for (const input of [
+    null,
+    "disk",
+    [],
+    {},
+    { kind: "run-command", name: "reboot" },
+    { kind: "download-finished", name: "$(reboot)" },
+    { kind: "download-finished", name: "alpha\u202ebeta" },
+    { kind: "download-finished", name: "alpha  beta" },
+    { kind: "download-finished", name: " alpha" },
+    { kind: "download-finished", name: "a" },
+    { kind: "download-finished", name: "a".repeat(41) },
+    { kind: "download-finished", name: 5 },
+    { kind: "download-finished" },
+    { kind: "disk-free-below", percent: 0 },
+    { kind: "disk-free-below", percent: 100 },
+    { kind: "disk-free-below", percent: 15.5 },
+    { kind: "disk-free-below", percent: "15" },
+    { kind: "service-answering", service: "sonarr" },
+    { kind: "service-answering", service: "toString" },
+    { kind: "disk-free-below", percent: 15, hours: 0 },
+    { kind: "disk-free-below", percent: 15, hours: 169 },
+    { kind: "disk-free-below", percent: 15, hours: 1.5 },
+  ]) assert.equal(actionQuestion("add_watcher", input), refused, JSON.stringify(input));
+});
+
+test("cancelling a watcher is put to Phil with its id, or as a watcher when the id isn't one", () => {
+  assert.equal(actionQuestion("cancel_watcher", { id: "0a1b2c3d" }), "Jarvis wants to cancel the watcher 0a1b2c3d. Type yes to let him, or anything else to stop it");
+  for (const input of [{}, null, { id: "0A1B2C3D" }, { id: "0a1b2c3" }, { id: "\u202e0a1b2c3d" }, { id: 12345678 }]) assert.equal(actionQuestion("cancel_watcher", input), "Jarvis wants to cancel a watcher. Type yes to let him, or anything else to stop it", JSON.stringify(input));
 });
 
 test("an environment gets the hub's token only with the hub's tools, and never a token it already had, nor ears's", () => {

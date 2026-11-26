@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Features } from "../../config.js";
 import type { ExpiryStatus } from "../expiry/checker.js";
+import type { WatcherView } from "../watchers/watchers.js";
 import type { Problem, Status } from "./alerts.js";
 import { ask, createTries, doctorWaitMs, examine, runDoctor, summaryOf, type Check, type DoctorSources, type Seen } from "./doctor.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
-const allOff: Features = { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true };
+const allOff: Features = { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false };
 const now = new Date("2026-11-26T12:00:00Z");
 const status: Status = { uptimeSeconds: 3600, memoryTotalMB: 8192, memoryAvailableMB: 4096, diskTotalGB: 100, diskAvailableGB: 40 };
 
@@ -27,6 +28,7 @@ function healthy(): Seen {
     inbox: { value: 2 },
     trains: { value: { departures: [] } },
     expiries: { value: [item("Alpha", 20)] },
+    watchers: [],
   };
 }
 
@@ -41,7 +43,7 @@ const problem = (code: Problem["code"], message: string): Problem => ({ code, me
 test("with everything healthy, every check is ok with plain words and nothing to try, and the summary says so", () => {
   const report = examine(healthy(), now);
   assert.equal(report.state, "ok");
-  assert.equal(report.summary, "Everything's OK: 12 checks fine.");
+  assert.equal(report.summary, "Everything's OK: 13 checks fine.");
   assert.equal(report.checkedAt, "2026-11-26T12:00:00.000Z");
   assert.deepEqual(report.checks, [
     { name: "Disk", state: "ok", detail: "40 of 100 GB free.", next: null },
@@ -56,11 +58,12 @@ test("with everything healthy, every check is ok with plain words and nothing to
     { name: "Deal watcher", state: "ok", detail: "No problems.", next: null },
     { name: "Train times", state: "ok", detail: "The departure board answered.", next: null },
     { name: "Expiry list", state: "ok", detail: "Nothing due in the next 7 days, with 1 item on the list.", next: null },
+    { name: "Watchers", state: "ok", detail: "Nothing being watched.", next: null },
   ]);
 });
 
 test("every switched-off feature is off, never a problem, with its setting named and nothing to try", () => {
-  const seen: Seen = { ...healthy(), features: allOff, heartbeat: { at: "2026-11-26T11:55:00Z", ok: false }, alerts: { at: "2026-11-26T11:55:00Z", ok: false }, inbox: null, trains: null, expiries: null, problems: [problem("deals-list", "The deal watcher's search list has a problem: x.")] };
+  const seen: Seen = { ...healthy(), features: allOff, heartbeat: { at: "2026-11-26T11:55:00Z", ok: false }, alerts: { at: "2026-11-26T11:55:00Z", ok: false }, inbox: null, trains: null, expiries: null, watchers: null, problems: [problem("deals-list", "The deal watcher's search list has a problem: x.")] };
   const report = examine(seen, now);
   const offChecks = report.checks.filter((check) => check.state === "off");
   assert.deepEqual(offChecks, [
@@ -70,9 +73,10 @@ test("every switched-off feature is off, never a problem, with its setting named
     { name: "Deal watcher", state: "off", detail: "Switched off (DEALS).", next: null },
     { name: "Train times", state: "off", detail: "Switched off (TRAINS).", next: null },
     { name: "Expiry list", state: "off", detail: "Switched off (EXPIRY_ALERTS).", next: null },
+    { name: "Watchers", state: "off", detail: "Switched off (WATCHERS).", next: null },
   ]);
   assert.equal(report.state, "ok");
-  assert.equal(report.summary, "Everything's OK: 6 checks fine, 6 switched off.");
+  assert.equal(report.summary, "Everything's OK: 6 checks fine, 7 switched off.");
 });
 
 test("each feature's own switch decides whether it's off, whatever the others are set to", () => {
@@ -211,6 +215,28 @@ test("an expiry list that can't be read, or warnings that couldn't be saved, are
   assert.deepEqual([dueAndUnsaved.state, dueAndUnsaved.detail], ["problem", `Beta expires in 3 days. ${saving}`]);
 });
 
+function watcher(what: string, lastCheck: WatcherView["lastCheck"], waitingToSend = false): WatcherView {
+  return { kind: "disk-free-below", percent: 10, id: "0a1b2c3d", what, hours: 24, createdAt: "2026-11-26T11:00:00.000Z", expiresAt: "2026-11-27T11:00:00.000Z", lastCheck, waitingToSend };
+}
+
+test("watchers are off with their switch off, even with a list", () => {
+  assert.deepEqual(checkOf({ ...healthy(), features: { ...allOn, watchers: false }, watchers: [watcher("Jellyfin to answer", { at: "2026-11-26T11:59:00.000Z", ok: false })] }, "Watchers"), { name: "Watchers", state: "off", detail: "Switched off (WATCHERS).", next: null });
+});
+
+test("watchers are fine when every last check read its source, counting what's watched", () => {
+  assert.deepEqual(checkOf({ ...healthy(), watchers: [watcher("free disk space to fall below 10%", null), watcher("Jellyfin to answer", { at: "2026-11-26T11:59:00.000Z", ok: true })] }, "Watchers"), { name: "Watchers", state: "ok", detail: "Watching for 2 things.", next: null });
+  assert.equal(checkOf({ ...healthy(), watchers: [watcher("x", null)] }, "Watchers").detail, "Watching for 1 thing.");
+});
+
+test("a watcher whose last check couldn't read its source, or whose notification is waiting to be sent, is something to look at", () => {
+  const unread = checkOf({ ...healthy(), watchers: [watcher('a download matching "Alpha" to finish', { at: "2026-11-26T11:59:00.000Z", ok: false }), watcher("Jellyfin to answer", null)] }, "Watchers");
+  assert.deepEqual([unread.state, unread.detail], ["warn", 'Couldn\'t check for a download matching "Alpha" to finish last time.']);
+  assert.match(unread.next ?? "", /get_watchers/);
+  const unsent = checkOf({ ...healthy(), watchers: [watcher("free disk space to fall below 10%", { at: "2026-11-26T11:59:00.000Z", ok: true }, true)] }, "Watchers");
+  assert.deepEqual([unsent.state, unsent.detail], ["warn", "It happened, but the notification for free disk space to fall below 10% couldn't be sent yet."]);
+  assert.match(unsent.next ?? "", /docker compose logs/);
+});
+
 test("the overall state is the worst of the checks, and the summary names problems first, then things to look at", () => {
   const warned = examine({ ...healthy(), status: { ...status, diskAvailableGB: 15 } }, now);
   assert.deepEqual([warned.state, warned.summary], ["warn", "1 thing to look at: Disk."]);
@@ -304,6 +330,18 @@ test("running the doctor asks only what's switched on, and never asks the board,
   const noList = sources({ expiries: undefined });
   const listless = await runDoctor(allOn, noList, reads, now);
   assert.equal(listless.checks.find((check) => check.name === "Expiry list")?.state, "off");
+});
+
+test("running the doctor lists the watchers only with their switch on and a list handed over", async () => {
+  let asked = 0;
+  const list = () => (asked++, [watcher("Jellyfin to answer", null)]);
+  const on = await runDoctor(allOn, sources({ watchers: list }), reads, now);
+  assert.equal(on.checks.find((check) => check.name === "Watchers")?.detail, "Watching for 1 thing.");
+  const off = await runDoctor({ ...allOn, watchers: false }, sources({ watchers: list }), reads, now);
+  assert.equal(off.checks.find((check) => check.name === "Watchers")?.state, "off");
+  assert.equal(asked, 1);
+  const missing = await runDoctor(allOn, sources(), reads, now);
+  assert.equal(missing.checks.find((check) => check.name === "Watchers")?.state, "off");
 });
 
 test("running the doctor passes the tries' latest outcomes, the time and the expiry list's own time through", async () => {

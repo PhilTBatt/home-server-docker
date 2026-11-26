@@ -77,6 +77,7 @@
  * @property {boolean} trains
  * @property {boolean} trainAlerts
  * @property {boolean} expiryAlerts
+ * @property {boolean} watchers
  */
 
 /**
@@ -92,6 +93,21 @@
  * @typedef {object} ExpiryList
  * @property {string} today
  * @property {ExpiryItem[]} items
+ */
+
+/**
+ * @typedef {object} Watcher
+ * @property {string} id
+ * @property {string} what
+ * @property {string} expiresAt
+ * @property {{ at: string, ok: boolean } | null} lastCheck
+ * @property {boolean} waitingToSend
+ */
+
+/**
+ * @typedef {object} WatcherList
+ * @property {number} most
+ * @property {Watcher[]} watchers
  */
 
 /**
@@ -255,7 +271,7 @@
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers" };
 
 /**
  * @param {string} id
@@ -303,6 +319,8 @@ const explainButton = /** @type {HTMLButtonElement} */ (byId("explain-button"));
 const explainResult = byId("explain-result");
 const expirySection = byId("expiry");
 const expiryList = byId("expiry-list");
+const watchersSection = byId("watchers");
+const watchersList = byId("watchers-list");
 const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/", "https://www.hotukdeals.com/deals/"];
 /** @type {number | undefined} */ let refreshTimer;
 /** @type {Set<string>} */ const openDealSections = new Set();
@@ -536,6 +554,7 @@ async function loadSwitches() {
   showBrain(features);
   showDeals(features);
   showExpiry(features);
+  showWatchers(features);
 }
 
 /**
@@ -598,6 +617,69 @@ async function loadExpiry() {
   /** @type {ExpiryList} */
   const list = await response.json();
   expiryList.replaceChildren(...(list.items.length === 0 ? [listItem("Nothing on the list.")] : list.items.map((item) => listItem(expiryText(item)))));
+}
+
+/**
+ * @param {Features} features
+ */
+function showWatchers(features) {
+  watchersSection.hidden = !features.watchers;
+  if (features.watchers) loadWatchers();
+}
+
+/**
+ * @param {Watcher} watcher
+ * @returns {string}
+ */
+function watcherText(watcher) {
+  const until = new Date(watcher.expiresAt).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const state = watcher.waitingToSend ? "; it happened, and the notification will be tried again" : watcher.lastCheck?.ok === false ? "; the last check couldn't read it" : "";
+  return `${watcher.what[0].toUpperCase()}${watcher.what.slice(1)}, until ${until}${state}. `;
+}
+
+/**
+ * @param {Watcher} watcher
+ * @returns {HTMLLIElement}
+ */
+function watcherItem(watcher) {
+  const item = listItem(watcherText(watcher));
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Cancel";
+  button.addEventListener("click", () => cancelWatcher(watcher, button));
+  item.append(button);
+  return item;
+}
+
+async function loadWatchers() {
+  const got = await fetchReply("/api/watchers", "Couldn't load what's being watched");
+  if ("text" in got) {
+    watchersList.replaceChildren(listItem(got.text));
+    return;
+  }
+  const list = /** @type {WatcherList} */ (got.reply);
+  watchersList.replaceChildren(...(list.watchers.length === 0 ? [listItem("Nothing. Ask Claude or Jarvis to tell you when something happens.")] : list.watchers.map(watcherItem)));
+}
+
+/**
+ * @param {Watcher} watcher
+ * @param {HTMLButtonElement} button
+ */
+async function cancelWatcher(watcher, button) {
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/watchers/${encodeURIComponent(watcher.id)}`, { method: "DELETE" });
+    if (response.ok || response.status === 404) {
+      await loadWatchers();
+      return;
+    }
+    /** @type {ApiError | null} */
+    const body = await response.json().catch(() => null);
+    watchersList.prepend(listItem(`Couldn't cancel it: ${body?.error ?? `the API replied ${response.status}`}.`));
+  } catch {
+    watchersList.prepend(listItem("Couldn't reach the API."));
+  }
+  button.disabled = false;
 }
 
 /**

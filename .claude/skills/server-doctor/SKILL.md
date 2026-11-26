@@ -21,6 +21,7 @@ For each check that's `problem` or `warn`, problems first, call only the read to
 - qBittorrent: `get_downloads`. Jellyfin: `get_library`. A second failure the same way means it's still down; one that works now means it was a blip.
 - Deal watcher: `get_deal_status` and `get_deal_searches`. Never the tools that return listings (`get_deal_matches`, `get_deal_listing`, `get_deal_hidden`, `explain_deal_listing`): they're not needed here.
 - Expiry list: `get_expiries`.
+- Watchers: `get_watchers` (each one's last check, and whether a notification is waiting to be sent).
 - Brain inbox, Train times: no tool says more. Don't ask the doctor again for trains just to retry: each ask is a call on Phil's Rail Data Marketplace key.
 
 A check that's `off` is switched off on purpose. Don't treat it as a problem or suggest switching it on: that's Phil's decision. Name it under Switched off.

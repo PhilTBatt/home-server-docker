@@ -5,8 +5,8 @@ export const hubServerFile = "/mcp/dist/server.js";
 export const hubServerName = "hub";
 export const hubToolPrefix = `mcp__${hubServerName}__`;
 
-export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup"];
-export const hubActionTools = ["scan_library", "stop_download", "start_download"];
+export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers"];
+export const hubActionTools = ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher"];
 export const notDoneNote = "Phil didn't say yes, so it wasn't done";
 export const hubApiUrl = "http://api:3000";
 export const lookupMs = 5_000;
@@ -42,8 +42,34 @@ function download(input: unknown): string {
   return hash.length > 8 ? `the download whose hash starts ${hash.slice(0, 8)}` : `the download ${hash}`;
 }
 
+const watchedServices: Record<string, string> = { qbittorrent: "qBittorrent", jellyfin: "Jellyfin" };
+
+export function watchText(input: unknown): string | null {
+  const fields = typeof input === "object" && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+  const whole = (value: unknown, lowest: number, highest: number) => typeof value === "number" && Number.isInteger(value) && value >= lowest && value <= highest;
+  if (fields.hours !== undefined && !whole(fields.hours, 1, 168)) return null;
+  const hours = typeof fields.hours === "number" ? fields.hours : 24;
+  const span = hours === 1 ? "an hour" : `${hours} hours`;
+  let what: string | null = null;
+  if (fields.kind === "download-finished" && typeof fields.name === "string" && /^[A-Za-z0-9'\-.,()&/+:_]+( [A-Za-z0-9'\-.,()&/+:_]+)*$/.test(fields.name) && fields.name.length >= 2 && fields.name.length <= 40) what = `a download matching "${fields.name}" to finish`;
+  if (fields.kind === "disk-free-below" && whole(fields.percent, 1, 99)) what = `free disk space to fall below ${String(fields.percent)}%`;
+  if (fields.kind === "service-answering" && typeof fields.service === "string" && Object.hasOwn(watchedServices, fields.service)) what = `${watchedServices[fields.service]} to answer`;
+  return what === null ? null : `watch for ${what}, for up to ${span}, and tell your phone once when it happens`;
+}
+
+function watcherId(input: unknown): string {
+  const id = typeof input === "object" && input !== null ? (input as Record<string, unknown>).id : undefined;
+  return typeof id === "string" && /^[0-9a-f]{8}$/.test(id) ? `the watcher ${id}` : "a watcher";
+}
+
 export function actionQuestion(name: string, input: unknown): string {
-  const what: Record<string, string> = { scan_library: "scan the library", stop_download: `stop ${download(input)}`, start_download: `start ${download(input)} again` };
+  const what: Record<string, string> = {
+    scan_library: "scan the library",
+    stop_download: `stop ${download(input)}`,
+    start_download: `start ${download(input)} again`,
+    add_watcher: watchText(input) ?? "add a watcher with details the hub won't accept",
+    cancel_watcher: `cancel ${watcherId(input)}`,
+  };
   return `Jarvis wants to ${what[name] ?? `use ${name}`}. ${typeYes}`;
 }
 

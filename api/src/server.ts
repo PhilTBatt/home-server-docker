@@ -13,6 +13,8 @@ import { createChangeFeed } from "./modules/trains/changes.js";
 import { expiryCheckerFor } from "./modules/expiry/setup.js";
 import { expiringLine } from "./modules/expiry/checker.js";
 import { createTries } from "./modules/system/doctor.js";
+import { watchersFor } from "./modules/watchers/setup.js";
+import { checkEveryMs } from "./modules/watchers/watchers.js";
 
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
@@ -28,7 +30,9 @@ const expiryChecker = config.features.expiryAlerts
 
 const tries = { heartbeat: createTries(), alerts: createTries() };
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries });
+const watchers = config.features.watchers ? watchersFor(config) : undefined;
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers });
 app.log.info({ features: config.features }, "feature switches");
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
@@ -110,4 +114,22 @@ if (config.features.trainAlerts) {
   };
   runTrainCheck();
   setInterval(runTrainCheck, tickMs);
+}
+
+if (watchers !== undefined) {
+  const runWatchers = () => {
+    watchers
+      .run(new Date())
+      .then((summary) => {
+        if (typeof summary === "string") return;
+        if (summary.fired > 0) app.log.info(`${summary.fired} watcher${summary.fired === 1 ? "" : "s"} fired`);
+        if (summary.expired > 0) app.log.info(`${summary.expired} watcher${summary.expired === 1 ? "" : "s"} expired`);
+        if (summary.unsent > 0) app.log.warn("a watcher's notification couldn't be sent");
+        if (summary.dropped > 0) app.log.warn("a watcher expired before its notification could be sent");
+      })
+      .catch((error: unknown) => {
+        app.log.error(error, "watcher check failed");
+      });
+  };
+  setInterval(runWatchers, checkEveryMs);
 }

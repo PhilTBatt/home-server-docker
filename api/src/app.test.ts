@@ -6,6 +6,7 @@ import type { Config } from "./config.js";
 import type { DealWatcher } from "./modules/deals/watcher.js";
 import { createExpiryChecker } from "./modules/expiry/checker.js";
 import { createTries } from "./modules/system/doctor.js";
+import { createWatchers } from "./modules/watchers/watchers.js";
 
 const config: Config = {
   apiToken: "test-token",
@@ -16,7 +17,7 @@ const config: Config = {
   deals: { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false },
   trains: { key: "test-rail-key", from: "AAA", to: "BBB", boardUrl: "https://api1.raildata.org.uk/test-board" },
   trainAlerts: { days: ["mon", "wed"], start: 420, end: 510, reminder: 405 },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true }
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -128,7 +129,10 @@ const protectedRoutes = [
   ["GET", "/trains"],
   ["GET", "/trains/changes"],
   ["GET", "/expiry"],
-  ["GET", "/system/doctor"]
+  ["GET", "/system/doctor"],
+  ["GET", "/watchers"],
+  ["POST", "/watchers"],
+  ["DELETE", "/watchers/0123abcd"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -263,7 +267,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -521,7 +525,7 @@ test("the server doctor is a route of the hub's, asking qBittorrent and Jellyfin
   const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, trains: false, expiryAlerts: false, memoryInbox: false } }, expiryChecker: checker });
   const offReport = (await off.inject({ method: "GET", url: "/system/doctor", headers: goodHeader })).json();
   assert.equal(asked.some((line) => line.startsWith("https://")), false);
-  assert.deepEqual(offReport.checks.filter((check: { state: string }) => check.state === "off").map((check: { name: string }) => check.name), ["Backups", "Brain inbox", "Train times", "Expiry list"]);
+  assert.deepEqual(offReport.checks.filter((check: { state: string }) => check.state === "off").map((check: { name: string }) => check.name), ["Backups", "Brain inbox", "Train times", "Expiry list", "Watchers"]);
 });
 
 test("the server doctor shows the heartbeat's and the alerts' latest outcomes from the tries it was handed", async () => {
@@ -532,4 +536,38 @@ test("the server doctor shows the heartbeat's and the alerts' latest outcomes fr
   const report = (await app.inject({ method: "GET", url: "/system/doctor", headers: goodHeader })).json();
   const byName = Object.fromEntries(report.checks.map((check: { name: string; state: string; detail: string }) => [check.name, check]));
   assert.deepEqual([byName.Heartbeat.state, byName.Heartbeat.detail, byName["Phone alerts"].detail], ["problem", "The last ping to Healthchecks.io, 26 Nov at 11:00, failed.", "No alert check has finished since the API started."]);
+});
+
+function quietWatchers() {
+  return createWatchers({
+    sources: { finished: async () => [], disk: async () => ({ freeGB: 50, totalGB: 100 }), answering: { qbittorrent: async () => [], jellyfin: async () => ({}) } },
+    send: async () => undefined,
+    makeId: () => "0123abcd",
+  });
+}
+
+test("watchers are a route of the hub's, given only the watchers it was handed and only with the switch on", async () => {
+  const watching = quietWatchers();
+  const on = await buildRealApp({ logger: false, config, watchers: watching });
+  const added = await on.inject({ method: "POST", url: "/watchers", headers: goodHeader, payload: { kind: "disk-free-below", percent: 10 } });
+  assert.deepEqual([added.statusCode, added.json().id], [200, "0123abcd"]);
+  const listed = await on.inject({ method: "GET", url: "/watchers", headers: goodHeader });
+  assert.deepEqual(listed.json().watchers.map((watcher: { what: string }) => watcher.what), ["free disk space to fall below 10%"]);
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, watchers: false } }, watchers: watching });
+  for (const [method, url] of [["GET", "/watchers"], ["POST", "/watchers"], ["DELETE", "/watchers/0123abcd"]] as const) {
+    const refused = await off.inject({ method, url, headers: goodHeader, ...(method === "POST" ? { payload: { kind: "disk-free-below", percent: 20 } } : {}) });
+    assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "Watchers are switched off" }], `${method} ${url}`);
+  }
+  assert.equal(watching.list().length, 1);
+});
+
+test("the server doctor's Watchers check reads the watchers the hub was handed, and is off without them or with the switch off", async () => {
+  mock.method(globalThis, "fetch", async () => Response.json([]));
+  const watching = quietWatchers();
+  watching.add({ watch: { kind: "service-answering", service: "jellyfin" }, hours: 24 }, new Date());
+  const watchersCheck = async (app: Awaited<ReturnType<typeof buildRealApp>>) => (await app.inject({ method: "GET", url: "/system/doctor", headers: goodHeader })).json().checks.find((check: { name: string }) => check.name === "Watchers");
+  const doctor = { inbox: async () => 0, trains: async () => ({}) };
+  assert.deepEqual(await watchersCheck(await buildRealApp({ logger: false, config, watchers: watching, doctor })), { name: "Watchers", state: "ok", detail: "Watching for 1 thing.", next: null });
+  assert.equal((await watchersCheck(await buildRealApp({ logger: false, config, doctor }))).state, "off");
+  assert.equal((await watchersCheck(await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, watchers: false } }, watchers: watching, doctor }))).state, "off");
 });

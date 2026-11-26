@@ -1,7 +1,8 @@
 export const apiUrl = "http://api:3000";
 
 export type ApiGet = (path: string) => Promise<unknown>;
-export type ApiPost = (path: string) => Promise<unknown>;
+export type ApiPost = (path: string, body?: Record<string, unknown>) => Promise<unknown>;
+export type ApiDelete = (path: string) => Promise<unknown>;
 
 async function saidWhy(response: Response): Promise<string> {
   const body: unknown = await response.json().catch(() => null);
@@ -11,11 +12,12 @@ async function saidWhy(response: Response): Promise<string> {
   return text === "" ? "" : `: ${text}`;
 }
 
-function createApiRequest(method: "GET" | "POST", token: string, timeoutMs: number) {
-  return async (path: string): Promise<unknown> => {
+function createApiRequest(method: "GET" | "POST" | "DELETE", token: string, timeoutMs: number) {
+  return async (path: string, body?: Record<string, unknown>): Promise<unknown> => {
     const response = await fetch(`${apiUrl}${path}`, {
       method,
-      headers: { Authorization: `Bearer ${token}` },
+      headers: body === undefined ? { Authorization: `Bearer ${token}` } : { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(timeoutMs),
     }).catch((error: Error) => {
       throw new Error(error.name === "TimeoutError" ? "The API didn't answer in time" : "Couldn't reach the API");
@@ -26,9 +28,15 @@ function createApiRequest(method: "GET" | "POST", token: string, timeoutMs: numb
 }
 
 export function createApiGet(token: string, timeoutMs = 10_000): ApiGet {
-  return createApiRequest("GET", token, timeoutMs);
+  const request = createApiRequest("GET", token, timeoutMs);
+  return (path) => request(path);
 }
 
 export function createApiPost(token: string, timeoutMs = 10_000): ApiPost {
   return createApiRequest("POST", token, timeoutMs);
+}
+
+export function createApiDelete(token: string, timeoutMs = 10_000): ApiDelete {
+  const request = createApiRequest("DELETE", token, timeoutMs);
+  return (path) => request(path);
 }

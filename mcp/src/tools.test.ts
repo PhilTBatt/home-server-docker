@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { InMemoryTransport, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/server";
-import type { ApiGet, ApiPost } from "./api.js";
+import type { ApiDelete, ApiGet, ApiPost } from "./api.js";
 import { buildServer } from "./tools.js";
 
 type Reply = {
@@ -33,6 +33,7 @@ const readPaths: Record<string, string> = {
   get_backup: "/system/backup",
   get_expiries: "/expiry",
   get_doctor: "/system/doctor",
+  get_watchers: "/watchers",
   get_deal_status: "/deals/status",
   get_deal_searches: "/deals/searches",
 };
@@ -45,6 +46,8 @@ const actions: Record<string, { args: Record<string, unknown>; call: string }> =
   scan_library: { args: {}, call: "POST /media/library/scan" },
   stop_download: { args: { hash }, call: `POST /media/downloads/${hash}/stop` },
   start_download: { args: { hash }, call: `POST /media/downloads/${hash}/start` },
+  add_watcher: { args: { kind: "download-finished", name: "alpha beta", hours: 6 }, call: 'POST /watchers {"kind":"download-finished","name":"alpha beta","hours":6}' },
+  cancel_watcher: { args: { id: "0a1b2c3d" }, call: "DELETE /watchers/0a1b2c3d" },
 };
 
 function fakeApi(data: unknown = { ok: true, problems: [] }) {
@@ -53,21 +56,25 @@ function fakeApi(data: unknown = { ok: true, problems: [] }) {
     calls.push(`GET ${path}`);
     return data;
   };
-  const post: ApiPost = async (path) => {
-    calls.push(`POST ${path}`);
+  const post: ApiPost = async (path, body) => {
+    calls.push(body === undefined ? `POST ${path}` : `POST ${path} ${JSON.stringify(body)}`);
     return data;
   };
-  return { get, post, calls };
+  const remove: ApiDelete = async (path) => {
+    calls.push(`DELETE ${path}`);
+    return data;
+  };
+  return { get, post, remove, calls };
 }
 
-async function connect(api: { get: ApiGet; post: ApiPost; slowGet?: ApiGet }, actions = true) {
+async function connect(api: { get: ApiGet; post: ApiPost; slowGet?: ApiGet; remove?: ApiDelete }, actions = true) {
   const [client, serverSide] = InMemoryTransport.createLinkedPair();
   const waiting = new Map<number, (reply: Reply) => void>();
   client.onmessage = (message) => {
     const reply = message as Reply;
     waiting.get(reply.id)?.(reply);
   };
-  await buildServer(api.get, api.post, actions, api.slowGet).connect(serverSide);
+  await buildServer(api.get, api.post, actions, api.slowGet ?? api.get, api.remove ?? fakeApi().remove).connect(serverSide);
   await client.start();
 
   let nextId = 1;
@@ -101,7 +108,7 @@ test("names itself home-hub", async () => {
   assert.equal(result.serverInfo.name, "home-hub");
 });
 
-test("offers the eleven read tools, the two listing tools and the five tuning tools, then scan, stop and start, in order", async () => {
+test("offers the twelve read tools, the two listing tools and the five tuning tools, then scan, stop, start, add_watcher and cancel_watcher, in order", async () => {
   const { listTools } = await connect(fakeApi());
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), matchesTool, listingTool, ...tuningTools, ...Object.keys(actions)]);
@@ -237,7 +244,7 @@ test("an unknown tool is refused without calling the API", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
-test("read-only offers only the eleven read tools, the two listing tools and the five tuning tools, which all only read", async () => {
+test("read-only offers only the twelve read tools, the two listing tools and the five tuning tools, which all only read", async () => {
   const { listTools } = await connect(fakeApi(), false);
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), matchesTool, listingTool, ...tuningTools]);
@@ -458,4 +465,74 @@ test("explain_deal_listing says how a listing with options, or with too many to 
   const description = (await listTools()).find((tool) => tool.name === "explain_deal_listing")?.description ?? "";
   assert.match(description, /names the option it was judged at/);
   assert.match(description, /more options than a check reads is judged at its cheapest option not marked out of stock/);
+});
+
+test("add_watcher's kind is one of three fixed in the code, its numbers have ranges, and it takes nothing else", async () => {
+  const { listTools } = await connect(fakeApi());
+  const tool = (await listTools()).find((t) => t.name === "add_watcher");
+  assert.ok(tool !== undefined);
+  assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}), ["kind", "name", "percent", "service", "hours"]);
+  assert.deepEqual(tool.inputSchema.required, ["kind"]);
+  const properties = tool.inputSchema.properties as Record<string, { enum?: string[]; minimum?: number; maximum?: number; maxLength?: number; type?: string }>;
+  assert.deepEqual(properties.kind.enum, ["download-finished", "disk-free-below", "service-answering"]);
+  assert.deepEqual(properties.service.enum, ["qbittorrent", "jellyfin"]);
+  assert.deepEqual([properties.percent.type, properties.percent.minimum, properties.percent.maximum], ["integer", 1, 99]);
+  assert.deepEqual([properties.hours.type, properties.hours.minimum, properties.hours.maximum], ["integer", 1, 168]);
+  assert.equal(properties.name.maxLength, 40);
+});
+
+test("add_watcher sends only the fields it was given, as JSON", async () => {
+  const fake = fakeApi({ id: "0a1b2c3d" });
+  const { callTool } = await connect(fake);
+  await callTool("add_watcher", { kind: "disk-free-below", percent: 15 });
+  await callTool("add_watcher", { kind: "service-answering", service: "jellyfin", hours: 168 });
+  assert.deepEqual(fake.calls, ['POST /watchers {"kind":"disk-free-below","percent":15}', 'POST /watchers {"kind":"service-answering","service":"jellyfin","hours":168}']);
+});
+
+for (const [label, args] of Object.entries({
+  "no kind": { percent: 15 },
+  "a kind that isn't fixed in the code": { kind: "run-command", name: "reboot" },
+  "a percent of 0": { kind: "disk-free-below", percent: 0 },
+  "a percent of 100": { kind: "disk-free-below", percent: 100 },
+  "a percent that isn't whole": { kind: "disk-free-below", percent: 15.5 },
+  "a percent as text": { kind: "disk-free-below", percent: "15" },
+  "hours over a week": { kind: "disk-free-below", percent: 15, hours: 169 },
+  "no hours at all": { kind: "disk-free-below", percent: 15, hours: 0 },
+  "a service the hub doesn't ask": { kind: "service-answering", service: "sonarr" },
+  "a name with a shell's characters": { kind: "download-finished", name: "$(reboot)" },
+  "a name with a new line": { kind: "download-finished", name: "alpha\nbeta" },
+  "a name with a space at the end": { kind: "download-finished", name: "alpha " },
+  "a one-letter name": { kind: "download-finished", name: "a" },
+  "a name over 40 characters": { kind: "download-finished", name: "a".repeat(41) },
+})) {
+  test(`add_watcher refuses ${label} without calling the API`, async () => {
+    const fake = fakeApi();
+    const { callTool } = await connect(fake);
+    assert.ok(refused(await callTool("add_watcher", args)));
+    assert.deepEqual(fake.calls, []);
+  });
+}
+
+test("add_watcher drops a field it doesn't know rather than passing it on", async () => {
+  const fake = fakeApi();
+  const { callTool } = await connect(fake);
+  await callTool("add_watcher", { kind: "disk-free-below", percent: 15, command: "reboot" });
+  assert.deepEqual(fake.calls, ['POST /watchers {"kind":"disk-free-below","percent":15}']);
+});
+
+for (const id of ["0A1B2C3D", "0a1b2c3", "../expiry", "0a1b2c3d0", ""]) {
+  test(`cancel_watcher refuses the id "${id}" without calling the API`, async () => {
+    const fake = fakeApi();
+    const { callTool } = await connect(fake);
+    assert.ok(refused(await callTool("cancel_watcher", { id })));
+    assert.deepEqual(fake.calls, []);
+  });
+}
+
+test("the watcher tools say they fail while watchers are switched off, and that a restart forgets them", async () => {
+  const { listTools } = await connect(fakeApi());
+  for (const tool of (await listTools()).filter((t) => ["get_watchers", "add_watcher"].includes(t.name))) {
+    assert.match(tool.description ?? "", /404 while watchers are switched off \(WATCHERS\)/, tool.name);
+    assert.match(tool.description ?? "", /restart of the API forgets them/, tool.name);
+  }
 });

@@ -3,6 +3,7 @@ import { whenText, type ExpiryStatus } from "../expiry/checker.js";
 import { formatLondonTime } from "../notify/daily.js";
 import type { Problem, Status } from "./alerts.js";
 import type { BackupState } from "./backup.js";
+import type { WatcherView } from "../watchers/watchers.js";
 
 export type CheckState = "ok" | "warn" | "problem" | "off";
 
@@ -44,6 +45,7 @@ export type Seen = {
   inbox: Got<number> | null;
   trains: Got<unknown> | null;
   expiries: Got<ExpiryStatus[]> | null;
+  watchers: WatcherView[] | null;
 };
 
 export type DoctorSources = {
@@ -54,6 +56,7 @@ export type DoctorSources = {
   inbox: () => Promise<number>;
   trains: () => Promise<unknown>;
   expiries?: (now: Date) => Promise<ExpiryStatus[]>;
+  watchers?: () => WatcherView[];
   waitMs?: number;
 };
 
@@ -235,6 +238,17 @@ function expiryCheck(seen: Seen): Check {
   return { name, state: "ok", detail: `Nothing due in the next ${expirySoonDays} days, with ${plural(items.length, "item")} on the list.`, next: null };
 }
 
+function watchersCheck(seen: Seen): Check {
+  const name = "Watchers";
+  if (!seen.features.watchers || seen.watchers === null) return off(name, "WATCHERS");
+  const unread = seen.watchers.filter((watcher) => watcher.lastCheck?.ok === false);
+  const unsent = seen.watchers.filter((watcher) => watcher.waitingToSend);
+  const lines = [...unread.map((watcher) => `Couldn't check for ${watcher.what} last time.`), ...unsent.map((watcher) => `It happened, but the notification for ${watcher.what} couldn't be sent yet.`)];
+  if (lines.length > 0) return { name, state: "warn", detail: lines.join(" "), next: "GET /watchers, or get_watchers, shows each one's last check. docker compose logs --tail 20 api shows why a notification couldn't be sent." };
+  const count = seen.watchers.length;
+  return { name, state: "ok", detail: count === 0 ? "Nothing being watched." : `Watching for ${plural(count, "thing")}.`, next: null };
+}
+
 function listed(names: string[]): string {
   return names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
@@ -254,7 +268,7 @@ export function summaryOf(checks: Check[]): string {
 }
 
 export function examine(seen: Seen, now: Date): DoctorReport {
-  const checks = [diskCheck(seen), memoryCheck(seen), wifiCheck(seen), backupCheck(seen, now), heartbeatCheck(seen), alertsCheck(seen), downloadsCheck(seen), libraryCheck(seen), inboxCheck(seen), dealsCheck(seen), trainsCheck(seen), expiryCheck(seen)];
+  const checks = [diskCheck(seen), memoryCheck(seen), wifiCheck(seen), backupCheck(seen, now), heartbeatCheck(seen), alertsCheck(seen), downloadsCheck(seen), libraryCheck(seen), inboxCheck(seen), dealsCheck(seen), trainsCheck(seen), expiryCheck(seen), watchersCheck(seen)];
   const state = checks.some((check) => check.state === "problem") ? "problem" : checks.some((check) => check.state === "warn") ? "warn" : "ok";
   return { state, summary: summaryOf(checks), checkedAt: now.toISOString(), checks };
 }
@@ -277,5 +291,5 @@ export async function runDoctor(
     features.trains ? ask(() => sources.trains(), waitMs) : null,
     features.expiryAlerts && expiries !== undefined ? ask(() => expiries(now), waitMs) : null,
   ]);
-  return examine({ features, problems, status, backup, heartbeat: sources.heartbeat?.last() ?? null, alerts: sources.alerts?.last() ?? null, downloads, library, inbox, trains, expiries: expiring }, now);
+  return examine({ features, problems, status, backup, heartbeat: sources.heartbeat?.last() ?? null, alerts: sources.alerts?.last() ?? null, downloads, library, inbox, trains, expiries: expiring, watchers: features.watchers && sources.watchers !== undefined ? sources.watchers() : null }, now);
 }

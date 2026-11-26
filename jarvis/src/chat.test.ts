@@ -1146,7 +1146,7 @@ test("a hub tool's note leaves out the Agent SDK's mcp__hub__ prefix", () => {
 test("both engines are told what the hub's tools are for, that the get_ ones only read, and that their code asks Phil before any action", () => {
   for (const system of [chatSystem, apiChatSystem]) {
     assert.ok(system.includes("If you have the hub's tools, named get_status, get_alerts and so on, use them for questions about the home server itself: its status, alerts, downloads, library, Wi-Fi and backups. The get_ ones only read."));
-    assert.ok(system.includes("You can only read, apart from the hub's actions if you have them: scan_library, stop_download and start_download. Your own code asks Phil yes or no before each one runs, so don't ask him first yourself, and tell him plainly if one wasn't done. If he asks you to change anything else, tell him you can't yet."));
+    assert.ok(system.includes("You can only read, apart from the hub's actions if you have them: scan_library, stop_download, start_download, add_watcher and cancel_watcher. Your own code asks Phil yes or no before each one runs, so don't ask him first yourself, and tell him plainly if one wasn't done. If he asks you to change anything else, tell him you can't yet."));
     assert.ok(!system.includes("You can only read. If he asks"));
   }
 });

@@ -9,7 +9,7 @@ import type { Problem } from "./alerts.js";
 import type { DoctorSources } from "./doctor.js";
 import { currentProblems, parseReconnects, system } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true };
 
 function buildApp(features = allOn, backupDir = join(tmpdir(), "no-such-backup-status-here")) {
   const app = Fastify();
@@ -124,15 +124,15 @@ test("currentProblems agrees with the alerts route", async () => {
 test("features returns the switches it's given", async () => {
   const allOnResponse = await buildApp().inject({ method: "GET", url: "/system/features" });
   assert.equal(allOnResponse.statusCode, 200);
-  assert.deepEqual(allOnResponse.json(), { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true });
-  const mixed = { alerts: false, heartbeat: true, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
+  assert.deepEqual(allOnResponse.json(), { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true });
+  const mixed = { alerts: false, heartbeat: true, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true };
   const mixedResponse = await buildApp(mixed).inject({ method: "GET", url: "/system/features" });
   assert.deepEqual(mixedResponse.json(), mixed);
 });
 
 test("features never includes any other settings", async () => {
   const response = await buildApp().inject({ method: "GET", url: "/system/features" });
-  assert.deepEqual(Object.keys(response.json()), ["alerts", "heartbeat", "dailySummary", "memoryInbox", "memoryUpload", "deals", "findPhone", "trains", "trainAlerts", "expiryAlerts"]);
+  assert.deepEqual(Object.keys(response.json()), ["alerts", "heartbeat", "dailySummary", "memoryInbox", "memoryUpload", "deals", "findPhone", "trains", "trainAlerts", "expiryAlerts", "watchers"]);
 });
 
 test("backup says never run when there's no status yet", async () => {
@@ -249,7 +249,7 @@ test("doctor answers with an overall state, a summary in plain words, the time a
   const report = response.json();
   assert.deepEqual(Object.keys(report), ["state", "summary", "checkedAt", "checks"]);
   assert.equal(report.checkedAt, "2026-11-26T12:00:00.000Z");
-  assert.deepEqual(report.checks.map((check: { name: string }) => check.name), ["Disk", "Memory", "Wi-Fi", "Backups", "Heartbeat", "Phone alerts", "qBittorrent", "Jellyfin", "Brain inbox", "Deal watcher", "Train times", "Expiry list"]);
+  assert.deepEqual(report.checks.map((check: { name: string }) => check.name), ["Disk", "Memory", "Wi-Fi", "Backups", "Heartbeat", "Phone alerts", "qBittorrent", "Jellyfin", "Brain inbox", "Deal watcher", "Train times", "Expiry list", "Watchers"]);
   for (const check of report.checks) {
     assert.deepEqual(Object.keys(check), ["name", "state", "detail", "next"]);
     assert.ok(["ok", "warn", "problem", "off"].includes(check.state));

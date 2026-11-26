@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
-import type { ApiGet, ApiPost } from "./api.js";
+import type { ApiDelete, ApiGet, ApiPost } from "./api.js";
 
 type ReadTool = {
   name: string;
@@ -21,7 +21,7 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_features",
-    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads, the deal watcher, finding the phone, train times, train alerts and expiry alerts.",
+    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads, the deal watcher, finding the phone, train times, train alerts, expiry alerts and watchers.",
     path: "/system/features",
   },
   {
@@ -51,8 +51,13 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_doctor",
-    description: "One answer to \"is everything OK on the home server?\": state is ok, warn or problem, summary says it in plain words, and checks lists each check (disk, memory, Wi-Fi, backups, the heartbeat, phone alerts, qBittorrent, Jellyfin, the brain inbox, the deal watcher, train times, the expiry list) with its own state (ok, warn, problem, or off when its feature is switched off, which is never a problem), detail in plain words, and next, what to try (null when ok or off). It only reads what the hub can already see; asking it calls qBittorrent and Jellyfin, and the departure board once while train times are on.",
+    description: "One answer to \"is everything OK on the home server?\": state is ok, warn or problem, summary says it in plain words, and checks lists each check (disk, memory, Wi-Fi, backups, the heartbeat, phone alerts, qBittorrent, Jellyfin, the brain inbox, the deal watcher, train times, the expiry list, watchers) with its own state (ok, warn, problem, or off when its feature is switched off, which is never a problem), detail in plain words, and next, what to try (null when ok or off). It only reads what the hub can already see; asking it calls qBittorrent and Jellyfin, and the departure board once while train times are on.",
     path: "/system/doctor",
+  },
+  {
+    name: "get_watchers",
+    description: "What the hub is watching for Phil, each to send one notification to his phone when it happens: each watcher's id, kind (download-finished, disk-free-below or service-answering), its name, percent or service, what in plain words, how many hours it lasts, when it was made and when it gives up, its last check (ok is false when the source couldn't be read) and whether it happened but the notification is still waiting to be sent, with the most allowed at once. Watchers are kept in memory, so a restart of the API forgets them. Fails with a 404 while watchers are switched off (WATCHERS).",
+    path: "/watchers",
   },
   {
     name: "get_deal_status",
@@ -139,6 +144,36 @@ const hashInput = z.object({
   hash: z.string().regex(/^[0-9a-f]{40}$/).describe("The torrent's hash, from get_downloads"),
 });
 
+export const watcherKinds = ["download-finished", "disk-free-below", "service-answering"] as const;
+export const watcherServices = ["qbittorrent", "jellyfin"] as const;
+
+const watcherInput = z.object({
+  kind: z.enum(watcherKinds).describe("download-finished: a download whose name holds name finishes after now. disk-free-below: the server's free disk space falls below percent. service-answering: service answers the hub again."),
+  name: z
+    .string()
+    .min(2)
+    .max(40)
+    .regex(/^[A-Za-z0-9'\-.,()&/+:_]+( [A-Za-z0-9'\-.,()&/+:_]+)*$/)
+    .optional()
+    .describe("For download-finished only: a few words of the download's name, matched in any case, like \"alpha beta\". Letters, digits, single spaces and ' - . , ( ) & / + : _ only."),
+  percent: z.number().int().min(1).max(99).optional().describe("For disk-free-below only: a whole percentage of the disk, from 1 to 99."),
+  service: z.enum(watcherServices).optional().describe("For service-answering only."),
+  hours: z.number().int().min(1).max(168).optional().describe("How long to watch before giving up, from 1 to 168 hours; 24 if left out."),
+});
+
+const watcherIdInput = z.object({
+  id: z.string().regex(/^[0-9a-f]{8}$/).describe("The watcher's id, from get_watchers"),
+});
+
+function watcherBody(input: z.infer<typeof watcherInput>): Record<string, unknown> {
+  const body: Record<string, unknown> = { kind: input.kind };
+  if (input.name !== undefined) body.name = input.name;
+  if (input.percent !== undefined) body.percent = input.percent;
+  if (input.service !== undefined) body.service = input.service;
+  if (input.hours !== undefined) body.hours = input.hours;
+  return body;
+}
+
 function asText(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
 }
@@ -149,7 +184,7 @@ function lookupPath(path: string, query: Record<string, string | undefined>): st
   return `${path}?${params.toString()}`;
 }
 
-export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGet: ApiGet = get): McpServer {
+export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGet: ApiGet, remove: ApiDelete): McpServer {
   const server = new McpServer({ name: "home-hub", version: "1.0.0" });
   for (const tool of readTools) {
     server.registerTool(tool.name, { description: tool.description }, async () => asText(await get(tool.path)));
@@ -237,6 +272,21 @@ export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGe
     "start_download",
     { description: "Starts a stopped torrent in qBittorrent again.", inputSchema: hashInput },
     async ({ hash }) => asText(await post(`/media/downloads/${hash}/start`)),
+  );
+
+  server.registerTool(
+    "add_watcher",
+    {
+      description: "Asks the hub to watch for one thing and send Phil's phone one notification when it happens, then forget it. Only these kinds exist: a download finishing (download-finished, with a few words of its name), the server's free disk space falling below a percentage (disk-free-below, with percent), or qBittorrent or Jellyfin answering again (service-answering, with service). Give only the field its kind takes. It gives up after hours (24 if left out, 168 at most) and sends a low-priority note saying it didn't happen. The hub checks about once a minute and keeps at most 10, in memory only, so a restart of the API forgets them. A disk or service watch that's already true fires at the next check. Fails with a 400 saying why for anything the kind doesn't allow, a 409 when the same watch exists or 10 already do, and a 404 while watchers are switched off (WATCHERS).",
+      inputSchema: watcherInput,
+    },
+    async (input) => asText(await post("/watchers", watcherBody(input))),
+  );
+
+  server.registerTool(
+    "cancel_watcher",
+    { description: "Cancels one of the hub's watchers by its id from get_watchers, so it never sends its notification.", inputSchema: watcherIdInput },
+    async ({ id }) => asText(await remove(`/watchers/${id}`)),
   );
   return server;
 }

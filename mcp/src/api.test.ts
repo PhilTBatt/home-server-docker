@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { createApiGet, createApiPost } from "./api.js";
+import { createApiDelete, createApiGet, createApiPost } from "./api.js";
 
 const token = "test-token";
 
@@ -173,4 +173,33 @@ test("createApiPost says when the API can't be reached", async () => {
     throw new TypeError("fetch failed");
   });
   await assert.rejects(createApiPost(token)("/media/library/scan"), { message: "Couldn't reach the API" });
+});
+
+test("createApiPost with a body sends it as JSON, saying so", async () => {
+  const fetchMock = fakeApi();
+  await createApiPost(token)("/watchers", { kind: "disk-free-below", percent: 15 });
+  const init = fetchMock.mock.calls[0].arguments[1];
+  assert.equal(init?.body, '{"kind":"disk-free-below","percent":15}');
+  assert.deepEqual(init?.headers, { Authorization: "Bearer test-token", "Content-Type": "application/json" });
+});
+
+test("createApiDelete sends a DELETE with no body, the token and the same timeout", async () => {
+  const fetchMock = fakeApi(200, JSON.stringify({ cancelled: "0a1b2c3d" }));
+  const timeoutMock = mock.method(AbortSignal, "timeout");
+  assert.deepEqual(await createApiDelete(token)("/watchers/0a1b2c3d"), { cancelled: "0a1b2c3d" });
+  const [url, init] = fetchMock.mock.calls[0].arguments;
+  assert.equal(url, "http://api:3000/watchers/0a1b2c3d");
+  assert.deepEqual([init?.method, init?.body, init?.headers], ["DELETE", undefined, { Authorization: "Bearer test-token" }]);
+  assert.equal(timeoutMock.mock.calls[0].arguments[0], 10_000);
+});
+
+test("createApiDelete names the status and path, and what the API said, when it refuses", async () => {
+  fakeApi(404, JSON.stringify({ error: "No watcher with that id" }));
+  await assert.rejects(createApiDelete(token)("/watchers/ffffffff"), { message: "The API replied 404 to /watchers/ffffffff: No watcher with that id" });
+});
+
+test("createApiGet never sends a body, even if one is passed by mistake", async () => {
+  const fetchMock = fakeApi();
+  await (createApiGet(token) as (path: string, body?: Record<string, unknown>) => Promise<unknown>)("/watchers", { kind: "x" });
+  assert.equal(fetchMock.mock.calls[0].arguments[1]?.body, undefined);
 });

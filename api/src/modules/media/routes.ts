@@ -10,6 +10,7 @@ type QbitTorrent = {
   eta: number;
   state: string;
   hash: string;
+  completion_on?: number;
 };
 
 type JellyfinCounts = {
@@ -67,6 +68,24 @@ export async function downloading(qbitApiKey: string, signal?: AbortSignal) {
   }
   const torrents = (await response.json()) as QbitTorrent[];
   return torrents.map(toDownload);
+}
+
+export type Finished = { name: string; completedAt: number };
+
+export async function finishedDownloads(qbitApiKey: string, signal?: AbortSignal): Promise<Finished[]> {
+  const response = await fetch(
+    "http://qbittorrent:8081/api/v2/torrents/info?filter=completed",
+    { headers: { Authorization: `Bearer ${qbitApiKey}` }, signal },
+  );
+  if (!response.ok) {
+    throw new Error(`qBittorrent replied ${response.status}`);
+  }
+  const torrents = (await response.json()) as QbitTorrent[];
+  return torrents.flatMap((t) =>
+    typeof t.name === "string" && t.progress >= 1 && typeof t.completion_on === "number" && t.completion_on > 0
+      ? [{ name: t.name, completedAt: t.completion_on * 1000 }]
+      : [],
+  );
 }
 
 export async function libraryCounts(jellyfinApiKey: string, signal?: AbortSignal) {

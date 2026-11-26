@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
 import Fastify from "fastify";
-import { media } from "./routes.js";
+import { finishedDownloads, media } from "./routes.js";
 
 const hash = "0123456789abcdef0123456789abcdef01234567";
 
@@ -185,4 +185,24 @@ test("an error from Jellyfin on scan becomes a 500", async () => {
   mock.method(globalThis, "fetch", async () => new Response(null, { status: 500 }));
   const response = await buildApp().inject({ method: "POST", url: "/media/library/scan" });
   assert.equal(response.statusCode, 500);
+});
+test("finished downloads are asked for with the API key and keep only complete torrents with a completion time, in milliseconds", async () => {
+  const fetchMock = mock.method(globalThis, "fetch", async () =>
+    Response.json([
+      { name: "Alpha", progress: 1, dlspeed: 0, eta: 0, state: "uploading", hash, completion_on: 1_790_000_000 },
+      { name: "Beta", progress: 0.999, dlspeed: 0, eta: 0, state: "stalledDL", hash, completion_on: 1_790_000_100 },
+      { name: "Gamma", progress: 1, dlspeed: 0, eta: 0, state: "uploading", hash, completion_on: -1 },
+      { name: "Delta", progress: 1, dlspeed: 0, eta: 0, state: "uploading", hash },
+      { name: 7, progress: 1, dlspeed: 0, eta: 0, state: "uploading", hash, completion_on: 1_790_000_200 },
+    ]),
+  );
+  assert.deepEqual(await finishedDownloads("test-qbit-key"), [{ name: "Alpha", completedAt: 1_790_000_000_000 }]);
+  const [url, options] = fetchMock.mock.calls[0].arguments;
+  assert.equal(url, "http://qbittorrent:8081/api/v2/torrents/info?filter=completed");
+  assert.equal(new Headers(options?.headers).get("Authorization"), "Bearer test-qbit-key");
+});
+
+test("an error from qBittorrent on finished downloads is thrown with its status", async () => {
+  mock.method(globalThis, "fetch", async () => Response.json([], { status: 403 }));
+  await assert.rejects(finishedDownloads("test-qbit-key"), { message: "qBittorrent replied 403" });
 });

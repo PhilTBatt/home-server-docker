@@ -8,7 +8,9 @@
       "Bash(cp *)",
       "mcp__hub__scan_library",
       "mcp__hub__stop_download",
-      "mcp__hub__start_download"
+      "mcp__hub__start_download",
+      "mcp__hub__add_watcher",
+      "mcp__hub__cancel_watcher"
     ],
     "allow": [
       "mcp__hub__get_status",
@@ -20,6 +22,7 @@
       "mcp__hub__get_backup",
       "mcp__hub__get_expiries",
       "mcp__hub__get_doctor",
+      "mcp__hub__get_watchers",
       "mcp__hub__get_deal_status",
       "mcp__hub__get_deal_searches",
       "mcp__hub__get_deal_matches",

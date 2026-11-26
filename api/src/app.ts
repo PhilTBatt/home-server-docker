@@ -15,11 +15,14 @@ import type { ChangeFeed } from "./modules/trains/changes.js";
 import { expiry } from "./modules/expiry/routes.js";
 import type { ExpiryChecker } from "./modules/expiry/checker.js";
 import type { DoctorSources, Tries } from "./modules/system/doctor.js";
+import { watchers } from "./modules/watchers/routes.js";
+import type { Watchers } from "./modules/watchers/watchers.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; doctor?: Partial<DoctorSources> }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources> }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
+  const watching = options.watchers;
 
   await app.register(cookie);
 
@@ -45,6 +48,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     inbox: () => countWaiting(),
     trains: boardFor(options.config.trains),
     expiries: expiryChecker === undefined ? undefined : (now) => expiryChecker.list(now),
+    watchers: watching === undefined ? undefined : () => watching.list(),
     ...options.doctor,
   };
   app.register(system, { prefix: "/system", features: options.config.features, moreProblems: () => [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])], doctor });
@@ -52,6 +56,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic });
   app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains, changes: options.config.features.trainAlerts ? options.trainChanges : undefined });
   app.register(expiry, { prefix: "/expiry", features: options.config.features, checker: expiryChecker });
+  app.register(watchers, { prefix: "/watchers", features: options.config.features, watchers: watching });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,
