@@ -13,7 +13,7 @@ const status: Status = {
   diskAvailableGB: 180,
 };
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
 
 const neverRun: BackupState = { lastRun: null, lastSuccess: null };
 
@@ -207,7 +207,7 @@ test("a different hour can be chosen", async () => {
 });
 
 test("a summary names anything switched off, in a fixed order", () => {
-  const summary = summaryFor(status, [], { alerts: false, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true }, null, neverRun);
+  const summary = summaryFor(status, [], { alerts: false, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true }, null, neverRun);
   assert.equal(
     summary.message,
     [
@@ -222,7 +222,7 @@ test("a summary names anything switched off, in a fixed order", () => {
 });
 
 test("the switched-off line comes after the problems", () => {
-  const summary = summaryFor(status, [diskLow], { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true }, 2, neverRun);
+  const summary = summaryFor(status, [diskLow], { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true }, 2, neverRun);
   assert.deepEqual(summary.message.split("\n").slice(-5), ["Problems:", diskLow.message, "Brain: 2 notes waiting.", "Backups: never run.", "Switched off: heartbeat."]);
 });
 
@@ -231,9 +231,9 @@ test("a summary with everything on says nothing about switches", () => {
 });
 
 test("summaryFor leaves the switches unchanged", () => {
-  const features: Features = { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true };
+  const features: Features = { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
   summaryFor(status, [], features, 3, neverRun);
-  assert.deepEqual(features, { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true });
+  assert.deepEqual(features, { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true });
 });
 
 test("the summary that's sent includes what's switched off", async () => {
@@ -248,6 +248,7 @@ test("the summary that's sent includes what's switched off", async () => {
     findPhone: true,
     trains: true,
     trainAlerts: true,
+    expiryAlerts: true,
   }, async () => 0, async () => neverRun);
   assert.equal(await send(new Date("2026-11-13T08:00:00Z")), true);
   const body = String(fetchMock.mock.calls[0].arguments[1]?.body);
@@ -415,4 +416,24 @@ test("a deal watcher problem is listed under Problems in the summary like any ot
   const keys: Problem = { code: "deals-source", message: "The deal watcher can't check its searches: eBay refused the keys." };
   const lines = summaryFor(status, [diskLow, keys], allOn, 0, neverRun, { on: 3, off: 0 }).message.split("\n");
   assert.deepEqual(lines.slice(3, 6), ["Problems:", diskLow.message, keys.message]);
+});
+test("with expiry alerts on, the summary gives the expiring line after the deals line, and none when nothing's within 30 days", async () => {
+  const lines = summaryFor(status, [], { ...allOn, heartbeat: false }, 2, neverRun, { on: 3, off: 1 }, "Expiring: Alpha in 7 days.").message.split("\n");
+  assert.deepEqual(lines.slice(-3), ["Deals: watching 3 searches, 1 switched off.", "Expiring: Alpha in 7 days.", "Switched off: heartbeat."]);
+  assert.doesNotMatch(summaryFor(status, [], allOn, 2, neverRun, undefined, null).message, /Expiring/);
+  assert.equal(summaryFor(status, [], allOn, 2, neverRun, undefined, null).message, summaryFor(status, [], allOn, 2, neverRun).message);
+});
+
+test("the summary asks for the expiring line with its own time, and says when the list couldn't be read", async () => {
+  const fetchMock = fakeNtfy();
+  const asked: Date[] = [];
+  const send = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0, async () => neverRun, undefined, async (now) => (asked.push(now), "Expiring: Alpha today."));
+  await send(new Date("2026-11-13T08:01:00Z"));
+  assert.deepEqual(asked, [new Date("2026-11-13T08:01:00Z")]);
+  assert.match(String(fetchMock.mock.calls[0].arguments[1]?.body), /\nExpiring: Alpha today\.$/);
+  const failing = createDailySummary("my-topic", async () => status, async () => [], 8, allOn, async () => 0, async () => neverRun, undefined, async () => {
+    throw new Error("The expiry list has a problem: there's no expiry/items.json yet");
+  });
+  await failing(new Date("2026-11-13T08:01:00Z"));
+  assert.match(String(fetchMock.mock.calls[1].arguments[1]?.body), /\nExpiring: couldn't read the list\.$/);
 });

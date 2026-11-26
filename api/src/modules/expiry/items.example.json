@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "name": "Server's Tailscale key", "date": "2099-01-31", "note": "Renew with tailscale up --force-reauth, or turn off its key expiry in the admin console" },
+    { "name": "GitHub token", "date": "2099-02-28", "note": "Make a new one on GitHub, then change it where it's used" },
+    { "name": "Yearly subscription", "date": "2099-03-31" }
+  ]
+}

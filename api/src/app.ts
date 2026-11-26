@@ -12,10 +12,13 @@ import { phone } from "./modules/phone/routes.js";
 import { trains } from "./modules/trains/routes.js";
 import type { DealWatcher } from "./modules/deals/watcher.js";
 import type { ChangeFeed } from "./modules/trains/changes.js";
+import { expiry } from "./modules/expiry/routes.js";
+import type { ExpiryChecker } from "./modules/expiry/checker.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
+  const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
 
   await app.register(cookie);
 
@@ -33,10 +36,11 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
       jellyfinApiKey: options.config.jellyfinApiKey,
     });
   app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
-  app.register(system, { prefix: "/system", features: options.config.features, moreProblems: () => dealWatcher?.problems() ?? [] });
+  app.register(system, { prefix: "/system", features: options.config.features, moreProblems: () => [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])] });
   app.register(memory, { prefix: "/memory", features: options.config.features });
   app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic });
   app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains, changes: options.config.features.trainAlerts ? options.trainChanges : undefined });
+  app.register(expiry, { prefix: "/expiry", features: options.config.features, checker: expiryChecker });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,

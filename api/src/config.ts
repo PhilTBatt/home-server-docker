@@ -12,6 +12,7 @@ export type Features = {
   findPhone: boolean;
   trains: boolean;
   trainAlerts: boolean;
+  expiryAlerts: boolean;
 };
 
 export type DealSettings = {
@@ -44,6 +45,7 @@ const featureLabels: Record<keyof Features, string> = {
   findPhone: "find my phone",
   trains: "train times",
   trainAlerts: "train alerts",
+  expiryAlerts: "expiry alerts",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -87,8 +89,9 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     findPhone: readSwitch("FIND_PHONE"),
     trains: readSwitch("TRAINS"),
     trainAlerts: readSwitch("TRAIN_ALERTS"),
+    expiryAlerts: readSwitch("EXPIRY_ALERTS"),
   };
-  const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts);
+  const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
   const deals: DealSettings = {
     seen: readChoice("DEALS_SEEN", ["memory", "disk"], features.deals),

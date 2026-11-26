@@ -7,7 +7,7 @@ import type { Board } from "./board.js";
 import { createChangeFeed, type ChangeFeed } from "./changes.js";
 import { trains } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
 const settings = { key: "test-rail-key", from: "AAA", to: "BBB", boardUrl: "https://api1.raildata.org.uk/test-board" };
 const board: Board = { from: "Alpha", to: "Beta", departures: [{ due: "08:14", expected: "On time", platform: "16", cancelled: false, reason: null, destination: "Beta" }], buses: 0, messages: [] };
 
@@ -93,7 +93,7 @@ test("today's train changes are at /trains/changes, after a number and run if gi
 });
 
 test("with train alerts off, or no feed, the changes are a 404", async () => {
-  for (const app of [withChanges({ ...allOn, trainAlerts: false }, feedWithTwo()), withChanges(allOn)]) {
+  for (const app of [withChanges({ ...allOn, trainAlerts: false, expiryAlerts: false }, feedWithTwo()), withChanges(allOn)]) {
     const reply = await app.inject({ method: "GET", url: "/trains/changes" });
     assert.deepEqual([reply.statusCode, reply.json()], [404, { error: "Train alerts are switched off" }]);
   }

@@ -4,6 +4,7 @@ import { buildApp as buildRealApp } from "./app.js";
 import { createChangeFeed } from "./modules/trains/changes.js";
 import type { Config } from "./config.js";
 import type { DealWatcher } from "./modules/deals/watcher.js";
+import { createExpiryChecker } from "./modules/expiry/checker.js";
 
 const config: Config = {
   apiToken: "test-token",
@@ -14,7 +15,7 @@ const config: Config = {
   deals: { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false },
   trains: { key: "test-rail-key", from: "AAA", to: "BBB", boardUrl: "https://api1.raildata.org.uk/test-board" },
   trainAlerts: { days: ["mon", "wed"], start: 420, end: 510, reminder: 405 },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true }
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -124,7 +125,8 @@ const protectedRoutes = [
   ["POST", "/deals/check"],
   ["POST", "/phone/find"],
   ["GET", "/trains"],
-  ["GET", "/trains/changes"]
+  ["GET", "/trains/changes"],
+  ["GET", "/expiry"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -259,7 +261,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -446,7 +448,7 @@ test("train changes come from the feed the hub was given, only with train alerts
   const on = await buildRealApp({ logger: false, config, trainChanges: feed });
   const given = await on.inject({ method: "GET", url: "/trains/changes", headers: goodHeader });
   assert.deepEqual([given.statusCode, given.json().run, given.json().changes.length], [200, "run-1", 1]);
-  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, trainAlerts: false } }, trainChanges: feed });
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, trainAlerts: false, expiryAlerts: false } }, trainChanges: feed });
   const refused = await off.inject({ method: "GET", url: "/trains/changes", headers: goodHeader });
   assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "Train alerts are switched off" }]);
 });
@@ -455,4 +457,41 @@ test("train times are a route of the hub's, which says when they're switched off
   const app = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, trains: false } } });
   const response = await app.inject({ method: "GET", url: "/trains", headers: goodHeader });
   assert.deepEqual([response.statusCode, response.json()], [404, { error: "Train times are switched off" }]);
+});
+
+function fakeExpiryChecker(fail = false) {
+  let reads = 0;
+  const checker = createExpiryChecker({
+    load: async () => {
+      reads++;
+      if (fail) throw new Error("expiry/items.json isn't valid JSON");
+      return [{ name: "Alpha", date: "2099-01-01", note: null }];
+    },
+    store: { load: async () => new Map(), save: async () => undefined },
+    send: async () => undefined,
+  });
+  return { checker, reads: () => reads };
+}
+
+test("the expiry list is a route of the hub's, given only the checker it was handed and only with the switch on", async () => {
+  const { checker, reads } = fakeExpiryChecker();
+  const on = await buildRealApp({ logger: false, config, expiryChecker: checker });
+  const given = await on.inject({ method: "GET", url: "/expiry", headers: goodHeader });
+  assert.deepEqual([given.statusCode, given.json().items.map((item: { name: string }) => item.name)], [200, ["Alpha"]]);
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, expiryAlerts: false } }, expiryChecker: checker });
+  const refused = await off.inject({ method: "GET", url: "/expiry", headers: goodHeader });
+  assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "Expiry alerts are switched off" }]);
+  assert.equal(reads(), 1);
+});
+
+test("a problem with the expiry list shows in the alerts with the deal watcher's, only while the switch is on", async () => {
+  mock.method(globalThis, "fetch", async () => new Response(null, { status: 200 }));
+  const { checker } = fakeExpiryChecker(true);
+  await checker.list(new Date()).catch(() => undefined);
+  const on = await buildRealApp({ logger: false, config, expiryChecker: checker });
+  const problems = (await on.inject({ method: "GET", url: "/system/alerts", headers: goodHeader })).json().problems as { code: string; message: string }[];
+  assert.deepEqual(problems.filter((problem) => problem.code.startsWith("expiry")), [{ code: "expiry-list", message: "The expiry list has a problem: expiry/items.json isn't valid JSON." }]);
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, expiryAlerts: false } }, expiryChecker: checker });
+  const offProblems = (await off.inject({ method: "GET", url: "/system/alerts", headers: goodHeader })).json().problems as { code: string }[];
+  assert.equal(offProblems.some((problem) => problem.code.startsWith("expiry")), false);
 });

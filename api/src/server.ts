@@ -10,25 +10,34 @@ import { dealWatcherFor } from "./modules/deals/setup.js";
 import { boardForAlerts, createTrainAlerts, tickMs, type AlertHooks } from "./modules/trains/alerts.js";
 import { createJourneyAlerts, journeysForAlerts } from "./modules/trains/journey-alerts.js";
 import { createChangeFeed } from "./modules/trains/changes.js";
+import { expiryCheckerFor } from "./modules/expiry/setup.js";
+import { expiringLine } from "./modules/expiry/checker.js";
 
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
 
 const trainChanges = config.features.trainAlerts ? createChangeFeed() : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges });
+const expiryChecker = config.features.expiryAlerts
+  ? expiryCheckerFor(config, {
+      listProblem: (message) => (message === null ? app.log.info("the expiry list can be read again") : app.log.error(message)),
+      warn: (message) => app.log.warn(message),
+    })
+  : undefined;
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker });
 app.log.info({ features: config.features }, "feature switches");
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
 
 
-const allProblems = () => currentProblems(undefined, dealWatcher?.problems());
+const allProblems = () => currentProblems(undefined, [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])]);
 const checkAndNotify = createNotifier(config.ntfyTopic, allProblems);
 const countDeals = () => {
   const searches = dealWatcher?.searches() ?? [];
   return { on: searches.filter((search) => search.on).length, off: searches.filter((search) => !search.on).length };
 };
-const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, allProblems, 8, config.features, countWaiting, readBackupState, dealWatcher === undefined ? undefined : countDeals);
+const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, allProblems, 8, config.features, countWaiting, readBackupState, dealWatcher === undefined ? undefined : countDeals, expiryChecker === undefined ? undefined : (now) => expiryChecker.list(now).then(expiringLine));
 
 function runCheck() {
   if (config.features.alerts) {
@@ -57,6 +66,17 @@ function runCheck() {
       })
       .catch((error: unknown) => {
         app.log.error(error, "deal check failed");
+      });
+  }
+
+  if (expiryChecker !== undefined) {
+    expiryChecker
+      .run(new Date())
+      .then((result) => {
+        if (result === "unsent") app.log.warn("the expiry warnings couldn't be sent and will be tried again");
+      })
+      .catch((error: unknown) => {
+        app.log.error(error, "expiry check failed");
       });
   }
 }

@@ -24,7 +24,7 @@ I built it using my own ideas, with AI helping me plan and learn what I needed t
 ## Services
 | Address | Service | What it's for |
 |---|---|---|
-| `hub.home` | the phone page | alerts, downloads, library, Wi-Fi, brain, deals, server, backups and switches |
+| `hub.home` | the phone page | alerts, downloads, library, Wi-Fi, brain, deals, expiring, server, backups and switches |
 | `api.home` | the API | everything the phone page and Claude Code use |
 | `home.home` | Homepage | a dashboard of everything |
 | `dns.home` | AdGuard Home | DNS and ad blocking |
@@ -102,6 +102,15 @@ If the board fails for 5 minutes or more, whether it can't be reached, refuses t
 
 While `TRAIN_ALERTS` is on, `GET /trains/changes` gives today's change lines too (record 0051), for Jarvis to say aloud: each check that found changes is one entry, numbered from 1, with when it was found and its lines, only the newest 50 kept and none of the reminder's or the outage notices. `?after=<number>&run=<run>` gives only the entries after that number; the `run` changes each time the API starts, and since the numbers start again then, asking with an old run gives all of today's entries. Entries are found as each check runs, whether or not ntfy takes them, and kept in memory only, so a restart empties them. After a restart past the window's end, the first check's lines go to your phone as before but aren't added, since they're what was already wrong. It's behind the API's token like every route, and since Jarvis asks every 30 seconds, asking isn't logged, refusals and wrong tokens included, unless the API itself fails.
 
+### Expiry alerts
+`EXPIRY_ALERTS` switches on reminders for things that run out on a date, like the server's Tailscale key, a GitHub token or a yearly subscription, sent to your phone through `NTFY_TOPIC`, so `api/.env` needs that topic while it's on (record 0057).
+
+The list is `expiry/items.json`, which git ignores: copy `api/src/modules/expiry/items.example.json` there and edit it in VS Code. Each item has a `name`, a `date` written `YYYY-MM-DD`, and an optional `note`. It's read again at every check, so a change needs no restart. It holds names and dates only, never a key, token or password: a name (up to 40 characters) or note (up to 100) is refused if it has anything but letters, digits, spaces and `' - . , ( ) & / + : _`, a word over 20 characters, or a word of 12 or more mixing letters and digits, since that could be a key pasted in by mistake. Two items with the same name, in any case, and more than 50 items are refused too. One refused entry stops the whole list, as with the deal watcher's: the error names the file and the entry by its number, never what was refused, and goes to the API's log, to `GET /system/alerts` (so the alerts send it to your phone while `ALERTS` is on) and to `GET /expiry`. With the switch off the list isn't read, so a missing or broken one never stops the API starting.
+
+Every 5 minutes, from 08:00 London time, the API checks the list and sends one notification for everything due: an item is warned about at 30, 14, 7, 3 and 1 days before, on the day, and once when it's overdue. ntfy turns a message over 4,096 bytes into a file attachment, so a warning that long lists what fits in 3,500 bytes, soonest first, and ends by saying how many more there are. One first seen part way through, or after a day the check couldn't run, is warned about once for where it is then, with its real days left. A notification ntfy doesn't take is tried again at the next check. It's high priority when something is a day away or less, due today or overdue. What was sent is kept in `expiry/sent.json`, written by the API beside the list, so a restart sends nothing again; a new date for an item, as after renewing it, starts its warnings again. If that file can't be saved, the alerts say so, and a warning may be sent again after a restart. Deleting it while the API is stopped is safe: each item within 30 days, or overdue, gets one warning for where it is now.
+
+The names, dates and notes go through ntfy.sh in the notifications and the daily summary, so keep them general. `GET /expiry` gives today's London date and each item with its date, note, days left (below 0 once passed) and whether it's overdue, soonest first, and says when expiry alerts are switched off or the list has a problem. The daily summary adds an "Expiring:" line when something is within 30 days or overdue, the phone page lists them under "Expiring", and Claude Code reads them with `get_expiries`.
+
 ### Jarvis's settings
 Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he starts.
 - `ANTHROPIC_API_KEY`: required.
@@ -170,6 +179,7 @@ Lines in `jarvis/.env`. Jarvis prints the `JARVIS_` ones in one line when he sta
 - `jarvis/persona/`: how Jarvis comes across, one file per persona, for `JARVIS_PERSONA`. `butler.md` is Claude's draft, there to be edited. It's tracked, so keep personal details out.
 - `host/`: files that run outside Docker (the Wi-Fi watchdog, and the backup script with its service and timer), plus helper scripts: `hub-update.sh` pulls and rebuilds only what changed, `hub-mcp.sh` starts the MCP server, `jarvis.sh` starts Jarvis with the API token for the hub's tools and the sessions' notes (and, with his voice on, with his speakers, starting and stopping Kokoro or Piper around the chat, and with `JARVIS_EARS=push` or `wake`, with ears's network and token), runs his sound test, or downloads Piper's voice, `ears.sh` mutes and unmutes ears and checks its microphone, and `hub-get.sh` and `hub-post.sh` try an API route, and `ebay-check.sh` tests the eBay keys without showing them.
 - `deals/`: the deal watcher's search list and state file, both git-ignored. Only its `README.md` is tracked.
+- `expiry/`: the list of things that expire and the record of warnings sent, both git-ignored. Only its `README.md` is tracked.
 - `piper/voices/`: the voices Piper speaks in, downloaded by `bash host/jarvis.sh piper-voice` and git-ignored.
 - `ears/`: "ears", the service that owns Jarvis's microphone. Node 26 and TypeScript with its own tests, built into its own image, which also holds Silero's speech detector (record 0042). `ears/switch/` (git-ignored) holds its mute switch.
 - `whisper/`: `sitecustomize.py`, which keeps Whisper's transcripts out of its log, and `models/` (git-ignored), where `bash host/ears.sh whisper-model` puts Whisper's model.

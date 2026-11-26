@@ -29,3 +29,5 @@ PLAN.md
 *.patch
 deals/*
 !deals/README.md
+expiry/*
+!expiry/README.md

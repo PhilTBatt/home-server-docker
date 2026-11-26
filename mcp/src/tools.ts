@@ -16,12 +16,12 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_alerts",
-    description: "Problems on the home server right now: low disk, low memory, Wi-Fi reconnects in the last 24 hours, a failed last backup, or the deal watcher being unable to check. ok is true when there are none.",
+    description: "Problems on the home server right now: low disk, low memory, Wi-Fi reconnects in the last 24 hours, a failed last backup, the deal watcher being unable to check, or a problem with the expiry list. ok is true when there are none.",
     path: "/system/alerts",
   },
   {
     name: "get_features",
-    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads, the deal watcher, finding the phone, train times and train alerts.",
+    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads, the deal watcher, finding the phone, train times, train alerts and expiry alerts.",
     path: "/system/features",
   },
   {
@@ -43,6 +43,11 @@ export const readTools: ReadTool[] = [
     name: "get_backup",
     description: "When the last backup ran and whether it worked (problem is null when it did), and when the last good backup was. lastRun is null if backups have never run.",
     path: "/system/backup",
+  },
+  {
+    name: "get_expiries",
+    description: "Things Phil keeps a list of because they expire, like keys, tokens and subscriptions: each one's name, date (YYYY-MM-DD), days left (below 0 once it has passed), whether it's overdue, and his note, soonest first, with today's date in London. The list holds names and dates only, never a key or token itself. Fails with a 404 while expiry alerts are switched off (EXPIRY_ALERTS), and a 500 saying what's wrong when the list can't be read.",
+    path: "/expiry",
   },
   {
     name: "get_deal_status",
