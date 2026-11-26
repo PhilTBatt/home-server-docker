@@ -113,7 +113,7 @@ export function lookUpReport(lines: LookUpLogLine[], table: (header: string[], r
     "Time is from the question being handed over to the answer being ready to say: the median over answered look-ups, with the slowest in brackets. Starting up, searches, pages opened, tokens and the cost of each are medians over answered look-ups too; pages refused and the cost in all are totals. The cost is Claude Code's own estimate at list prices, so on a plan it isn't a bill.",
   ];
   const credentials = lines.flatMap((line) => (line.credential === null ? [] : [line.credential]));
-  if (credentials.length > 0) out.push(`Where Claude Code said its sign-in came from: ${counted(credentials)}.`);
+  if (credentials.length > 0) out.push(`The sign-in each look-up reported: ${counted(credentials)}.`);
   const errors = lines.flatMap((line) => (line.error === null || line.ended === "stopped" ? [] : [line.error]));
   if (errors.length > 0) out.push(`What went wrong: ${counted(errors)}.`);
   return out;

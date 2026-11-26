@@ -7,6 +7,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
 import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
 import { lookUpsLine, type LookedUp } from "./look-up.js";
+import { apiHelper } from "./look-up-api.js";
 import { claudeHelper, findProgram, guardFile, noGuard, noProgram, planToken } from "./look-up-claude.js";
 import { lookUpLogFile, lookUpLoggingNote, lookUpNumbers, startLookUpLog, type LookUpMode } from "./look-up-log.js";
 import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.js";
@@ -65,7 +66,7 @@ try {
   const persona = config.persona === null ? null : await readPersona(config.persona);
   let voice: VoiceMode = "off";
   let speaker: Speaker | null = null;
-  const webHelper = config.webToken === null ? undefined : claudeHelper({ model: chatModel, credential: { [planToken]: config.webToken } });
+  const webHelper = config.web === "off" ? undefined : config.webBy === "api" ? apiHelper({ apiKey: config.apiKey, model: chatModel, now, prices: pricesPerMTok[chatModel] }) : config.webToken === null ? undefined : claudeHelper({ model: chatModel, credential: { [planToken]: config.webToken } });
   const lookUpLog =
     webHelper === undefined || !config.webLog
       ? undefined
@@ -126,8 +127,8 @@ try {
               helper: webHelper,
               now,
               record: async (mode: LookUpMode, looked: LookedUp) => {
-                await lookUpLog?.(mode, "claude", looked);
-                await log?.lookUp(lookUpNumbers(mode, "claude", looked));
+                await lookUpLog?.(mode, config.webBy, looked);
+                await log?.lookUp(lookUpNumbers(mode, config.webBy, looked));
               },
             },
       failureHint: setup.failureHint ?? undefined,
@@ -161,7 +162,7 @@ try {
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
-  if (webHelper !== undefined) process.stdout.write(`${lookUpsLine((await findProgram()) === null ? noProgram : existsSync(guardFile) ? null : noGuard)}\n`);
+  if (webHelper !== undefined) process.stdout.write(`${lookUpsLine(config.webBy, config.webBy === "api" ? null : (await findProgram()) === null ? noProgram : existsSync(guardFile) ? null : noGuard)}\n`);
   if (lookUpLog !== undefined) process.stdout.write(`${lookUpLoggingNote}\n`);
   await runChat({
     ...first,

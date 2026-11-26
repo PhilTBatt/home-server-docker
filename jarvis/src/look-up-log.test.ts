@@ -56,7 +56,14 @@ test("what went wrong is kept as one of a fixed set of kinds in the numbers, and
     ["Claude Code said: error_max_turns", "too many steps"],
     ["Claude Code said: error_during_execution: something the page said", "claude code error"],
     ["Claude Code said: success: Invalid API key", "claude code error"],
+    ["The API said 401: invalid x-api-key", "api 401"],
+    ["The API said 529", "api 529"],
+    ["The API's answer couldn't be read.", "api unreadable"],
+    ["The API paused twice without answering.", "api paused"],
+    ["The API couldn't be reached: fetch failed", "api unreachable"],
     ["something nobody planned for, with words from a page", "other"],
+    ["Say: The API said 400: x", "other"],
+    ["The API said 4000: x", "other"],
     ["", "other"],
   ];
   for (const [message, kind] of kinds) assert.equal(lookUpErrorKind(message), kind, message);
@@ -115,6 +122,15 @@ test("only a well-formed look-up line is read as one", () => {
   for (const value of [null, 42, "line", [], {}]) assert.equal(isLookUpLine(value), false);
 });
 
+test("look-ups by the API are logged and reported apart from Claude Code's", () => {
+  assert.ok(isLookUpLine(logged({ by: "api", credential: "API key", version: null, startMs: null })));
+  const report = lookUpReport([logged(), logged({ by: "api", ms: 4_000, startMs: null, credential: "API key" })], table);
+  const rows = report[1].split("\n").map((row) => row.split(/\s{3,}/));
+  assert.deepEqual([rows[1][0], rows[1][7], rows[1][8]], ["ask, api", "4.0 s (4.0 s)", "-"]);
+  assert.deepEqual([rows[2][0], rows[2][7], rows[2][8]], ["ask, claude", "12.7 s (12.7 s)", "1.6 s"]);
+  assert.equal(report[3], "The sign-in each look-up reported: API key (1), none (1).");
+});
+
 test("the compare tool reads look-up lines apart from answers, and counts nothing as unreadable", () => {
   const read = readLog(jsonl(logged(), logged({ ended: "failed", error: "exit 1" }), { ...logged(), by: "bing" }));
   assert.equal(read.lookUps?.length, 2);
@@ -138,7 +154,7 @@ test("the look-up report groups by mode and helper, with medians over answered l
   assert.deepEqual(rows[1], ["ask, claude", "6", "2", "1", "1", "1", "1", "12.0 s (14.0 s)", "1.5 s", "2.0", "1.0", "6", "25,000", "1,500", "$0.0200", "$0.0700"]);
   assert.deepEqual(rows[2], ["auto, claude", "1", "1", "0", "0", "0", "0", "7.0 s (7.0 s)", "1.6 s", "1.0", "2.0", "1", "25,634", "1,222", "$0.0130", "$0.0130"]);
   assert.match(report[2], /on a plan it isn't a bill/);
-  assert.equal(report[3], "Where Claude Code said its sign-in came from: ANTHROPIC_API_KEY (1), none (5).");
+  assert.equal(report[3], "The sign-in each look-up reported: ANTHROPIC_API_KEY (1), none (5).");
   assert.equal(report[4], "What went wrong: Claude Code ended without a result. It exited with 1. (1).");
   assert.equal(report.length, 5);
 });

@@ -1,4 +1,4 @@
-import { webModes, type WebMode } from "./look-up.js";
+import { webHelpers, webModes, type WebBy, type WebMode } from "./look-up.js";
 
 export const brainDir = "/brain";
 
@@ -75,6 +75,7 @@ export type Config = {
   brainQuestions: boolean;
   clock: boolean;
   web: WebMode;
+  webBy: WebBy;
   webToken: string | null;
   webLog: boolean;
   log: boolean;
@@ -104,6 +105,10 @@ export function readVolume(env: Record<string, string | undefined>): number {
 
 function tokenCount(value: string): number | null {
   return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
+}
+
+function isWebBy(value: string): value is WebBy {
+  return (webHelpers as readonly string[]).includes(value);
 }
 
 function isWebMode(value: string): value is WebMode {
@@ -214,10 +219,13 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (clock !== "on" && clock !== "off") throw new Error(`JARVIS_CLOCK must be on or off, not "${clock}"`);
   const web = env.JARVIS_WEB?.trim() || "off";
   if (!isWebMode(web)) throw new Error(`JARVIS_WEB must be ${webModes.join(" or ")}, not "${web}"`);
+  const webBy = env.JARVIS_WEB_BY?.trim() || "claude";
+  if (!isWebBy(webBy)) throw new Error(`JARVIS_WEB_BY must be ${webHelpers.join(" or ")}, not "${webBy}"`);
+  const needsToken = web !== "off" && webBy === "claude";
   const webToken = env.JARVIS_WEB_TOKEN?.trim() || null;
-  if (web !== "off" && webToken === null) throw new Error("Missing setting: JARVIS_WEB_TOKEN (the token claude setup-token prints), which look-ups need");
-  if (web !== "off" && webToken !== null && /\s/.test(webToken)) throw new Error("JARVIS_WEB_TOKEN must be the token alone on one line, with no spaces in it");
+  if (needsToken && webToken === null) throw new Error("Missing setting: JARVIS_WEB_TOKEN (the token claude setup-token prints), which look-ups by Claude Code need");
+  if (needsToken && webToken !== null && /\s/.test(webToken)) throw new Error("JARVIS_WEB_TOKEN must be the token alone on one line, with no spaces in it");
   const webLog = env.JARVIS_WEB_LOG?.trim() || "off";
   if (webLog !== "on" && webLog !== "off") throw new Error(`JARVIS_WEB_LOG must be on or off, not "${webLog}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", web, webToken: web === "off" ? null : webToken, webLog: webLog === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", web, webBy, webToken: needsToken ? webToken : null, webLog: webLog === "on", log: log === "on" };
 }

@@ -43,9 +43,14 @@ const errorKinds: [RegExp, string][] = [
   [/^Claude Code started with tools it shouldn't have/, "other tools"],
   [/^Claude Code said: error_max_turns/, "too many steps"],
   [/^Claude Code said: /, "claude code error"],
+  [/^The API's answer couldn't be read\.$/, "api unreadable"],
+  [/^The API paused twice without answering\.$/, "api paused"],
+  [/^The API couldn't be reached:/, "api unreachable"],
 ];
 
 export function lookUpErrorKind(message: string): string {
+  const status = /^The API said (\d{3})(?::|$)/.exec(message);
+  if (status !== null) return `api ${status[1]}`;
   return errorKinds.find(([pattern]) => pattern.test(message))?.[1] ?? "other";
 }
 
