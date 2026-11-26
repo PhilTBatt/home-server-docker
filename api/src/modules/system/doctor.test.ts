@@ -4,7 +4,7 @@ import type { Features } from "../../config.js";
 import type { ExpiryStatus } from "../expiry/checker.js";
 import type { WatcherView } from "../watchers/watchers.js";
 import type { Problem, Status } from "./alerts.js";
-import { ask, createTries, doctorWaitMs, examine, runDoctor, summaryOf, type Check, type DoctorSources, type Seen } from "./doctor.js";
+import { ask, createTries, doctorKeepMs, doctorWaitMs, examine, kept, runDoctor, summaryOf, type Check, type DoctorSources, type Seen } from "./doctor.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true };
 const allOff: Features = { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false };
@@ -136,6 +136,7 @@ test("a good backup more than a week old is a warning, and one exactly a week ol
   assert.equal(week.state, "ok");
   const old = checkOf({ ...healthy(), backup: { lastRun: { time: "2026-11-19T11:59:00Z", problem: null }, lastSuccess: "2026-11-19T11:59:00Z" } }, "Backups");
   assert.deepEqual([old.state, old.detail], ["warn", "The last good backup was 19 Nov at 11:59, more than a week ago."]);
+  assert.equal(old.next, "sudo home-hub-backup runs one now. If the nightly timer is meant to be on, systemctl status home-hub-backup.timer says whether it is.");
   assert.match(old.next ?? "", /home-hub-backup\.timer/);
   const noSuccessTime = checkOf({ ...healthy(), backup: { lastRun: { time: "2026-11-25T02:00:00Z", problem: null }, lastSuccess: null } }, "Backups");
   assert.deepEqual([noSuccessTime.state, noSuccessTime.detail], ["ok", "The last good backup was 25 Nov at 02:00."]);
@@ -379,4 +380,120 @@ test("the doctor waits 6 seconds at most for each source, under the 10 seconds C
 test("an unreadable backup status is a warning, not a failure of the whole check", async () => {
   const report = await runDoctor(allOn, sources(), { ...reads, backup: async () => Promise.reject(new Error("EACCES")) }, now);
   assert.equal(report.checks.find((check) => check.name === "Backups")?.detail, "Couldn't read the backup status.");
+});
+
+test("a kept source is asked once for everyone who asks within 10 seconds, even while the first ask is still out, and again after that", async () => {
+  assert.equal(doctorKeepMs, 10_000);
+  let at = 0;
+  let calls = 0;
+  const waiting: ((value: number) => void)[] = [];
+  const source = kept(() => new Promise<number>((resolve) => waiting.push(resolve)).then((value) => value + ++calls * 100), doctorKeepMs, () => at);
+  const first = source();
+  at = 9_999;
+  const second = source();
+  await Promise.resolve();
+  assert.equal(waiting.length, 1, "the second ask joins the first, which hasn't answered yet");
+  waiting[0](1);
+  assert.deepEqual(await Promise.all([first, second]), [101, 101]);
+  assert.equal(await source(), 101, "still inside the 10 seconds, so the answer is reused");
+  at = 10_000;
+  const third = source();
+  await Promise.resolve();
+  assert.equal(waiting.length, 2, "10 seconds on, it asks again");
+  waiting[1](2);
+  assert.equal(await third, 202);
+});
+
+test("a kept source doesn't keep a failure: the next ask tries again, and one that throws straight away counts as a failure", async () => {
+  let at = 0;
+  const signals: AbortSignal[] = [];
+  const failing = kept(async (signal) => {
+    signals.push(signal);
+    throw new Error(`refused ${signals.length}`);
+  }, doctorKeepMs, () => at);
+  await assert.rejects(failing(), { message: "refused 1" });
+  await assert.rejects(failing(), { message: "refused 2" });
+  at = 1;
+  await assert.rejects(failing(), { message: "refused 3" });
+  assert.deepEqual(signals.map((signal) => [signal instanceof AbortSignal, signal.aborted]), [[true, false], [true, false], [true, false]]);
+  const throwing = kept((): Promise<number> => {
+    throw new Error("broke before asking");
+  });
+  await assert.rejects(throwing(), { message: "broke before asking" });
+  assert.deepEqual(await ask(throwing, 50), { failed: "broke before asking" });
+  let calls = 0;
+  const flaky = kept(async () => {
+    calls++;
+    if (calls === 1) throw new Error("down");
+    return calls;
+  }, doctorKeepMs, () => at);
+  await assert.rejects(flaky(), { message: "down" });
+  assert.deepEqual([await flaky(), await flaky()], [2, 2], "a good answer after a failure is kept as usual");
+});
+
+test("someone who joins a kept call that never answers is told it didn't answer within 6 seconds, in words, and the next ask tries again", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let at = 0;
+  let calls = 0;
+  const hanging = kept((signal) => {
+    calls++;
+    return new Promise<number>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+  }, doctorKeepMs, () => at);
+  const first = hanging();
+  at = 2_000;
+  const joined = hanging();
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  const outcomes = Promise.allSettled([first, joined]);
+  t.mock.timers.tick(doctorWaitMs);
+  const settled = await outcomes;
+  assert.deepEqual(settled.map((outcome) => (outcome.status === "rejected" ? (outcome.reason as Error).message : "answered")), ["no answer within 6 seconds", "no answer within 6 seconds"]);
+  at = 7_000;
+  void hanging().catch(() => {});
+  await Promise.resolve();
+  assert.equal(calls, 2, "the failure isn't kept, so a later ask inside the 10 seconds asks again");
+});
+
+test("an old kept call that fails late doesn't throw away a newer answer", async () => {
+  let at = 0;
+  const failLate: Array<(reason: Error) => void> = [];
+  let calls = 0;
+  const source = kept(() => {
+    calls++;
+    if (calls === 1) return new Promise<number>((_, reject) => failLate.push(reject));
+    return Promise.resolve(calls);
+  }, 1_000, () => at);
+  const first = source();
+  at = 2_000;
+  assert.equal(await source(), 2);
+  failLate[0]?.(new Error("late"));
+  await assert.rejects(first, { message: "late" });
+  await new Promise((resolve) => setImmediate(resolve));
+  at = 2_500;
+  assert.equal(await source(), 2, "the newer answer is still the one kept");
+  assert.equal(calls, 2);
+});
+
+test("the time limit a kept source gives its call is the doctor's longest wait, so a call nobody is waiting for any more is dropped", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let signal: AbortSignal | undefined;
+  const hanging = kept((given) => {
+    signal = given;
+    return new Promise<number>(() => {});
+  });
+  void hanging();
+  await Promise.resolve();
+  assert.equal(signal?.aborted, false);
+  t.mock.timers.tick(doctorWaitMs - 1);
+  assert.equal(signal?.aborted, false);
+  t.mock.timers.tick(1);
+  assert.equal(signal?.aborted, true);
+  let answered: AbortSignal | undefined;
+  const quick = kept(async (given) => {
+    answered = given;
+    return 1;
+  });
+  assert.equal(await quick(), 1);
+  t.mock.timers.tick(doctorWaitMs);
+  assert.equal(answered?.aborted, false, "once it has answered, its limit is cleared");
 });

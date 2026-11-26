@@ -14,7 +14,7 @@ import type { DealWatcher } from "./modules/deals/watcher.js";
 import type { ChangeFeed } from "./modules/trains/changes.js";
 import { expiry } from "./modules/expiry/routes.js";
 import type { ExpiryChecker } from "./modules/expiry/checker.js";
-import { runDoctor, type DoctorSources, type Tries } from "./modules/system/doctor.js";
+import { kept, runDoctor, type DoctorSources, type Tries } from "./modules/system/doctor.js";
 import { watchers } from "./modules/watchers/routes.js";
 import type { Watchers } from "./modules/watchers/watchers.js";
 import { catchUpDoctorMs, createCatchUp } from "./modules/catchup/catchup.js";
@@ -42,7 +42,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
       jellyfinApiKey: options.config.jellyfinApiKey,
     });
   app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
-  const doctor: DoctorSources = {
+  const asked: DoctorSources = {
     heartbeat: options.tries?.heartbeat,
     alerts: options.tries?.alerts,
     downloads: (signal) => downloading(options.config.qbitApiKey, signal),
@@ -53,6 +53,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     watchers: watching === undefined ? undefined : () => watching.list(),
     ...options.doctor,
   };
+  const doctor: DoctorSources = { ...asked, downloads: kept(asked.downloads), library: kept(asked.library), trains: kept(() => asked.trains()) };
   const moreProblems = () => [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])];
   app.register(system, { prefix: "/system", features: options.config.features, moreProblems, doctor });
   const features = options.config.features;

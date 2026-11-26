@@ -604,6 +604,25 @@ test("catch-up is a route of the hub's, asking GitHub for the listed repos with 
   for (const secret of [token, "test-qbit-key", "test-jellyfin-key", "test-rail-key", "test-topic", "hc-ping"]) assert.equal(response.body.includes(secret), false, secret);
 });
 
+test("the doctor and catch-up asked together, as the phone page does, ask qBittorrent, Jellyfin and the departure board once between them", async () => {
+  const asked: string[] = [];
+  mock.method(globalThis, "fetch", async (url: string) => {
+    asked.push(url);
+    if (url.startsWith("http://qbittorrent")) return Response.json([]);
+    if (url.startsWith("http://jellyfin")) return Response.json({ MovieCount: 1, SeriesCount: 2, EpisodeCount: 3 });
+    return new Response(null, { status: 503 });
+  });
+  const app = await buildRealApp({ logger: false, config, doctor: { inbox: async () => 0 } });
+  const count = (start: string) => asked.filter((url) => url.startsWith(start)).length;
+  const [doctor, catchUp] = await Promise.all([app.inject({ method: "GET", url: "/system/doctor", headers: goodHeader }), app.inject({ method: "GET", url: "/catch-up", headers: goodHeader })]);
+  assert.deepEqual([doctor.statusCode, catchUp.statusCode], [200, 200]);
+  assert.deepEqual([count("http://qbittorrent"), count("http://jellyfin"), count("https://api1.raildata.org.uk/test-board")], [1, 1, 1]);
+  assert.equal(catchUp.json().server.summary, doctor.json().summary);
+  const again = await app.inject({ method: "GET", url: "/system/doctor", headers: goodHeader });
+  assert.equal(again.statusCode, 200);
+  assert.deepEqual([count("http://qbittorrent"), count("http://jellyfin"), count("https://api1.raildata.org.uk/test-board")], [1, 1, 2], "a second look within 10 seconds reuses what answered, and asks the board again because it refused");
+});
+
 test("catch-up is a 404 with its switch off, and its parts are off with their own switches off, even when handed what they'd read", async () => {
   mock.method(globalThis, "fetch", async () => Response.json([]));
   const { checker } = fakeExpiryChecker();

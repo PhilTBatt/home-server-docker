@@ -61,6 +61,7 @@ export type DoctorSources = {
 };
 
 export const doctorWaitMs = 6_000;
+export const doctorKeepMs = 10_000;
 export const diskWarnFraction = 0.2;
 export const backupStaleDays = 7;
 export const expirySoonDays = 7;
@@ -92,6 +93,27 @@ function reasonOf(error: unknown): string {
 
 function sentence(text: string): string {
   return /[.!?\u2026]$/.test(text) ? text : `${text}.`;
+}
+
+export function kept<Value>(read: (signal: AbortSignal) => Promise<Value>, keepMs = doctorKeepMs, clock: () => number = () => performance.now()): () => Promise<Value> {
+  let last: { at: number; answer: Promise<Value> } | null = null;
+  return () => {
+    const at = clock();
+    if (last !== null && at - last.at < keepMs) return last.answer;
+    const dropped = new AbortController();
+    const timer = setTimeout(() => dropped.abort(new Error(`no answer within ${doctorWaitMs / 1000} seconds`)), doctorWaitMs);
+    const asked = {
+      at,
+      answer: Promise.resolve()
+        .then(() => read(dropped.signal))
+        .finally(() => clearTimeout(timer)),
+    };
+    asked.answer.catch(() => {
+      if (last === asked) last = null;
+    });
+    last = asked;
+    return asked.answer;
+  };
 }
 
 export async function ask<Value>(asking: (signal: AbortSignal) => Promise<Value>, waitMs = doctorWaitMs): Promise<Got<Value>> {
@@ -162,7 +184,7 @@ function backupCheck(seen: Seen, now: Date): Check {
   if (failed !== undefined) return { name, state: "problem", detail: `${failed.message} ${lastGood}`, next: "journalctl -u home-hub-backup -n 30 shows the last run's log, and sudo home-hub-backup --dry-run what a run would do." };
   const good = backup.lastRun.time;
   const age = now.getTime() - Date.parse(good);
-  if (!(age <= backupStaleDays * dayMs)) return { name, state: "warn", detail: `The last good backup was ${formatLondonTime(good)}, more than a week ago.`, next: "The nightly timer may be off: systemctl status home-hub-backup.timer says." };
+  if (!(age <= backupStaleDays * dayMs)) return { name, state: "warn", detail: `The last good backup was ${formatLondonTime(good)}, more than a week ago.`, next: "sudo home-hub-backup runs one now. If the nightly timer is meant to be on, systemctl status home-hub-backup.timer says whether it is." };
   return { name, state: "ok", detail: `The last good backup was ${formatLondonTime(good)}.`, next: null };
 }
 

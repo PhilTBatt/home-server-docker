@@ -33,7 +33,7 @@ This repo's `.claude/settings.json` allows the hub's read tools and no shell com
 - `docker system df`: what Docker's images, containers and build cache use.
 - `docker stats --no-stream`: each container's memory and CPU, once.
 - `df -h /` and `free -h`: disk and memory, as the server sees them.
-- `systemctl status home-hub-backup.timer` and `journalctl -u home-hub-backup -n 30`: the backup timer and the last run's log.
+- `systemctl status home-hub-backup.timer` and `journalctl -u home-hub-backup -n 30`: the backup timer and the last run's log. The README says the timer stays off until there's a backup drive, so a timer that's off isn't a fault by itself, and an old backup then means running one by hand (`sudo home-hub-backup`, which Phil types himself).
 - `ls -ld ~/hub-memory/inbox`: whether the brain inbox folder is there.
 
 If Phil says yes to running one of those, you may run exactly that one. Never run, or suggest, `docker inspect`, `docker compose config` without `--quiet`, `env`, `printenv` or `set`, and never read a `.env` file: they print secrets. Never run anything with `sudo`; Phil types those himself.
