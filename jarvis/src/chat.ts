@@ -2,7 +2,7 @@ import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
 import { answerMost, findInstruction, isEnd, isSkip, isYes, questionsNoteText, questionsOffNote, questionsWord, readQuestions, type BrainQuestions, type QuestionsRun } from "./brain-questions.js";
-import { codeWordIn, earsStoppedWhy, hubOffNote, londonStamp, stopMyselfReply, stoppedReply, type CodeWord, type CodeWordReply } from "./code-words.js";
+import { clockReply, codeWordIn, earsStoppedWhy, hubOffNote, londonStamp, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply } from "./code-words.js";
 import type { SpeechReport } from "./speech-queue.js";
 import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type SpeechStop, type ThinkingHistory } from "./config.js";
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
@@ -61,10 +61,17 @@ export function withSpokenStyle(system: string, on: boolean): string {
   return on ? `${system}\n\n${spokenStyle}` : system;
 }
 
-export type SystemParts = { persona: string | null; facts: string | null; spoken: boolean; notes: SessionNotes[] };
+export const clockNote =
+  "A line in square brackets after a message, starting with Time now, comes from your own code, not from Phil, and he doesn't see it. It gives the time and the date in London as his message was sent. Use it whenever the time or the date matters, and never mention the line itself.";
+
+export function withClock(system: string, on: boolean): string {
+  return on ? `${system}\n\n${clockNote}` : system;
+}
+
+export type SystemParts = { persona: string | null; facts: string | null; spoken: boolean; notes: SessionNotes[]; clock: boolean };
 
 export function systemFor(base: string, parts: SystemParts): string {
-  return withNotes(withSpokenStyle(withLiveFacts(withPersona(base, parts.persona), parts.facts), parts.spoken), parts.notes);
+  return withNotes(withSpokenStyle(withClock(withLiveFacts(withPersona(base, parts.persona), parts.facts), parts.clock), parts.spoken), parts.notes);
 }
 export const engineNames: Record<Engine, string> = {
   sdk: "the Agent SDK",
@@ -151,6 +158,7 @@ export type ChatDeps = {
   failureHint?: string;
   lengthNote?: (tokens: number | null) => string | null;
   sizeLine?: (tokens: number | null) => string | null;
+  clock?: () => Date;
   lengthCap?: number;
   knownSize?: number;
   rememberSize?: (tokens: number) => Promise<void>;
@@ -404,8 +412,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -471,7 +479,7 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
     return asked;
   };
   const timer = withPausableTimeout(
-    deps.session.ask(withSizeLine(message, deps.sizeLine?.(state.lastRequestTokens) ?? null), {
+    deps.session.ask(withSizeLine(withTimeLine(message, deps.clock === undefined ? null : timeLine(deps.clock())), deps.sizeLine?.(state.lastRequestTokens) ?? null), {
       text: (delta) => {
         streamed = true;
         show(printable(delta));
@@ -745,7 +753,7 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     return "go";
   }
   deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
-  const word = codeWordIn(sent.heard.text);
+  const word = codeWordIn(sent.heard.text, deps.clock !== undefined);
   if (state.questions !== null && word?.kind !== "stop listening") return onAnswer(deps, state, sent.heard.text, "spoken", voiced(sent.heard));
   if (word?.kind === "questions" && deps.questions !== undefined) {
     state.turn++;
@@ -783,6 +791,10 @@ async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWo
   if (word.kind === "stop listening") {
     await endQuestions(deps, state);
     await sayLine(deps, state, stopMyselfReply);
+    return;
+  }
+  if (word.kind === "time" || word.kind === "date") {
+    if (deps.clock !== undefined) await sayLine(deps, state, clockReply(word.kind, deps.clock()));
     return;
   }
   const signal = deps.closing ?? new AbortController().signal;

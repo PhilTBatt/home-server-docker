@@ -64,8 +64,8 @@ try {
   const open = (setup: ChatSetup) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts, brainQuestions: config.brainQuestions }) : null;
-    const instructions = (base: string) => systemFor(base, { persona, facts, spoken, notes: notes ?? [] });
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts, brainQuestions: config.brainQuestions, clock: config.clock }) : null;
+    const instructions = (base: string) => systemFor(base, { persona, facts, spoken, notes: notes ?? [], clock: config.clock });
     const chat =
       config.engine === "api"
         ? startApiSession({
@@ -142,6 +142,7 @@ try {
     early: heard.early,
     questionTimeoutMs,
     sizeLine: hints.sizeLine,
+    clock: config.clock ? () => new Date() : undefined,
     lengthCap: config.lengthCap ?? undefined,
     confirm: (query, signal) => askOnce(lines, query, confirmMs, signal),
     describe: hub === undefined ? undefined : describeWithHub(hub.token),

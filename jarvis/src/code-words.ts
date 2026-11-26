@@ -1,6 +1,6 @@
 import { hubApiUrl } from "./hub-tools.js";
 
-export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" } | { kind: "questions" };
+export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" } | { kind: "questions" } | { kind: "time" } | { kind: "date" };
 
 const address = /^\s*(?:(?:hey|hi|ok|okay)\b[\s,.!?]*)?(?:\S*vis\b[\s,.!?]*)?/i;
 const askingWords = "can you|could you|would you|will you|can u|please|just|jarvis";
@@ -30,7 +30,10 @@ const serverAfter = fillersAfter.split("|").filter((word) => word !== "ok" && wo
 export const questionWords = ["brain questions", "any brain questions", "ask me some brain questions", "ask me your brain questions", "any questions for me", "have you got any questions for me", "do you have any questions for me", "got any questions for me"];
 export const trainWords = ["train times", "train time", "trains", "next train", "next trains", "when's my train", "when is my train", "when's the next train", "when is the next train", "what time's my train", "what time is my train", "what time's the next train", "what time is the next train", "is my train on time", "are my trains on time", "are the trains on time", "how are the trains", "how are the trains looking"];
 
-function codeWordAlone(said: string): CodeWord | null {
+export const timeWords = ["what time is it", "what time's it", "what's the time", "what is the time", "tell me the time", "tell me what time it is", "do you know the time", "do you know what time it is"];
+export const dateWords = ["what's the date", "what is the date", "what's the date today", "what is the date today", "what's today's date", "what is today's date", "tell me the date", "tell me today's date", "what day is it", "what day is it today", "what day's it", "tell me what day it is", "do you know what day it is"];
+
+function codeWordAlone(said: string, clock: boolean): CodeWord | null {
   const text = said.replace(/[\u2018\u2019]/g, "'").replace(address, "");
   const note = noteStart.exec(text);
   if (note !== null) return { kind: "note", text: text.slice(note[0].length).trim() };
@@ -41,6 +44,8 @@ function codeWordAlone(said: string): CodeWord | null {
   if (trainWords.includes(request) || trainWords.includes(request.replace(trainAsking, ""))) return { kind: "trains" };
   const server = asked(plainWords(text).replace(new RegExp(`^(?:(?:${fillersBefore}) )+`), "").replace(new RegExp(`(?: (?:${serverAfter}))+$`), ""));
   if (serverWords.includes(server) || /^(?:do a|run a|give me a) server check$/.test(server)) return { kind: "server" };
+  if (clock && timeWords.includes(request)) return { kind: "time" };
+  if (clock && dateWords.includes(request)) return { kind: "date" };
   if (questionWords.includes(words.replace(new RegExp(`^(?:(?:${askingWords}) )+`), ""))) return { kind: "questions" };
   if (/^(?:(?:you can|can you|could you|would you|will you|just|please|now) )*stop listening(?: |$)/.test(words)) return { kind: "stop listening" };
   return null;
@@ -51,11 +56,11 @@ export function lastSentenceOf(said: string): string | null {
   return sentences.length > 1 ? sentences[sentences.length - 1] : null;
 }
 
-export function codeWordIn(said: string): CodeWord | null {
-  const whole = codeWordAlone(said);
+export function codeWordIn(said: string, clock = false): CodeWord | null {
+  const whole = codeWordAlone(said, clock);
   if (whole !== null) return whole;
   const last = lastSentenceOf(said);
-  return last === null ? null : codeWordAlone(last);
+  return last === null ? null : codeWordAlone(last, false);
 }
 
 export type CodeWordReply = { say: string; note?: string };
@@ -71,6 +76,30 @@ export const codeWordMs = 12_000;
 export function londonStamp(at: Date): string {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at).map((part) => [part.type, part.value]));
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function londonParts(at: Date): Record<string, string> {
+  return Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at).map((part) => [part.type, part.value]));
+}
+
+export function timeLine(at: Date): string {
+  const parts = londonParts(at);
+  return `[Time now: ${parts.hour}:${parts.minute} on ${parts.weekday} ${parts.day} ${parts.month} ${parts.year}, in London.]`;
+}
+
+export function withTimeLine(message: string, line: string | null): string {
+  return line === null ? message : `${message}\n\n${line}`;
+}
+
+function ordinal(day: number): string {
+  const tens = day % 100;
+  const suffix = tens >= 11 && tens <= 13 ? "th" : day % 10 === 1 ? "st" : day % 10 === 2 ? "nd" : day % 10 === 3 ? "rd" : "th";
+  return `${day}${suffix}`;
+}
+
+export function clockReply(kind: "time" | "date", at: Date): CodeWordReply {
+  const parts = londonParts(at);
+  return { say: kind === "time" ? `It's ${parts.hour}:${parts.minute}.` : `It's ${parts.weekday} the ${ordinal(Number(parts.day))} of ${parts.month}.` };
 }
 
 export function voiceNoteText(said: string, at: Date): string {

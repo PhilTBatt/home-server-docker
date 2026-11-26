@@ -1019,3 +1019,64 @@ test("train times in a chat with no way to the hub say how to get one", { timeou
   chat.lines.close();
   await chat.running;
 });
+
+test("with the clock on, every question goes to Claude with the time line after it, before the size line when there is one, and without the clock it goes as before", { timeout: 5_000 }, async () => {
+  const at = new Date("2026-11-26T13:52:40Z");
+  const line = "[Time now: 13:52 on Thursday 26 November 2026, in London.]";
+  const on = wakeChat({ [`Is it too late to ring?\n\n${line}`]: said("Not at all.") }, [], { clock: () => at });
+  on.lines.push("Is it too late to ring?");
+  await pause(20);
+  on.lines.close();
+  await on.running;
+  assert.deepEqual(on.events.filter((event) => event.startsWith("ask")), [`ask Is it too late to ring?\n\n${line}`]);
+  assert.ok(on.output().includes("Not at all."), on.output());
+  assert.ok(!on.output().includes("Time now"), "the line is for Claude, never shown");
+  const sized = wakeChat({ [`Is it too late to ring?\n\n${line}\n\n[Chat size: big]`]: said("Not at all.") }, [], { clock: () => at, sizeLine: () => "[Chat size: big]" });
+  sized.lines.push("Is it too late to ring?");
+  await pause(20);
+  sized.lines.close();
+  await sized.running;
+  assert.deepEqual(sized.events.filter((event) => event.startsWith("ask")), [`ask Is it too late to ring?\n\n${line}\n\n[Chat size: big]`]);
+  const off = wakeChat({ "Is it too late to ring?": said("Not at all.") });
+  off.lines.push("Is it too late to ring?");
+  await pause(20);
+  off.lines.close();
+  await off.running;
+  assert.deepEqual(off.events.filter((event) => event.startsWith("ask")), ["ask Is it too late to ring?"]);
+});
+
+test("with the clock on, asking the time or the date out loud is answered by his own code from the clock, with no hub, and never asked of Claude", { timeout: 5_000 }, async () => {
+  const spoken: string[] = [];
+  const chat = wakeChat({}, [], { clock: () => new Date("2026-11-26T13:52:40Z"), speak: () => ({ ...fakeSpeech([]), text: (text: string) => void spoken.push(text) }) });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("Hey Jarvis, what time is it?"), textMs: 900 });
+  await pause(20);
+  chat.wake.push({ kind: "wake", id: 5 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 5, answer: earsDone("What's the date today?"), textMs: 900 });
+  await pause(20);
+  assert.ok(chat.output().includes(`${heardPrefix}Hey Jarvis, what time is it?\nJarvis: It's 13:52.\n`), chat.output());
+  assert.ok(chat.output().includes(`${heardPrefix}What's the date today?\nJarvis: It's Thursday the 26th of November.\n`), chat.output());
+  assert.deepEqual(spoken, ["It's 13:52.", "It's Thursday the 26th of November."]);
+  assert.deepEqual(chat.events.filter((event) => event.startsWith("ask")), []);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("without the clock, asking the time or the date out loud goes to Claude exactly as it always did", { timeout: 5_000 }, async () => {
+  const chat = wakeChat({ "Hey Jarvis, what time is it?": said("I have no clock."), "What's the date today?": said("I can't say.") });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("Hey Jarvis, what time is it?"), textMs: 900 });
+  await pause(20);
+  chat.wake.push({ kind: "wake", id: 5 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 5, answer: earsDone("What's the date today?"), textMs: 900 });
+  await pause(20);
+  assert.deepEqual(chat.events.filter((event) => event.startsWith("ask")), ["ask Hey Jarvis, what time is it?", "ask What's the date today?"]);
+  assert.ok(chat.output().includes("I have no clock.") && chat.output().includes("I can't say."), chat.output());
+  assert.ok(!chat.output().includes("It's "), chat.output());
+  chat.lines.close();
+  await chat.running;
+});

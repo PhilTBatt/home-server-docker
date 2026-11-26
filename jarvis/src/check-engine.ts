@@ -248,11 +248,11 @@ try {
   folders.push(personaHome);
   await writeFile(join(personaHome, "check.md"), `# Check\n- Calm and \"dry\", marker ${randomUUID()}\n`);
   const personaText = await readPersona("check", personaHome);
-  const factsText = liveFacts({ voice: "kokoro", ears: "wake", followUp: 6, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: true, brainQuestions: false });
+  const factsText = liveFacts({ voice: "kokoro", ears: "wake", followUp: 6, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: true, brainQuestions: false, clock: false });
   const personaSdkApi = await startStandInApi(script, "sdk");
   const personaPlainApi = await startStandInApi(script, "api");
   apis.push(personaSdkApi, personaPlainApi);
-  const personaSystem = (base: string) => systemFor(base, { persona: personaText, facts: factsText, spoken: false, notes: [] });
+  const personaSystem = (base: string) => systemFor(base, { persona: personaText, facts: factsText, spoken: false, notes: [], clock: false });
   const personaSdk = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: personaSystem(chatSystem), cwd: brain, now, env: { ...process.env, ANTHROPIC_BASE_URL: personaSdkApi.url } });
   const personaPlain = startApiSession(
     { apiKey: "sk-ant-test-key", model: chatModel, system: personaSystem(apiChatSystem), maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: createBrainTools(brain), thinkingHistory: "keep" },

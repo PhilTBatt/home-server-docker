@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
+import { clockReply, dateWords, timeLine, timeWords, withTimeLine, codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
 
 const stillOpen = new Set<() => unknown>();
 
@@ -382,4 +382,41 @@ test("what the hub says about the server is cleaned of control characters and cu
   assert.ok(!/[\u0000-\u001f]/.test(said.say + (said.note ?? "")));
   assert.equal(said.say, `1 problem:  Disk.${"x".repeat(283)} Disk${"y".repeat(36)}: Full ${"z".repeat(294)}\u2026`);
   assert.equal(said.note, `Disk${"y".repeat(36)}: Clear  it${"w".repeat(291)}`);
+});
+
+test("with the clock on, asking the time or the date is a code word of its own kind when it's all that's said, asked politely or not, and never as the last sentence of something longer", () => {
+  assert.deepEqual(timeWords, ["what time is it", "what time's it", "what's the time", "what is the time", "tell me the time", "tell me what time it is", "do you know the time", "do you know what time it is"]);
+  assert.deepEqual(dateWords, ["what's the date", "what is the date", "what's the date today", "what is the date today", "what's today's date", "what is today's date", "tell me the date", "tell me today's date", "what day is it", "what day is it today", "what day's it", "tell me what day it is", "do you know what day it is"]);
+  for (const said of [...timeWords, "What time is it?", "Hey Jarvis, what\u2019s the time?", "Jarvis, can you tell me the time please?", "What time is it now?", "Okay, what is the time, Jarvis?"]) assert.deepEqual(codeWordIn(said, true), { kind: "time" }, said);
+  for (const said of [...dateWords, "What's the date?", "Hey Jarvis, what day is it today?", "Could you tell me today's date?"]) assert.deepEqual(codeWordIn(said, true), { kind: "date" }, said);
+  for (const said of ["I'm in New York. What time is it?", "I'm running late. What time is it?", "Tell me about the battle. What's the date?", "I've lost track. What day is it?", "What time is it? I need to leave by six."]) assert.equal(codeWordIn(said, true), null, said);
+  for (const said of ["What time is it in New York?", "What time is the match?", "What's the time difference?", "Do you have the time?", "Have you got the time?", "Can you help me with something? Do you have the time?", "What's the date of the final?", "What day is it on?", "Time.", "The date."]) assert.equal(codeWordIn(said, true), null, said);
+  assert.deepEqual(codeWordIn("What time's my train?", true), { kind: "trains" });
+  assert.deepEqual(codeWordIn("One sec. Train times.", true), { kind: "trains" }, "the other code words still count as a last sentence");
+  assert.deepEqual(codeWordIn("Note this: what time is it?", true), { kind: "note", text: "what time is it?" });
+});
+
+test("without the clock, asking the time or the date is no code word at all, however it's put, and every other code word is as it was", () => {
+  for (const said of [...timeWords, ...dateWords, "What time is it?", "Hey Jarvis, what day is it today?"]) {
+    assert.equal(codeWordIn(said), null, said);
+    assert.equal(codeWordIn(said, false), null, said);
+  }
+  for (const said of ["Train times.", "Find my phone.", "Never mind.", "Server check.", "Stop listening.", "Brain questions.", "Note this: milk", "Sorry, one sec. Find my phone."]) assert.deepEqual(codeWordIn(said, true), codeWordIn(said), said);
+});
+
+test("the time line gives London's time and date in one bracketed line, through summer time and past midnight, and goes after the message", () => {
+  assert.equal(timeLine(new Date("2026-11-26T13:52:40Z")), "[Time now: 13:52 on Thursday 26 November 2026, in London.]");
+  assert.equal(timeLine(new Date("2026-07-01T23:30:00Z")), "[Time now: 00:30 on Thursday 2 July 2026, in London.]");
+  assert.equal(timeLine(new Date("2026-01-01T00:05:00Z")), "[Time now: 00:05 on Thursday 1 January 2026, in London.]");
+  assert.equal(withTimeLine("What's next?", "[Time now: 13:52 on Thursday 26 November 2026, in London.]"), "What's next?\n\n[Time now: 13:52 on Thursday 26 November 2026, in London.]");
+  assert.equal(withTimeLine("What's next?", null), "What's next?");
+});
+
+test("the time and the date are said in London's, the date with its day of the week and the right ending on the number", () => {
+  assert.deepEqual(clockReply("time", new Date("2026-11-26T13:52:40Z")), { say: "It's 13:52." });
+  assert.deepEqual(clockReply("time", new Date("2026-07-01T23:30:00Z")), { say: "It's 00:30." });
+  assert.deepEqual(clockReply("date", new Date("2026-11-26T13:52:40Z")), { say: "It's Thursday the 26th of November." });
+  assert.deepEqual(clockReply("date", new Date("2026-07-01T23:30:00Z")), { say: "It's Thursday the 2nd of July." });
+  const endings = (days: number[]) => days.map((day) => clockReply("date", new Date(Date.UTC(2026, 0, day, 12))).say.replace(/^It's \w+ the (\w+) of January\.$/, "$1"));
+  assert.deepEqual(endings([1, 2, 3, 4, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 30, 31]), ["1st", "2nd", "3rd", "4th", "10th", "11th", "12th", "13th", "14th", "20th", "21st", "22nd", "23rd", "24th", "30th", "31st"]);
 });

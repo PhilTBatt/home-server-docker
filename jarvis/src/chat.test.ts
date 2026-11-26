@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { pricesPerMTok } from "./prices.js";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
-import { apiChatSystem, spokenStyle, systemFor, withSpokenStyle, askOnce, questionPrompt, chatModel, chatsLine, chatSystem, confirmMs, commandNote, costLine, heardLines, lengthLineFor, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
+import { apiChatSystem, clockNote, spokenStyle, systemFor, withSpokenStyle, askOnce, questionPrompt, chatModel, chatsLine, chatSystem, confirmMs, commandNote, costLine, heardLines, lengthLineFor, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 import { personaFraming } from "./persona.js";
 
@@ -663,8 +663,8 @@ test("only a lone + or - is a rating; anything longer is a question", async () =
 });
 
 test("Jarvis's settings are printed in one line, as they're written in jarvis/.env", () => {
-  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, voice: "piper", kokoroVoice: "bm_fable", kokoroSpeed: 0.9, piperVoice: "en_GB-northern_english_male-medium", volume: 65, speechStart: "clause", speechStop: "sentence", speechBundle: true, spokenStyle: true, persona: "butler", liveFacts: true, filler: true, ears: "wake", followUp: 5, turnCheck: true, trainAlerts: true, brainQuestions: true, log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_VOICE=piper, JARVIS_KOKORO_VOICE=bm_fable, JARVIS_KOKORO_SPEED=0.9, JARVIS_PIPER_VOICE=en_GB-northern_english_male-medium, JARVIS_VOLUME=65, JARVIS_SPEECH_START=clause, JARVIS_SPEECH_STOP=sentence, JARVIS_SPEECH_BUNDLE=on, JARVIS_SPOKEN_STYLE=on, JARVIS_PERSONA=butler, JARVIS_LIVE_FACTS=on, JARVIS_FILLER=on, JARVIS_EARS=wake, JARVIS_FOLLOW_UP=5, JARVIS_TURN_CHECK=on, JARVIS_TRAIN_ALERTS=on, JARVIS_BRAIN_QUESTIONS=on, JARVIS_LOG=on");
-  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_VOICE=off, JARVIS_KOKORO_VOICE=bm_george, JARVIS_KOKORO_SPEED=1, JARVIS_PIPER_VOICE=en_GB-alan-medium, JARVIS_VOLUME=80, JARVIS_SPEECH_START=sentence, JARVIS_SPEECH_STOP=now, JARVIS_SPEECH_BUNDLE=off, JARVIS_SPOKEN_STYLE=off, JARVIS_PERSONA=off, JARVIS_LIVE_FACTS=off, JARVIS_FILLER=off, JARVIS_EARS=off, JARVIS_FOLLOW_UP=off, JARVIS_TURN_CHECK=off, JARVIS_TRAIN_ALERTS=off, JARVIS_BRAIN_QUESTIONS=off, JARVIS_LOG=off");
+  assert.equal(settingsLine({ engine: "api", thinkingHistory: "drop", chats: "resume", lengthHints: "jarvis", lengthWarn: 60000, lengthCap: 150000, hubToken: "a-token", hubActions: true, sessionNotes: true, voice: "piper", kokoroVoice: "bm_fable", kokoroSpeed: 0.9, piperVoice: "en_GB-northern_english_male-medium", volume: 65, speechStart: "clause", speechStop: "sentence", speechBundle: true, spokenStyle: true, persona: "butler", liveFacts: true, filler: true, ears: "wake", followUp: 5, turnCheck: true, trainAlerts: true, brainQuestions: true, clock: true, log: true }), "Settings: JARVIS_ENGINE=api, JARVIS_THINKING_HISTORY=drop, JARVIS_CHATS=resume, JARVIS_LENGTH_HINTS=jarvis, JARVIS_LENGTH_WARN=60000, JARVIS_LENGTH_CAP=150000, JARVIS_HUB_TOOLS=on, JARVIS_HUB_ACTIONS=on, JARVIS_SESSION_NOTES=on, JARVIS_VOICE=piper, JARVIS_KOKORO_VOICE=bm_fable, JARVIS_KOKORO_SPEED=0.9, JARVIS_PIPER_VOICE=en_GB-northern_english_male-medium, JARVIS_VOLUME=65, JARVIS_SPEECH_START=clause, JARVIS_SPEECH_STOP=sentence, JARVIS_SPEECH_BUNDLE=on, JARVIS_SPOKEN_STYLE=on, JARVIS_PERSONA=butler, JARVIS_LIVE_FACTS=on, JARVIS_FILLER=on, JARVIS_EARS=wake, JARVIS_FOLLOW_UP=5, JARVIS_TURN_CHECK=on, JARVIS_TRAIN_ALERTS=on, JARVIS_BRAIN_QUESTIONS=on, JARVIS_CLOCK=on, JARVIS_LOG=on");
+  assert.equal(settingsLine({ engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, log: false }), "Settings: JARVIS_ENGINE=sdk, JARVIS_THINKING_HISTORY=keep, JARVIS_CHATS=fresh, JARVIS_LENGTH_HINTS=note, JARVIS_LENGTH_WARN=80000, JARVIS_LENGTH_CAP=off, JARVIS_HUB_TOOLS=off, JARVIS_HUB_ACTIONS=off, JARVIS_SESSION_NOTES=off, JARVIS_VOICE=off, JARVIS_KOKORO_VOICE=bm_george, JARVIS_KOKORO_SPEED=1, JARVIS_PIPER_VOICE=en_GB-alan-medium, JARVIS_VOLUME=80, JARVIS_SPEECH_START=sentence, JARVIS_SPEECH_STOP=now, JARVIS_SPEECH_BUNDLE=off, JARVIS_SPOKEN_STYLE=off, JARVIS_PERSONA=off, JARVIS_LIVE_FACTS=off, JARVIS_FILLER=off, JARVIS_EARS=off, JARVIS_FOLLOW_UP=off, JARVIS_TURN_CHECK=off, JARVIS_TRAIN_ALERTS=off, JARVIS_BRAIN_QUESTIONS=off, JARVIS_CLOCK=off, JARVIS_LOG=off");
 });
 
 test("the chats line says whether this chat is saved, and what it picks up", () => {
@@ -1481,15 +1481,22 @@ test("asking on a closed chat, or after being called off, gives no answer at onc
   open.lines.close();
 });
 
+test("the note about the time line says it comes after a message, not at the end, because the chat-size line can follow it, and has no double quotes", () => {
+  assert.ok(clockNote.startsWith("A line in square brackets after a message, starting with Time now,"), clockNote);
+  assert.ok(!clockNote.includes("at the end"), clockNote);
+  assert.ok(!clockNote.includes('"'), clockNote);
+});
+
 test("his instructions are built in one order on both engines: his own, then the persona, live facts, spoken style and session notes, each only when on", () => {
   const notes = [{ name: "docker" as const, place: "~/docker", text: "- Hub tools done", lines: 1, cut: false }];
   for (const system of [chatSystem, apiChatSystem]) {
-    assert.equal(systemFor(system, { persona: null, facts: null, spoken: false, notes: [] }), system);
-    const built = systemFor(system, { persona: "# Butler", facts: "Facts here.", spoken: true, notes });
-    const places = [system, personaFraming, "# Butler", "Facts here.", spokenStyle, "Notes from the docker session"].map((part) => built.indexOf(part));
+    assert.equal(systemFor(system, { persona: null, facts: null, spoken: false, notes: [], clock: false }), system);
+    const built = systemFor(system, { persona: "# Butler", facts: "Facts here.", spoken: true, notes, clock: true });
+    const places = [system, personaFraming, "# Butler", "Facts here.", clockNote, spokenStyle, "Notes from the docker session"].map((part) => built.indexOf(part));
     assert.ok(places.every((place, index) => place >= 0 && (index === 0 || place > places[index - 1])), JSON.stringify(places));
-    assert.equal(systemFor(system, { persona: null, facts: "Facts here.", spoken: false, notes: [] }), `${system}\n\nFacts here.`);
-    assert.equal(systemFor(system, { persona: "# Butler", facts: null, spoken: false, notes: [] }), `${system}\n\n${personaFraming}\n# Butler`);
+    assert.equal(systemFor(system, { persona: null, facts: "Facts here.", spoken: false, notes: [], clock: false }), `${system}\n\nFacts here.`);
+    assert.equal(systemFor(system, { persona: null, facts: null, spoken: false, notes: [], clock: true }), `${system}\n\n${clockNote}`);
+    assert.equal(systemFor(system, { persona: "# Butler", facts: null, spoken: false, notes: [], clock: false }), `${system}\n\n${personaFraming}\n# Butler`);
   }
 });
 

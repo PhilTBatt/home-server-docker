@@ -9,6 +9,7 @@ export type FactsInput = {
   codeWordsReachHub: boolean;
   trainAlerts: boolean;
   brainQuestions: boolean;
+  clock: boolean;
 };
 
 const voiceNames: Record<Exclude<VoiceMode, "off">, string> = { kokoro: "Kokoro", piper: "Piper" };
@@ -23,9 +24,10 @@ export function liveFacts(input: FactsInput): string {
   else facts.push(`He can type, or speak to you after typing /talk, saying Hey Jarvis or pressing his talk button.${input.followUp === null ? "" : ` After you answer something he said with Hey Jarvis or the button, you listen for ${input.followUp} seconds for a follow-up without the wake word.`}`);
   facts.push(input.hubTools ? `You have the hub's read-only tools${input.hubActions ? ", and actions that each need his yes before they run" : ""}.` : "You don't have the hub's tools in this chat.");
   if (input.ears !== "off") {
-    facts.push("Some things he says out loud never reach you, because your own code acts on them first when they're all he says or the last sentence of it: note this, followed by anything, saves it as a voice note in his brain's inbox; find my phone sends his phone a notification; train times reads out his next three trains; server check, or how's the server, reads out the hub's check of the home server; never mind or that's all asks nothing; and stop listening, said on its own, makes ears mute itself until he unmutes it on the server.");
+    facts.push(`Some things he says out loud never reach you, because your own code acts on them first when they're all he says or the last sentence of it: note this, followed by anything, saves it as a voice note in his brain's inbox; find my phone sends his phone a notification; train times reads out his next three trains; server check, or how's the server, reads out the hub's check of the home server; never mind or that's all asks nothing; and stop listening, said on its own, makes ears mute itself until he unmutes it on the server.`);
     if (!input.codeWordsReachHub) facts.push("Notes, finding his phone, train times and the server check go through the hub, so they won't work until he turns your hub tools on.");
     facts.push("If he asks you for one of those and it reaches you, your code didn't catch it. Typed messages never count, but typed and spoken messages reach you the same way, so you can't tell which this was: never say he typed it or said it, and never say you've done it. Tell him to say the words out loud, on their own or as the last thing he says, for example: say find my phone.");
+    if (input.clock) facts.push("When all he says out loud is a question about the time or the date, such as what time is it, your own code answers it from the server's clock and you never see it. Any other question about the time or the date does reach you, typed or spoken: answer it yourself from the Time now line.");
   }
   if (input.trainAlerts) facts.push(`When the hub finds a change to his morning trains, your own code ${input.voice === "off" ? "shows it on screen" : "says it aloud"} once you're quiet. You don't see what it says, so if he asks about it, tell him to ${input.ears === "off" ? "check his phone, where the hub sends it too" : "say train times, or check his phone"}.`);
   if (input.brainQuestions) facts.push(`When he types /questions${input.ears === "off" ? "" : " or says brain questions or any questions for me"}, your own code asks you to find up to two gaps or suspected mistakes in his brain, in a fixed format, then asks him them one at a time and files his answers in his brain's inbox itself. You never write to his brain, and you never raise brain questions unless he asks that way.`);
