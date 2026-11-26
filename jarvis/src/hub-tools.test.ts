@@ -24,7 +24,7 @@ test("an MCP server started by Jarvis himself gets the token and the actions set
 });
 
 test("Jarvis knows the hub's eight read tools and five actions by name, and accepts the actions only when they're on", () => {
-  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers"]);
+  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"]);
   assert.deepEqual(hubActionTools, ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher"]);
   assert.deepEqual(allowedHubTools(hubServerFor("t")), hubReadTools);
   assert.deepEqual(allowedHubTools(hubServerFor("t", true)), [...hubReadTools, ...hubActionTools]);
@@ -320,4 +320,10 @@ test("a lookup that's called off stops waiting for the hub", async () => {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("the hub's tools that ask eBay live are left out of Jarvis's read tools, so his questions can't use up the deal watcher's daily calls", () => {
+  for (const tool of ["get_deal_search_cuts", "lookup_deal_categories", "lookup_deal_details", "explain_deal_listing"]) assert.ok(!hubReadTools.includes(tool), tool);
+  assert.ok(hubReadTools.every((tool) => tool.startsWith("get_")));
+  assert.equal(new Set(hubReadTools).size, hubReadTools.length);
 });
