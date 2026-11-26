@@ -26,6 +26,8 @@ export type LookUpNumbers = {
   credential: string | null;
   version: string | null;
   error: string | null;
+  followsOn: boolean;
+  judgedMs: number | null;
 };
 
 export type LookUpLine = LookUpNumbers & { v: number; at: string; question: string; found: string[]; openedSites: string[]; refusedSites: string[]; errorDetail: string | null };
@@ -75,6 +77,8 @@ export function lookUpNumbers(mode: LookUpMode, by: WebBy, looked: LookedUp): Lo
     credential: numbers?.credential ?? null,
     version: numbers?.version ?? null,
     error: typeof looked.helped?.error === "string" ? lookUpErrorKind(looked.helped.error) : null,
+    followsOn: looked.followsOn === true,
+    judgedMs: looked.judgedMs ?? null,
   };
 }
 

@@ -5,7 +5,8 @@ import { answerMost, findInstruction, isEnd, isSkip, isYes, questionsNoteText, q
 import { clockReply, codeWordIn, earsStoppedWhy, hubOffNote, londonStamp, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply } from "./code-words.js";
 import type { SpeechReport } from "./speech-queue.js";
 import { createEvents, merged } from "./events.js";
-import { capped, lookingUp, lookUp, noQuestion, questionCap, type Helper, type LookedUp } from "./look-up.js";
+import { capped, lookingUp, lookUp, noQuestion, questionCap, type Earlier, type Helper, type LookedUp } from "./look-up.js";
+import { followOnNote, isRecent, type FollowOnCheck } from "./look-up-follow.js";
 import type { LookUpMode } from "./look-up-log.js";
 import { isLookUpTool, questionIn } from "./look-up-tool.js";
 import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type SpeechStop, type ThinkingHistory } from "./config.js";
@@ -190,13 +191,13 @@ export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise
 
 export const neverMindNote = "left there, so nothing was asked";
 
-export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[] };
+export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[]; web?: WebDeps };
 
 export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null };
 
 function sounds(state: ChatState, speech: AnswerSpeech | null): void {
   if (speech === null || state.sounding.has(speech)) return;
@@ -721,13 +722,15 @@ export async function* readied<T>(inputs: AsyncIterable<T>, ready?: (yes: boolea
   }
 }
 
-function openFollow(deps: ChatDeps, state: ChatState): void {
+function openFollow(deps: ChatDeps, state: ChatState, afterLookUp: Earlier | null = null): void {
+  state.followLookUp = null;
   const follow = deps.followUp;
   if (follow === undefined) return;
   if (state.followed >= followUpsInARow) {
     deps.write(`  (${followLimitNote})\n`);
     return;
   }
+  state.followLookUp = afterLookUp;
   const turn = state.turn;
   const speech = state.speech;
   state.followsComing++;
@@ -761,6 +764,8 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     return "go";
   }
   deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
+  const afterLookUp = sent.heard.follow === true ? state.followLookUp : null;
+  state.followLookUp = null;
   const word = codeWordIn(sent.heard.text, deps.clock !== undefined, deps.web !== undefined);
   if (state.questions !== null && word?.kind !== "stop listening") return onAnswer(deps, state, sent.heard.text, "spoken", voiced(sent.heard));
   if (word?.kind === "questions" && deps.questions !== undefined) {
@@ -768,15 +773,33 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     if (sent.heard.wake === true || sent.heard.button === true) state.followed = 0;
     return startQuestions(deps, state, voiced(sent.heard));
   }
+  const spoken = sent.heard.wake === true || sent.heard.follow === true || sent.heard.button === true;
   if (word !== null && word.kind !== "questions") {
-    await onCodeWord(deps, state, word);
+    if (word.kind === "look up") counted(sent.heard, state);
+    await onCodeWord(deps, state, word, spoken);
     return "go";
   }
-  if (sent.heard.wake === true || sent.heard.button === true) state.followed = 0;
-  if (sent.heard.follow === true) state.followed++;
+  counted(sent.heard, state);
+  if (afterLookUp !== null && deps.web !== undefined) {
+    const started = deps.web.now();
+    const verdict = deps.web.followOn === undefined ? null : await deps.web.followOn(sent.heard.text, afterLookUp, deps.closing ?? new AbortController().signal).catch(() => null);
+    const judgedMs = Math.max(0, Math.round(deps.web.now() - started));
+    deps.write(`  (${followOnNote(verdict, judgedMs)})\n`);
+    if (verdict === "look") {
+      state.turn++;
+      await hush(deps, state);
+      await onLookUp(deps, state, sent.heard.text, spoken, judgedMs);
+      return "go";
+    }
+  }
   const going = await ask(deps, state, sent.heard.text, sent.heard);
   if (going === "answered" && (sent.heard.wake === true || sent.heard.follow === true || sent.heard.button === true)) openFollow(deps, state);
   return going === "stop" ? "stop" : "go";
+}
+
+function counted(heard: Heard, state: ChatState): void {
+  if (heard.wake === true || heard.button === true) state.followed = 0;
+  if (heard.follow === true) state.followed++;
 }
 
 async function sayLine(deps: ChatDeps, state: ChatState, reply: CodeWordReply): Promise<void> {
@@ -791,7 +814,7 @@ async function sayLine(deps: ChatDeps, state: ChatState, reply: CodeWordReply): 
 
 export type LookedUpEvent = { kind: "looked up"; id: number; looked: LookedUp };
 
-export type WebDeps = { helper: Helper; now: () => number; record?: (mode: LookUpMode, looked: LookedUp) => Promise<void>; tool?: { allow(): void; block(): void } };
+export type WebDeps = { helper: Helper; now: () => number; record?: (mode: LookUpMode, looked: LookedUp) => Promise<void>; tool?: { allow(): void; block(): void }; followOn?: FollowOnCheck };
 
 export const lookUpWord = "/lookup";
 export const lookUpsOffReply: CodeWordReply = { say: "Look-ups are off.", note: "JARVIS_WEB=ask in jarvis/.env turns them on" };
@@ -818,7 +841,11 @@ function stopLookUp(deps: ChatDeps, state: ChatState): void {
   deps.write(`  (${lookUpStoppedNote})\n`);
 }
 
-async function onLookUp(deps: ChatDeps, state: ChatState, asked: string): Promise<void> {
+export function followingOnNote(earlier: Earlier): string {
+  return `following on from the last look-up: ${earlier.question}`;
+}
+
+async function onLookUp(deps: ChatDeps, state: ChatState, asked: string, spoken = false, judgedMs: number | null = null): Promise<void> {
   const web = deps.web;
   const tell = state.looked;
   if (web === undefined || tell === null) {
@@ -831,25 +858,33 @@ async function onLookUp(deps: ChatDeps, state: ChatState, asked: string): Promis
     await sayLine(deps, state, { say: noQuestion });
     return;
   }
+  const earlier = isRecent(state.lastLookUp, web.now()) ? state.lastLookUp : null;
   deps.write(`  (${printable(lookingUpNote(question))})\n`);
+  if (earlier !== null) deps.write(`  (${printable(followingOnNote(earlier))})\n`);
   await sayLine(deps, state, { say: lookingUp });
   const stop = new AbortController();
   const id = ++state.lookUps;
-  state.lookUp = { id, stop };
-  void lookUp(question, { helper: web.helper, now: web.now, signal: deps.closing === undefined ? stop.signal : AbortSignal.any([stop.signal, deps.closing]) }).then((looked) => tell({ kind: "looked up", id, looked }));
+  state.lookUp = { id, stop, spoken };
+  void lookUp(question, { helper: web.helper, now: web.now, signal: deps.closing === undefined ? stop.signal : AbortSignal.any([stop.signal, deps.closing]), earlier, judgedMs }).then(async (looked) => {
+    await web.record?.("ask", looked).catch(() => {});
+    tell({ kind: "looked up", id, looked });
+  });
 }
 
 async function onLookedUp(deps: ChatDeps, state: ChatState, event: LookedUpEvent): Promise<void> {
-  await deps.web?.record?.("ask", event.looked).catch(() => {});
-  if (state.lookUp?.id !== event.id) return;
+  const running = state.lookUp;
+  if (running?.id !== event.id) return;
   state.lookUp = null;
   if (event.looked.say === null) return;
+  const answered = event.looked.ended === "answered";
+  if (answered && deps.web !== undefined) state.lastLookUp = { question: event.looked.question, answer: event.looked.say, at: deps.web.now() };
   deps.interrupt?.();
-  await sayLine(deps, state, { say: event.looked.say, note: event.looked.ended === "answered" ? fromWebNote(event.looked) : lookUpFailedNote(event.looked) });
+  await sayLine(deps, state, { say: event.looked.say, note: answered ? fromWebNote(event.looked) : lookUpFailedNote(event.looked) });
+  if (answered && running.spoken) openFollow(deps, state, state.lastLookUp);
   deps.prompt();
 }
 
-async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWord, { kind: "questions" }>): Promise<void> {
+async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWord, { kind: "questions" }>, spoken = false): Promise<void> {
   state.turn++;
   await hush(deps, state);
   if (word.kind === "never mind") {
@@ -866,7 +901,7 @@ async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWo
     return;
   }
   if (word.kind === "look up") {
-    await onLookUp(deps, state, word.text);
+    await onLookUp(deps, state, word.text, spoken);
     return;
   }
   const signal = deps.closing ?? new AbortController().signal;
@@ -1119,7 +1154,7 @@ async function finishQuestions(deps: ChatDeps, state: ChatState): Promise<void> 
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   const found = deps.web === undefined ? null : createEvents<LookedUpEvent>();
@@ -1174,6 +1209,8 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         if (state.questions !== null) await finishQuestions(current, state);
         await settle(current, state);
         current = await startNewChat(current, state);
+        state.lastLookUp = null;
+        state.followLookUp = null;
       } else if (message.toLowerCase() === talkWord) {
         if (talking === null) current.write(`  (${talkOffNote})\n`);
         else await startListening(talking, state);

@@ -32,6 +32,7 @@ import { notesFound, notesLine, readSessionNotes } from "./session-notes.js";
 import { startTalk } from "./talk.js";
 import { askHubForChanges, watchTrainChanges } from "./train-news.js";
 import { turnCheck } from "./turn-check.js";
+import { followOnCheck } from "./look-up-follow.js";
 import { voiceFor } from "./voice.js";
 import { createFollowAsk, eager, spokenOf, startWakeHold, stopOnCutIn, watchWake } from "./wake.js";
 
@@ -137,6 +138,7 @@ try {
               now,
               record: recordLookUp,
               tool: lookUpTool,
+              followOn: followOnCheck({ apiKey: config.apiKey, model: chatModel }),
             },
       failureHint: setup.failureHint ?? undefined,
       lengthNote: hints.newLengthNote(),

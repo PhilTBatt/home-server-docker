@@ -33,7 +33,9 @@ export function isLookUpLine(value: unknown): value is LookUpLogLine {
     endings.includes(line.ended as string) &&
     [line.ms, line.questionChars, line.answerChars, line.searches, line.opened, line.refused].every(whole) &&
     [line.steps, line.inputTokens, line.outputTokens, line.costEstimateUsd, line.helperMs, line.startMs].every(wholeOrNull) &&
-    [line.credential, line.version, line.error].every(textOrNull)
+    [line.credential, line.version, line.error].every(textOrNull) &&
+    (line.followsOn === undefined || typeof line.followsOn === "boolean") &&
+    (line.judgedMs === undefined || wholeOrNull(line.judgedMs))
   );
 }
 
@@ -66,6 +68,12 @@ function decimal(value: number | null): string {
 
 function dollars(value: number | null): string {
   return value === null ? "-" : `$${value.toFixed(4)}`;
+}
+
+export const signIns: Record<string, string> = { none: "your plan token, no API key", ANTHROPIC_API_KEY: "an API key in Claude Code's environment", "API key": "Jarvis's API key, for the API helper" };
+
+export function signIn(credential: string): string {
+  return signIns[credential] ?? credential;
 }
 
 function counted(values: string[]): string {
@@ -112,8 +120,11 @@ export function lookUpReport(lines: LookUpLogLine[], table: (header: string[], r
     table(["", "Look-ups", "Answered", "Found nothing", "Failed", "Too slow", "Stopped", "Time", "Starting up", "Searches", "Pages opened", "Pages refused", "Tokens in", "Tokens out", "Est. cost each", "Est. cost in all"], rows),
     "Time is from the question being handed over to the answer being ready to say: the median over answered look-ups, with the slowest in brackets. Starting up, searches, pages opened, tokens and the cost of each are medians over answered look-ups too; pages refused and the cost in all are totals. The cost is Claude Code's own estimate at list prices, so on a plan it isn't a bill.",
   ];
-  const credentials = lines.flatMap((line) => (line.credential === null ? [] : [line.credential]));
-  if (credentials.length > 0) out.push(`The sign-in each look-up reported: ${counted(credentials)}.`);
+  const credentials = lines.flatMap((line) => (line.credential === null ? [] : [signIn(line.credential)]));
+  if (credentials.length > 0) out.push(`How each look-up signed in: ${counted(credentials)}.`);
+  const following = lines.filter((line) => line.followsOn === true);
+  const judged = picked(lines, (line) => line.judgedMs ?? null);
+  if (following.length > 0) out.push(`${following.length} followed on from the look-up before, so the helper was also given that one's question and answer${judged.length === 0 ? "" : `. ${judged.length} of them came from what you said after a look-up, picked out by the check in ${seconds(median(judged))} (median)`}.`);
   const errors = lines.flatMap((line) => (line.error === null || line.ended === "stopped" ? [] : [line.error]));
   if (errors.length > 0) out.push(`What went wrong: ${counted(errors)}.`);
   return out;

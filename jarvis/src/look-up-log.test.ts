@@ -6,12 +6,12 @@ import { compareReport, readLog, table } from "./comparison.js";
 import { noNumbers, type Helped, type LookedUp } from "./look-up.js";
 import { lookUpErrorKind, lookUpLine, lookUpLogFile, lookUpLoggingNote, lookUpLogVersion, lookUpNumbers, startLookUpLog } from "./look-up-log.js";
 import { noGuard, noProgram, noResult, otherTools } from "./look-up-claude.js";
-import { isLookUpLine, lookUpReport } from "./look-up-report.js";
+import { isLookUpLine, lookUpReport, signIn } from "./look-up-report.js";
 
 const at = new Date("2026-11-26T19:00:00.000Z");
 const helped: Helped = { answer: "Node 26 is the latest, per [nodejs.org](https://nodejs.org).", error: null, numbers: { searches: 1, opened: 2, refused: 1, steps: 4, inputTokens: 25_634, outputTokens: 1_222, costEstimateUsd: 0.013, helperMs: 11_233, startMs: 1_585, credential: "none", version: "2.1.327" }, found: ["nodejs.org", "endoflife.date"], opened: ["nodejs.org"], refused: ["192.168.0.1"] };
 const answered: LookedUp = { ended: "answered", say: "Node 26 is the latest, per nodejs.org.", question: "what is the latest Node version?", ms: 12_668, helped };
-const numbers = { mode: "ask", by: "claude", ended: "answered", ms: 12_668, questionChars: 32, answerChars: 38, searches: 1, opened: 2, refused: 1, steps: 4, inputTokens: 25_634, outputTokens: 1_222, costEstimateUsd: 0.013, helperMs: 11_233, startMs: 1_585, credential: "none", version: "2.1.327", error: null } as const;
+const numbers = { mode: "ask", by: "claude", ended: "answered", ms: 12_668, questionChars: 32, answerChars: 38, searches: 1, opened: 2, refused: 1, steps: 4, inputTokens: 25_634, outputTokens: 1_222, costEstimateUsd: 0.013, helperMs: 11_233, startMs: 1_585, credential: "none", version: "2.1.327", error: null, followsOn: false, judgedMs: null } as const;
 const context: LogContext = { engine: "sdk", thinking: null, model: "claude-haiku-5-5", chats: "fresh", lengthHints: "note", hubTools: "off", hubActions: "off", sessionNotes: "off", voice: "kokoro", kokoroSpeed: 1, speechStart: "sentence", speechStop: "now", speechBundle: "off", spokenStyle: "off", persona: "off", liveFacts: "off" };
 
 test("a look-up's numbers are taken from how it ended and what the helper reported, with lengths in place of words", () => {
@@ -21,7 +21,7 @@ test("a look-up's numbers are taken from how it ended and what the helper report
 });
 
 test("a look-up that never reached the helper, or didn't end in an answer, has empty numbers and no answer length", () => {
-  assert.deepEqual(lookUpNumbers("auto", "claude", { ended: "stopped", say: null, question: "q", ms: 3, helped: null }), { mode: "auto", by: "claude", ended: "stopped", ms: 3, questionChars: 1, answerChars: 0, searches: 0, opened: 0, refused: 0, steps: null, inputTokens: null, outputTokens: null, costEstimateUsd: null, helperMs: null, startMs: null, credential: null, version: null, error: null });
+  assert.deepEqual(lookUpNumbers("auto", "claude", { ended: "stopped", say: null, question: "q", ms: 3, helped: null }), { mode: "auto", by: "claude", ended: "stopped", ms: 3, questionChars: 1, answerChars: 0, searches: 0, opened: 0, refused: 0, steps: null, inputTokens: null, outputTokens: null, costEstimateUsd: null, helperMs: null, startMs: null, credential: null, version: null, error: null, followsOn: false, judgedMs: null });
   const failed = lookUpNumbers("ask", "claude", { ended: "failed", say: "I couldn't look that up.", question: "q", ms: 900, helped: { ...helped, answer: null, error: "Claude Code ended without a result. It exited with 1.", numbers: { ...noNumbers } } });
   assert.deepEqual([failed.ended, failed.answerChars, failed.error], ["failed", 0, "no result"]);
   assert.equal(lookUpNumbers("ask", "claude", { ended: "timed out", say: "The look-up took too long, so I stopped it.", question: "q", ms: 45_000, helped }).answerChars, 0);
@@ -129,7 +129,7 @@ test("look-ups by the API are logged and reported apart from Claude Code's", () 
   const rows = report[1].split("\n").map((row) => row.split(/\s{3,}/));
   assert.deepEqual([rows[1][0], rows[1][7], rows[1][8]], ["ask, api", "4.0 s (4.0 s)", "-"]);
   assert.deepEqual([rows[2][0], rows[2][7], rows[2][8]], ["ask, claude", "12.7 s (12.7 s)", "1.6 s"]);
-  assert.equal(report[3], "The sign-in each look-up reported: API key (1), none (1).");
+  assert.equal(report[3], "How each look-up signed in: Jarvis's API key, for the API helper (1), your plan token, no API key (1).");
 });
 
 test("the compare tool reads look-up lines apart from answers, and counts nothing as unreadable", () => {
@@ -155,7 +155,7 @@ test("the look-up report groups by mode and helper, with medians over answered l
   assert.deepEqual(rows[1], ["ask, claude", "6", "2", "1", "1", "1", "1", "12.0 s (14.0 s)", "1.5 s", "2.0", "1.0", "6", "25,000", "1,500", "$0.0200", "$0.0700"]);
   assert.deepEqual(rows[2], ["auto, claude", "1", "1", "0", "0", "0", "0", "7.0 s (7.0 s)", "1.6 s", "1.0", "2.0", "1", "25,634", "1,222", "$0.0130", "$0.0130"]);
   assert.match(report[2], /on a plan it isn't a bill/);
-  assert.equal(report[3], "The sign-in each look-up reported: ANTHROPIC_API_KEY (1), none (5).");
+  assert.equal(report[3], "How each look-up signed in: an API key in Claude Code's environment (1), your plan token, no API key (5).");
   assert.equal(report[4], "What went wrong: Claude Code ended without a result. It exited with 1. (1).");
   assert.equal(report.length, 5);
 });
@@ -173,4 +173,32 @@ test("the compare report ends with the look-ups, with or without answers in the 
   assert.match(only, /^No answers logged yet\./);
   assert.match(only, /\n\nLook-ups:\n1 look-up logged\./);
   assert.ok(!compareReport(readLog("")).includes("Look-ups"));
+});
+
+test("the sign-in Claude Code reports is said in words, and anything unknown is shown as it came", () => {
+  assert.equal(signIn("none"), "your plan token, no API key");
+  assert.equal(signIn("ANTHROPIC_API_KEY"), "an API key in Claude Code's environment");
+  assert.equal(signIn("API key"), "Jarvis's API key, for the API helper");
+  assert.equal(signIn("/login managed key"), "/login managed key");
+});
+
+test("follow-on look-ups and the check's time are counted, and lines from before they were logged still read", () => {
+  const old = { ...logged() } as Record<string, unknown>;
+  delete old.followsOn;
+  delete old.judgedMs;
+  assert.ok(isLookUpLine(old));
+  assert.ok(!isLookUpLine({ ...logged(), followsOn: "yes" }));
+  assert.ok(!isLookUpLine({ ...logged(), judgedMs: -1 }));
+  const plain = lookUpReport([logged(), old as LookUpLogLine], table);
+  assert.ok(!plain.some((line) => line.includes("followed on")));
+  const report = lookUpReport([logged(), logged({ followsOn: true }), logged({ followsOn: true, judgedMs: 400 }), logged({ followsOn: true, judgedMs: 800 })], table);
+  assert.ok(report.includes("3 followed on from the look-up before, so the helper was also given that one's question and answer. 2 of them came from what you said after a look-up, picked out by the check in 0.6 s (median)."), report.join("\n"));
+  assert.ok(lookUpReport([logged({ followsOn: true })], table).includes("1 followed on from the look-up before, so the helper was also given that one's question and answer."));
+});
+
+test("a look-up's numbers say whether it followed on and how long the check took, and default to no and none", () => {
+  assert.deepEqual([lookUpNumbers("ask", "claude", answered).followsOn, lookUpNumbers("ask", "claude", answered).judgedMs], [false, null]);
+  const following = lookUpNumbers("ask", "claude", { ...answered, followsOn: true, judgedMs: 512 });
+  assert.deepEqual([following.followsOn, following.judgedMs], [true, 512]);
+  assert.equal(lookUpLine("ask", "claude", { ...answered, followsOn: true }, at).followsOn, true);
 });
