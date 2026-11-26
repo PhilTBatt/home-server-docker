@@ -5,13 +5,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createChanges, type Changes } from "./changes.js";
 import type { Config } from "./config.js";
-import { createEars, type Ears } from "./ears.js";
+import { createEars, type Ears, type VoiceGate } from "./ears.js";
 import { createListener, wakeHost, wakeOff, wakePort, type Listener, type ListenerDeps } from "./listener.js";
 import { applyMicSettings, findMicCard, recorderArgs, recorderCommand, type MicCard } from "./mic-card.js";
 import { switchEveryMs, switchFile, watchSwitch } from "./mute.js";
 import { startRecording, type Recorder } from "./recorder.js";
 import { createDetector, loadSilero, type SileroStep } from "./silero.js";
 import { earsPort, startEarsServer, wakeOffError, type WakeApi } from "./server.js";
+import { loadVoiceId, type VoiceCheck } from "./voice-id.js";
 import type { ToText } from "./whisper.js";
 import { connectWyoming } from "./wyoming-client.js";
 
@@ -31,6 +32,7 @@ export type ServiceOptions = {
   setLevel?: (card: number, control: string, level: number) => Promise<void>;
   setBoost?: (card: number, control: string, steps: number) => Promise<void>;
   loadSilero?: () => Promise<SileroStep>;
+  loadVoice?: () => Promise<VoiceCheck | null>;
   wake?: Partial<Pick<ListenerDeps, "connect" | "presenceMs" | "holdMs" | "gapMs" | "retryMs" | "settleMs" | "startWithinMs" | "quietForMs">> & { claimMs?: number; waitMs?: number };
 };
 
@@ -45,6 +47,15 @@ async function chooseRecorder(options: ServiceOptions): Promise<{ recorder: Reco
   return { recorder: options.recorder ?? { command: recorderCommand, args: recorderArgs(card) }, microphone: `sound card ${card.number}'s microphone (${level})` };
 }
 
+export const notYoursSoFar = "the voice so far hasn't counted as the voiceprint's";
+
+export function gatedWords(check: VoiceCheck, toText: ToText): ToText {
+  return async (sound, signal) => {
+    if ((await check(sound)).verdict !== "match") throw new Error(notYoursSoFar);
+    return toText(sound, signal);
+  };
+}
+
 export async function startService(options: ServiceOptions): Promise<Service> {
   const { recorder, microphone } = await chooseRecorder(options);
   let step: SileroStep | null = null;
@@ -56,6 +67,18 @@ export async function startService(options: ServiceOptions): Promise<Service> {
     }
   }
   const silero = step;
+  const voiceId = options.config.voiceId;
+  let check: VoiceCheck | null = null;
+  if (voiceId.mode !== "off") {
+    try {
+      check = await (options.loadVoice ?? (() => loadVoiceId(voiceId)))();
+    } catch (error) {
+      throw new Error(`voice ID couldn't start: ${error instanceof Error ? error.message : String(error)}. Set EARS_VOICE_ID=off to go without it`);
+    }
+  }
+  const voice: VoiceGate | undefined = check === null || voiceId.mode === "off" ? undefined : { check, mode: voiceId.mode, threshold: voiceId.threshold };
+  const heard = options.toText;
+  const words = !options.config.turnWords || heard === undefined ? undefined : voice === undefined || voice.mode !== "require" ? heard : gatedWords(voice.check, heard);
   const tuning = options.wake ?? {};
   let changes: Changes | null = null;
   let listener: Listener | null = null;
@@ -64,6 +87,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
     record: (by) => (listener === null ? startRecording({ recorder, limitMs: options.limitMs }) : listener.tap(by)),
     log: options.log,
     toText: options.toText,
+    voice,
     claimMs: tuning.claimMs,
     idsAfter: Date.now(),
     changed: () => {
@@ -88,7 +112,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
       stream: (onSound) => startRecording({ recorder, limitMs: null, keep: false, onSound }),
       connect: tuning.connect ?? ((signal) => connectWyoming({ host: wakeHost, port: wakePort, signal })),
       detector: silero === null ? undefined : () => createDetector(silero),
-      words: options.config.turnWords ? options.toText : undefined,
+      words,
       interrupt: options.config.interrupt,
       log: options.log,
       changed: () => seen.check(),

@@ -1,0 +1,10 @@
+services:
+  ears:
+    volumes:
+      - type: bind
+        source: ./ears/voice
+        target: /voice
+        read_only: true
+        bind:
+          create_host_path: false
+    mem_limit: 384m

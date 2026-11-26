@@ -187,7 +187,7 @@ others=$(awk '/^  ears:$/ {skip=1; next} skip && /^  [a-z]/ {skip=0} skip && /^[
 check "only Whisper and openWakeWord join ears on its network" "  whisper:
   openwakeword:" "$(awk '/^  [a-z]/ {name=$0; net=0} /^    networks:$/ {net=1; next} /^    [a-z]/ {net=0} net && /^      - ears$/ {print name}' <<< "$others")"
 check "the sound file doesn't put Jarvis on it" "0" "$(grep -c 'ears' "$here/../docker-compose.sound.yaml")"
-check "the switch, ears's settings and its build are git-ignored" "ears/node_modules/ ears/dist/ ears/switch/ " "$(grep '^ears/' "$here/../.gitignore" | tr '\n' ' ')"
+check "the switch, the voiceprint's folder, ears's settings and its build are git-ignored" "ears/node_modules/ ears/dist/ ears/switch/ ears/voice/ " "$(grep '^ears/' "$here/../.gitignore" | tr '\n' ' ')"
 check "and so is Whisper's model" "whisper/models/" "$(grep '^whisper/' "$here/../.gitignore")"
 check "and .env files are too" "1" "$(grep -c '^\.env$' "$here/../.gitignore")"
 check "the image runs as node, not root" "USER node" "$(grep '^USER' "$here/../ears/Dockerfile")"
@@ -277,6 +277,17 @@ check "the mic file gives ears only the named card's mixer and microphone, and t
     group_add:
       - "${AUDIO_GROUP_ID:?start it with bash host/ears.sh start}"' "$(cat "$mic_file")"
 check "never a speaker" "0" "$(grep -c 'D[0-9]*p' "$mic_file")"
+check "the voice file gives ears only the voiceprint's folder, read-only, and more memory for the voice model" 'services:
+  ears:
+    volumes:
+      - type: bind
+        source: ./ears/voice
+        target: /voice
+        read_only: true
+        bind:
+          create_host_path: false
+    mem_limit: 384m' "$(cat "$here/../docker-compose.voice.yaml")"
+check "and the main file gives ears no voiceprint" "0" "$(grep -c 'ears/voice' "$here/../docker-compose.yaml")"
 
 mkdir -p "$work/bin"
 cat > "$work/bin/docker" <<'FAKE'
@@ -465,6 +476,48 @@ printf 'EARS_TOKEN=x\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=pci-0000:04:00.6\nEA
 output=$(SOUND_DIR="$snd" with_fakes start)
 check "with the card microphone and the wake word, start adds the mic file and starts openWakeWord too" "0|docker compose -f docker-compose.yaml -f docker-compose.mic.yaml up -d --build --wait ears openwakeword | MIC_CARD_NUMBER=1 AUDIO_GROUP_ID=$(stat -c %g "$snd/controlC1")|WAKE_THRESHOLD=0.6 for: docker compose -f docker-compose.yaml -f docker-compose.mic.yaml up -d --build --wait ears openwakeword" "$?|$(cat "$DOCKER_LOG")|$(cat "$DOCKER_LOG.wake")"
 check_has "saying both" "Starting ears with sound card 1's microphone, Whisper, and openWakeWord at threshold 0.6..." "$output"
+
+for voice in observe require; do
+  fresh
+  fake_card
+  fake_model
+  mkdir -p "$work/repo/ears/voice"
+  : > "$work/repo/ears/voice/voiceprint.json"
+  printf 'EARS_TOKEN=x\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=pci-0000:04:00.6\nEARS_VOICE_ID=%s\n' "$voice" > "$work/repo/ears/.env"
+  output=$(SOUND_DIR="$snd" with_fakes start)
+  check "with voice ID set to $voice and a voiceprint made, start adds the voice file after the mic file" "0|docker compose -f docker-compose.yaml -f docker-compose.mic.yaml -f docker-compose.voice.yaml up -d --build --wait ears | MIC_CARD_NUMBER=1 AUDIO_GROUP_ID=$(stat -c %g "$snd/controlC1")" "$?|$(cat "$DOCKER_LOG")"
+  check_has "saying so ($voice)" "Starting ears with sound card 1's microphone, and Whisper, with your voiceprint..." "$output"
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears/voice"
+  : > "$work/repo/ears/voice/voiceprint.json"
+  printf 'EARS_TOKEN=x\nEARS_MICROPHONE=pretend\nEARS_WAKE=on\nEARS_VOICE_ID=%s\n' "$voice" > "$work/repo/ears/.env"
+  output=$(with_fakes start)
+  check "without a card microphone, voice ID set to $voice adds the voice file to the main one" "0|docker compose -f docker-compose.yaml -f docker-compose.voice.yaml up -d --build --wait ears openwakeword | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
+  check_has "saying so ($voice, no card)" "Starting ears, Whisper and openWakeWord at threshold 0.5, with your voiceprint..." "$output"
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\nEARS_VOICE_ID=%s\n' "$voice" > "$work/repo/ears/.env"
+  output=$(with_fakes start 2>&1)
+  check "voice ID set to $voice with no voiceprint stops start, saying how to make one, before Docker is asked anything" "1|EARS_VOICE_ID is $voice in ears/.env, but there's no voiceprint yet. Make one with: bash host/ears.sh voice-enrol|0" "$?|$output|$(wc -l < "$DOCKER_LOG" 2> /dev/null || echo 0)"
+done
+for voice in on yes REQUIRE; do
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\nEARS_VOICE_ID=%s\n' "$voice" > "$work/repo/ears/.env"
+  output=$(with_fakes start 2>&1)
+  check "voice ID set to anything else ($voice) stops start, saying what it must be" "1|EARS_VOICE_ID is $voice in ears/.env, but it must be off, observe or require.|0" "$?|$output|$(wc -l < "$DOCKER_LOG" 2> /dev/null || echo 0)"
+done
+for voice in off ""; do
+  fresh
+  fake_model
+  mkdir -p "$work/repo/ears"
+  printf 'EARS_TOKEN=x\nEARS_VOICE_ID=%s\n' "$voice" > "$work/repo/ears/.env"
+  output=$(with_fakes start)
+  check "voice ID off ('$voice') starts ears as before, with no voice file and no voiceprint needed" "0|docker compose up -d --build --wait ears | MIC_CARD_NUMBER= AUDIO_GROUP_ID=" "$?|$(cat "$DOCKER_LOG")"
+done
 
 for setting in "EARS_WAKE=off" "EARS_WAKE=" ""; do
   fresh
@@ -664,12 +717,32 @@ Recording started by the wake word.
 A Jarvis chat took the wake-word recording.
 Recording stopped after 2.9 seconds: it went quiet for 2.5 seconds after you spoke.
 Speech in it: first heard after 0 seconds, 0.4 seconds of speech, longest pause between words 0 seconds.
+Voice: Speech was heard for only 0.4 seconds, under the 1 second a voice needs to be compared fairly.
 Turned into text in 0.5 seconds.
 LOG
+cat > "$work/voice-log.txt" << 'LOG'
+Voice: Score against the voiceprint: 0.84. At the threshold of 0.5, that counts as the voiceprint's voice.
+Voice: Score against the voiceprint: 0.61. At the threshold of 0.5, that counts as the voiceprint's voice.
+Voice: Score against the voiceprint: 0.90. At the threshold of 0.5, that counts as the voiceprint's voice.
+Voice: Score against the voiceprint: 0.12. At the threshold of 0.5, that counts as a different voice.
+Not turned into text: the voice in it didn't match the voiceprint.
+Voice: Score against the voiceprint: 0.30. At the threshold of 0.5, that counts as a different voice.
+Not turned into text: the voice in it didn't match the voiceprint.
+Voice: Score against the voiceprint: -0.07. At the threshold of 0.5, that counts as a different voice.
+Not turned into text: the voice in it didn't match the voiceprint.
+Voice: No speech was heard, so there was nothing to compare.
+Not turned into text: the speech in it was too quiet to check against the voiceprint, and voice ID is required.
+Voice: Speech was heard for only 0.6 seconds, under the 1 second a voice needs to be compared fairly.
+Voice: No speech was heard, so there was nothing to compare.
+Voice: couldn't be checked (the model broke).
+Not turned into text: the voice in it couldn't be checked against the voiceprint, and voice ID is required.
+LOG
+output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/voice-log.txt" with_fakes wake-report)
+check "with voice ID on, a last line counts how voices were judged, with the range of scores each way, and how many recordings it stopped" "0|- Voice ID: counted as your voice, 3 (scores 0.61 to 0.90, median 0.84); as a different voice, 3 (scores -0.07 to 0.30, median 0.12); too little speech to judge, 3; couldn't be checked, 1. Not turned into text because of the voice: 5." "$?|$(tail -1 <<< "$output")"
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/words-log.txt" with_fakes wake-report)
 check "with the word check on, a last line counts how recordings were judged and how often the text made at a pause was used" "0|- Judged by your words: finished, 1; more to come, 1; unsure, 1; not judged, 2. A Jarvis chat gave the answer for 1 of them. The text made at a pause was used for 3, so Whisper wasn't asked again.|4" "$?|$(tail -1 <<< "$output")|$(grep -o 'turned into text, [0-9]*' <<< "$output" | head -1 | grep -o '[0-9]*')"
 check "and a line before it counts the times he was cut in on, by the wake word and by speech" "- Cut-ins while Jarvis was speaking: 1 by the wake word, 1 by speech (those start a wake recording with no wake word heard).|- \"Hey Jarvis\" heard: 4. Ignored: 0 as too late to trust (or with no usable time), 0 that came after ears stopped listening." "$(tail -2 <<< "$output" | head -1)|$(sed -n 2p <<< "$output")"
-check "and a log with none of those lines has neither line" "0|0" "$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Cut-ins')|$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Judged by your words')"
+check "and a log with none of those lines has none of the three" "0|0|0" "$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Cut-ins')|$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Judged by your words')|$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Voice ID')"
 output=$(FAKE_EARS_LOG="$report_log" with_fakes wake-report)
 check "with no ears container, it says to start ears, and doesn't ask for a log" "1|Ears has no log yet. Start it with bash host/ears.sh start.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" DOCKER_EXIT=1 with_fakes wake-report)
@@ -727,6 +800,25 @@ if [ "$1 $2" = "build -q" ]; then
   echo "sha256:0123"
   exit 0
 fi
+if [ "$1" = run ] && [[ " $* " == *" dist/voice-enrol-run.js "* ]]; then
+  echo "enrol: docker $* | EARS_MIC_LEVEL=${EARS_MIC_LEVEL-unset} EARS_MIC_CONTROL=${EARS_MIC_CONTROL-unset} EARS_MIC_BOOST=${EARS_MIC_BOOST-unset} EARS_MIC_BOOST_CONTROL=${EARS_MIC_BOOST_CONTROL-unset} EARS_VOICE_ID_THRESHOLD=${EARS_VOICE_ID_THRESHOLD-unset} EARS_TOKEN=${EARS_TOKEN-unset}" >> "$MIC_LOG"
+  echo "Sentence 1 of 5. Read it at your normal speed when it says Go:" >&2
+  if [ -n "${FAKE_ENROL_FAIL:-}" ]; then echo "$FAKE_ENROL_FAIL" >&2; exit 1; fi
+  if [ -n "${FAKE_ENROL_INT:-}" ]; then
+    trap 'exit 130' INT
+    : > "$STARTED"
+    for _ in $(seq 1 100); do sleep 0.05; done
+    exit 0
+  fi
+  if [ -n "${FAKE_ENROL_SAYS+set}" ]; then [ -n "$FAKE_ENROL_SAYS" ] && printf '%s\n' "$FAKE_ENROL_SAYS"; exit 0; fi
+  printf 'voiceprint follows\n%s\n' "$(cat "$VOICEPRINT")"
+  exit 0
+fi
+if [ "$1" = run ] && [[ " $* " == *" dist/voice-check-run.js "* ]]; then
+  echo "check: docker $* | EARS_MIC_LEVEL=${EARS_MIC_LEVEL-unset} EARS_VOICE_ID_THRESHOLD=${EARS_VOICE_ID_THRESHOLD-unset} EARS_VOICE_CHECK_WAIT=${EARS_VOICE_CHECK_WAIT-unset} EARS_TOKEN=${EARS_TOKEN-unset}" >> "$MIC_LOG"
+  echo "Score against the voiceprint: 0.73. At the threshold of 0.5, that counts as the voiceprint's voice."
+  exit "${FAKE_CHECK_EXIT:-0}"
+fi
 if [ "$1" = run ] && [[ " $* " == *" home-hub-ears "* ]]; then
   echo "recorder: docker $* | EARS_MIC_LEVEL=${EARS_MIC_LEVEL-unset} EARS_MIC_CONTROL=${EARS_MIC_CONTROL-unset} EARS_MIC_BOOST=${EARS_MIC_BOOST-unset} EARS_MIC_BOOST_CONTROL=${EARS_MIC_BOOST_CONTROL-unset} EARS_WAKE_END=${EARS_WAKE_END-unset} EARS_WAKE_PAUSE=${EARS_WAKE_PAUSE-unset} EARS_MIC_TEST_WAIT=${EARS_MIC_TEST_WAIT-unset} EARS_TOKEN=${EARS_TOKEN-unset}" >> "$MIC_LOG"
   echo "The room's background is 41, so speech is anything above 300." >&2
@@ -767,6 +859,8 @@ exit 9
 FAKE
 chmod +x "$work/micbin/docker"
 export MIC_LOG="$work/mic.log" PLAYED="$work/played" SOUND="$work/sound" STARTED="$work/started"
+export VOICEPRINT="$work/voiceprint"
+printf '{"model":"wespeaker_en_voxceleb_CAM++","clips":5,"made":"2026-11-20T10:00:00.000Z","vector":[%s]}' "$(printf '0.044194,%.0s' $(seq 1 511))0.044194" > "$VOICEPRINT"
 printf 'ab\000\001\n\377sound follows\n' > "$SOUND"
 head -c 3200 /dev/zero >> "$SOUND"
 
@@ -977,18 +1071,129 @@ rm -f "$STARTED"
 (cd "$work/repo" && SOUND_DIR="$snd" TMPDIR="$work/tmp" PATH="$work/micbin:$PATH" FAKE_PLAYER_INT=0 script -qec "bash -c 'bash host/ears.sh mic-test; echo after it'" /dev/null < <(for _ in $(seq 1 100); do [ -e "$STARTED" ] && break; sleep 0.05; done; sleep 0.2; printf '\003'; sleep 1) > "$work/out" 2>&1)
 check "and a script that ran it is stopped by the same Ctrl+C while it plays back, as by any other command's" "1|0" "$(grep -c '^player:' "$MIC_LOG")|$(grep -c 'after it' "$work/out")"
 
-for args in "mic-test 5 6" "mute 5" "start 5" "whisper-model x" "wake-report 5 6"; do
+for args in "mic-test 5 6" "mute 5" "start 5" "whisper-model x" "wake-report 5 6" "voice-enrol 5" "voice-check 5 6"; do
   mic_setup
   read -r -a words <<< "$args"
   mic_test "${words[@]}"
   check "too many arguments are refused before anything runs: '$args'" "1|" "$mic_status|$(cat "$MIC_LOG")"
-  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model, bash host/ears.sh mic-test [seconds to wait], or bash host/ears.sh wake-report [hours]" "$mic_output"
+  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model|voice-enrol, bash host/ears.sh mic-test [seconds to wait], bash host/ears.sh voice-check [seconds to wait], or bash host/ears.sh wake-report [hours]" "$mic_output"
+done
+
+voice_dir="$work/repo/ears/voice"
+saved="$voice_dir/voiceprint.json"
+
+mic_setup
+output=$(cd "$work/repo" && PATH="$work/micbin:$PATH" SOUND_DIR="$snd" bash host/ears.sh voice-enrol < /dev/null 2>&1)
+check "voice-enrol without a terminal is refused, before Docker, and writes nothing" "1||no folder" "$?|$(cat "$MIC_LOG" 2> /dev/null)|$([ -e "$voice_dir" ] && echo folder || echo "no folder")"
+check_has "saying it only runs from a terminal someone types in" "voice-enrol records the room, so it only runs from a terminal someone is typing in, not from a script or an AI tool." "$output"
+output=$(cd "$work/repo" && PATH="$work/micbin:$PATH" SOUND_DIR="$snd" bash host/ears.sh voice-check < /dev/null 2>&1)
+check "voice-check without a terminal is refused too" "1|" "$?|$(cat "$MIC_LOG" 2> /dev/null)"
+check_has "saying why" "voice-check records the room, so it only runs from a terminal someone is typing in" "$output"
+
+mic_setup
+printf 'EARS_TOKEN=a-secret-token\nEARS_MICROPHONE=card\nEARS_SOUND_CARD=usb-0000:00:14.0-1\nEARS_MIC_LEVEL=100\nEARS_MIC_CONTROL=Mic\nEARS_MIC_BOOST=2\nEARS_MIC_BOOST_CONTROL="Mic Boost"\nEARS_VOICE_ID_THRESHOLD=0.45\n' > "$work/repo/ears/.env"
+mic_test voice-enrol
+check "voice-enrol builds ears's image, checks ears isn't listening, then records in a throwaway container with only the microphone and its mixer, no network and no log, and ears's microphone settings and threshold passed by name" "0|docker build -q -t home-hub-ears ears
+docker compose ps --status running --quiet ears
+enrol: $hardened --group-add $(stat -c %g "$snd/controlC2") --device /dev/snd/controlC2:/dev/snd/controlC2:rw --device /dev/snd/pcmC2D0c:/dev/snd/pcmC2D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_VOICE_ID_THRESHOLD home-hub-ears node dist/voice-enrol-run.js | EARS_MIC_LEVEL=100 EARS_MIC_CONTROL=Mic EARS_MIC_BOOST=2 EARS_MIC_BOOST_CONTROL=Mic Boost EARS_VOICE_ID_THRESHOLD=0.45 EARS_TOKEN=unset" "$mic_status|$(cat "$MIC_LOG")"
+check "it saves exactly the voiceprint the enrolment sent, as one line" "same" "$(cmp -s <(cat "$VOICEPRINT"; echo) "$saved" && echo same || echo different)"
+check "in a folder and a file only their owner can open" "700 600" "$(stat -c %a "$voice_dir") $(stat -c %a "$saved")"
+check "with nothing else left in the folder" "voiceprint.json" "$(ls -A "$voice_dir")"
+check "the enrolment gets no folder from the server and no token" "0|0" "$(grep '^enrol:' "$MIC_LOG" | grep -c -e '--mount' -e ' -v ' -e 'source=')|$(grep -c 'a-secret-token' "$MIC_LOG")"
+check_has "passing on what the enrolment says" "Sentence 1 of 5. Read it at your normal speed when it says Go:" "$mic_output"
+check_has "and saying where it saved it, and that it's private" "Saved your voiceprint in ears/voice/voiceprint.json. Only you can read it, and git ignores it." "$mic_output"
+check_has "and how to try it" "Try it with bash host/ears.sh voice-check." "$mic_output"
+check "and never prints the voiceprint" "0" "$(grep -c '0.044194' <<< "$mic_output")"
+
+mic_test voice-enrol
+check_has "a second enrolment replaces the first, saying so" "Saved your new voiceprint in ears/voice/voiceprint.json, in place of the old one." "$mic_output"
+check "still with nothing else in the folder" "0|voiceprint.json" "$mic_status|$(ls -A "$voice_dir")"
+
+for case in "FAKE_ENROL_FAIL=Clip 3 sounds like a different voice|1|Clip 3 sounds like a different voice" "FAKE_ENROL_SAYS=|1|The enrolment ended without sending a voiceprint, so nothing was saved." "FAKE_ENROL_SAYS=something else|1|The enrolment sent something other than a voiceprint, so nothing was saved." "FAKE_ENROL_SAYS=voiceprint follows|1|The voiceprint didn't come through whole, so nothing was saved." "FAKE_ENROL_SAYS=voiceprint follows
+{\"model\":\"other\",\"clips\":5,\"made\":\"2026-11-20T10:00:00.000Z\",\"vector\":[0.1]}|1|The voiceprint didn't come through whole, so nothing was saved." "FAKE_ENROL_SAYS=voiceprint follows
+$(cat "$VOICEPRINT")
+more|1|The voiceprint didn't come through whole, so nothing was saved." "FAKE_ENROL_SAYS=voiceprint follows
+$(cat "$VOICEPRINT")
+|1|The voiceprint didn't come through whole, so nothing was saved." "FAKE_ENROL_SAYS=voiceprint follows
+{\"model\":\"wespeaker_en_voxceleb_CAM++\",\"clips\":5,\"made\":\"2026-11-20T10:00:00.000Z\",\"vector\":[\$(reboot)]}|1|The voiceprint didn't come through whole, so nothing was saved."; do
+  IFS='|' read -r -d '' fake code said <<< "$case" || true
+  said=${said%$'\n'}
+  mic_setup
+  mkdir -p "$voice_dir"
+  echo "old voiceprint" > "$saved"
+  (export "${fake%%=*}=${fake#*=}"; mic_test voice-enrol; printf '%s\n%s\n' "$mic_status" "$mic_output" > "$work/enrol-result")
+  mic_status=$(head -n 1 "$work/enrol-result")
+  mic_output=$(tail -n +2 "$work/enrol-result")
+  check "an enrolment that fails or sends anything but one whole voiceprint saves nothing and keeps the old one: ${fake:0:60}" "$code|old voiceprint|voiceprint.json" "$mic_status|$(cat "$saved")|$(ls -A "$voice_dir")"
+  check_has "saying why: ${fake:0:60}" "$said" "$mic_output"
+  check "and no saved line: ${fake:0:60}" "0" "$(grep -c '^Saved your' <<< "$mic_output")"
+done
+
+mic_setup
+FAKE_ENROL_FAIL="The voice model couldn't run: it broke." mic_test voice-enrol
+check "an enrolment that fails ends with its own code and words, saying nothing about a missing voiceprint" "1|1|0" "$mic_status|$(grep -c "The voice model couldn't run: it broke." <<< "$mic_output")|$(grep -c 'ended without sending' <<< "$mic_output")"
+
+mic_setup
+: > "$MIC_LOG"
+rm -f "$STARTED"
+(cd "$work/repo" && { for _ in $(seq 1 100); do [ -e "$STARTED" ] && break; sleep 0.05; done; sleep 0.2; printf '\003'; sleep 1; } | SOUND_DIR="$snd" TMPDIR="$work/tmp" PATH="$work/micbin:$PATH" FAKE_ENROL_INT=1 script -qec "bash host/ears.sh voice-enrol" /dev/null > "$work/out" 2>&1)
+check "Ctrl+C during the enrolment ends it as Ctrl+C does, saving nothing and saying nothing about it" "130|no voiceprint|0" "$?|$([ -e "$saved" ] && echo voiceprint || echo "no voiceprint")|$(grep -c -e 'nothing was saved' -e 'Saved your' "$work/out")"
+
+mic_setup
+: > "$MIC_LOG"
+rm -f "$STARTED"
+(cd "$work/repo" && SOUND_DIR="$snd" TMPDIR="$work/tmp" PATH="$work/micbin:$PATH" FAKE_ENROL_INT=1 script -qec "bash -c 'bash host/ears.sh voice-enrol; echo after it'" /dev/null < <(for _ in $(seq 1 100); do [ -e "$STARTED" ] && break; sleep 0.05; done; sleep 0.2; printf '\003'; sleep 1) > "$work/out" 2>&1)
+check "and a script that ran it is stopped by the same Ctrl+C, as by any other command's" "0" "$(grep -c 'after it' "$work/out")"
+
+for state in idle recording; do
+  mic_setup
+  FAKE_PS=abc123 FAKE_HEALTH="200 $state" mic_test voice-enrol
+  check "with ears running and $state, voice-enrol stops before recording" "1|0" "$mic_status|$(grep -c '^enrol' "$MIC_LOG")"
+  check_has "saying to mute it first" "Ears is running and $state, not muted, so it may be using the microphone. Mute it with bash host/ears.sh mute" "$mic_output"
+done
+
+mic_setup
+FAKE_BUILD_FAIL=ears mic_test voice-enrol
+check "an image that won't build stops voice-enrol before anything runs" "1|0" "$mic_status|$(grep -c '^enrol' "$MIC_LOG")"
+
+mic_setup
+printf 'EARS_TOKEN=x\nEARS_SOUND_CARD=pci-0000:04:00.1\n' > "$work/repo/ears/.env"
+mic_test voice-enrol
+check "a card with no microphone stops voice-enrol before Docker" "1|" "$mic_status|$(cat "$MIC_LOG")"
+
+mic_setup
+mic_test voice-check
+check "voice-check with no voiceprint stops before Docker, saying how to make one" "1||There's no voiceprint yet: make one with bash host/ears.sh voice-enrol" "$mic_status|$(cat "$MIC_LOG")|$mic_output"
+
+mic_setup
+printf 'EARS_TOKEN=a-secret-token\nEARS_SOUND_CARD=pci-0000:04:00.6\nEARS_MIC_LEVEL=70\nEARS_VOICE_ID_THRESHOLD=0.55\n' > "$work/repo/ears/.env"
+mkdir -p "$voice_dir"
+cp "$VOICEPRINT" "$saved"
+chmod 700 "$voice_dir"
+chmod 600 "$saved"
+mic_test voice-check 08
+check "voice-check runs as you, so it can read your voiceprint, with only the microphone, its mixer and the voiceprint's folder read-only, the threshold and the wait passed by name" "0|check: $hardened --user $(id -u):$(id -g) --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_VOICE_ID_THRESHOLD -e EARS_VOICE_CHECK_WAIT --mount type=bind,source=$work/repo/ears/voice,target=/voice,readonly home-hub-ears node dist/voice-check-run.js | EARS_MIC_LEVEL=70 EARS_VOICE_ID_THRESHOLD=0.55 EARS_VOICE_CHECK_WAIT=8 EARS_TOKEN=unset" "$mic_status|$(grep '^check:' "$MIC_LOG")"
+check_has "and passes on the score" "Score against the voiceprint: 0.73." "$mic_output"
+check "and leaves the voiceprint as it was" "same|600" "$(cmp -s "$VOICEPRINT" "$saved" && echo same || echo different)|$(stat -c %a "$saved")"
+
+mic_setup
+mkdir -p "$voice_dir"
+cp "$VOICEPRINT" "$saved"
+FAKE_CHECK_EXIT=1 mic_test voice-check
+check "a check that fails fails voice-check with its code" "1" "$mic_status"
+
+for wait_for in x 61 1.5; do
+  mic_setup
+  mic_test voice-check "$wait_for"
+  check "a wait of '$wait_for' stops voice-check before Docker" "1|" "$mic_status|$(cat "$MIC_LOG")"
+  check_has "saying what it must be: '$wait_for'" "The wait is $wait_for, but it must be a whole number of seconds from 0 to 60" "$mic_output"
 done
 
 dockerfile="$here/../ears/Dockerfile"
 check "ears's image is built and run on Node 26's slim Debian image, which onnxruntime's ready-made files need" "2" "$(grep -c '^FROM node:26-trixie-slim' "$dockerfile")"
 check "it builds with npm ci, after copying in the .npmrc that keeps it from fetching onnxruntime's CUDA files, and keeps only this machine's onnxruntime files" "1|after|1|1" "$(grep -c '^RUN npm ci$' "$dockerfile")|$(awk '/^COPY .*\.npmrc/ { copied = NR } /^RUN npm ci$/ { print (copied > 0 && copied < NR) ? "after" : "before" }' "$dockerfile")|$(grep -c 'npm prune --omit=dev' "$dockerfile")|$(grep -c 'rm -rf win32 darwin && find linux -mindepth 1 -maxdepth 1 ! -name \"\$(node -p process.arch)\" -exec rm -rf {} +' "$dockerfile")"
 check "the speech detector's model is downloaded and checked while the image builds, and copied in beside the code" "1|1" "$(grep -c 'node dist/fetch-model-run.js /app/models/silero_vad.onnx' "$dockerfile")|$(grep -c '^COPY --from=build /app/models ./models$' "$dockerfile")"
+check "and so is the voice model, by name, into the same folder" "1" "$(grep -c 'node dist/fetch-model-run.js /app/models/voice-id.onnx voice' "$dockerfile")"
 check "with onnxruntime's telemetry to Microsoft switched off in the image it runs from" "ENV ORT_DISABLE_TELEMETRY=1|2" "$(grep 'TELEMETRY' "$dockerfile")|$(awk '/^FROM/ { stage++ } /ORT_DISABLE_TELEMETRY/ { print stage }' "$dockerfile")"
 
 echo "$passed passed, $failed failed"

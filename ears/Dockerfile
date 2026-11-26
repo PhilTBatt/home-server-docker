@@ -4,7 +4,7 @@ COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
-RUN npx tsc && node dist/fetch-model-run.js /app/models/silero_vad.onnx && npm prune --omit=dev && cd node_modules/onnxruntime-node/bin/napi-v6 && rm -rf win32 darwin && find linux -mindepth 1 -maxdepth 1 ! -name "$(node -p process.arch)" -exec rm -rf {} +
+RUN npx tsc && node dist/fetch-model-run.js /app/models/silero_vad.onnx && node dist/fetch-model-run.js /app/models/voice-id.onnx voice && npm prune --omit=dev && cd node_modules/onnxruntime-node/bin/napi-v6 && rm -rf win32 darwin && find linux -mindepth 1 -maxdepth 1 ! -name "$(node -p process.arch)" -exec rm -rf {} +
 
 FROM node:26-trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends alsa-utils && rm -rf /var/lib/apt/lists/*

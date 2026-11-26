@@ -2,8 +2,8 @@
 
 cd "$(dirname "$0")/.." || exit 1
 
-if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ] && [ "$1" != wake-report ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != talk ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ] && [ "$1" != wake-report ]; }; then
-  echo "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model, bash host/ears.sh mic-test [seconds to wait], or bash host/ears.sh wake-report [hours]" >&2
+if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ] && [ "$1" != wake-report ] && [ "$1" != voice-check ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != talk ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ] && [ "$1" != wake-report ] && [ "$1" != voice-enrol ] && [ "$1" != voice-check ]; }; then
+  echo "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model|voice-enrol, bash host/ears.sh mic-test [seconds to wait], bash host/ears.sh voice-check [seconds to wait], or bash host/ears.sh wake-report [hours]" >&2
   exit 1
 fi
 
@@ -41,6 +41,41 @@ mic_card() {
 }
 
 hardened=(--rm --init --log-driver none --network none --cap-drop ALL --security-opt no-new-privileges)
+
+ears_muted() {
+  local state
+  if [ -n "$(docker compose ps --status running --quiet ears 2> /dev/null)" ]; then
+    state=$(docker compose exec -T ears node dist/ask.js health 2> /dev/null)
+    if [[ ! "$state" =~ ^200\ [a-z]+$ ]]; then
+      echo "Ears is running but didn't say whether it's muted, so it may be using the microphone. If it has only just started, wait a few seconds and run this again; otherwise stop it with bash host/ears.sh stop, run this again, then start it." >&2
+      return 1
+    fi
+    if [ "$state" != "200 muted" ]; then
+      echo "Ears is running and ${state#200 }, not muted, so it may be using the microphone. Mute it with bash host/ears.sh mute, wait a second, run this again, then unmute it." >&2
+      return 1
+    fi
+  fi
+}
+
+voiceprint_line='^\{"model":"wespeaker_en_voxceleb_CAM\+\+","clips":[0-9]{1,2},"made":"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{3})?Z","vector":\[-?[0-9][-0-9.e,]*\]\}$'
+
+save_voiceprint() {
+  local ready line extra part
+  IFS= read -r ready || return 3
+  if [ "$ready" != "voiceprint follows" ]; then
+    echo "The enrolment sent something other than a voiceprint, so nothing was saved." >&2
+    return 1
+  fi
+  if ! IFS= read -r line || IFS= read -r extra || [ -n "$extra" ] || [ "${#line}" -gt 20000 ] || [[ ! "$line" =~ $voiceprint_line ]]; then
+    echo "The voiceprint didn't come through whole, so nothing was saved." >&2
+    return 1
+  fi
+  if ! { mkdir -p ears/voice && chmod 700 ears/voice && part=$(umask 077 && mktemp ears/voice/.voiceprint.XXXXXX) && printf '%s\n' "$line" > "$part" && chmod 600 "$part" && mv -f "$part" ears/voice/voiceprint.json; }; then
+    [ -n "$part" ] && rm -f "$part"
+    echo "Couldn't write ears/voice/voiceprint.json, so nothing was saved." >&2
+    return 1
+  fi
+}
 
 play_back() {
   local ready interrupted=
@@ -134,6 +169,11 @@ if [ "$1" = wake-report ]; then
     }
     /^Turned into text in / && kind != "" { text[kind]++ }
     /^(Not turned into text|Couldn.t turn it into text): / && kind != "" { untext[kind]++ }
+    /^Voice: Score against the voiceprint: -?[0-9.]+\. .* counts as the voiceprint.s voice\.$/ { yours++; score["yours", yours] = $6 + 0 }
+    /^Voice: Score against the voiceprint: -?[0-9.]+\. .* counts as a different voice\.$/ { others++; score["others", others] = $6 + 0 }
+    /^Voice: (Speech was heard for only|No speech was heard)/ { unjudgedVoice++ }
+    /^Voice: couldn.t be checked/ { uncheckedVoice++ }
+    /^Not turned into text: the (voice|speech) in it / { blockedVoice++ }
     /^It came while Jarvis was speaking, so it cuts in\.$/ { cutWake++ }
     /^Heard speech while Jarvis was speaking\. / { cutSpeech++ }
     /^Judged by your words: finished, / { finished++ }
@@ -162,6 +202,15 @@ if [ "$1" = wake-report ]; then
       sort(k, "pause", count)
       return line sprintf("; longest pause between words a median of %.1f s, at most %.1f s.", median(count), list[count])
     }
+    function scores(which, count,   i, j, value) {
+      if (count == 0) return ""
+      for (i = 1; i <= count; i++) {
+        value = score[which, i]
+        for (j = i - 1; j >= 1 && list[j] > value; j--) list[j + 1] = list[j]
+        list[j + 1] = value
+      }
+      return sprintf(" (scores %.2f to %.2f, median %.2f)", list[1], list[count], median(count))
+    }
     function outcomes(k) {
       return sprintf("cancelled, muted or failed, %d; turned into text, %d; not turned into text after all, %d.", off[k], text[k], untext[k])
     }
@@ -175,6 +224,7 @@ if [ "$1" = wake-report ]; then
       print speech("wake", "wake recordings")
       print speech("follow", "follow-up windows")
       print speech("button", "talk-button recordings")
+      if (yours + others + unjudgedVoice + uncheckedVoice > 0) printf "- Voice ID: counted as your voice, %d%s; as a different voice, %d%s; too little speech to judge, %d; couldn\047t be checked, %d. Not turned into text because of the voice: %d.\n", yours, scores("yours", yours), others, scores("others", others), unjudgedVoice, uncheckedVoice, blockedVoice
       if (cutWake + cutSpeech > 0) printf "- Cut-ins while Jarvis was speaking: %d by the wake word, %d by speech (those start a wake recording with no wake word heard).\n", cutWake, cutSpeech
       if (finished + more + unsure + unjudged > 0) printf "- Judged by your words: finished, %d; more to come, %d; unsure, %d; not judged, %d. A Jarvis chat gave the answer for %d of them. The text made at a pause was used for %d, so Whisper wasn\047t asked again.\n", finished, more, unsure, unjudged, chat, reused
     }' <<< "$log"
@@ -207,17 +257,7 @@ if [ "$1" = mic-test ]; then
   echo "Getting ears's and Jarvis's images ready..."
   docker build -q -t home-hub-ears ears > /dev/null || exit 1
   docker build -q -t home-hub-jarvis jarvis > /dev/null || exit 1
-  if [ -n "$(docker compose ps --status running --quiet ears 2> /dev/null)" ]; then
-    state=$(docker compose exec -T ears node dist/ask.js health 2> /dev/null)
-    if [[ ! "$state" =~ ^200\ [a-z]+$ ]]; then
-      echo "Ears is running but didn't say whether it's muted, so it may be using the microphone. If it has only just started, wait a few seconds and run this again; otherwise stop it with bash host/ears.sh stop, run this again, then start it." >&2
-      exit 1
-    fi
-    if [ "$state" != "200 muted" ]; then
-      echo "Ears is running and ${state#200 }, not muted, so it may be using the microphone. Mute it with bash host/ears.sh mute, wait a second, run this again, then unmute it." >&2
-      exit 1
-    fi
-  fi
+  ears_muted || exit 1
   echo "When it's done, it plays the recording back on sound card $speakers's speakers."
   export EARS_MIC_LEVEL EARS_MIC_CONTROL EARS_MIC_BOOST EARS_MIC_BOOST_CONTROL EARS_WAKE_END EARS_WAKE_PAUSE EARS_MIC_TEST_WAIT
   EARS_MIC_LEVEL=$(setting EARS_MIC_LEVEL)
@@ -246,6 +286,65 @@ if [ "$1" = mic-test ]; then
     exit 1
   fi
   echo "Done. Run it again from somewhere else to compare."
+  exit 0
+fi
+
+if [ "$1" = voice-enrol ] || [ "$1" = voice-check ]; then
+  if [ ! -t 0 ]; then
+    echo "$1 records the room, so it only runs from a terminal someone is typing in, not from a script or an AI tool." >&2
+    exit 1
+  fi
+  wait_for=${2:-0}
+  if [[ ! "$wait_for" =~ ^[0-9]{1,2}$ ]] || [ "$((10#$wait_for))" -gt 60 ]; then
+    echo "The wait is $wait_for, but it must be a whole number of seconds from 0 to 60, like 10 to give you time to get where you'll talk from." >&2
+    exit 1
+  fi
+  if [ "$1" = voice-check ] && [ ! -f ears/voice/voiceprint.json ]; then
+    echo "There's no voiceprint yet: make one with bash host/ears.sh voice-enrol" >&2
+    exit 1
+  fi
+  card=$(mic_card) || exit 1
+  read -r number group <<< "$card"
+  echo "Getting ears's image ready..."
+  docker build -q -t home-hub-ears ears > /dev/null || exit 1
+  ears_muted || exit 1
+  export EARS_MIC_LEVEL EARS_MIC_CONTROL EARS_MIC_BOOST EARS_MIC_BOOST_CONTROL EARS_VOICE_ID_THRESHOLD EARS_VOICE_CHECK_WAIT
+  EARS_MIC_LEVEL=$(setting EARS_MIC_LEVEL)
+  EARS_MIC_CONTROL=$(setting EARS_MIC_CONTROL)
+  EARS_MIC_BOOST=$(setting EARS_MIC_BOOST)
+  EARS_MIC_BOOST_CONTROL=$(setting EARS_MIC_BOOST_CONTROL)
+  EARS_VOICE_ID_THRESHOLD=$(setting EARS_VOICE_ID_THRESHOLD)
+  EARS_VOICE_CHECK_WAIT=$((10#$wait_for))
+  microphone=(--group-add "$group" --device "/dev/snd/controlC$number:/dev/snd/controlC$number:rw" --device "/dev/snd/pcmC${number}D0c:/dev/snd/pcmC${number}D0c:rw" -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_VOICE_ID_THRESHOLD)
+  if [ "$1" = voice-check ]; then
+    exec docker run "${hardened[@]}" --user "$(id -u):$(id -g)" "${microphone[@]}" -e EARS_VOICE_CHECK_WAIT --mount "type=bind,source=$PWD/ears/voice,target=/voice,readonly" home-hub-ears node dist/voice-check-run.js
+  fi
+  had=
+  [ -f ears/voice/voiceprint.json ] && had=1
+  interrupted=
+  trap 'interrupted=1' INT
+  docker run "${hardened[@]}" "${microphone[@]}" home-hub-ears node dist/voice-enrol-run.js | save_voiceprint
+  codes=("${PIPESTATUS[@]}")
+  if [ -n "$interrupted" ]; then
+    trap - INT
+    kill -INT "$$"
+  fi
+  if [ "${codes[0]}" -ne 0 ]; then
+    exit "${codes[0]}"
+  fi
+  if [ "${codes[1]}" -eq 3 ]; then
+    echo "The enrolment ended without sending a voiceprint, so nothing was saved." >&2
+    exit 1
+  fi
+  if [ "${codes[1]}" -ne 0 ]; then
+    exit "${codes[1]}"
+  fi
+  if [ -n "$had" ]; then
+    echo "Saved your new voiceprint in ears/voice/voiceprint.json, in place of the old one. Only you can read it, and git ignores it."
+  else
+    echo "Saved your voiceprint in ears/voice/voiceprint.json. Only you can read it, and git ignores it."
+  fi
+  echo "Try it with bash host/ears.sh voice-check."
   exit 0
 fi
 
@@ -337,13 +436,30 @@ if [ "$1" = start ]; then
     echo "EARS_WAKE is $wake in ears/.env, but it must be on or off." >&2
     exit 1
   fi
+  voice=$(setting EARS_VOICE_ID)
+  voice_file=()
+  if [ "$voice" = observe ] || [ "$voice" = require ]; then
+    if [ ! -f ears/voice/voiceprint.json ]; then
+      echo "EARS_VOICE_ID is $voice in ears/.env, but there's no voiceprint yet. Make one with: bash host/ears.sh voice-enrol" >&2
+      exit 1
+    fi
+    voice_file=(-f docker-compose.voice.yaml)
+    with_card="$with_card, with your voiceprint"
+    without_card="$without_card, with your voiceprint"
+  elif [ -n "$voice" ] && [ "$voice" != off ]; then
+    echo "EARS_VOICE_ID is $voice in ears/.env, but it must be off, observe or require." >&2
+    exit 1
+  fi
   if [ "$microphone" = card ]; then
     card=$(mic_card) || exit 1
     read -r number group <<< "$card"
     echo "Starting ears with sound card $number's microphone, $with_card..."
-    MIC_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" exec docker compose -f docker-compose.yaml -f docker-compose.mic.yaml up -d --build --wait "${services[@]}"
+    MIC_CARD_NUMBER="$number" AUDIO_GROUP_ID="$group" exec docker compose -f docker-compose.yaml -f docker-compose.mic.yaml "${voice_file[@]}" up -d --build --wait "${services[@]}"
   fi
   echo "Starting ears$without_card..."
+  if [ ${#voice_file[@]} -gt 0 ]; then
+    exec docker compose -f docker-compose.yaml "${voice_file[@]}" up -d --build --wait "${services[@]}"
+  fi
   exec docker compose up -d --build --wait "${services[@]}"
 fi
 

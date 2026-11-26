@@ -2,11 +2,14 @@ import type { Microphone } from "./config.js";
 import type { Ender, SpeechHeard } from "./levels.js";
 import type { Recording, Stopped, WordsJudged } from "./recorder.js";
 import type { By } from "./tap.js";
+import { blocksRecording, describeVoice, type VoiceCheck, type VoiceResult } from "./voice-id.js";
 import type { ToText } from "./whisper.js";
 
 export type EarsState = "muted" | "idle" | "recording" | "working" | "failed";
 
 export type LastRecording = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender; pauseMs?: number };
+
+export type VoiceGate = { check: VoiceCheck; mode: "observe" | "require"; threshold: number; limitMs?: number };
 
 export type EarsView = { state: EarsState; reason: string | null; microphone: Microphone | null; last: LastRecording | null };
 
@@ -14,7 +17,7 @@ export type Refused = { ok: false; error: string; gone?: true };
 
 export type Current = { id: number; by: By; claimed: boolean };
 
-export type EarsDeps = { microphone: Microphone | null; record: (by: By) => Recording; log: (line: string) => void; toText?: ToText; now?: () => number; changed?: () => void; claimMs?: number; idsAfter?: number };
+export type EarsDeps = { microphone: Microphone | null; record: (by: By) => Recording; log: (line: string) => void; toText?: ToText; now?: () => number; changed?: () => void; claimMs?: number; idsAfter?: number; voice?: VoiceGate };
 
 export type Ears = {
   view(): EarsView;
@@ -70,6 +73,13 @@ function orCalledOff<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+function within<T>(ms: number, work: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`it took longer than ${secondsText(ms)}`)), ms);
+    work.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 export const mutedBeforeText = "it was muted before it was turned into text";
 export const flippedBeforeText = "the switch was flipped before it was turned into text, so a mute may have come and gone";
 export const cancelledBeforeText = "it was cancelled before it was turned into text";
@@ -80,6 +90,10 @@ export const claimMs = 2_000;
 export const notTakenWhy = `no Jarvis chat took it within ${claimMs / 1000} seconds`;
 export const movedOn = "ears has moved on to a newer recording, so that one is gone";
 export const thatOneEnded = "that recording has already ended";
+export const notYourVoice = "the voice in it didn't match the voiceprint";
+export const voiceNotChecked = "the voice in it couldn't be checked against the voiceprint, and voice ID is required";
+export const voiceTooQuiet = "the speech in it was too quiet to check against the voiceprint, and voice ID is required";
+export const voiceCheckMs = 10_000;
 export const stopListeningWhy = "it heard its spoken code word to stop";
 export const stoppedListening = "you said stop listening, so ears muted itself. Unmute it on the server with bash host/ears.sh unmute";
 
@@ -104,6 +118,7 @@ export function createEars(deps: EarsDeps): Ears {
   let count = deps.idsAfter ?? 0;
   let underway: Current | null = null;
   let lastId: number | null = null;
+  let lastBy: By | null = null;
   let claimTimer: ReturnType<typeof setTimeout> | null = null;
   let muteSelf: (why: string) => Promise<void> = async () => {};
   const ids = new WeakMap<Recording, number>();
@@ -119,6 +134,7 @@ export function createEars(deps: EarsDeps): Ears {
   const finished = (stopped: Stopped, of: Recording) => {
     last = { seconds: seconds(stopped.ms), reason: stopped.reason, text: null, textProblem: null, ...(stopped.ender === undefined ? {} : { ender: stopped.ender }), ...(stopped.pauseMs === undefined ? {} : { pauseMs: stopped.pauseMs }) };
     lastId = ids.get(of) ?? null;
+    lastBy = underway === null ? null : underway.by;
     if (underway !== null && underway.id === lastId) underway = null;
     if (claimTimer !== null && underway === null) {
       clearTimeout(claimTimer);
@@ -140,9 +156,22 @@ export function createEars(deps: EarsDeps): Ears {
     state = "working";
     changed();
     const calledOff = new AbortController();
-    const began = now();
+    const by = lastBy;
     const done = (async () => {
       try {
+        if (deps.voice !== undefined) {
+          const gate = deps.voice;
+          const judged: VoiceResult | string = await orCalledOff(within(gate.limitMs ?? voiceCheckMs, gate.check(stopped.sound)), calledOff.signal).catch((error: unknown) => problem(error));
+          if (calledOff.signal.aborted) return;
+          const result = typeof judged === "string" ? null : judged;
+          deps.log(result === null ? `Voice: couldn't be checked (${judged}).` : `Voice: ${describeVoice(result, gate.threshold)}`);
+          if (blocksRecording(gate.mode, result, by)) {
+            heard.textProblem = result === null ? voiceNotChecked : result.verdict === "no speech" ? voiceTooQuiet : notYourVoice;
+            deps.log(`Not turned into text: ${heard.textProblem}.`);
+            return;
+          }
+        }
+        const began = now();
         const text = await orCalledOff(turn(stopped.sound, calledOff.signal), calledOff.signal);
         if (calledOff.signal.aborted) return;
         deps.log(made === undefined ? `Turned into text in ${secondsText(now() - began)}.` : "Turned into text in 0 seconds: the text made while you paused was used.");

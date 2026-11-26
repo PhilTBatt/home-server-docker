@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, microphones, mostBoostSteps, readConfig, readMicSettings, readWakeEnd, readWakePause, shortestToken, wakePauses } from "./config.js";
+import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, defaultVoiceIdThreshold, microphones, mostBoostSteps, readConfig, readMicSettings, readVoiceIdMode, readVoiceIdSettings, readVoiceIdThreshold, readWakeEnd, readWakePause, shortestToken, voiceIdModes, wakePauses } from "./config.js";
 
 const token = "t".repeat(64);
 
-const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500, turnWords: false, interrupt: "off" };
+const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500, turnWords: false, interrupt: "off", voiceId: { mode: "off", threshold: 0.5 } };
 
 test("reads the token, and with no microphone set there's nothing to record from", () => {
   assert.deepEqual(readConfig({ EARS_TOKEN: token }), { token, microphone: null, ...usual });
@@ -125,4 +125,31 @@ test("a wake recording ends on loudness unless EARS_WAKE_END says silero, and an
   for (const value of ["Silero", "vad", "detector", "on", "loud"]) {
     assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_WAKE_END: value }), { message: `EARS_WAKE_END must be loudness or silero, not "${value}"` }, value);
   }
+});
+
+test("voice ID is off unless EARS_VOICE_ID says observe or require, and anything else stops ears, saying what it must be", () => {
+  assert.deepEqual(voiceIdModes, ["off", "observe", "require"]);
+  for (const [value, mode] of [[undefined, "off"], ["", "off"], [" ", "off"], ["off", "off"], [" observe ", "observe"], ["require", "require"]] as const) {
+    assert.equal(readConfig({ EARS_TOKEN: token, EARS_VOICE_ID: value }).voiceId?.mode, mode, String(value));
+    assert.equal(readVoiceIdMode(value), mode, String(value));
+  }
+  for (const value of ["on", "Off", "Require", "block", "yes", "1"]) {
+    assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_VOICE_ID: value }), { message: `EARS_VOICE_ID must be off, observe or require, not "${value}"` }, value);
+  }
+});
+
+test("voice ID's threshold is 0.5 unless EARS_VOICE_ID_THRESHOLD says a number above 0 and below 1 to two places, and anything else stops ears, saying what it must be", () => {
+  assert.equal(defaultVoiceIdThreshold, 0.5);
+  for (const [value, threshold] of [[undefined, 0.5], ["", 0.5], [" ", 0.5], ["0.01", 0.01], ["0.4", 0.4], [" 0.45 ", 0.45], ["0.99", 0.99], ["0.50", 0.5]] as const) {
+    assert.equal(readConfig({ EARS_TOKEN: token, EARS_VOICE_ID_THRESHOLD: value }).voiceId?.threshold, threshold, String(value));
+    assert.equal(readVoiceIdThreshold(value), threshold, String(value));
+  }
+  for (const value of ["0", "0.0", "0.00", "1", "1.0", "0.455", ".5", "0.", "-0.5", "50%", "half", "0,5", "5e-1"]) {
+    assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_VOICE_ID_THRESHOLD: value }), { message: `EARS_VOICE_ID_THRESHOLD must be a number above 0 and below 1, with up to 2 decimal places, like 0.5 or 0.45, not "${value}"` }, value);
+  }
+});
+
+test("voice ID's two settings can be read on their own, without a token, for the voice tools", () => {
+  assert.deepEqual(readVoiceIdSettings({}), { mode: "off", threshold: 0.5 });
+  assert.deepEqual(readVoiceIdSettings({ EARS_VOICE_ID: "observe", EARS_VOICE_ID_THRESHOLD: "0.6", EARS_TOKEN: "short" }), { mode: "observe", threshold: 0.6 });
 });

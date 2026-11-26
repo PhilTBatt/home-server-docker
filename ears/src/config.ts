@@ -7,7 +7,14 @@ export type MicLevel = number | "keep";
 
 export type MicSettings = { micLevel: MicLevel; micControl: string; micBoost: MicLevel; micBoostControl: string };
 
-export type Config = { token: string; microphone: Microphone | null; wake: boolean; wakeEnd: Ender; wakePauseMs: number; turnWords: boolean; interrupt: Interrupt } & MicSettings;
+export const voiceIdModes = ["off", "observe", "require"] as const;
+export type VoiceIdMode = (typeof voiceIdModes)[number];
+
+export type VoiceIdSettings = { mode: VoiceIdMode; threshold: number };
+
+export const defaultVoiceIdThreshold = 0.5;
+
+export type Config = { token: string; microphone: Microphone | null; wake: boolean; wakeEnd: Ender; wakePauseMs: number; turnWords: boolean; interrupt: Interrupt; voiceId: VoiceIdSettings } & MicSettings;
 
 export const wakePauses = { least: 1, most: 5, usual: 1.5 };
 
@@ -79,6 +86,24 @@ export function readTurnWords(value: string | undefined): boolean {
   return true;
 }
 
+export function readVoiceIdMode(value: string | undefined): VoiceIdMode {
+  const mode = value?.trim() ?? "";
+  if (mode === "") return "off";
+  if ((voiceIdModes as readonly string[]).includes(mode)) return mode as VoiceIdMode;
+  throw new Error(`EARS_VOICE_ID must be off, observe or require, not "${mode}"`);
+}
+
+export function readVoiceIdThreshold(value: string | undefined): number {
+  const threshold = value?.trim() ?? "";
+  if (threshold === "") return defaultVoiceIdThreshold;
+  if (!/^0\.[0-9]{1,2}$/.test(threshold) || Number(threshold) === 0) throw new Error(`EARS_VOICE_ID_THRESHOLD must be a number above 0 and below 1, with up to 2 decimal places, like 0.5 or 0.45, not "${threshold}"`);
+  return Number(threshold);
+}
+
+export function readVoiceIdSettings(env: Record<string, string | undefined>): VoiceIdSettings {
+  return { mode: readVoiceIdMode(env.EARS_VOICE_ID), threshold: readVoiceIdThreshold(env.EARS_VOICE_ID_THRESHOLD) };
+}
+
 function readWake(value: string | undefined, microphone: Microphone | null): boolean {
   const wake = value?.trim() ?? "";
   if (wake === "" || wake === "off") return false;
@@ -95,5 +120,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (microphone !== "" && !(microphones as readonly string[]).includes(microphone)) throw new Error(`EARS_MICROPHONE must be pretend or card, or left out until a microphone is set up, not "${microphone}"`);
   const mic = microphone === "" ? null : (microphone as Microphone);
   const settings = readMicSettings(env);
-  return { token, microphone: mic, micLevel: settings.micLevel, micControl: settings.micControl, micBoost: settings.micBoost, micBoostControl: settings.micBoostControl, wake: readWake(env.EARS_WAKE, mic), wakeEnd: readWakeEnd(env.EARS_WAKE_END), wakePauseMs: readWakePause(env.EARS_WAKE_PAUSE), turnWords: readTurnWords(env.EARS_TURN_WORDS), interrupt: readInterrupt(env.EARS_INTERRUPT) };
+  return { token, microphone: mic, micLevel: settings.micLevel, micControl: settings.micControl, micBoost: settings.micBoost, micBoostControl: settings.micBoostControl, wake: readWake(env.EARS_WAKE, mic), wakeEnd: readWakeEnd(env.EARS_WAKE_END), wakePauseMs: readWakePause(env.EARS_WAKE_PAUSE), turnWords: readTurnWords(env.EARS_TURN_WORDS), interrupt: readInterrupt(env.EARS_INTERRUPT), voiceId: readVoiceIdSettings(env) };
 }

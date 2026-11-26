@@ -23,6 +23,7 @@ whisper/models/
 ears/node_modules/
 ears/dist/
 ears/switch/
+ears/voice/
 .claude/settings.local.json
 CLAUDE.local.md
 PLAN.md
