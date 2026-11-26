@@ -57,6 +57,14 @@ export async function currentProblems(backupDir?: string, more: Problem[] = []) 
   return [...problems, ...more];
 }
 
+export function doctorReads(backupDir?: string, moreProblems?: () => Problem[]) {
+  return {
+    problems: () => currentProblems(backupDir, moreProblems?.()),
+    status: readStatus,
+    backup: () => readBackupState(backupDir),
+  };
+}
+
 export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?: string; moreProblems?: () => Problem[]; doctor?: DoctorSources; now?: () => Date }> = async (app, options) => {
   app.get("/wifi-reconnects", async () => {
     return parseReconnects(await readReconnectLog());
@@ -81,10 +89,6 @@ export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?:
 
   app.get("/doctor", async (_request, reply) => {
     if (options.doctor === undefined) return reply.code(404).send({ error: "The server doctor isn't set up" });
-    return runDoctor(options.features, options.doctor, {
-      problems: () => currentProblems(options.backupDir, options.moreProblems?.()),
-      status: readStatus,
-      backup: () => readBackupState(options.backupDir),
-    }, options.now?.() ?? new Date());
+    return runDoctor(options.features, options.doctor, doctorReads(options.backupDir, options.moreProblems), options.now?.() ?? new Date());
   });
 };

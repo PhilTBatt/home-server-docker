@@ -78,6 +78,7 @@
  * @property {boolean} trainAlerts
  * @property {boolean} expiryAlerts
  * @property {boolean} watchers
+ * @property {boolean} catchUp
  */
 
 /**
@@ -108,6 +109,27 @@
  * @typedef {object} WatcherList
  * @property {number} most
  * @property {Watcher[]} watchers
+ */
+
+/**
+ * @typedef {object} CatchUpCommit
+ * @property {string} at
+ * @property {string} message
+ */
+
+/**
+ * @typedef {object} CatchUpRepo
+ * @property {string} repo
+ * @property {number} [count]
+ * @property {boolean} [more]
+ * @property {{ day: string, commits: CatchUpCommit[] }[]} [days]
+ * @property {string} [failed]
+ */
+
+/**
+ * @typedef {object} CatchUpReport
+ * @property {string} summary
+ * @property {CatchUpRepo[]} repos
  */
 
 /**
@@ -271,7 +293,7 @@
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up" };
 
 /**
  * @param {string} id
@@ -321,6 +343,9 @@ const expirySection = byId("expiry");
 const expiryList = byId("expiry-list");
 const watchersSection = byId("watchers");
 const watchersList = byId("watchers-list");
+const catchUpSection = byId("catch-up");
+const catchUpSummary = byId("catch-up-summary");
+const catchUpRepos = byId("catch-up-repos");
 const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/", "https://www.hotukdeals.com/deals/"];
 /** @type {number | undefined} */ let refreshTimer;
 /** @type {Set<string>} */ const openDealSections = new Set();
@@ -555,6 +580,7 @@ async function loadSwitches() {
   showDeals(features);
   showExpiry(features);
   showWatchers(features);
+  showCatchUp(features);
 }
 
 /**
@@ -680,6 +706,50 @@ async function cancelWatcher(watcher, button) {
     watchersList.prepend(listItem("Couldn't reach the API."));
   }
   button.disabled = false;
+}
+
+/**
+ * @param {Features} features
+ */
+function showCatchUp(features) {
+  catchUpSection.hidden = !features.catchUp;
+  if (features.catchUp) loadCatchUp();
+}
+
+/**
+ * @param {unknown} reply
+ * @returns {reply is CatchUpReport}
+ */
+function isCatchUpReport(reply) {
+  return isObject(reply) && typeof reply.summary === "string" && Array.isArray(reply.repos) && reply.repos.every((repo) => isObject(repo) && typeof repo.repo === "string" && (typeof repo.failed === "string" || (typeof repo.count === "number" && Array.isArray(repo.days))));
+}
+
+/**
+ * @param {CatchUpRepo} repo
+ * @returns {string}
+ */
+function catchUpText(repo) {
+  if (repo.failed !== undefined) return `${repo.repo}: couldn't read it: ${repo.failed}.`;
+  const latest = repo.days?.[0]?.commits[0];
+  if (latest === undefined) return `${repo.repo}: no commits.`;
+  const count = `${repo.more ? "at least " : ""}${repo.count} commit${repo.count === 1 ? "" : "s"}`;
+  return `${repo.repo}: ${count}, the latest ${new Date(latest.at).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}: ${latest.message}`;
+}
+
+async function loadCatchUp() {
+  const got = await fetchReply("/api/catch-up", "Couldn't catch up");
+  if ("text" in got) {
+    catchUpSummary.textContent = got.text;
+    catchUpRepos.replaceChildren();
+    return;
+  }
+  if (!isCatchUpReport(got.reply)) {
+    catchUpSummary.textContent = "Couldn't read the API's reply.";
+    catchUpRepos.replaceChildren();
+    return;
+  }
+  catchUpSummary.textContent = got.reply.summary;
+  catchUpRepos.replaceChildren(...got.reply.repos.map((repo) => listItem(catchUpText(repo))));
 }
 
 /**

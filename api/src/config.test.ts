@@ -31,9 +31,10 @@ const complete = {
   TRAIN_ALERT_REMINDER: "06:45",
   EXPIRY_ALERTS: "on",
   WATCHERS: "on",
+  CATCH_UP: "on",
 };
 
-const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off", FIND_PHONE: "off", TRAINS: "off", TRAIN_ALERTS: "off", EXPIRY_ALERTS: "off", WATCHERS: "off" };
+const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off", FIND_PHONE: "off", TRAINS: "off", TRAIN_ALERTS: "off", EXPIRY_ALERTS: "off", WATCHERS: "off", CATCH_UP: "off" };
 const dealSettings = { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false };
 
 test("reads every setting into its own field", () => {
@@ -46,7 +47,8 @@ test("reads every setting into its own field", () => {
     deals: dealSettings,
     trains: { key: "test-rail-key", from: "AAA", to: "BBB", boardUrl: "https://api1.raildata.org.uk/test-board" },
     trainAlerts: { days: ["mon", "wed"], start: 420, end: 510, reminder: 405 },
-    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true },
+    catchUp: { repos: [], token: "" },
+    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true },
   });
 });
 
@@ -61,6 +63,7 @@ test("ignores anything else in the environment", () => {
     "deals",
     "trains",
     "trainAlerts",
+    "catchUp",
     "features",
   ]);
 });
@@ -84,12 +87,12 @@ test("an empty setting counts as missing", () => {
 
 test("with nothing set, the always-needed settings and every switch are named, in a fixed order", () => {
   assert.throws(() => readConfig({}), {
-    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE, TRAINS, TRAIN_ALERTS, EXPIRY_ALERTS, WATCHERS",
+    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE, TRAINS, TRAIN_ALERTS, EXPIRY_ALERTS, WATCHERS, CATCH_UP",
   });
 });
 
 test("with every switch on and nothing else set, every other setting is named, in a fixed order", () => {
-  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on", TRAINS: "on", TRAIN_ALERTS: "on", EXPIRY_ALERTS: "on", WATCHERS: "on" }), {
+  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on", TRAINS: "on", TRAIN_ALERTS: "on", EXPIRY_ALERTS: "on", WATCHERS: "on", CATCH_UP: "on" }), {
     message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL, DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, DEALS_AI, RAIL_DATA_KEY, TRAINS_FROM, TRAINS_TO, TRAINS_BOARD_URL, TRAIN_ALERT_DAYS, TRAIN_ALERT_WINDOW, TRAIN_ALERT_REMINDER",
   });
 });
@@ -122,6 +125,7 @@ test("each switch can be turned off on its own", () => {
     trainAlerts: true,
     expiryAlerts: true,
     watchers: true,
+    catchUp: true,
   });
   assert.deepEqual(readConfig({ ...complete, HEARTBEAT: "off" }).features, {
     alerts: true,
@@ -135,6 +139,7 @@ test("each switch can be turned off on its own", () => {
     trainAlerts: true,
     expiryAlerts: true,
     watchers: true,
+    catchUp: true,
   });
   assert.deepEqual(readConfig({ ...complete, DAILY_SUMMARY: "off" }).features, {
     alerts: true,
@@ -148,6 +153,7 @@ test("each switch can be turned off on its own", () => {
     trainAlerts: true,
     expiryAlerts: true,
     watchers: true,
+    catchUp: true,
   });
   assert.deepEqual(readConfig({ ...complete, MEMORY_INBOX: "off" }).features, {
     alerts: true,
@@ -161,6 +167,7 @@ test("each switch can be turned off on its own", () => {
     trainAlerts: true,
     expiryAlerts: true,
     watchers: true,
+    catchUp: true,
   });
   assert.deepEqual(readConfig({ ...complete, MEMORY_UPLOAD: "off" }).features, {
     alerts: true,
@@ -174,6 +181,7 @@ test("each switch can be turned off on its own", () => {
     trainAlerts: true,
     expiryAlerts: true,
     watchers: true,
+    catchUp: true,
   });
 });
 
@@ -249,7 +257,7 @@ test("EXPIRY_ALERTS must be written out, as exactly on or off, and needs no sett
   for (const value of ["yes", "On", "true", " on"]) assert.throws(() => readConfig({ ...complete, EXPIRY_ALERTS: value }), { message: "Settings in api/.env that must be on or off: EXPIRY_ALERTS" }, value);
   assert.equal(readConfig({ ...complete, EXPIRY_ALERTS: "off" }).features.expiryAlerts, false);
   const on = readConfig({ ...allOff, EXPIRY_ALERTS: "on", HEALTHCHECK_URL: undefined });
-  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "watchers"]);
+  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "watchers", "catch-up"]);
 });
 
 test("WATCHERS must be written out, as exactly on or off, and needs no setting but the ntfy topic", () => {
@@ -257,8 +265,77 @@ test("WATCHERS must be written out, as exactly on or off, and needs no setting b
   for (const value of ["yes", "On", "true", " on"]) assert.throws(() => readConfig({ ...complete, WATCHERS: value }), { message: "Settings in api/.env that must be on or off: WATCHERS" }, value);
   assert.equal(readConfig({ ...complete, WATCHERS: "off" }).features.watchers, false);
   const on = readConfig({ ...allOff, WATCHERS: "on", HEALTHCHECK_URL: undefined });
-  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts"]);
+  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "catch-up"]);
   assert.throws(() => readConfig({ ...allOff, WATCHERS: "on", NTFY_TOPIC: undefined }), { message: "Missing settings in api/.env: NTFY_TOPIC" });
+});
+
+const testGithubToken = "github_pat_test_0123456789abcdefghij";
+
+test("CATCH_UP must be written out, as exactly on or off, and needs no other setting, not even the ntfy topic", () => {
+  assert.throws(() => readConfig({ ...complete, CATCH_UP: undefined }), { message: "Missing settings in api/.env: CATCH_UP" });
+  for (const value of ["yes", "On", "true", " on"]) assert.throws(() => readConfig({ ...complete, CATCH_UP: value }), { message: "Settings in api/.env that must be on or off: CATCH_UP" }, value);
+  assert.equal(readConfig({ ...complete, CATCH_UP: "off" }).features.catchUp, false);
+  const on = readConfig({ ...allOff, CATCH_UP: "on", NTFY_TOPIC: undefined, HEALTHCHECK_URL: undefined });
+  assert.equal(on.features.catchUp, true);
+  assert.deepEqual(on.catchUp, { repos: [], token: "" });
+  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "watchers"]);
+});
+
+test("CATCH_UP_REPOS and CATCH_UP_GITHUB_TOKEN are read as given, in order, and both may be left out", () => {
+  const config = readConfig({ ...complete, CATCH_UP_REPOS: "alpha/one,Beta-2/two.three_4,gamma/.github", CATCH_UP_GITHUB_TOKEN: testGithubToken });
+  assert.deepEqual(config.catchUp, { repos: ["alpha/one", "Beta-2/two.three_4", "gamma/.github"], token: testGithubToken });
+  assert.deepEqual(readConfig(complete).catchUp, { repos: [], token: "" });
+  assert.deepEqual(readConfig({ ...complete, CATCH_UP_REPOS: "", CATCH_UP_GITHUB_TOKEN: "" }).catchUp, { repos: [], token: "" });
+});
+
+test("CATCH_UP_REPOS takes up to ten repos, each an owner and a name as GitHub allows them, once each, and refuses anything else without repeating it", () => {
+  const ten = Array.from({ length: 10 }, (_unused, index) => `alpha/repo${index}`);
+  assert.equal(readConfig({ ...complete, CATCH_UP_REPOS: ten.join(",") }).catchUp.repos.length, 10);
+  assert.deepEqual(readConfig({ ...complete, CATCH_UP_REPOS: `${"a".repeat(39)}/${"b".repeat(100)}` }).catchUp.repos, [`${"a".repeat(39)}/${"b".repeat(100)}`]);
+  const refused = [
+    [...ten, "alpha/eleven"].join(","),
+    "alpha",
+    "alpha/one/two",
+    "alpha/",
+    "/one",
+    "-alpha/one",
+    "alpha-/one",
+    "al--pha/one",
+    "al_pha/one",
+    `${"a".repeat(40)}/one`,
+    `alpha/${"b".repeat(101)}`,
+    "alpha/.",
+    "alpha/..",
+    "alpha/one two",
+    "alpha/one,",
+    ",alpha/one",
+    "alpha/one, beta/two",
+    "alpha/one,ALPHA/One",
+    "alpha/one?per_page=100",
+    "alpha/one#x",
+    "alpha/%2e%2e",
+    "alpha/one\nbeta/two",
+    "https://github.com/alpha/one",
+  ];
+  for (const value of refused) {
+    assert.throws(() => readConfig({ ...complete, CATCH_UP_REPOS: value }), (error: Error) => {
+      assert.equal(error.message, "Settings in api/.env with a value that isn't allowed: CATCH_UP_REPOS (up to 10 GitHub repos as owner/repo, each once, with commas and no spaces between, like alpha/one,beta/two)");
+      return true;
+    }, value);
+  }
+  assert.throws(() => readConfig({ ...complete, CATCH_UP: "off", CATCH_UP_REPOS: "alpha" }), { message: /CATCH_UP_REPOS/ }, "it's checked with the switch off too");
+});
+
+test("CATCH_UP_GITHUB_TOKEN must be a fine-grained token, and a refusal names the setting, never the token", () => {
+  const refused = [`ghp_${"a".repeat(36)}`, "github_pat_short", `${testGithubToken} `, `${testGithubToken}-x`, `Bearer ${testGithubToken}`, `github_pat_${"a".repeat(251)}`];
+  for (const value of refused) {
+    assert.throws(() => readConfig({ ...complete, CATCH_UP_GITHUB_TOKEN: value }), (error: Error) => {
+      assert.equal(error.message, "Settings in api/.env with a value that isn't allowed: CATCH_UP_GITHUB_TOKEN (a fine-grained GitHub token, starting github_pat_)");
+      assert.equal(error.message.includes(value), false);
+      return true;
+    }, value);
+  }
+  assert.equal(readConfig({ ...complete, CATCH_UP_GITHUB_TOKEN: `github_pat_${"a".repeat(250)}` }).catchUp.token.length, 261);
 });
 
 test("FIND_PHONE must be written out, as exactly on or off", () => {
@@ -282,17 +359,17 @@ test("the API token and service keys are needed even with every feature off", ()
 
 test("everything off still works when the feature settings are present", () => {
   const config = readConfig(allOff);
-  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false });
+  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false });
   assert.equal(config.ntfyTopic, "test-topic");
   assert.equal(config.healthcheckUrl, "https://hc-ping.com/test");
 });
 
 test("switchedOff lists nothing when everything is on", () => {
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true }), []);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true }), []);
 });
 
 test("switchedOff names each feature that's off, in plain words and a fixed order", () => {
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false }), [
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false }), [
     "alerts",
     "heartbeat",
     "daily summary",
@@ -304,11 +381,12 @@ test("switchedOff names each feature that's off, in plain words and a fixed orde
     "train alerts",
     "expiry alerts",
     "watchers",
+    "catch-up",
   ]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true }), ["daily summary"]);
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true }), ["alerts"]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true }), ["brain inbox"]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true }), ["note uploads"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true }), ["daily summary"]);
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true }), ["alerts"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true }), ["brain inbox"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true }), ["note uploads"]);
 });
 
 test("switchedOff agrees with what readConfig reads", () => {

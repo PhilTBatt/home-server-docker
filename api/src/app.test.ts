@@ -17,7 +17,8 @@ const config: Config = {
   deals: { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false },
   trains: { key: "test-rail-key", from: "AAA", to: "BBB", boardUrl: "https://api1.raildata.org.uk/test-board" },
   trainAlerts: { days: ["mon", "wed"], start: 420, end: 510, reminder: 405 },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true }
+  catchUp: { repos: [], token: "" },
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -132,7 +133,8 @@ const protectedRoutes = [
   ["GET", "/system/doctor"],
   ["GET", "/watchers"],
   ["POST", "/watchers"],
-  ["DELETE", "/watchers/0123abcd"]
+  ["DELETE", "/watchers/0123abcd"],
+  ["GET", "/catch-up"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -267,7 +269,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -570,4 +572,59 @@ test("the server doctor's Watchers check reads the watchers the hub was handed, 
   assert.deepEqual(await watchersCheck(await buildRealApp({ logger: false, config, watchers: watching, doctor })), { name: "Watchers", state: "ok", detail: "Watching for 1 thing.", next: null });
   assert.equal((await watchersCheck(await buildRealApp({ logger: false, config, doctor }))).state, "off");
   assert.equal((await watchersCheck(await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, watchers: false } }, watchers: watching, doctor }))).state, "off");
+});
+
+test("catch-up is a route of the hub's, asking GitHub for the listed repos with the token and reusing the doctor's and the modules' reads", async () => {
+  const asked: string[] = [];
+  mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+    asked.push(`${url} ${new Headers(init?.headers).get("authorization") ?? "-"} ${init?.redirect ?? "-"}`);
+    if (url.startsWith("https://api.github.com/")) return Response.json([{ sha: "1".repeat(40), commit: { message: "Add the thing", committer: { date: "2026-11-26T09:00:00Z" } } }]);
+    if (url.startsWith("http://qbittorrent")) return Response.json([]);
+    if (url.startsWith("http://jellyfin")) return Response.json({ MovieCount: 1, SeriesCount: 2, EpisodeCount: 3 });
+    return new Response(null, { status: 503 });
+  });
+  const token = "github_pat_test_0123456789abcdefghij";
+  const { checker } = fakeExpiryChecker();
+  const watching = quietWatchers();
+  watching.add({ watch: { kind: "service-answering", service: "jellyfin" }, hours: 24 }, new Date());
+  const app = await buildRealApp({ logger: false, config: { ...config, catchUp: { repos: ["alpha/one"], token } }, expiryChecker: checker, watchers: watching, doctor: { inbox: async () => 2 } });
+  const response = await app.inject({ method: "GET", url: "/catch-up?days=3", headers: goodHeader });
+  assert.equal(response.statusCode, 200);
+  const report = response.json();
+  assert.equal(report.days, 3);
+  assert.deepEqual(report.repos.map((repo: { repo: string; count: number }) => [repo.repo, repo.count]), [["alpha/one", 1]]);
+  assert.deepEqual([report.waiting.inbox, report.waiting.watchers], [{ notes: 2 }, { watching: ["Jellyfin to answer"] }]);
+  assert.ok(Array.isArray(report.waiting.expiring.items));
+  assert.equal(report.server.state, "problem", "the doctor's line is there, with the board refusing");
+  assert.match(report.server.summary, /Train times/);
+  const github = asked.filter((line) => line.startsWith("https://api.github.com/"));
+  assert.equal(github.length, 1);
+  assert.match(github[0], /^https:\/\/api\.github\.com\/repos\/alpha\/one\/commits\?since=\S+&per_page=30 Bearer github_pat_test_0123456789abcdefghij error$/);
+  assert.ok(asked.some((line) => line.startsWith("http://qbittorrent")), "the doctor asks qBittorrent as it always does");
+  for (const secret of [token, "test-qbit-key", "test-jellyfin-key", "test-rail-key", "test-topic", "hc-ping"]) assert.equal(response.body.includes(secret), false, secret);
+});
+
+test("catch-up is a 404 with its switch off, and its parts are off with their own switches off, even when handed what they'd read", async () => {
+  mock.method(globalThis, "fetch", async () => Response.json([]));
+  const { checker } = fakeExpiryChecker();
+  const watching = quietWatchers();
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, catchUp: false } }, watchers: watching });
+  const refused = await off.inject({ method: "GET", url: "/catch-up", headers: goodHeader });
+  assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "Catch-up is switched off" }]);
+  const partsOff = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, memoryInbox: false, expiryAlerts: false, watchers: false } }, expiryChecker: checker, watchers: watching, doctor: { inbox: async () => 2 } });
+  const report = (await partsOff.inject({ method: "GET", url: "/catch-up", headers: goodHeader })).json();
+  assert.deepEqual([report.waiting.inbox, report.waiting.expiring, report.waiting.watchers], [{ off: "MEMORY_INBOX" }, { off: "EXPIRY_ALERTS" }, { off: "WATCHERS" }]);
+  assert.deepEqual([report.repos, report.commitsAskedAt], [[], null]);
+});
+
+test("catch-up gives the doctor's line even when a service it asks doesn't answer, because the doctor's checks wait less than catch-up waits for it", async () => {
+  mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+    if (url.startsWith("http://qbittorrent")) return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)));
+    if (url.startsWith("http://jellyfin")) return Response.json({ MovieCount: 1, SeriesCount: 2, EpisodeCount: 3 });
+    return new Response(null, { status: 503 });
+  });
+  const app = await buildRealApp({ logger: false, config, doctor: { inbox: async () => 0 } });
+  const report = (await app.inject({ method: "GET", url: "/catch-up", headers: goodHeader })).json();
+  assert.equal(report.server.state, "problem");
+  assert.match(report.server.summary, /qBittorrent/);
 });

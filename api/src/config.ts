@@ -1,6 +1,7 @@
 import { boardAheadMinutes, clockMinutes, readDays, readWindow, type AlertSettings } from "./modules/trains/alerts.js";
 import { safeBoardUrl, type TrainSettings } from "./modules/trains/board.js";
 import { detailedBoardUrl } from "./modules/trains/journeys.js";
+import { mostRepos, readRepos, validToken } from "./modules/catchup/github.js";
 
 export type Features = {
   alerts: boolean;
@@ -14,6 +15,7 @@ export type Features = {
   trainAlerts: boolean;
   expiryAlerts: boolean;
   watchers: boolean;
+  catchUp: boolean;
 };
 
 export type DealSettings = {
@@ -22,6 +24,11 @@ export type DealSettings = {
   ebayClientId: string;
   ebayClientSecret: string;
   ai: boolean;
+};
+
+export type CatchUpSettings = {
+  repos: string[];
+  token: string;
 };
 
 export type Config = {
@@ -33,6 +40,7 @@ export type Config = {
   deals: DealSettings;
   trains: TrainSettings;
   trainAlerts: AlertSettings;
+  catchUp: CatchUpSettings;
   features: Features;
 };
 
@@ -48,6 +56,7 @@ const featureLabels: Record<keyof Features, string> = {
   trainAlerts: "train alerts",
   expiryAlerts: "expiry alerts",
   watchers: "watchers",
+  catchUp: "catch-up",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -93,6 +102,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     trainAlerts: readSwitch("TRAIN_ALERTS"),
     expiryAlerts: readSwitch("EXPIRY_ALERTS"),
     watchers: readSwitch("WATCHERS"),
+    catchUp: readSwitch("CATCH_UP"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
@@ -144,6 +154,12 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (reminder !== null && alertWindow !== null && reminder >= alertWindow.end) notAllowed.push("TRAIN_ALERT_REMINDER (a time before TRAIN_ALERT_WINDOW ends)");
   if (reminder !== null && alertWindow !== null && reminder < alertWindow.end - boardAheadMinutes) notAllowed.push(`TRAIN_ALERT_REMINDER (no more than ${boardAheadMinutes / 60} hours before TRAIN_ALERT_WINDOW ends, since the board only looks about that far ahead)`);
   const trainAlerts: AlertSettings = { days: days ?? [], start: alertWindow?.start ?? 0, end: alertWindow?.end ?? 0, reminder: reminder ?? 0 };
+  const reposText = read("CATCH_UP_REPOS", false);
+  const repos = reposText === "" ? [] : readRepos(reposText);
+  if (repos === null) notAllowed.push(`CATCH_UP_REPOS (up to ${mostRepos} GitHub repos as owner/repo, each once, with commas and no spaces between, like alpha/one,beta/two)`);
+  const githubToken = read("CATCH_UP_GITHUB_TOKEN", false);
+  if (githubToken !== "" && !validToken(githubToken)) notAllowed.push("CATCH_UP_GITHUB_TOKEN (a fine-grained GitHub token, starting github_pat_)");
+  const catchUp: CatchUpSettings = { repos: repos ?? [], token: githubToken };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -151,5 +167,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, features };
 }

@@ -4,7 +4,7 @@ import { downloading, libraryCounts, media } from "./modules/media/routes.js";
 import cookie from "@fastify/cookie";
 import { isAuthorized, tokenFromHeader } from "./token.js";
 import { auth } from "./modules/auth/routes.js";
-import { system } from "./modules/system/routes.js";
+import { doctorReads, system } from "./modules/system/routes.js";
 import { countWaiting, memory } from "./modules/memory/routes.js";
 import type { Config } from "./config.js";
 import { deals } from "./modules/deals/routes.js";
@@ -14,9 +14,11 @@ import type { DealWatcher } from "./modules/deals/watcher.js";
 import type { ChangeFeed } from "./modules/trains/changes.js";
 import { expiry } from "./modules/expiry/routes.js";
 import type { ExpiryChecker } from "./modules/expiry/checker.js";
-import type { DoctorSources, Tries } from "./modules/system/doctor.js";
+import { runDoctor, type DoctorSources, type Tries } from "./modules/system/doctor.js";
 import { watchers } from "./modules/watchers/routes.js";
 import type { Watchers } from "./modules/watchers/watchers.js";
+import { catchUpDoctorMs, createCatchUp } from "./modules/catchup/catchup.js";
+import { catchUp } from "./modules/catchup/routes.js";
 
 export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources> }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
@@ -51,7 +53,22 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     watchers: watching === undefined ? undefined : () => watching.list(),
     ...options.doctor,
   };
-  app.register(system, { prefix: "/system", features: options.config.features, moreProblems: () => [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])], doctor });
+  const moreProblems = () => [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])];
+  app.register(system, { prefix: "/system", features: options.config.features, moreProblems, doctor });
+  const features = options.config.features;
+  const catchingUp = createCatchUp({
+    repos: options.config.catchUp.repos,
+    token: options.config.catchUp.token,
+    hub: {
+      server: () => runDoctor(features, { ...doctor, waitMs: catchUpDoctorMs }, doctorReads(undefined, moreProblems), new Date()),
+      problems: () => doctorReads(undefined, moreProblems).problems(),
+      backup: () => doctorReads().backup(),
+      inbox: features.memoryInbox ? doctor.inbox : undefined,
+      expiries: doctor.expiries,
+      watchers: features.watchers ? doctor.watchers : undefined,
+    },
+  });
+  app.register(catchUp, { prefix: "/catch-up", features, catchUp: catchingUp });
   app.register(memory, { prefix: "/memory", features: options.config.features });
   app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic });
   app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains, changes: options.config.features.trainAlerts ? options.trainChanges : undefined });
