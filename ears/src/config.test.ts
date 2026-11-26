@@ -4,7 +4,7 @@ import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, microphones
 
 const token = "t".repeat(64);
 
-const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500, turnWords: false };
+const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500, turnWords: false, interrupt: "off" };
 
 test("reads the token, and with no microphone set there's nothing to record from", () => {
   assert.deepEqual(readConfig({ EARS_TOKEN: token }), { token, microphone: null, ...usual });
@@ -105,6 +105,11 @@ test("a wake recording ends after 1.5 seconds without speech unless EARS_WAKE_PA
   for (const value of ["0.9", "0", "5.1", "6", "10", "1.25", "2.", ".5", "-2", "2s", "two", "2,5", "1e0", "0x2"]) {
     assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_WAKE_PAUSE: value }), { message: `EARS_WAKE_PAUSE must be a number of seconds from 1 to 5, with at most one decimal place, like 1.5 or 2.5, not "${value}"` }, value);
   }
+});
+
+test("interrupting is off unless EARS_INTERRUPT says wake or speech, and anything else stops ears, saying what it must be", () => {
+  for (const [value, mode] of [[undefined, "off"], ["", "off"], ["  ", "off"], ["off", "off"], [" wake ", "wake"], ["speech", "speech"]] as const) assert.equal(readConfig({ EARS_TOKEN: token, EARS_INTERRUPT: value }).interrupt, mode, String(value));
+  for (const value of ["on", "WAKE", "yes", "both"]) assert.throws(() => readConfig({ EARS_TOKEN: token, EARS_INTERRUPT: value }), { message: `EARS_INTERRUPT must be off, wake or speech, not "${value}"` }, value);
 });
 
 test("the word check is off unless EARS_TURN_WORDS says on, and anything else stops ears, saying what it must be", () => {

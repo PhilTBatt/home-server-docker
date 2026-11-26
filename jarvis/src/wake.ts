@@ -8,7 +8,7 @@ export const retryMs = 2_000;
 export const holdEveryMs = 5_000;
 export const busyClaimMs = 1_000;
 
-export type WakeEvent = { kind: "wake"; id: number; follow?: true; button?: true } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string } | { kind: "late"; behindMs: number | null } | { kind: "turn"; id: number; verdict: TurnVerdict | null; ms: number; counted: boolean };
+export type WakeEvent = { kind: "wake"; id: number; follow?: true; button?: true; cut?: true } | { kind: "hush"; id: number } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string } | { kind: "late"; behindMs: number | null } | { kind: "turn"; id: number; verdict: TurnVerdict | null; ms: number; counted: boolean };
 
 export const oldEarsLine = "off: this ears doesn't know the wake word yet, so start it again with bash host/ears.sh start, which rebuilds it";
 export const oldFollowWhy = "this ears doesn't know follow-ups yet, so start it again with bash host/ears.sh start, which rebuilds it";
@@ -64,7 +64,7 @@ async function dropStrayFollow(call: EarsCall): Promise<void> {
   } catch {}
 }
 
-export type WatchDeps = { call: EarsCall; signal: AbortSignal; first?: string | null; now?: () => number; wait?: (ms: number, signal: AbortSignal) => Promise<void>; retryMs?: number; busy?: () => boolean; busyClaimMs?: number; follow?: FollowAsk; judge?: TurnCheck };
+export type WatchDeps = { call: EarsCall; signal: AbortSignal; first?: string | null; now?: () => number; wait?: (ms: number, signal: AbortSignal) => Promise<void>; retryMs?: number; busy?: () => boolean; busyClaimMs?: number; follow?: FollowAsk; judge?: TurnCheck; speaking?: () => boolean };
 
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -88,6 +88,7 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
   let lateSeen: { run: string | null; count: number } | null = null;
   let taken: { id: number; endedAt: number | null } | null = null;
   let judged: { id: number; n: number } | null = null;
+  let hushed: number | null = null;
   const judgements: { id: number; verdict: TurnVerdict | null; ms: number; counted: boolean }[] = [];
   const waitPath = deps.judge === undefined ? "" : "&judge=on";
   const answerEars = async (check: TurnCheck, id: number, n: number, text: string) => {
@@ -161,7 +162,8 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
         const id: number = answer.current.id;
         const button = answer.current.by === "button";
         let claimed: EarsAnswer | null = null;
-        if (deps.busy?.() === true) {
+        const cut = answer.wake?.interrupt !== undefined && deps.speaking?.() === true;
+        if (deps.busy?.() === true && !cut) {
           await wait(deps.busyClaimMs ?? busyClaimMs, deps.signal);
           if (deps.signal.aborted) return;
         }
@@ -172,9 +174,14 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
         }
         if (claimed?.status === 200) {
           taken = { id, endedAt: null };
-          yield button ? { kind: "wake", id, button: true } : { kind: "wake", id };
+          yield { kind: "wake", id, ...(button ? { button: true as const } : {}), ...(cut ? { cut: true as const } : {}) };
           answer = claimed;
         }
+      }
+      const theirs = taken === null ? (answer.current ?? null) : null;
+      if (theirs !== null && (theirs.by === "wake" || theirs.by === "button") && theirs.id !== hushed && answer.state === "recording" && answer.wake?.interrupt !== undefined && deps.speaking?.() === true) {
+        hushed = theirs.id;
+        yield { kind: "hush", id: theirs.id };
       }
       if (taken === null) continue;
       const asking = answer.asking ?? null;
@@ -194,7 +201,7 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
   }
 }
 
-export type WakeHold = { during(spoken: () => Promise<void>): void; close(): void };
+export type WakeHold = { during(spoken: () => Promise<void>): void; active(): boolean; close(): void };
 
 export function holderId(): string {
   return randomUUID().replaceAll("-", "").slice(0, 16);
@@ -230,6 +237,7 @@ export function startWakeHold(call: EarsCall, by = holderId(), everyMs = holdEve
       }
       void spoken().then(letGo, letGo);
     },
+    active: () => count > 0,
     close() {
       if (closed) return;
       closed = true;
@@ -251,7 +259,14 @@ export function spokenOf(speech: { done(): Promise<void> }): () => Promise<void>
   };
 }
 
-export function eager<T>(source: AsyncIterable<T>): AsyncIterable<T> {
+export function stopOnCutIn(speeches: Iterable<{ stop(): void }>): (event: WakeEvent) => void {
+  return (event) => {
+    if (event.kind !== "hush" && !(event.kind === "wake" && event.cut === true)) return;
+    for (const speech of speeches) speech.stop();
+  };
+}
+
+export function eager<T>(source: AsyncIterable<T>, seen?: (event: T) => void): AsyncIterable<T> {
   const waiting: T[] = [];
   let over = false;
   let problem: { error: unknown } | null = null;
@@ -262,6 +277,7 @@ export function eager<T>(source: AsyncIterable<T>): AsyncIterable<T> {
       for (;;) {
         const next = await iterator.next();
         if (next.done === true) break;
+        seen?.(next.value);
         waiting.push(next.value);
         wake();
       }

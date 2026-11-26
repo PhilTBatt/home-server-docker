@@ -14,6 +14,8 @@ try {
   log(`Ears is ready and muted, with ${service.microphone}. Unmute it with bash host/ears.sh unmute.`);
   if (config.wake) log(`The wake word is on: ears listens for it whenever it's unmuted and a Jarvis chat with JARVIS_EARS=wake is open. A recording after it ends when ${config.wakeEnd === "silero" ? "the speech detector hears no speech" : "it goes quiet"} for ${secondsText(config.wakePauseMs)} after you speak.`);
   if (config.wake && config.turnWords) log(`Your words are looked at too: at each pause ears turns what you've said so far into text, ends sooner (${secondsText(doneAfterMs)}) when it reads as finished, and waits longer (${secondsText(Math.max(config.wakePauseMs, moreAfterMs))}) when it reads as unfinished.`);
+  if (config.wake && config.interrupt === "wake") log("Jarvis can be interrupted: ears keeps listening for the wake word while he speaks.");
+  if (config.wake && config.interrupt === "speech") log("Jarvis can be interrupted: ears keeps listening for the wake word, and for any speech, while he speaks. That only works with a microphone that doesn't hear him.");
 } catch (error) {
   console.error(`Ears couldn't start: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;

@@ -89,6 +89,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
       connect: tuning.connect ?? ((signal) => connectWyoming({ host: wakeHost, port: wakePort, signal })),
       detector: silero === null ? undefined : () => createDetector(silero),
       words: options.config.turnWords ? options.toText : undefined,
+      interrupt: options.config.interrupt,
       log: options.log,
       changed: () => seen.check(),
       limitMs: options.limitMs,

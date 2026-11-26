@@ -19,10 +19,13 @@ export const wholeMsBytes = bytesPerSecond / 1000;
 export const longestPieceBytes = bytesPerSecond;
 export const lateMs = 2_000;
 export const roomFrames = 10;
+export const cutInMs = 300;
 
 const format = { rate: recordingRate, width: 2, channels: 1 };
 
-export type WakeView = { on: boolean; listening: boolean; held: boolean; problem: string | null; late: { count: number; behindMs: number | null } };
+export type Interrupt = "off" | "wake" | "speech";
+
+export type WakeView = { on: boolean; listening: boolean; held: boolean; problem: string | null; late: { count: number; behindMs: number | null }; interrupt?: "wake" | "speech" };
 
 export const wakeOff: WakeView = { on: false, listening: false, held: false, problem: null, late: { count: 0, behindMs: null } };
 
@@ -50,6 +53,7 @@ export type ListenerDeps = {
   limitMs?: number;
   detector?: () => Detector;
   words?: (sound: Uint8Array, signal: AbortSignal) => Promise<string>;
+  interrupt?: Interrupt;
 };
 
 export type Listener = {
@@ -91,6 +95,8 @@ export function createListener(deps: ListenerDeps): Listener {
   const word = deps.word ?? wakeWord;
   const keepBefore = ((deps.beforeMs ?? beforeMs) / 1000) * bytesPerSecond;
   const keepLevels = Math.max(1, Math.round((deps.backgroundMs ?? backgroundMs) / frameMs));
+  const interrupt = deps.interrupt ?? "off";
+  const cutInFrames = Math.max(1, Math.round(cutInMs / frameMs));
   const frames = createFrames();
   let stream: Recording | null = null;
   let tap: Tap | null = null;
@@ -116,6 +122,7 @@ export function createListener(deps: ListenerDeps): Listener {
   let pendingWake: { before: Uint8Array; background: number } | null = null;
   let pendingFollow: { withinMs: number; background: number } | null = null;
   let pendingPress: { background: number } | null = null;
+  let loudFrames = 0;
   let lastBackground: number | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
@@ -129,7 +136,10 @@ export function createListener(deps: ListenerDeps): Listener {
   };
   const held = () => now() < heldUntil();
   const live = (state: EarsState) => state === "idle" || state === "recording" || state === "working";
-  const canFeed = () => !closed && tap === null && stream !== null && detector !== null && present() && !held() && now() >= gapUntil && deps.ears().state() === "idle";
+  const deaf = () => interrupt === "off" && held();
+  const hisVoice = () => (interrupt === "wake" ? held() || now() < gapUntil : interrupt === "off" && held());
+  const canFeed = () => !closed && tap === null && stream !== null && detector !== null && present() && !deaf() && (interrupt !== "off" || now() >= gapUntil) && deps.ears().state() === "idle";
+  const room = () => (levels.length >= roomFrames ? backgroundLevel(levels) : (lastBackground ?? (levels.length === 0 ? null : backgroundLevel(levels))));
 
   const setProblem = (text: string) => {
     if (text === problem) return;
@@ -137,6 +147,7 @@ export function createListener(deps: ListenerDeps): Listener {
     deps.log(`The wake word isn't working: ${text}.`);
   };
   const forget = () => {
+    loudFrames = 0;
     unsent = new Uint8Array(0);
     frames.clear();
     before = [];
@@ -189,14 +200,24 @@ export function createListener(deps: ListenerDeps): Listener {
       deps.changed();
       return;
     }
+    const cutIn = held();
     const background = backgroundLevel(levels);
-    const sound = joined(before);
+    const sound = cutIn ? new Uint8Array(0) : joined(before);
     deps.log(`Heard the wake word. The room's background is ${background}, so speech is anything above ${speakingLevel(background)}.`);
+    if (cutIn) deps.log("It came while Jarvis was speaking, so it cuts in.");
     lastBackground = background;
     pendingWake = { before: sound, background };
     const started = deps.ears().start("wake");
     pendingWake = null;
     if (!started.ok) deps.log(`Couldn't record after the wake word: ${started.error}.`);
+  };
+  const onSpeech = (background: number) => {
+    deps.log(`Heard speech while Jarvis was speaking. The room's background is ${background}, so speech is anything above ${speakingLevel(background)}.`);
+    lastBackground = background;
+    pendingWake = { before: joined(before), background };
+    const started = deps.ears().start("wake");
+    pendingWake = null;
+    if (!started.ok) deps.log(`Couldn't record after hearing speech: ${started.error}.`);
   };
   const readDetections = async (connection: WyomingConnection) => {
     try {
@@ -255,7 +276,7 @@ export function createListener(deps: ListenerDeps): Listener {
     }
     if (sound.length === 0) return;
     if (tap !== null) {
-      tap.push(held() ? new Uint8Array(sound.length) : sound);
+      tap.push(hisVoice() ? new Uint8Array(sound.length) : sound);
       return;
     }
     const connection = detector;
@@ -272,12 +293,34 @@ export function createListener(deps: ListenerDeps): Listener {
     for (let at = 0; at < whole; at += longestPieceBytes) send(connection, "audio-chunk", waiting.slice(at, Math.min(whole, at + longestPieceBytes)));
     unsent = waiting.slice(whole);
     sentBytes += whole;
-    before.push(copy);
-    beforeBytes += copy.length;
-    while (before.length > 1 && beforeBytes - before[0].length >= keepBefore) beforeBytes -= (before.shift() as Uint8Array).length;
-    levels.push(...frames.push(copy));
-    if (levels.length > keepLevels) levels = levels.slice(-keepLevels);
-    if (connection.buffered() > (deps.behindBytes ?? behindBytes)) lost(connection, "it stopped taking the sound it was sent");
+    if (interrupt === "wake" && hisVoice()) {
+      before = [];
+      beforeBytes = 0;
+    } else {
+      before.push(copy);
+      beforeBytes += copy.length;
+      while (before.length > 1 && beforeBytes - before[0].length >= keepBefore) beforeBytes -= (before.shift() as Uint8Array).length;
+    }
+    const heard = frames.push(copy);
+    if (connection.buffered() > (deps.behindBytes ?? behindBytes)) {
+      lost(connection, "it stopped taking the sound it was sent");
+      return;
+    }
+    if (!held()) {
+      loudFrames = 0;
+      levels.push(...heard);
+      if (levels.length > keepLevels) levels = levels.slice(-keepLevels);
+      return;
+    }
+    const background = interrupt === "speech" ? room() : null;
+    if (background === null) return;
+    for (const level of heard) {
+      loudFrames = level > speakingLevel(background) ? loudFrames + 1 : 0;
+      if (loudFrames < cutInFrames) continue;
+      loudFrames = 0;
+      onSpeech(background);
+      return;
+    }
   };
   const openStream = () => {
     carry = null;
@@ -346,7 +389,7 @@ export function createListener(deps: ListenerDeps): Listener {
   }
 
   return {
-    view: () => ({ on: true, listening: feeding, held: held(), problem, late: ignored }),
+    view: () => ({ on: true, listening: feeding, held: held(), problem, late: ignored, ...(interrupt === "off" ? {} : { interrupt }) }),
     tap(by) {
       const follow = by === "follow" ? pendingFollow : null;
       const pressed = by === "button" ? pendingPress : null;
@@ -425,8 +468,8 @@ export function createListener(deps: ListenerDeps): Listener {
     press(start) {
       if (deps.ears().state() !== "idle") return start();
       if (!present()) return { ok: false, error: noChatWaiting };
-      if (held()) return { ok: false, error: stillSpeakingPress };
-      const background = levels.length >= roomFrames ? backgroundLevel(levels) : (lastBackground ?? (levels.length === 0 ? null : backgroundLevel(levels)));
+      if (deaf()) return { ok: false, error: stillSpeakingPress };
+      const background = room();
       if (background === null) return { ok: false, error: noRoomYet };
       deps.log(`The talk button was pressed. The room's background is ${background}, so speech is anything above ${speakingLevel(background)}.`);
       lastBackground = background;

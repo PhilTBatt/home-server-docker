@@ -183,3 +183,10 @@ test("a question ears is waiting on is read with its recording's number, its own
   for (const asking of [null, 7, "x", {}, { id: 0, n: 1, text: "x" }, { id: 7, n: 0, text: "x" }, { id: 7, n: 1.5, text: "x" }, { id: "7", n: 1, text: "x" }, { id: 7, n: 1 }, { id: 7, n: 1, text: 4 }]) assert.equal(readEarsAnswer(200, { version: 3, asking }).asking, null, JSON.stringify(asking));
   assert.equal("asking" in readEarsAnswer(200, { state: "idle" }), false, "a plain state answer has none");
 });
+
+test("whether ears lets him be interrupted, and how, is read from the wake word's part of its view, and anything else is read as not", () => {
+  const plain = { on: true, listening: true, held: false, problem: null };
+  assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plain, interrupt: "wake" } }).wake, { ...plain, interrupt: "wake" });
+  assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plain, interrupt: "speech" } }).wake, { ...plain, interrupt: "speech" });
+  for (const interrupt of ["off", "on", true, null, 1, "WAKE"]) assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plain, interrupt } }).wake, plain, String(interrupt));
+});

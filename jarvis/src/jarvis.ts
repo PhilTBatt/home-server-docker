@@ -26,7 +26,7 @@ import { startTalk } from "./talk.js";
 import { askHubForChanges, watchTrainChanges } from "./train-news.js";
 import { turnCheck } from "./turn-check.js";
 import { voiceFor } from "./voice.js";
-import { createFollowAsk, eager, spokenOf, startWakeHold, watchWake } from "./wake.js";
+import { createFollowAsk, eager, spokenOf, startWakeHold, stopOnCutIn, watchWake } from "./wake.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
 const heard = heardLines(lines, promptWhileOpen(lines));
@@ -125,8 +125,10 @@ try {
   const talk = earsCall === null ? undefined : startTalk({ call: earsCall, wake: config.ears === "wake" });
   if (talk !== undefined) process.stdout.write(`${printable(await talk.check(starting.signal))}\n`);
   let chatReady = false;
+  const speeches = new Set<{ stop(): void }>();
+  const cutIn = stopOnCutIn(speeches);
   const follow = config.followUp === null ? undefined : createFollowAsk();
-  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady, follow, judge: config.turnCheck ? turnCheck({ apiKey: config.apiKey, model: chatModel }) : undefined }));
+  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady, follow, judge: config.turnCheck ? turnCheck({ apiKey: config.apiKey, model: chatModel }) : undefined, speaking: () => hold?.active() ?? false }), cutIn);
   const followSeconds = config.followUp;
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
@@ -147,7 +149,9 @@ try {
         ? undefined
         : (after) => {
             const speech = startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after, ...(config.filler ? { filler: fillerFor(speaking) } : {}) });
-            hold?.during(spokenOf(speech));
+            speeches.add(speech);
+            const over = spokenOf(speech)().finally(() => speeches.delete(speech));
+            hold?.during(() => over);
             return speech;
           },
     speechStop: config.speechStop,

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import { logLine, type LogContext, type Outcome } from "./answer-log.js";
 import type { AnswerSpeech } from "./answer-speech.js";
-import { buttonListeningNote, chatInputs, neverMindNote, droppedNote, lateNote, turnNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
+import { buttonListeningNote, chatInputs, hushNotes, neverMindNote, droppedNote, lateNote, otherChatNote, turnNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
 import { earsStoppedWhy, hubOffNote } from "./code-words.js";
 import type { EarsAnswer } from "./ears-client.js";
 import type { SpeechReport } from "./speech-queue.js";
@@ -268,6 +268,44 @@ test("what the quick check said about whether you'd finished is noted while that
   await settled();
   assert.ok(chat.output().endsWith(`  (${turnNote("more", 1180, true)})\nYou: `), chat.output());
   assert.deepEqual(chat.events.slice(before), ["interrupt"]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("a wake that cut in shows that he stopped talking and plays no chime, and an ordinary wake after speech that was already stopped chimes and says nothing about it", { timeout: 5_000 }, async () => {
+  for (const cut of [true, false]) {
+    const speech = fakeSpeech([]);
+    speech.report().firstSoundMs = 100;
+    const chat = wakeChat({ "First?": said("An answer.") }, [], { speak: () => speech });
+    chat.lines.push("First?");
+    await settled();
+    speech.stop();
+    chat.wake.push(cut ? { kind: "wake", id: 4, cut: true } : { kind: "wake", id: 4 });
+    await settled();
+    assert.equal(chat.output().endsWith(`${cut ? `  (${hushNotes.talking})\n` : ""}  (${wakeListeningNote})\nYou: `), true, chat.output());
+    assert.equal(chat.output().includes(hushNotes.talking), cut);
+    assert.equal(chat.events.includes("chime"), !cut);
+    chat.lines.close();
+    await chat.running;
+  }
+});
+
+test("told to hush because another chat took what was said, the chat stops its speech and says why, and says nothing when it wasn't speaking", { timeout: 5_000 }, async () => {
+  const log: string[] = [];
+  const speech = fakeSpeech(log);
+  speech.report().firstSoundMs = 100;
+  const chat = wakeChat({ "First?": said("An answer.") }, [], { speak: () => speech });
+  chat.lines.push("First?");
+  await settled();
+  chat.wake.push({ kind: "hush", id: 9 });
+  await settled();
+  assert.equal(chat.output().endsWith(`  (${hushNotes.talking})\n  (${otherChatNote})\nYou: `), true, chat.output());
+  assert.deepEqual(log, ["speech stop"]);
+  assert.equal(otherChatNote, "ears heard you cut in, and another chat took what you said");
+  const before = chat.output();
+  chat.wake.push({ kind: "hush", id: 10 });
+  await settled();
+  assert.equal(chat.output(), `${before}You: `);
   chat.lines.close();
   await chat.running;
 });

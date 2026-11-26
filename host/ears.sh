@@ -134,6 +134,8 @@ if [ "$1" = wake-report ]; then
     }
     /^Turned into text in / && kind != "" { text[kind]++ }
     /^(Not turned into text|Couldn.t turn it into text): / && kind != "" { untext[kind]++ }
+    /^It came while Jarvis was speaking, so it cuts in\.$/ { cutWake++ }
+    /^Heard speech while Jarvis was speaking\. / { cutSpeech++ }
     /^Judged by your words: finished, / { finished++ }
     /^Judged by your words: more to come, / { more++ }
     /^Judged by your words: unsure, / { unsure++ }
@@ -173,6 +175,7 @@ if [ "$1" = wake-report ]; then
       print speech("wake", "wake recordings")
       print speech("follow", "follow-up windows")
       print speech("button", "talk-button recordings")
+      if (cutWake + cutSpeech > 0) printf "- Cut-ins while Jarvis was speaking: %d by the wake word, %d by speech (those start a wake recording with no wake word heard).\n", cutWake, cutSpeech
       if (finished + more + unsure + unjudged > 0) printf "- Judged by your words: finished, %d; more to come, %d; unsure, %d; not judged, %d. A Jarvis chat gave the answer for %d of them. The text made at a pause was used for %d, so Whisper wasn\047t asked again.\n", finished, more, unsure, unjudged, chat, reused
     }' <<< "$log"
   exit 0

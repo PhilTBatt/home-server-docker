@@ -654,10 +654,22 @@ Recording stopped after 3 seconds: it went quiet for 2.5 seconds after you spoke
 Speech in it: first heard after 0.4 seconds, 0.2 seconds of speech, longest pause between words 0 seconds.
 Your words weren't judged in time (1 look).
 Turned into text in 1.4 seconds.
+Heard the wake word. The room's background is 200, so speech is anything above 600.
+It came while Jarvis was speaking, so it cuts in.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 5.8 seconds: nothing loud enough to be speech came within 5 seconds, so it wasn't sent to Whisper.
+Heard speech while Jarvis was speaking. The room's background is 200, so speech is anything above 600.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 2.9 seconds: it went quiet for 2.5 seconds after you spoke.
+Speech in it: first heard after 0 seconds, 0.4 seconds of speech, longest pause between words 0 seconds.
+Turned into text in 0.5 seconds.
 LOG
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/words-log.txt" with_fakes wake-report)
-check "with the word check on, a last line counts how recordings were judged and how often the text made at a pause was used" "0|- Judged by your words: finished, 1; more to come, 1; unsure, 1; not judged, 2. A Jarvis chat gave the answer for 1 of them. The text made at a pause was used for 3, so Whisper wasn't asked again.|3" "$?|$(tail -1 <<< "$output")|$(grep -o 'turned into text, [0-9]*' <<< "$output" | head -1 | grep -o '[0-9]*')"
-check "and a log with none of those lines has no such line" "0" "$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Judged by your words')"
+check "with the word check on, a last line counts how recordings were judged and how often the text made at a pause was used" "0|- Judged by your words: finished, 1; more to come, 1; unsure, 1; not judged, 2. A Jarvis chat gave the answer for 1 of them. The text made at a pause was used for 3, so Whisper wasn't asked again.|4" "$?|$(tail -1 <<< "$output")|$(grep -o 'turned into text, [0-9]*' <<< "$output" | head -1 | grep -o '[0-9]*')"
+check "and a line before it counts the times he was cut in on, by the wake word and by speech" "- Cut-ins while Jarvis was speaking: 1 by the wake word, 1 by speech (those start a wake recording with no wake word heard).|- \"Hey Jarvis\" heard: 4. Ignored: 0 as too late to trust (or with no usable time), 0 that came after ears stopped listening." "$(tail -2 <<< "$output" | head -1)|$(sed -n 2p <<< "$output")"
+check "and a log with none of those lines has neither line" "0|0" "$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Cut-ins')|$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Judged by your words')"
 output=$(FAKE_EARS_LOG="$report_log" with_fakes wake-report)
 check "with no ears container, it says to start ears, and doesn't ask for a log" "1|Ears has no log yet. Start it with bash host/ears.sh start.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" DOCKER_EXIT=1 with_fakes wake-report)

@@ -7,7 +7,7 @@ export type MicLevel = number | "keep";
 
 export type MicSettings = { micLevel: MicLevel; micControl: string; micBoost: MicLevel; micBoostControl: string };
 
-export type Config = { token: string; microphone: Microphone | null; wake: boolean; wakeEnd: Ender; wakePauseMs: number; turnWords: boolean } & MicSettings;
+export type Config = { token: string; microphone: Microphone | null; wake: boolean; wakeEnd: Ender; wakePauseMs: number; turnWords: boolean; interrupt: Interrupt } & MicSettings;
 
 export const wakePauses = { least: 1, most: 5, usual: 1.5 };
 
@@ -63,6 +63,15 @@ export function readWakePause(value: string | undefined): number {
   return Math.round(seconds * 1000);
 }
 
+export const interrupts = ["off", "wake", "speech"] as const;
+export type Interrupt = (typeof interrupts)[number];
+
+export function readInterrupt(value: string | undefined): Interrupt {
+  const mode = value?.trim() || "off";
+  if (mode !== "off" && mode !== "wake" && mode !== "speech") throw new Error(`EARS_INTERRUPT must be off, wake or speech, not "${mode}"`);
+  return mode;
+}
+
 export function readTurnWords(value: string | undefined): boolean {
   const words = value?.trim() ?? "";
   if (words === "" || words === "off") return false;
@@ -86,5 +95,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (microphone !== "" && !(microphones as readonly string[]).includes(microphone)) throw new Error(`EARS_MICROPHONE must be pretend or card, or left out until a microphone is set up, not "${microphone}"`);
   const mic = microphone === "" ? null : (microphone as Microphone);
   const settings = readMicSettings(env);
-  return { token, microphone: mic, micLevel: settings.micLevel, micControl: settings.micControl, micBoost: settings.micBoost, micBoostControl: settings.micBoostControl, wake: readWake(env.EARS_WAKE, mic), wakeEnd: readWakeEnd(env.EARS_WAKE_END), wakePauseMs: readWakePause(env.EARS_WAKE_PAUSE), turnWords: readTurnWords(env.EARS_TURN_WORDS) };
+  return { token, microphone: mic, micLevel: settings.micLevel, micControl: settings.micControl, micBoost: settings.micBoost, micBoostControl: settings.micBoostControl, wake: readWake(env.EARS_WAKE, mic), wakeEnd: readWakeEnd(env.EARS_WAKE_END), wakePauseMs: readWakePause(env.EARS_WAKE_PAUSE), turnWords: readTurnWords(env.EARS_TURN_WORDS), interrupt: readInterrupt(env.EARS_INTERRUPT) };
 }

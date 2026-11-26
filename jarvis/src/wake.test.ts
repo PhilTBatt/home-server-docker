@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EarsAnswer, EarsCall } from "./ears-client.js";
-import { busyClaimMs, createFollowAsk, eager, holdEveryMs, holderId, oldEarsLine, oldFollowWhy, retryMs, spokenOf, startWakeHold, waitAskMs, wakeStatus, watchWake, type WakeEvent } from "./wake.js";
+import { busyClaimMs, createFollowAsk, eager, holdEveryMs, holderId, oldEarsLine, oldFollowWhy, retryMs, spokenOf, startWakeHold, stopOnCutIn, waitAskMs, wakeStatus, watchWake, type WakeEvent } from "./wake.js";
 
 function view(fields: Partial<EarsAnswer> = {}): EarsAnswer {
   return { status: 200, state: "idle", reason: null, error: null, seconds: null, last: null, version: 1, run: "aa", lastId: null, current: null, wake: { on: true, listening: true, held: false, problem: null }, ...fields };
@@ -757,4 +757,91 @@ test("without a quick check the watcher never says it will judge and never answe
   second.abort();
   await waiting;
   assert.equal((checkSignal as AbortSignal | null)?.aborted, true);
+});
+
+const interruptible = { on: true, listening: true, held: true, problem: null, interrupt: "wake" as const };
+
+test("in an ears that lets him be interrupted, a chat that's speaking claims at once even while busy, and the wake is marked as cutting in; otherwise a busy chat still waits and nothing is marked", { timeout: 5_000 }, async () => {
+  for (const [wake, speaking, cut] of [[interruptible, true, true], [{ ...interruptible, interrupt: "speech" as const }, true, true], [interruptible, false, false], [{ on: true, listening: true, held: true, problem: null }, true, false]] as const) {
+    const signal = new AbortController();
+    const order: string[] = [];
+    const ears = pretendEars([view({ version: 1, state: "recording", current: { id: 4, by: "wake", claimed: false }, wake })], [view({ version: 2, state: "recording", current: { id: 4, by: "wake", claimed: true }, wake })]);
+    const call: EarsCall = async (method, path, ms, callSignal) => {
+      if (path.startsWith("/wake/claim")) order.push("claim");
+      return ears.call(method, path, ms, callSignal);
+    };
+    const events = watchWake({ call, signal: signal.signal, wait: async (ms) => void order.push(`wait ${ms}`), first: wakeStatus(view({ wake })), busy: () => true, speaking: () => speaking });
+    assert.deepEqual(await take(events, 1), [cut ? { kind: "wake", id: 4, cut: true } : { kind: "wake", id: 4 }], JSON.stringify([wake, speaking]));
+    assert.deepEqual(order, cut ? ["claim"] : ["wait 1000", "claim"]);
+    signal.abort();
+  }
+  const signal = new AbortController();
+  const pressed = pretendEars([view({ version: 1, state: "recording", current: { id: 5, by: "button", claimed: false }, wake: interruptible })], [view({ version: 2, state: "recording", current: { id: 5, by: "button", claimed: true }, wake: interruptible })]);
+  const button = watchWake({ call: pressed.call, signal: signal.signal, wait: noPause, first: wakeStatus(view({ wake: interruptible })), busy: () => true, speaking: () => true });
+  assert.deepEqual(await take(button, 1), [{ kind: "wake", id: 5, button: true, cut: true }]);
+  signal.abort();
+});
+
+test("a chat that's speaking is told to hush, once for each recording, when another chat has it or its own claim lost, in an ears that lets him be interrupted, and never otherwise", { timeout: 5_000 }, async () => {
+  const theirs = (version: number, id: number, wake: EarsAnswer["wake"] = interruptible) => view({ version, state: "recording", current: { id, by: "wake", claimed: true }, wake });
+  const signal = new AbortController();
+  const ears = pretendEars([theirs(1, 4), theirs(2, 4), view({ version: 3, wake: interruptible }), view({ version: 4, state: "recording", current: { id: 5, by: "button", claimed: false }, wake: interruptible }), view({ version: 5, wake: interruptible }), view({ version: 6, state: "recording", current: { id: 6, by: "follow", claimed: true }, wake: interruptible }), view({ version: 7, state: "working", current: { id: 7, by: "wake", claimed: true }, wake: interruptible })], [view({ status: 409, error: "another chat took it" })]);
+  const events = watchWake({ call: ears.call, signal: signal.signal, wait: noPause, first: wakeStatus(view({ wake: interruptible })), speaking: () => true });
+  assert.deepEqual(await take(events, 2), [{ kind: "hush", id: 4 }, { kind: "hush", id: 5 }]);
+  const next = events.next();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(ears.asked.filter((one) => one.path.startsWith("/wait")).length, 8, "a follow-up, and a recording that's already over, tell it nothing");
+  signal.abort();
+  await next;
+  for (const [wake, speaking] of [[{ on: true, listening: true, held: true, problem: null }, true], [interruptible, false]] as const) {
+    const off = new AbortController();
+    const quiet = pretendEars([theirs(1, 4, wake)]);
+    const none = watchWake({ call: quiet.call, signal: off.signal, wait: noPause, first: wakeStatus(view({ wake })), speaking: () => speaking });
+    const waiting = none.next();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(quiet.asked.length, 2, "it went straight back to waiting");
+    off.abort();
+    assert.deepEqual(await waiting, { done: true, value: undefined });
+  }
+});
+
+test("a cut-in or a hush stops every speech still going, and no other event does", () => {
+  const stopped: string[] = [];
+  const speeches = new Set([{ stop: () => void stopped.push("a") }, { stop: () => void stopped.push("b") }]);
+  const seen = stopOnCutIn(speeches);
+  for (const event of [{ kind: "wake", id: 1 }, { kind: "wake", id: 1, button: true }, { kind: "wake", id: 1, follow: true }, { kind: "status", line: "on" }, { kind: "late", behindMs: 5 }, { kind: "done", id: 1, answer: view(), textMs: 0 }] as WakeEvent[]) seen(event);
+  assert.deepEqual(stopped, []);
+  seen({ kind: "wake", id: 2, cut: true });
+  assert.deepEqual(stopped, ["a", "b"]);
+  seen({ kind: "hush", id: 3 });
+  assert.deepEqual(stopped, ["a", "b", "a", "b"]);
+  stopOnCutIn(new Set())({ kind: "hush", id: 3 });
+});
+
+test("the pump shows each event to its watcher as soon as it's read, before anyone takes it, and the hold says whether anything is being spoken", { timeout: 5_000 }, async () => {
+  const seen: number[] = [];
+  let release: () => void = () => {};
+  const source = (async function* () {
+    yield 1;
+    yield 2;
+    await new Promise<void>((resolve) => (release = resolve));
+    yield 3;
+  })();
+  const pumped = eager(source, (event) => void seen.push(event));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(seen, [1, 2], "nobody has taken an event yet");
+  const taken: number[] = [];
+  release();
+  for await (const event of pumped) taken.push(event);
+  assert.deepEqual([seen, taken], [[1, 2, 3], [1, 2, 3]]);
+  const { call } = pretendHolds();
+  const hold = startWakeHold(call, "ab12", 60_000);
+  assert.equal(hold.active(), false);
+  let over: () => void = () => {};
+  hold.during(() => new Promise<void>((resolve) => (over = resolve)));
+  assert.equal(hold.active(), true);
+  over();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(hold.active(), false);
+  hold.close();
 });

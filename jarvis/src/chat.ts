@@ -92,6 +92,7 @@ export const talkCommandNote = `Jarvis's only / command is ${talkWord}. To start
 export const listeningNote = "listening for up to 30 seconds: press Enter on an empty line to send what you say, or type anything else to drop it";
 export const droppedNote = "dropped that recording";
 export const heardPrefix = "You said: ";
+export const otherChatNote = "ears heard you cut in, and another chat took what you said";
 export const wakeListeningNote = "heard Hey Jarvis, so listening: it sends when you stop talking, or press Enter on an empty line to send it now, or type anything else to drop it";
 export const buttonListeningNote = "the talk button was pressed, so listening: it sends when you stop talking, or press Enter on an empty line, or the button again once you've spoken, to send it now, or type anything else to drop it";
 export const noFollowHeardNote = "no follow-up heard, so say Hey Jarvis to ask again";
@@ -548,7 +549,7 @@ function hushNote(report: SpeechReport, finishing: boolean): string {
   return report.firstSoundMs === null ? hushNotes.unspoken : hushNotes.talking;
 }
 
-async function settle(deps: ChatDeps, state: ChatState, hushed = false): Promise<void> {
+async function settle(deps: ChatDeps, state: ChatState, hushed = false, cut = false): Promise<boolean> {
   const speech = state.speech;
   const finishing = state.finishing.splice(0);
   state.speech = null;
@@ -557,13 +558,15 @@ async function settle(deps: ChatDeps, state: ChatState, hushed = false): Promise
   speech?.stop();
   await speech?.done();
   await state.speechLogged;
-  if (speech === null) return;
+  if (speech === null) return false;
   const report = speech.report();
-  writeSpeechNotes(deps, report, hushed && going && report.stopped ? hushNote(report, false) : null);
+  const noted = hushed && (going || cut) && report.stopped;
+  writeSpeechNotes(deps, report, noted ? hushNote(report, false) : null);
+  return noted;
 }
 
 async function hush(deps: ChatDeps, state: ChatState): Promise<void> {
-  if (deps.speechStop !== "sentence") return settle(deps, state, true);
+  if (deps.speechStop !== "sentence") return void (await settle(deps, state, true));
   const speech = state.speech;
   if (speech === null) return;
   state.speech = null;
@@ -808,6 +811,12 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
     deps.prompt();
     return "go";
   }
+  if (event.kind === "hush") {
+    deps.interrupt?.();
+    if (await settle(deps, state, true, true)) deps.write(`  (${otherChatNote})\n`);
+    deps.prompt();
+    return "go";
+  }
   if (event.kind === "no follow-up") {
     if (state.followTurn !== state.turn) return "go";
     state.followTurn = null;
@@ -828,13 +837,13 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
     }
     state.turn++;
     deps.interrupt?.();
-    await settle(deps, state, true);
+    await settle(deps, state, true, event.cut === true);
     state.listening = true;
     state.wakeId = event.id;
     state.following = follow;
     state.button = event.button === true;
     deps.write(`  (${follow ? followListeningNote(deps.followUp?.seconds ?? 0) : state.button ? buttonListeningNote : wakeListeningNote})\n`);
-    if (!follow) deps.chime?.();
+    if (!follow && event.cut !== true) deps.chime?.();
     deps.prompt();
     return "go";
   }
