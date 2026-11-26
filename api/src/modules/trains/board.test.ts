@@ -50,6 +50,10 @@ test("odd entries are left out, at most five trains and three messages are kept,
   assert.equal(readBoard({ crs: "AAA", locationName: `A\u0000${"b".repeat(300)}` }, settings).from, `A ${"b".repeat(118)}`);
 });
 
+test("an expected time of Ontime, as the board sometimes writes it, is read as On time", () => {
+  assert.deepEqual(readBoard({ crs: "AAA", trainServices: [{ std: "08:14", etd: "Ontime" }, { std: "08:44", etd: "on time" }, { std: "09:14", etd: "Ontime later" }] }, settings).departures.map((departure) => departure.expected), ["On time", "On time", "Ontime later"]);
+});
+
 test("a reply that isn't a board is an error", () => {
   for (const body of [null, "board", [], 5, {}, { fault: { faultstring: "Unable to route the message" } }, { crs: "BBB", trainServices: [] }]) assert.throws(() => readBoard(body, settings), { message: "the reply wasn't a departure board" }, JSON.stringify(body));
   assert.throws(() => readBoard({ crs: "AAA", trainServices: "lots" }, settings), { message: "the reply's trains weren't a list" });

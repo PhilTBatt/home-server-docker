@@ -1,4 +1,8 @@
-export type TrainSettings = { key: string; from: string; to: string; boardUrl: string };
+export type JourneySettings = { at: string; walk: number; arrivalsKey: string; arrivalsUrl: string; detailsUrl: string };
+
+export type TrainSettings = { key: string; from: string; to: string; boardUrl: string; journey?: JourneySettings };
+
+export type BoardAsk = { url: string; key: string; name: string; setting: string };
 
 export type Departure = { due: string; expected: string; platform: string | null; cancelled: boolean; reason: string | null; destination: string | null };
 
@@ -17,7 +21,11 @@ export function safeBoardUrl(value: string): string | null {
 
 const namedEntities: Record<string, string> = { quot: '"', apos: "'", nbsp: " ", lt: "<", gt: ">", ndash: "\u2013", mdash: "\u2014", lsquo: "\u2018", rsquo: "\u2019", ldquo: "\u201c", rdquo: "\u201d", hellip: "\u2026", pound: "\u00a3", amp: "&" };
 
-function text(value: unknown, limit = 120): string | null {
+export function onTime(value: string): string {
+  return /^on ?time$/i.test(value.trim()) ? "On time" : value;
+}
+
+export function text(value: unknown, limit = 120): string | null {
   if (typeof value !== "string") return null;
   const plain = value
     .replace(/<[^>]*>/g, " ")
@@ -31,7 +39,7 @@ function text(value: unknown, limit = 120): string | null {
   return plain === "" ? null : plain.slice(0, limit);
 }
 
-function placeName(value: unknown): string | null {
+export function placeName(value: unknown): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   if (typeof first !== "object" || first === null) return null;
   const fields = first as Record<string, unknown>;
@@ -43,13 +51,14 @@ function departureOf(value: unknown): Departure | null {
   if (typeof value !== "object" || value === null) return null;
   const fields = value as Record<string, unknown>;
   const due = text(fields.std, 10);
-  const expected = text(fields.etd, 20);
-  if (due === null || expected === null) return null;
+  const shown = text(fields.etd, 20);
+  if (due === null || shown === null) return null;
+  const expected = onTime(shown);
   const cancelled = fields.isCancelled === true || fields.filterLocationCancelled === true || expected.toLowerCase() === "cancelled";
   return { due, expected, platform: text(fields.platform, 10), cancelled, reason: text(cancelled ? fields.cancelReason : (fields.delayReason ?? fields.cancelReason), 200), destination: placeName(fields.destination) };
 }
 
-function messagesOf(value: unknown): string[] {
+export function messagesOf(value: unknown): string[] {
   const list = Array.isArray(value) ? value : typeof value === "object" && value !== null && Array.isArray((value as Record<string, unknown>).message) ? ((value as Record<string, unknown>).message as unknown[]) : [];
   return list.flatMap((item) => {
     const found = typeof item === "string" ? text(item, 300) : typeof item === "object" && item !== null ? text((item as Record<string, unknown>).Value ?? (item as Record<string, unknown>).value, 300) : null;
@@ -76,22 +85,26 @@ export function readBoard(body: unknown, settings: Pick<TrainSettings, "from" | 
   };
 }
 
-export async function fetchBoard(settings: TrainSettings, signal?: AbortSignal, fetcher: typeof fetch = fetch, ms = boardMs, rows = boardRows): Promise<Board> {
-  const url = `${settings.boardUrl}/${settings.from}?numRows=${rows}&filterCrs=${settings.to}&filterType=to`;
+export async function askBoard(ask: BoardAsk, signal?: AbortSignal, fetcher: typeof fetch = fetch, ms = boardMs): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetcher(url, { headers: { "x-apikey": settings.key, accept: "application/json" }, redirect: "error", signal: signal === undefined ? AbortSignal.timeout(ms) : AbortSignal.any([signal, AbortSignal.timeout(ms)]) });
+    response = await fetcher(ask.url, { headers: { "x-apikey": ask.key, accept: "application/json" }, redirect: "error", signal: signal === undefined ? AbortSignal.timeout(ms) : AbortSignal.any([signal, AbortSignal.timeout(ms)]) });
   } catch (error) {
     const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
-    if (cause.includes("redirect")) throw new Error("the board's address redirected somewhere else, so check TRAINS_BOARD_URL");
-    throw new Error(`the board couldn't be reached (${error instanceof Error && error.name === "TimeoutError" ? `no answer within ${ms / 1000} seconds` : "no connection"})`);
+    if (cause.includes("redirect")) throw new Error(`${ask.name}'s address redirected somewhere else, so check ${ask.setting}`);
+    throw new Error(`${ask.name} couldn't be reached (${error instanceof Error && error.name === "TimeoutError" ? `no answer within ${ms / 1000} seconds` : "no connection"})`);
   }
   if (!response.ok) {
     await response.body?.cancel();
-    throw new Error(response.status === 401 || response.status === 403 ? `the board refused the key, or the address isn't the product the key is for (${response.status})` : response.status === 404 ? "the board replied 404, so check TRAINS_BOARD_URL ends just before the station code" : `the board replied ${response.status}`);
+    throw new Error(response.status === 401 || response.status === 403 ? `${ask.name} refused the key, or the address isn't the product the key is for (${response.status})` : response.status === 404 ? `${ask.name} replied 404, so check ${ask.setting} ends just before the station code` : `${ask.name} replied ${response.status}`);
   }
-  const body: unknown = await response.json().catch((error: unknown) => {
-    throw new Error(error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? `the board couldn't be reached (no answer within ${ms / 1000} seconds)` : "the board's reply wasn't JSON");
+  return await response.json().catch((error: unknown) => {
+    throw new Error(error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? `${ask.name} couldn't be reached (no answer within ${ms / 1000} seconds)` : `${ask.name}'s reply wasn't JSON`);
   });
+}
+
+export async function fetchBoard(settings: TrainSettings, signal?: AbortSignal, fetcher: typeof fetch = fetch, ms = boardMs, rows = boardRows): Promise<Board> {
+  const url = `${settings.boardUrl}/${settings.from}?numRows=${rows}&filterCrs=${settings.to}&filterType=to`;
+  const body = await askBoard({ url, key: settings.key, name: "the board", setting: "TRAINS_BOARD_URL" }, signal, fetcher, ms);
   return readBoard(body, settings, rows);
 }

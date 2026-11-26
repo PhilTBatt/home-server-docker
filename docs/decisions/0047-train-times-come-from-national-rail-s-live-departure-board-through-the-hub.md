@@ -1,7 +1,7 @@
 # 0047. Train times come from National Rail's live departure board, through the hub
 
 - Date: 2026-11-22
-- Status: accepted
+- Status: accepted; extended to journeys with one change by 0053
 
 ## Context
 I want to ask Jarvis for my train times, and later have the hub check them each morning and tell me when a train is delayed or cancelled. That needs live data, and both sources I'd consider need a free key.

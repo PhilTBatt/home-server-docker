@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import type { Features } from "../../config.js";
 import { fetchBoard, type Board, type TrainSettings } from "./board.js";
 import type { ChangeFeed } from "./changes.js";
+import { fetchJourneys, type Journeys } from "./journeys.js";
 
 function asked(query: unknown, name: string): string | null | undefined {
   const value = typeof query === "object" && query !== null ? (query as Record<string, unknown>)[name] : undefined;
@@ -9,8 +10,8 @@ function asked(query: unknown, name: string): string | null | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-export const trains: FastifyPluginAsync<{ features: Features; settings: TrainSettings; board?: () => Promise<Board>; changes?: ChangeFeed; now?: () => Date }> = async (app, options) => {
-  const board = options.board ?? (() => fetchBoard(options.settings));
+export const trains: FastifyPluginAsync<{ features: Features; settings: TrainSettings; board?: () => Promise<Board | Journeys>; changes?: ChangeFeed; now?: () => Date }> = async (app, options) => {
+  const board = options.board ?? (options.settings.journey === undefined ? () => fetchBoard(options.settings) : () => fetchJourneys(options.settings));
 
   app.get("/", async (_request, reply) => {
     if (!options.features.trains) return reply.code(404).send({ error: "Train times are switched off" });

@@ -1,5 +1,6 @@
 import { boardAheadMinutes, clockMinutes, readDays, readWindow, type AlertSettings } from "./modules/trains/alerts.js";
 import { safeBoardUrl, type TrainSettings } from "./modules/trains/board.js";
+import { detailedBoardUrl } from "./modules/trains/journeys.js";
 
 export type Features = {
   alerts: boolean;
@@ -108,7 +109,22 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (to !== "" && to === from) notAllowed.push("TRAINS_TO (a different station from TRAINS_FROM)");
   const boardUrl = read("TRAINS_BOARD_URL", features.trains);
   if (boardUrl !== "" && safeBoardUrl(boardUrl) === null) notAllowed.push("TRAINS_BOARD_URL (an https address on raildata.org.uk ending just before the station code, with no ?, # or {crs} part)");
-  const trains: TrainSettings = { key: railKey, from, to, boardUrl: safeBoardUrl(boardUrl) ?? "" };
+  const changeAt = read("TRAINS_CHANGE_AT", false);
+  if (changeAt !== "" && !/^[A-Z]{3}$/.test(changeAt)) notAllowed.push("TRAINS_CHANGE_AT (a station's three-letter code in capitals, like KGX)");
+  else if (changeAt !== "" && (changeAt === from || changeAt === to)) notAllowed.push("TRAINS_CHANGE_AT (a different station from TRAINS_FROM and TRAINS_TO)");
+  const journeyNeeded = features.trains && changeAt !== "";
+  const walkText = read("TRAINS_CHANGE_MINUTES", journeyNeeded);
+  const walk = /^\d{1,2}$/.test(walkText) && Number(walkText) >= 1 && Number(walkText) <= 30 ? Number(walkText) : null;
+  if (walkText !== "" && walk === null) notAllowed.push("TRAINS_CHANGE_MINUTES (a whole number of minutes from 1 to 30, like 3)");
+  const arrivalsKey = read("RAIL_ARRIVALS_KEY", journeyNeeded);
+  if (arrivalsKey !== "" && !/^[\x21-\x7E]{1,200}$/.test(arrivalsKey)) notAllowed.push("RAIL_ARRIVALS_KEY (printable characters with no spaces)");
+  const arrivalsText = read("TRAINS_ARRIVALS_URL", journeyNeeded);
+  const arrivalsUrl = arrivalsText === "" ? null : safeBoardUrl(arrivalsText);
+  if (arrivalsText !== "" && (arrivalsUrl === null || !arrivalsUrl.endsWith("/GetArrBoardWithDetails"))) notAllowed.push("TRAINS_ARRIVALS_URL (the Live Arrival Board's https address on raildata.org.uk, ending in GetArrBoardWithDetails, with no ?, # or {crs} part)");
+  const detailsUrl = detailedBoardUrl(safeBoardUrl(boardUrl) ?? "");
+  if (changeAt !== "" && safeBoardUrl(boardUrl) !== null && detailsUrl === null) notAllowed.push("TRAINS_BOARD_URL (with TRAINS_CHANGE_AT set, an address ending in GetDepartureBoard or GetDepBoardWithDetails)");
+  const journey = changeAt !== "" && walk !== null && arrivalsUrl !== null && detailsUrl !== null ? { at: changeAt, walk, arrivalsKey, arrivalsUrl, detailsUrl } : undefined;
+  const trains: TrainSettings = { key: railKey, from, to, boardUrl: safeBoardUrl(boardUrl) ?? "", ...(journey === undefined ? {} : { journey }) };
   if (features.trainAlerts && env.TRAINS === "off") notAllowed.push("TRAIN_ALERTS (on needs TRAINS=on too)");
   const daysText = read("TRAIN_ALERT_DAYS", features.trainAlerts);
   const days = daysText === "" ? [] : readDays(daysText);

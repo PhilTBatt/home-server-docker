@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { codeWordIn, codeWordMs, lastSentenceOf, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText } from "./code-words.js";
+import { codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText } from "./code-words.js";
 
 const stillOpen = new Set<() => unknown>();
 
@@ -246,6 +246,43 @@ test("the board is said as the next three trains, each on time, expected later, 
   assert.deepEqual(spokenTrains({ ...board, departures: [{ ...board.departures[3], platform: "3" }], buses: 0, messages: [] }), { say: "Trains from Alpha to Beta: the 09:44 is delayed, with no time yet, platform 3." });
   assert.deepEqual(spokenTrains({ ...board, departures: [{ due: "10:00", expected: "Starts here", platform: null, cancelled: false, reason: null }], buses: 0, messages: [] }), { say: "Trains from Alpha to Beta: the 10:00 shows Starts here." });
   assert.deepEqual(spokenTrains({ ...board, departures: [], buses: 0, messages: [] }), { say: "There are no trains from Alpha to Beta on the board right now." });
+});
+
+const connection = (leaves: string, change: number, arrives: string, more: object = {}) => ({ leaves, expected: "On time", platform: "16", arrives, arrivesExpected: "On time", change, bus: false, ...more });
+
+const journeys = {
+  from: "Alpha",
+  via: "Gamma",
+  to: "Beta",
+  walk: 3,
+  messages: ["Engineering works near Gamma."],
+  journeys: [
+    { leaves: "08:33", expected: "On time", cancelled: false, bus: false, reason: null, arrives: "08:42", arrivesExpected: "On time", tight: null, best: connection("08:45", 3, "09:36"), fallback: connection("09:00", 18, "09:52") },
+    { leaves: "08:44", expected: "08:47", cancelled: false, bus: true, reason: "a fault", arrives: "08:53", arrivesExpected: "08:57", tight: connection("08:59", 2, "09:50", { platform: null }), best: connection("09:00", 3, "09:52", { arrivesExpected: "09:55" }), fallback: null },
+    { leaves: "09:00", expected: "Delayed", cancelled: false, bus: false, reason: "a signal fault", arrives: "09:09", arrivesExpected: "Delayed", tight: null, best: null, fallback: null },
+    { leaves: "09:15", expected: "On time", cancelled: false, bus: false, reason: null, arrives: "09:24", arrivesExpected: "On time", tight: null, best: null, fallback: null },
+  ],
+};
+
+test("journeys are said as the next three, each with its connection, any tight one and the fallback, with reasons and messages as a note", () => {
+  assert.deepEqual(spokenJourneys(journeys), {
+    say: "From Alpha: the 08:33 is on time, with 3 minutes at Gamma for the 08:45, platform 16, into Beta at 09:36, then the 09:00, in at 09:52; the 08:44 bus is expected at 08:47, with only 2 minutes at Gamma for the 08:59, else 3 minutes for the 09:00, platform 16, into Beta at 09:55; the 09:00 is delayed, with no time yet.",
+    note: "08:44: a fault; 09:00: a signal fault; Engineering works near Gamma.",
+  });
+  assert.deepEqual(spokenJourneys({ ...journeys, messages: [], journeys: [{ ...journeys.journeys[3] }, { ...journeys.journeys[0], leaves: "09:30", cancelled: true, reason: "a strike" }, { ...journeys.journeys[0], expected: "Ontime" }] }), {
+    say: "From Alpha: the 09:15 is on time, with no connection on the board yet; the 09:30 is cancelled; the 08:33 is on time, with 3 minutes at Gamma for the 08:45, platform 16, into Beta at 09:36, then the 09:00, in at 09:52.",
+    note: "09:30: a strike",
+  });
+  assert.deepEqual(spokenJourneys({ ...journeys, messages: [], journeys: [] }), { say: "There are no trains from Alpha to Gamma on the board right now." });
+});
+
+test("a hub following a journey is read as journeys, and Ontime on a plain board is on time", async () => {
+  const hub = await standInHub(() => ({ status: 200, body: journeys }));
+  assert.equal((await trainTimes(token, signal, hub.url)).say.slice(0, 40), "From Alpha: the 08:33 is on time, with 3");
+  const plain = await standInHub(() => ({ status: 200, body: { from: "Alpha", to: "Beta", departures: [{ due: "08:14", expected: "Ontime", platform: null, cancelled: false, reason: "not said" }], buses: 0, messages: [] } }));
+  assert.deepEqual(await trainTimes(token, signal, plain.url), { say: "Trains from Alpha to Beta: the 08:14 is on time." });
+  const odd = await standInHub(() => ({ status: 200, body: { ...journeys, walk: "3" } }));
+  assert.deepEqual(await trainTimes(token, signal, odd.url), { say: "I couldn't get the train times.", note: "the hub's reply wasn't a train board" });
 });
 
 test("train times are asked of the hub with the token, and a hub that's off, failing or odd is said plainly", async () => {

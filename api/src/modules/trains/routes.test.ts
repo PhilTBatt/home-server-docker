@@ -52,6 +52,19 @@ test("without a board given, the route asks the real board with the hub's settin
   }
 });
 
+test("with a change station, the route asks both boards there and gives the journeys", async () => {
+  const fetchMock = mock.method(globalThis, "fetch", async (url: string | URL | Request) => new Response(JSON.stringify(String(url).includes("arrivals") ? { crs: "CCC", locationName: "Gamma", filterLocationName: "Alpha", trainServices: [] } : { crs: "CCC", filterLocationName: "Beta", trainServices: [] }), { status: 200 }));
+  try {
+    const app = Fastify();
+    app.register(trains, { prefix: "/trains", features: allOn, settings: { ...settings, boardUrl: "https://api1.raildata.org.uk/test-board/GetDepartureBoard", journey: { at: "CCC", walk: 3, arrivalsKey: "test-arrivals-key", arrivalsUrl: "https://api1.raildata.org.uk/test-arrivals/GetArrBoardWithDetails", detailsUrl: "https://api1.raildata.org.uk/test-board/GetDepBoardWithDetails" } } });
+    const reply = await app.inject({ method: "GET", url: "/trains" });
+    assert.deepEqual([reply.statusCode, reply.json()], [200, { from: "Alpha", via: "Gamma", to: "Beta", walk: 3, journeys: [], messages: [] }]);
+    assert.deepEqual(fetchMock.mock.calls.map((call) => String(call.arguments[0]).split("?")[0]).sort(), ["https://api1.raildata.org.uk/test-arrivals/GetArrBoardWithDetails/CCC", "https://api1.raildata.org.uk/test-board/GetDepBoardWithDetails/CCC"]);
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
+
 function withChanges(features: Features, changes?: ChangeFeed) {
   const app = Fastify();
   app.register(trains, { prefix: "/trains", features, settings, board: async () => board, changes, now: () => new Date("2026-11-23T07:00:00Z") });

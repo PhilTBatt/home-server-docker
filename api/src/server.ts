@@ -7,7 +7,8 @@ import { readConfig } from "./config.js";
 import { countWaiting } from "./modules/memory/routes.js";
 import { readBackupState } from "./modules/system/backup.js";
 import { dealWatcherFor } from "./modules/deals/setup.js";
-import { boardForAlerts, createTrainAlerts, tickMs } from "./modules/trains/alerts.js";
+import { boardForAlerts, createTrainAlerts, tickMs, type AlertHooks } from "./modules/trains/alerts.js";
+import { createJourneyAlerts, journeysForAlerts } from "./modules/trains/journey-alerts.js";
 import { createChangeFeed } from "./modules/trains/changes.js";
 
 const config = readConfig(process.env);
@@ -64,14 +65,15 @@ runCheck();
 setInterval(runCheck, 5 * 60 * 1000);
 
 if (config.features.trainAlerts) {
-  const checkTrains = createTrainAlerts({
+  const hooks: AlertHooks = {
     settings: config.trainAlerts,
-    board: boardForAlerts(config.trains),
     send: (notification) => sendToNtfy(config.ntfyTopic, notification),
     changed: (lines, at) => trainChanges?.add(lines, at),
     warn: (message) => app.log.warn(message),
     info: (message) => app.log.info(message),
-  });
+  };
+  const journey = config.trains.journey;
+  const checkTrains = journey === undefined ? createTrainAlerts({ ...hooks, board: boardForAlerts(config.trains) }) : createJourneyAlerts({ ...hooks, boards: journeysForAlerts(config.trains), walk: journey.walk });
   const runTrainCheck = () => {
     checkTrains(new Date()).catch((error: unknown) => {
       app.log.error(error, "train check failed");

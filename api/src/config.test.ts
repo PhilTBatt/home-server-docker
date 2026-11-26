@@ -449,6 +449,38 @@ test("the rail key must be printable with no spaces, said without its value, and
 
 const alertsOff = { ...complete, TRAIN_ALERTS: "off", TRAIN_ALERT_DAYS: undefined, TRAIN_ALERT_WINDOW: undefined, TRAIN_ALERT_REMINDER: undefined };
 
+const journey = { TRAINS_CHANGE_AT: "CCC", TRAINS_CHANGE_MINUTES: "3", RAIL_ARRIVALS_KEY: "test-arrivals-key", TRAINS_ARRIVALS_URL: "https://api1.raildata.org.uk/test-arrivals/GetArrBoardWithDetails", TRAINS_BOARD_URL: "https://api1.raildata.org.uk/test-board/GetDepartureBoard" };
+
+test("with a change station, train times follow the journey through it, with the walk, the arrival board's key and address, and the detailed board next to the plain one", () => {
+  assert.deepEqual(readConfig({ ...complete, ...journey }).trains, {
+    key: "test-rail-key",
+    from: "AAA",
+    to: "BBB",
+    boardUrl: "https://api1.raildata.org.uk/test-board/GetDepartureBoard",
+    journey: { at: "CCC", walk: 3, arrivalsKey: "test-arrivals-key", arrivalsUrl: "https://api1.raildata.org.uk/test-arrivals/GetArrBoardWithDetails", detailsUrl: "https://api1.raildata.org.uk/test-board/GetDepBoardWithDetails" },
+  });
+  assert.equal(readConfig({ ...complete, ...journey, TRAINS_BOARD_URL: "https://api1.raildata.org.uk/test-board/GetDepBoardWithDetails" }).trains.journey?.detailsUrl, "https://api1.raildata.org.uk/test-board/GetDepBoardWithDetails");
+  assert.equal("journey" in readConfig(complete).trains, false, "without one, train times are as before");
+  assert.equal(readConfig({ ...complete, TRAINS_CHANGE_MINUTES: "3", RAIL_ARRIVALS_KEY: "test-arrivals-key" }).trains.journey, undefined, "the other journey settings do nothing on their own");
+});
+
+test("a change station needs the walk and the arrival board's key and address while train times are on, and not while they're off", () => {
+  assert.throws(() => readConfig({ ...complete, TRAINS_CHANGE_AT: "CCC", TRAINS_BOARD_URL: journey.TRAINS_BOARD_URL }), { message: "Missing settings in api/.env: TRAINS_CHANGE_MINUTES, RAIL_ARRIVALS_KEY, TRAINS_ARRIVALS_URL" });
+  assert.equal(readConfig({ ...complete, TRAINS: "off", TRAIN_ALERTS: "off", TRAINS_CHANGE_AT: "CCC", TRAINS_BOARD_URL: journey.TRAINS_BOARD_URL }).features.trains, false);
+});
+
+test("the change station, walk and arrival board's address are checked, and the arrival key is never shown", () => {
+  for (const station of ["ccc", "CC", "CCCC", "C C"]) assert.throws(() => readConfig({ ...complete, ...journey, TRAINS_CHANGE_AT: station }), { message: "Settings in api/.env with a value that isn't allowed: TRAINS_CHANGE_AT (a station's three-letter code in capitals, like KGX)" }, station);
+  for (const station of ["AAA", "BBB"]) assert.throws(() => readConfig({ ...complete, ...journey, TRAINS_CHANGE_AT: station }), { message: "Settings in api/.env with a value that isn't allowed: TRAINS_CHANGE_AT (a different station from TRAINS_FROM and TRAINS_TO)" }, station);
+  for (const walk of ["0", "31", "3.5", "-1", "three", "100"]) assert.throws(() => readConfig({ ...complete, ...journey, TRAINS_CHANGE_MINUTES: walk }), { message: "Settings in api/.env with a value that isn't allowed: TRAINS_CHANGE_MINUTES (a whole number of minutes from 1 to 30, like 3)" }, walk);
+  for (const walk of ["1", "30", "04"]) assert.equal(readConfig({ ...complete, ...journey, TRAINS_CHANGE_MINUTES: walk }).trains.journey?.walk, Number(walk), walk);
+  for (const key of ["a key", "key\u0001"]) assert.throws(() => readConfig({ ...complete, ...journey, RAIL_ARRIVALS_KEY: key }), (error: Error) => error.message === "Settings in api/.env with a value that isn't allowed: RAIL_ARRIVALS_KEY (printable characters with no spaces)" && !error.message.includes(key), key);
+  for (const url of ["https://api1.raildata.org.uk/test-arrivals/GetArrivalBoard", "https://api1.raildata.org.uk/test-arrivals/GetArrBoardWithDetails/{crs}", "https://example.com/GetArrBoardWithDetails", "http://api1.raildata.org.uk/GetArrBoardWithDetails"]) {
+    assert.throws(() => readConfig({ ...complete, ...journey, TRAINS_ARRIVALS_URL: url }), { message: "Settings in api/.env with a value that isn't allowed: TRAINS_ARRIVALS_URL (the Live Arrival Board's https address on raildata.org.uk, ending in GetArrBoardWithDetails, with no ?, # or {crs} part)" }, url);
+  }
+  assert.throws(() => readConfig({ ...complete, ...journey, TRAINS_BOARD_URL: "https://api1.raildata.org.uk/test-board" }), { message: "Settings in api/.env with a value that isn't allowed: TRAINS_BOARD_URL (with TRAINS_CHANGE_AT set, an address ending in GetDepartureBoard or GetDepBoardWithDetails)" });
+});
+
 test("TRAIN_ALERTS must be written out, as exactly on or off", () => {
   assert.throws(() => readConfig({ ...complete, TRAIN_ALERTS: undefined }), { message: "Missing settings in api/.env: TRAIN_ALERTS" });
   assert.throws(() => readConfig({ ...complete, TRAIN_ALERTS: "On" }), { message: "Settings in api/.env that must be on or off: TRAIN_ALERTS" });

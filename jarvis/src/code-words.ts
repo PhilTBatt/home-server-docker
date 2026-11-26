@@ -138,10 +138,75 @@ function boardOf(fields: Record<string, unknown>): TrainBoard | null {
   return { from, to, departures, buses: typeof fields.buses === "number" && Number.isSafeInteger(fields.buses) && fields.buses > 0 ? fields.buses : 0, messages: fields.messages.flatMap((message: unknown) => (plain(message, 300) === null ? [] : [plain(message, 300) as string])) };
 }
 
+export type TrainConnection = { leaves: string; expected: string; platform: string | null; arrives: string; arrivesExpected: string; change: number; bus: boolean };
+
+export type TrainJourney = { leaves: string; expected: string; cancelled: boolean; bus: boolean; reason: string | null; arrives: string; arrivesExpected: string; tight: TrainConnection | null; best: TrainConnection | null; fallback: TrainConnection | null };
+
+export type TrainJourneys = { from: string; via: string; to: string; walk: number; journeys: TrainJourney[]; messages: string[] };
+
+const isOnTime = (value: string) => /^on ?time$/i.test(value.trim());
+
+function connectionOf(value: unknown): TrainConnection | null {
+  if (typeof value !== "object" || value === null) return null;
+  const fields = value as Record<string, unknown>;
+  const leaves = plain(fields.leaves, 10);
+  const expected = plain(fields.expected, 20);
+  const arrives = plain(fields.arrives, 10);
+  const arrivesExpected = plain(fields.arrivesExpected, 20);
+  if (leaves === null || expected === null || arrives === null || arrivesExpected === null || typeof fields.change !== "number" || !Number.isSafeInteger(fields.change)) return null;
+  return { leaves, expected, platform: plain(fields.platform, 10), arrives, arrivesExpected, change: fields.change, bus: fields.bus === true };
+}
+
+function journeysOf(fields: Record<string, unknown>): TrainJourneys | null {
+  const from = plain(fields.from);
+  const via = plain(fields.via);
+  const to = plain(fields.to);
+  if (from === null || via === null || to === null || typeof fields.walk !== "number" || !Array.isArray(fields.journeys) || !Array.isArray(fields.messages)) return null;
+  const journeys = fields.journeys.flatMap((item: unknown) => {
+    if (typeof item !== "object" || item === null) return [];
+    const train = item as Record<string, unknown>;
+    const leaves = plain(train.leaves, 10);
+    const expected = plain(train.expected, 20);
+    const arrives = plain(train.arrives, 10);
+    const arrivesExpected = plain(train.arrivesExpected, 20);
+    if (leaves === null || expected === null || arrives === null || arrivesExpected === null) return [];
+    return [{ leaves, expected, cancelled: train.cancelled === true, bus: train.bus === true, reason: plain(train.reason, 200), arrives, arrivesExpected, tight: connectionOf(train.tight), best: connectionOf(train.best), fallback: connectionOf(train.fallback) }];
+  });
+  return { from, via, to, walk: fields.walk, journeys, messages: fields.messages.flatMap((message: unknown) => (plain(message, 300) === null ? [] : [plain(message, 300) as string])) };
+}
+
+function minutesSaid(count: number): string {
+  return `${count} minute${count === 1 ? "" : "s"}`;
+}
+
+function arrivalSaid(times: { arrives: string; arrivesExpected: string }): string {
+  return /^\d{1,2}:\d{2}$/.test(times.arrivesExpected) ? times.arrivesExpected : times.arrives;
+}
+
+function journeyLine(journey: TrainJourney, seen: TrainJourneys): string {
+  const name = `the ${journey.leaves}${journey.bus ? " bus" : ""}`;
+  if (journey.cancelled) return `${name} is cancelled`;
+  const start = isOnTime(journey.expected) ? `${name} is on time` : /^\d{1,2}:\d{2}$/.test(journey.expected) ? `${name} is expected at ${journey.expected}` : journey.expected.toLowerCase() === "delayed" ? `${name} is delayed, with no time yet` : `${name} shows ${journey.expected}`;
+  const platform = (connection: TrainConnection) => (connection.platform === null ? "" : `, platform ${connection.platform}`);
+  const said = (connection: TrainConnection, where: string) => `${minutesSaid(connection.change)}${where} for the ${connection.leaves}${connection.bus ? " bus" : ""}${platform(connection)}, into ${seen.to} at ${arrivalSaid(connection)}`;
+  const known = /^\d{1,2}:\d{2}$/.test(journey.arrivesExpected) || isOnTime(journey.arrivesExpected);
+  const change = journey.tight !== null ? `, with only ${minutesSaid(journey.tight.change)} at ${seen.via} for the ${journey.tight.leaves}${journey.best === null ? "" : `, else ${said(journey.best, "")}`}` : journey.best !== null ? `, with ${said(journey.best, ` at ${seen.via}`)}` : known ? ", with no connection on the board yet" : "";
+  const fallback = journey.fallback === null ? "" : `, then the ${journey.fallback.leaves}, in at ${arrivalSaid(journey.fallback)}`;
+  return `${start}${change}${fallback}`;
+}
+
+export function spokenJourneys(seen: TrainJourneys): CodeWordReply {
+  const shown = seen.journeys.slice(0, spokenTrainsMost);
+  const reasons = shown.flatMap((journey) => (journey.reason === null || (!journey.cancelled && isOnTime(journey.expected)) ? [] : [`${journey.leaves}: ${journey.reason}`]));
+  const notes = [...reasons, ...seen.messages];
+  const say = shown.length > 0 ? `From ${seen.from}: ${shown.map((journey) => journeyLine(journey, seen)).join("; ")}.` : `There are no trains from ${seen.from} to ${seen.via} on the board right now.`;
+  return notes.length === 0 ? { say } : { say, note: notes.join("; ") };
+}
+
 function trainLine(train: TrainBoard["departures"][number]): string {
   if (train.cancelled) return `the ${train.due} is cancelled`;
   const platform = train.platform === null ? "" : `, platform ${train.platform}`;
-  if (train.expected.toLowerCase() === "on time") return `the ${train.due} is on time${platform}`;
+  if (isOnTime(train.expected)) return `the ${train.due} is on time${platform}`;
   if (/^\d{1,2}:\d{2}$/.test(train.expected)) return `the ${train.due} is expected at ${train.expected}${platform}`;
   if (train.expected.toLowerCase() === "delayed") return `the ${train.due} is delayed, with no time yet${platform}`;
   return `the ${train.due} shows ${train.expected}${platform}`;
@@ -149,7 +214,7 @@ function trainLine(train: TrainBoard["departures"][number]): string {
 
 export function spokenTrains(board: TrainBoard): CodeWordReply {
   const shown = board.departures.slice(0, spokenTrainsMost);
-  const reasons = shown.flatMap((train) => (train.reason === null || (!train.cancelled && train.expected.toLowerCase() === "on time") ? [] : [`${train.due}: ${train.reason}`]));
+  const reasons = shown.flatMap((train) => (train.reason === null || (!train.cancelled && isOnTime(train.expected)) ? [] : [`${train.due}: ${train.reason}`]));
   const buses = board.buses === 1 ? "a bus" : `${board.buses} buses`;
   const notes = [...reasons, ...(board.buses === 0 || shown.length === 0 ? [] : [`the board also lists ${buses}`]), ...board.messages];
   const say = shown.length > 0 ? `Trains from ${board.from} to ${board.to}: ${shown.map(trainLine).join("; ")}.` : board.buses > 0 ? `There are no trains from ${board.from} to ${board.to} on the board right now, but it lists ${buses}.` : `There are no trains from ${board.from} to ${board.to} on the board right now.`;
@@ -162,6 +227,8 @@ export async function trainTimes(token: string | null, signal: AbortSignal, url 
     const { status, fields } = await hubAsk("/trains", { headers: { Authorization: `Bearer ${token}` } }, signal, url);
     if (status === 404 && fields.error === "Train times are switched off") return { say: "I couldn't get the train times.", note: "train times are off in the hub, so set TRAINS=on and its settings in api/.env and restart the hub" };
     if (status !== 200) return { say: "I couldn't get the train times.", note: `the hub said: ${errorOf(fields, status)}` };
+    const journeys = journeysOf(fields);
+    if (journeys !== null) return spokenJourneys(journeys);
     const board = boardOf(fields);
     return board === null ? { say: "I couldn't get the train times.", note: "the hub's reply wasn't a train board" } : spokenTrains(board);
   } catch (error) {

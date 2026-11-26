@@ -5,6 +5,15 @@ export type AlertSettings = { days: string[]; start: number; end: number; remind
 
 export type Told = { cancelled: boolean; late: number | null; platform: string | null };
 
+export type Watch<Seen, Kept> = {
+  get: () => Promise<Seen>;
+  reminder: (seen: Seen, now: number) => Notification;
+  first: (seen: Seen, now: number) => Kept;
+  fresh: () => Kept;
+  changes: (seen: Seen, kept: Kept, now: number) => { lines: string[]; cancelled: boolean; next: Kept };
+  left: (seen: Seen, now: number) => number;
+};
+
 export type CheckResult = "not today" | "too early" | "finished" | "waiting" | "busy" | "failed" | "reminded" | "checked" | "changed";
 
 export const dayNames = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -94,7 +103,7 @@ export function boardReach(departures: Departure[], nowMinutes: number): number 
   return furthest === null ? null : nowMinutes + furthest;
 }
 
-function withReason(sentence: string, reason: string | null): string {
+export function withReason(sentence: string, reason: string | null): string {
   if (reason === null) return sentence;
   return `${sentence} ${reason}${/[.!?]$/.test(reason) ? "" : "."}`;
 }
@@ -190,12 +199,30 @@ export function changeNotification(lines: string[], cancelled: boolean): Notific
   return { title: lines.length === 1 ? "Train change" : "Train changes", message: lines.join("\n"), tags: "warning", ...(cancelled ? { priority: 4 as const } : {}) };
 }
 
-export function createTrainAlerts(options: { settings: AlertSettings; board: () => Promise<Board>; send: (notification: Notification) => Promise<void>; changed?: (lines: string[], at: Date) => void; warn?: (message: string) => void; info?: (message: string) => void }) {
-  const { settings } = options;
+export type AlertHooks = { settings: AlertSettings; send: (notification: Notification) => Promise<void>; changed?: (lines: string[], at: Date) => void; warn?: (message: string) => void; info?: (message: string) => void };
+
+export function boardWatch(settings: AlertSettings, board: () => Promise<Board>): Watch<Board, Map<string, Told>> {
+  const inside = (seen: Board) => seen.departures.filter((departure) => inWindow(departure, settings));
+  return {
+    get: board,
+    reminder: (seen, now) => reminderFor(seen, settings, now),
+    first: (seen) => toldFrom(inside(seen)),
+    fresh: () => new Map(),
+    changes: (seen, kept, now) => changesFor(inside(seen), kept, { now, reach: boardReach(seen.departures, now), full: seen.departures.length >= alertRows }),
+    left: (seen) => inside(seen).length,
+  };
+}
+
+export function createTrainAlerts(options: AlertHooks & { board: () => Promise<Board> }) {
+  return createAlerts({ ...options, watch: boardWatch(options.settings, options.board) });
+}
+
+export function createAlerts<Seen, Kept>(options: AlertHooks & { watch: Watch<Seen, Kept> }) {
+  const { settings, watch } = options;
   let day = "";
   let reminded = false;
   let finished = false;
-  let told = new Map<string, Told>();
+  let told = watch.fresh();
   let lastAsked = 0;
   let failingSince: number | null = null;
   let failureSent = false;
@@ -209,7 +236,7 @@ export function createTrainAlerts(options: { settings: AlertSettings; board: () 
       day = time.day;
       reminded = false;
       finished = false;
-      told = new Map();
+      told = watch.fresh();
       lastAsked = 0;
       failingSince = null;
       failureSent = false;
@@ -226,9 +253,9 @@ export function createTrainAlerts(options: { settings: AlertSettings; board: () 
     }
     if (now.getTime() - lastAsked < checkEveryMs - tickMs / 2) return "waiting";
     lastAsked = now.getTime();
-    let board: Board;
+    let seen: Seen;
     try {
-      board = await options.board();
+      seen = await watch.get();
     } catch (error) {
       const why = error instanceof Error ? error.message : "no reason given";
       if (failingSince === null) options.warn?.(`the train check couldn't get the departure board: ${why}`);
@@ -247,20 +274,19 @@ export function createTrainAlerts(options: { settings: AlertSettings; board: () 
       failureSent = false;
       failingSince = null;
     }
-    const trains = board.departures.filter((departure) => inWindow(departure, settings));
     let startedLate = false;
     if (!reminded) {
       if (time.minutes <= settings.end) {
-        await options.send(reminderFor(board, settings, time.minutes));
+        await options.send(watch.reminder(seen, time.minutes));
         reminded = true;
-        told = toldFrom(trains);
+        told = watch.first(seen, time.minutes);
         return "reminded";
       }
       reminded = true;
-      told = new Map();
+      told = watch.fresh();
       startedLate = true;
     }
-    const changes = changesFor(trains, told, { now: time.minutes, reach: boardReach(board.departures, time.minutes), full: board.departures.length >= alertRows });
+    const changes = watch.changes(seen, told, time.minutes);
     const lines = [...unsent, ...changes.lines];
     const cancelled = unsentCancelled || changes.cancelled;
     told = changes.next;
@@ -272,7 +298,7 @@ export function createTrainAlerts(options: { settings: AlertSettings; board: () 
       unsent = [];
       unsentCancelled = false;
     }
-    if (time.minutes > settings.end && trains.length === 0) finished = true;
+    if (time.minutes > settings.end && watch.left(seen, time.minutes) === 0) finished = true;
     return lines.length > 0 ? "changed" : finished ? "finished" : "checked";
   }
 
