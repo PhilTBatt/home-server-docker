@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from "fastify";
 import type { Config } from "../../config.js";
 import { findProblems, type Problem, type Status } from "./alerts.js";
 import { readBackupState } from "./backup.js";
+import { runDoctor, type DoctorSources } from "./doctor.js";
 
 const reconnectLog = "/var/log/wifi-watchdog/reconnects.log";
 
@@ -56,7 +57,7 @@ export async function currentProblems(backupDir?: string, more: Problem[] = []) 
   return [...problems, ...more];
 }
 
-export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?: string; moreProblems?: () => Problem[] }> = async (app, options) => {
+export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?: string; moreProblems?: () => Problem[]; doctor?: DoctorSources; now?: () => Date }> = async (app, options) => {
   app.get("/wifi-reconnects", async () => {
     return parseReconnects(await readReconnectLog());
   });
@@ -76,5 +77,14 @@ export const system: FastifyPluginAsync<Pick<Config, "features"> & { backupDir?:
 
   app.get("/backup", async () => {
     return readBackupState(options.backupDir);
+  });
+
+  app.get("/doctor", async (_request, reply) => {
+    if (options.doctor === undefined) return reply.code(404).send({ error: "The server doctor isn't set up" });
+    return runDoctor(options.features, options.doctor, {
+      problems: () => currentProblems(options.backupDir, options.moreProblems?.()),
+      status: readStatus,
+      backup: () => readBackupState(options.backupDir),
+    }, options.now?.() ?? new Date());
   });
 };

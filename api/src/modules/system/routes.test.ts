@@ -6,6 +6,7 @@ import { join } from "node:path";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
 import type { Problem } from "./alerts.js";
+import type { DoctorSources } from "./doctor.js";
 import { currentProblems, parseReconnects, system } from "./routes.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true };
@@ -227,4 +228,47 @@ test("only the alerts route asks for those problems", async () => {
   assert.equal(asked, 0);
   await app.inject({ method: "GET", url: "/system/alerts" });
   assert.equal(asked, 1);
+});
+function doctorApp(features: Features, doctor?: DoctorSources, moreProblems?: () => Problem[]) {
+  const app = Fastify();
+  app.register(system, { prefix: "/system", features, backupDir: join(tmpdir(), "no-such-backup-status-here"), moreProblems, doctor, now: () => new Date("2026-11-26T12:00:00Z") });
+  return app;
+}
+
+const fakeDoctor: DoctorSources = {
+  downloads: async () => [],
+  library: async () => ({ movies: 1, series: 2, episodes: 3 }),
+  inbox: async () => 4,
+  trains: async () => ({}),
+  expiries: async () => [],
+};
+
+test("doctor answers with an overall state, a summary in plain words, the time and every check", async () => {
+  const response = await doctorApp(allOn, fakeDoctor).inject({ method: "GET", url: "/system/doctor" });
+  assert.equal(response.statusCode, 200);
+  const report = response.json();
+  assert.deepEqual(Object.keys(report), ["state", "summary", "checkedAt", "checks"]);
+  assert.equal(report.checkedAt, "2026-11-26T12:00:00.000Z");
+  assert.deepEqual(report.checks.map((check: { name: string }) => check.name), ["Disk", "Memory", "Wi-Fi", "Backups", "Heartbeat", "Phone alerts", "qBittorrent", "Jellyfin", "Brain inbox", "Deal watcher", "Train times", "Expiry list"]);
+  for (const check of report.checks) {
+    assert.deepEqual(Object.keys(check), ["name", "state", "detail", "next"]);
+    assert.ok(["ok", "warn", "problem", "off"].includes(check.state));
+    assert.equal(check.next === null, check.state === "ok" || check.state === "off", check.name);
+  }
+  assert.equal(report.checks.find((check: { name: string }) => check.name === "Brain inbox").detail, "4 notes waiting.");
+  assert.equal(report.checks.find((check: { name: string }) => check.name === "Backups").state, "off");
+});
+
+test("doctor uses the same problems as the alerts, including the deal watcher's and the expiry list's", async () => {
+  const more = () => [{ code: "deals-source", message: "The deal watcher can't check its searches: eBay refused." }, { code: "expiry-state", message: "The expiry checker couldn't save." }] as Problem[];
+  const report = (await doctorApp(allOn, fakeDoctor, more).inject({ method: "GET", url: "/system/doctor" })).json();
+  const byName = Object.fromEntries(report.checks.map((check: { name: string; state: string; detail: string }) => [check.name, check]));
+  assert.deepEqual([byName["Deal watcher"].state, byName["Deal watcher"].detail], ["problem", "The deal watcher can't check its searches: eBay refused."]);
+  assert.deepEqual([byName["Expiry list"].state, byName["Expiry list"].detail], ["problem", "The expiry checker couldn't save."]);
+  assert.equal(report.state, "problem");
+});
+
+test("doctor says it isn't set up when it's given nothing to look at", async () => {
+  const response = await doctorApp(allOn).inject({ method: "GET", url: "/system/doctor" });
+  assert.deepEqual([response.statusCode, response.json()], [404, { error: "The server doctor isn't set up" }]);
 });

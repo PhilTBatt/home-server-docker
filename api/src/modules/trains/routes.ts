@@ -10,8 +10,12 @@ function asked(query: unknown, name: string): string | null | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+export function boardFor(settings: TrainSettings): () => Promise<Board | Journeys> {
+  return settings.journey === undefined ? () => fetchBoard(settings) : () => fetchJourneys(settings);
+}
+
 export const trains: FastifyPluginAsync<{ features: Features; settings: TrainSettings; board?: () => Promise<Board | Journeys>; changes?: ChangeFeed; now?: () => Date }> = async (app, options) => {
-  const board = options.board ?? (options.settings.journey === undefined ? () => fetchBoard(options.settings) : () => fetchJourneys(options.settings));
+  const board = options.board ?? boardFor(options.settings);
 
   app.get("/", async (_request, reply) => {
     if (!options.features.trains) return reply.code(404).send({ error: "Train times are switched off" });

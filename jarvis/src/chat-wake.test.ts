@@ -938,6 +938,35 @@ test("train times are asked of the hub through their action and said like any co
   await chat.running;
 });
 
+test("a server check is asked of the hub through its action and said like any code word, with what to try as a note", { timeout: 5_000 }, async () => {
+  const spoken: string[] = [];
+  let checks = 0;
+  const chat = wakeChat({}, [], {
+    speak: () => ({ ...fakeSpeech([]), text: (text: string) => void spoken.push(text) }),
+    codeWords: { note: async () => ({ say: "unused" }), phone: async () => ({ say: "unused" }), trains: async () => ({ say: "unused" }), server: async () => (checks++, { say: "1 problem: Heartbeat. Heartbeat: The last ping failed.", note: "Heartbeat: check the API's log" }) },
+  });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("Hey Jarvis, how's the server?"), textMs: 900 });
+  await pause(20);
+  assert.ok(chat.output().includes(`${heardPrefix}Hey Jarvis, how's the server?\nJarvis: 1 problem: Heartbeat. Heartbeat: The last ping failed.\n  (Heartbeat: check the API's log)\n`), chat.output());
+  assert.deepEqual([checks, spoken, chat.events.filter((event) => event.startsWith("ask"))], [1, ["1 problem: Heartbeat. Heartbeat: The last ping failed."], []]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("a server check with no way to ask the hub for it says how to get one, and is never asked of Claude", { timeout: 5_000 }, async () => {
+  const chat = wakeChat({}, [], { codeWords: { note: async () => ({ say: "unused" }), phone: async () => ({ say: "unused" }), trains: async () => ({ say: "unused" }) } });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("Server check."), textMs: 900 });
+  await pause(20);
+  assert.ok(chat.output().includes(`Jarvis: I couldn't check the server.\n  (${hubOffNote})\n`), chat.output());
+  assert.deepEqual(chat.events.filter((event) => event.startsWith("ask")), []);
+  chat.lines.close();
+  await chat.running;
+});
+
 test("when ears mutes itself on stop listening, Jarvis says so out loud, and a near miss is told how instead of being asked", { timeout: 5_000 }, async () => {
   const spoken: string[] = [];
   const chat = followChat({}, 0, { speak: () => ({ ...fakeSpeech([]), text: (text: string) => void spoken.push(text) }) });

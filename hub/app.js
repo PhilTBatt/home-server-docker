@@ -50,6 +50,22 @@
  */
 
 /**
+ * @typedef {object} DoctorCheck
+ * @property {string} name
+ * @property {"ok" | "warn" | "problem" | "off"} state
+ * @property {string} detail
+ * @property {string | null} next
+ */
+
+/**
+ * @typedef {object} DoctorReport
+ * @property {"ok" | "warn" | "problem"} state
+ * @property {string} summary
+ * @property {string} checkedAt
+ * @property {DoctorCheck[]} checks
+ */
+
+/**
  * @typedef {object} Features
  * @property {boolean} alerts
  * @property {boolean} heartbeat
@@ -264,6 +280,8 @@ const wifiText = byId("wifi");
 const serverText = byId("server");
 const backupText = byId("backup");
 const alertsList = byId("alerts");
+const doctorSummary = byId("doctor-summary");
+const doctorChecks = byId("doctor-checks");
 const switchesText = byId("switches");
 const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
 const brainSection = byId("brain");
@@ -311,6 +329,7 @@ function showView(loggedIn) {
     loadServer();
     loadBackup();
     loadAlerts();
+    loadDoctor();
     loadSwitches();
 
     refreshTimer = setInterval(refreshDownloads, 10_000);
@@ -461,6 +480,45 @@ async function loadAlerts() {
     return;
   }
   alertsList.replaceChildren(...alerts.problems.map((p) => listItem(p.message)));
+}
+
+/**
+ * @param {unknown} reply
+ * @returns {reply is DoctorReport}
+ */
+function isDoctorReport(reply) {
+  return isObject(reply) && typeof reply.summary === "string" && Array.isArray(reply.checks) && reply.checks.every((check) => isObject(check) && typeof check.name === "string" && typeof check.state === "string" && typeof check.detail === "string" && (check.next === null || typeof check.next === "string"));
+}
+
+/**
+ * @param {DoctorReport} report
+ * @returns {HTMLLIElement[]}
+ */
+function doctorItems(report) {
+  /** @param {string} state */
+  const named = (state) => report.checks.filter((check) => check.state === state).map((check) => check.name);
+  const items = ["problem", "warn"].flatMap((state) => report.checks.filter((check) => check.state === state)).map((check) => listItem(`${check.state === "problem" ? "Problem" : "Look at"}: ${check.name}. ${check.detail}${check.next === null ? "" : ` Try: ${check.next}`}`));
+  const fine = named("ok");
+  const off = named("off");
+  if (fine.length > 0) items.push(listItem(`Fine: ${fine.join(", ")}.`));
+  if (off.length > 0) items.push(listItem(`Switched off: ${off.join(", ")}.`));
+  return items;
+}
+
+async function loadDoctor() {
+  const got = await fetchReply("/api/system/doctor", "Couldn't check the server");
+  if ("text" in got) {
+    doctorSummary.textContent = got.text;
+    doctorChecks.replaceChildren();
+    return;
+  }
+  if (!isDoctorReport(got.reply)) {
+    doctorSummary.textContent = "Couldn't read the API's reply.";
+    doctorChecks.replaceChildren();
+    return;
+  }
+  doctorSummary.textContent = got.reply.summary;
+  doctorChecks.replaceChildren(...doctorItems(got.reply));
 }
 
 async function loadSwitches() {

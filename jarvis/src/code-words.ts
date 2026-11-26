@@ -1,6 +1,6 @@
 import { hubApiUrl } from "./hub-tools.js";
 
-export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "trains" } | { kind: "stop listening" };
+export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" };
 
 const address = /^\s*(?:(?:hey|hi|ok|okay)\b[\s,.!?]*)?(?:\S*vis\b[\s,.!?]*)?/i;
 const askingWords = "can you|could you|would you|will you|can u|please|just|jarvis";
@@ -25,6 +25,8 @@ const trainAsking = /^(?:(?:tell me|give me|check|get|show me) (?:the |my )?|(?:
 
 export const neverMindWords = ["never mind", "nevermind", "that's all", "that is all"];
 export const phoneWords = ["find my phone", "help me find my phone", "where's my phone", "where is my phone", "ring my phone", "ping my phone"];
+export const serverWords = ["server check", "check the server", "how's the server", "how is the server", "how's the server doing", "how is the server doing", "is the server ok", "is the server okay"];
+const serverAfter = fillersAfter.split("|").filter((word) => word !== "ok" && word !== "okay").join("|");
 export const trainWords = ["train times", "train time", "trains", "next train", "next trains", "when's my train", "when is my train", "when's the next train", "when is the next train", "what time's my train", "what time is my train", "what time's the next train", "what time is the next train", "is my train on time", "are my trains on time", "are the trains on time", "how are the trains", "how are the trains looking"];
 
 function codeWordAlone(said: string): CodeWord | null {
@@ -36,6 +38,8 @@ function codeWordAlone(said: string): CodeWord | null {
   if (phoneWords.includes(request)) return { kind: "phone" };
   if (neverMindWords.includes(words) && !/\?\s*$/.test(text)) return { kind: "never mind" };
   if (trainWords.includes(request) || trainWords.includes(request.replace(trainAsking, ""))) return { kind: "trains" };
+  const server = asked(plainWords(text).replace(new RegExp(`^(?:(?:${fillersBefore}) )+`), "").replace(new RegExp(`(?: (?:${serverAfter}))+$`), ""));
+  if (serverWords.includes(server) || /^(?:do a|run a|give me a) server check$/.test(server)) return { kind: "server" };
   if (/^(?:(?:you can|can you|could you|would you|will you|just|please|now) )*stop listening(?: |$)/.test(words)) return { kind: "stop listening" };
   return null;
 }
@@ -58,7 +62,7 @@ export const stopMyselfReply: CodeWordReply = { say: "Say just stop listening, a
 export const stoppedReply: CodeWordReply = { say: "I've stopped listening.", note: "ears muted itself, so unmute it on the server with bash host/ears.sh unmute" };
 export const earsStoppedWhy = "you said stop listening, so ears muted itself. Unmute it on the server with bash host/ears.sh unmute";
 
-export const hubOffNote = "notes, finding your phone and train times go through the hub, so set JARVIS_HUB_TOOLS=on in jarvis/.env and start Jarvis again with bash host/jarvis.sh";
+export const hubOffNote = "notes, finding your phone, train times and the server check go through the hub, so set JARVIS_HUB_TOOLS=on in jarvis/.env and start Jarvis again with bash host/jarvis.sh";
 export const noteTitle = "voice note";
 export const codeWordMs = 12_000;
 
@@ -233,5 +237,57 @@ export async function trainTimes(token: string | null, signal: AbortSignal, url 
     return board === null ? { say: "I couldn't get the train times.", note: "the hub's reply wasn't a train board" } : spokenTrains(board);
   } catch (error) {
     return { say: "I couldn't get the train times.", note: `couldn't reach the hub: ${reasonOf(error)}` };
+  }
+}
+
+export type DoctorCheck = { name: string; state: "ok" | "warn" | "problem" | "off"; detail: string; next: string | null };
+
+export type DoctorReport = { summary: string; checks: DoctorCheck[] };
+
+export const spokenChecksMost = 3;
+
+const spokenStates = ["problem", "warn"] as const;
+
+function plainCut(value: unknown, limit: number): string | null {
+  const text = plain(value, Infinity);
+  if (text === null || text.length <= limit) return text;
+  const cut = text.slice(0, limit - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > limit / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:(]+$/, "")}\u2026`;
+}
+
+function doctorOf(fields: Record<string, unknown>): DoctorReport | null {
+  const summary = plain(fields.summary, 300);
+  if (summary === null || !Array.isArray(fields.checks)) return null;
+  const checks = fields.checks.flatMap((item: unknown) => {
+    if (typeof item !== "object" || item === null) return [];
+    const check = item as Record<string, unknown>;
+    const name = plain(check.name, 40);
+    const detail = plainCut(check.detail, 300);
+    const state = spokenStates.find((known) => known === check.state);
+    if (name === null || detail === null || state === undefined) return [];
+    return [{ name, state, detail, next: plain(check.next, 300) }];
+  });
+  return { summary, checks };
+}
+
+export function spokenDoctor(report: DoctorReport): CodeWordReply {
+  const notOk = [...report.checks.filter((check) => check.state === "problem"), ...report.checks.filter((check) => check.state === "warn")];
+  const shown = notOk.slice(0, spokenChecksMost);
+  const say = [report.summary, ...shown.map((check) => `${check.name}: ${check.detail}`)].join(" ");
+  const notes = [...shown.flatMap((check) => (check.next === null ? [] : [`${check.name}: ${check.next.replace(/\.$/, "")}`])), ...(notOk.length > shown.length ? [`${notOk.length - shown.length} more on the hub page`] : [])];
+  return notes.length === 0 ? { say } : { say, note: notes.join("; ") };
+}
+
+export async function serverCheck(token: string | null, signal: AbortSignal, url = hubApiUrl): Promise<CodeWordReply> {
+  if (token === null) return { say: "I couldn't check the server.", note: hubOffNote };
+  try {
+    const { status, fields } = await hubAsk("/system/doctor", { headers: { Authorization: `Bearer ${token}` } }, signal, url);
+    if (status === 404) return { say: "I couldn't check the server.", note: "the hub has no server doctor yet, so update it and rebuild the API" };
+    if (status !== 200) return { say: "I couldn't check the server.", note: `the hub said: ${errorOf(fields, status)}` };
+    const report = doctorOf(fields);
+    return report === null ? { say: "I couldn't check the server.", note: "the hub's reply wasn't a server check" } : spokenDoctor(report);
+  } catch (error) {
+    return { say: "I couldn't check the server.", note: `couldn't reach the hub: ${reasonOf(error)}` };
   }
 }

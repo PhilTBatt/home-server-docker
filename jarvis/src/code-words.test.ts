@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText } from "./code-words.js";
+import { codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
 
 const stillOpen = new Set<() => unknown>();
 
@@ -159,7 +159,7 @@ test("a note that can't be saved says so with why, and an empty one or one with 
   assert.deepEqual(await saveVoiceNote("  ", token, signal, new Date(), asked.url), { say: "Say note this, then what to note." });
   assert.deepEqual(await saveVoiceNote("x", null, signal, new Date(), asked.url), { say: "I couldn't save that note.", note: hubOffNote });
   assert.equal(asked.asked.length, 0);
-  assert.equal(hubOffNote, "notes, finding your phone and train times go through the hub, so set JARVIS_HUB_TOOLS=on in jarvis/.env and start Jarvis again with bash host/jarvis.sh");
+  assert.equal(hubOffNote, "notes, finding your phone, train times and the server check go through the hub, so set JARVIS_HUB_TOOLS=on in jarvis/.env and start Jarvis again with bash host/jarvis.sh");
   const gone = await saveVoiceNote("x", token, signal, new Date(), "http://127.0.0.1:1");
   assert.equal(gone.say, "I couldn't save that note.");
   assert.match(gone.note ?? "", /^couldn't reach the hub: /);
@@ -301,4 +301,85 @@ test("train times are asked of the hub with the token, and a hub that's off, fai
   assert.deepEqual(await trainTimes(token, signal, odd.url), { say: "I couldn't get the train times.", note: "the hub's reply wasn't a train board" });
   assert.deepEqual(await trainTimes(null, signal, hub.url), { say: "I couldn't get the train times.", note: hubOffNote });
   assert.equal(hub.asked.length, 1);
+});
+
+test("the server check is a short fixed list of phrasings, said on its own, politely, or as the last sentence", () => {
+  assert.deepEqual(serverWords, ["server check", "check the server", "how's the server", "how is the server", "how's the server doing", "how is the server doing", "is the server ok", "is the server okay"]);
+  for (const said of ["Server check.", "Hey Jarvis, server check.", "How's the server?", "How\u2019s the server doing?", "How is the server doing?", "Is the server OK?", "Is the server okay?", "Check the server.", "Can you check the server, please?", "Could you do a server check?", "Jarvis, run a server check.", "Give me a server check.", "Please check the server.", "Morning. How's the server?", "Right\u2026 Server check.", "Actually, is the server OK?", "Thanks, server check.", "OK, how's the server?", "Is the server OK, thanks?"]) assert.deepEqual(codeWordIn(said), { kind: "server" }, said);
+});
+
+test("asking whether everything is OK or all right is not a code word, alone or as the last sentence, so it goes to Claude as before", () => {
+  for (const said of ["Is everything OK?", "Is everything okay, Jarvis?", "Is everything all right?", "Is everything alright?", "Hey Jarvis, is everything OK?", "Can you tell me, is everything ok?", "I had a rough day. Is everything all right?", "Morning. Is everything OK?", "Actually, is everything OK?", "Is everything OK, thanks?"]) assert.equal(codeWordIn(said), null, said);
+});
+
+test("near misses of the server check go to Claude as usual", () => {
+  for (const said of ["Is everything OK with you?", "Is everything OK with the boiler?", "How's the server room?", "Check the server logs.", "Is the server down?", "What's a server check?", "Server checks are boring.", "How is the server set up?", "Is everything ok in the kitchen?", "Should I check the server?", "Is everything OK? Tell me about Docker.", "How's the server doing compared to yesterday?", "Do a server check tomorrow.", "Do a check the server.", "Run a how's the server.", "Give me a server."]) assert.equal(codeWordIn(said), null, said);
+});
+
+const report: DoctorReport = {
+  summary: "1 problem: Heartbeat. 2 things to look at: Disk and Wi-Fi.",
+  checks: [
+    { name: "Disk", state: "warn", detail: "15 of 100 GB free, under a fifth.", next: "docker system df shows what Docker uses." },
+    { name: "Memory", state: "ok", detail: "4.0 of 8.0 GB available.", next: null },
+    { name: "Wi-Fi", state: "warn", detail: "Wi-Fi reconnected 1 time in the last 24 hours.", next: null },
+    { name: "Heartbeat", state: "problem", detail: "The last ping to Healthchecks.io, 26 Nov at 11:55, failed.", next: "docker compose logs --tail 20 api shows why." },
+    { name: "Train times", state: "off", detail: "Switched off (TRAINS).", next: null },
+  ],
+};
+
+test("the server check says the summary, then problems before things to look at, and puts what to try on screen only", () => {
+  assert.deepEqual(spokenDoctor(report), {
+    say: "1 problem: Heartbeat. 2 things to look at: Disk and Wi-Fi. Heartbeat: The last ping to Healthchecks.io, 26 Nov at 11:55, failed. Disk: 15 of 100 GB free, under a fifth. Wi-Fi: Wi-Fi reconnected 1 time in the last 24 hours.",
+    note: "Heartbeat: docker compose logs --tail 20 api shows why; Disk: docker system df shows what Docker uses",
+  });
+  assert.deepEqual(spokenDoctor({ summary: "Everything's OK: 3 checks fine, 1 switched off.", checks: [{ name: "Disk", state: "ok", detail: "40 of 100 GB free.", next: null }, { name: "Train times", state: "off", detail: "Switched off (TRAINS).", next: null }] }), { say: "Everything's OK: 3 checks fine, 1 switched off." });
+});
+
+test("the server check says at most three checks aloud and counts the rest for the hub page", () => {
+  assert.equal(spokenChecksMost, 3);
+  const many: DoctorReport = { summary: "4 problems: A, B, C and D.", checks: ["A", "B", "C", "D"].map((name) => ({ name, state: "problem" as const, detail: `${name} is broken.`, next: null })) };
+  assert.deepEqual(spokenDoctor(many), { say: "4 problems: A, B, C and D. A: A is broken. B: B is broken. C: C is broken.", note: "1 more on the hub page" });
+});
+
+test("a long detail in the server check is cut at the last word that fits and ends with an ellipsis", async () => {
+  const words = Array.from({ length: 60 }, (_, index) => `item${index}`).join(", ");
+  const hub = await standInHub(() => ({ status: 200, body: { summary: "1 problem: Expiry list.", checks: [{ name: "Expiry list", state: "problem", detail: words, next: null }, { name: "Deals", state: "warn", detail: `${"x".repeat(320)} end`, next: null }] } }));
+  const reply = await serverCheck(token, signal, hub.url);
+  const expiry = reply.say.slice("1 problem: Expiry list. Expiry list: ".length, reply.say.indexOf(" Deals: "));
+  assert.ok(words.startsWith(expiry.slice(0, -1)), expiry);
+  assert.ok(expiry.endsWith("\u2026") && expiry.length <= 300 && expiry.length > 250, expiry);
+  assert.match(expiry, /item\d+\u2026$/);
+  assert.ok(words.split(", ").includes(expiry.slice(0, -1).split(", ").pop() as string), expiry);
+  assert.equal(reply.say.slice(reply.say.indexOf(" Deals: ") + " Deals: ".length), `${"x".repeat(299)}\u2026`);
+  const exact = await standInHub(() => ({ status: 200, body: { summary: "1 problem: Disk.", checks: [{ name: "Disk", state: "problem", detail: "y".repeat(300), next: null }] } }));
+  assert.equal((await serverCheck(token, signal, exact.url)).say, `1 problem: Disk. Disk: ${"y".repeat(300)}`);
+});
+
+test("the server check asks the hub's doctor with the token, and a hub that's old, failing or odd is said plainly", async () => {
+  const hub = await standInHub(() => ({ status: 200, body: { state: "warn", summary: "1 thing to look at: Disk.", checkedAt: "2026-11-26T12:00:00.000Z", checks: [{ name: "Disk", state: "warn", detail: "15 of 100 GB free, under a fifth.", next: "Free some space." }, { name: "Odd", state: "broken", detail: "x", next: null }, { name: 7 }, "x", null] } }));
+  assert.deepEqual(await serverCheck(token, signal, hub.url), { say: "1 thing to look at: Disk. Disk: 15 of 100 GB free, under a fifth.", note: "Disk: Free some space" });
+  assert.deepEqual(hub.asked.map((one) => [one.method, one.url, one.authorization]), [["GET", "/system/doctor", `Bearer ${token}`]]);
+  const old = await standInHub(() => ({ status: 404, body: { message: "Route GET:/system/doctor not found", error: "Not Found", statusCode: 404 } }));
+  assert.deepEqual(await serverCheck(token, signal, old.url), { say: "I couldn't check the server.", note: "the hub has no server doctor yet, so update it and rebuild the API" });
+  const refused = await standInHub(() => ({ status: 401, body: { error: "Unauthorized" } }));
+  assert.deepEqual(await serverCheck(token, signal, refused.url), { say: "I couldn't check the server.", note: "the hub said: Unauthorized" });
+  const failing = await standInHub(() => ({ status: 500, body: {} }));
+  assert.deepEqual(await serverCheck(token, signal, failing.url), { say: "I couldn't check the server.", note: "the hub said: the hub replied 500" });
+  for (const body of [{ checks: [] }, { summary: "Fine.", checks: "none" }, { summary: "  ", checks: [] }, []]) {
+    const odd = await standInHub(() => ({ status: 200, body }));
+    assert.deepEqual(await serverCheck(token, signal, odd.url), { say: "I couldn't check the server.", note: "the hub's reply wasn't a server check" }, JSON.stringify(body));
+  }
+  assert.deepEqual(await serverCheck(null, signal, hub.url), { say: "I couldn't check the server.", note: hubOffNote });
+  assert.equal(hub.asked.length, 1);
+  const gone = await serverCheck(token, signal, "http://127.0.0.1:1");
+  assert.equal(gone.say, "I couldn't check the server.");
+  assert.match(gone.note ?? "", /^couldn't reach the hub: /);
+});
+
+test("what the hub says about the server is cleaned of control characters and cut to length before it's said", async () => {
+  const hub = await standInHub(() => ({ status: 200, body: { summary: `1 problem:\u0007 Disk.${"x".repeat(400)}`, checks: [{ name: `Disk${"y".repeat(60)}`, state: "problem", detail: `Full\n${"z".repeat(400)}`, next: `Clear\u001b it${"w".repeat(400)}` }] } }));
+  const said = await serverCheck(token, signal, hub.url);
+  assert.ok(!/[\u0000-\u001f]/.test(said.say + (said.note ?? "")));
+  assert.equal(said.say, `1 problem:  Disk.${"x".repeat(283)} Disk${"y".repeat(36)}: Full ${"z".repeat(294)}\u2026`);
+  assert.equal(said.note, `Disk${"y".repeat(36)}: Clear  it${"w".repeat(291)}`);
 });

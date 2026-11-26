@@ -12,6 +12,7 @@ import { createJourneyAlerts, journeysForAlerts } from "./modules/trains/journey
 import { createChangeFeed } from "./modules/trains/changes.js";
 import { expiryCheckerFor } from "./modules/expiry/setup.js";
 import { expiringLine } from "./modules/expiry/checker.js";
+import { createTries } from "./modules/system/doctor.js";
 
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
@@ -25,7 +26,9 @@ const expiryChecker = config.features.expiryAlerts
     })
   : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker });
+const tries = { heartbeat: createTries(), alerts: createTries() };
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries });
 app.log.info({ features: config.features }, "feature switches");
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
@@ -41,15 +44,21 @@ const sendDailySummary = createDailySummary(config.ntfyTopic, readStatus, allPro
 
 function runCheck() {
   if (config.features.alerts) {
-    checkAndNotify().catch((error: unknown) => {
-      app.log.error(error, "notification check failed");
-    });
+    checkAndNotify()
+      .then(() => tries.alerts.ok(new Date()))
+      .catch((error: unknown) => {
+        tries.alerts.failed(new Date());
+        app.log.error(error, "notification check failed");
+      });
   }
 
   if (config.features.heartbeat) {
-    sendHeartbeat(config.healthcheckUrl).catch((error: unknown) => {
-      app.log.error(error, "heartbeat failed");
-    });
+    sendHeartbeat(config.healthcheckUrl)
+      .then(() => tries.heartbeat.ok(new Date()))
+      .catch((error: unknown) => {
+        tries.heartbeat.failed(new Date());
+        app.log.error(error, "heartbeat failed");
+      });
   }
 
   if (config.features.dailySummary) {

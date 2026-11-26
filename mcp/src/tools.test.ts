@@ -32,6 +32,7 @@ const readPaths: Record<string, string> = {
   get_wifi_reconnects: "/system/wifi-reconnects",
   get_backup: "/system/backup",
   get_expiries: "/expiry",
+  get_doctor: "/system/doctor",
   get_deal_status: "/deals/status",
   get_deal_searches: "/deals/searches",
 };
@@ -100,7 +101,7 @@ test("names itself home-hub", async () => {
   assert.equal(result.serverInfo.name, "home-hub");
 });
 
-test("offers the ten read tools, the two listing tools and the five tuning tools, then scan, stop and start, in order", async () => {
+test("offers the eleven read tools, the two listing tools and the five tuning tools, then scan, stop and start, in order", async () => {
   const { listTools } = await connect(fakeApi());
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), matchesTool, listingTool, ...tuningTools, ...Object.keys(actions)]);
@@ -236,7 +237,7 @@ test("an unknown tool is refused without calling the API", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
-test("read-only offers only the ten read tools, the two listing tools and the five tuning tools, which all only read", async () => {
+test("read-only offers only the eleven read tools, the two listing tools and the five tuning tools, which all only read", async () => {
   const { listTools } = await connect(fakeApi(), false);
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), matchesTool, listingTool, ...tuningTools]);

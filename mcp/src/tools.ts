@@ -50,6 +50,11 @@ export const readTools: ReadTool[] = [
     path: "/expiry",
   },
   {
+    name: "get_doctor",
+    description: "One answer to \"is everything OK on the home server?\": state is ok, warn or problem, summary says it in plain words, and checks lists each check (disk, memory, Wi-Fi, backups, the heartbeat, phone alerts, qBittorrent, Jellyfin, the brain inbox, the deal watcher, train times, the expiry list) with its own state (ok, warn, problem, or off when its feature is switched off, which is never a problem), detail in plain words, and next, what to try (null when ok or off). It only reads what the hub can already see; asking it calls qBittorrent and Jellyfin, and the departure board once while train times are on.",
+    path: "/system/doctor",
+  },
+  {
     name: "get_deal_status",
     description: "How the deal watcher is doing: when it last ran, today's counts of calls and alerts against their limits, quiet hours, when the digest goes and whether today's has, where it keeps seen listings, and any problems. Fails with a 404 while the deal watcher is switched off.",
     path: "/deals/status",

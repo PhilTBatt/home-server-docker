@@ -57,19 +57,40 @@ function toDownload(t: QbitTorrent) {
   };
 }
 
+export async function downloading(qbitApiKey: string, signal?: AbortSignal) {
+  const response = await fetch(
+    "http://qbittorrent:8081/api/v2/torrents/info?filter=downloading",
+    { headers: { Authorization: `Bearer ${qbitApiKey}` }, signal },
+  );
+  if (!response.ok) {
+    throw new Error(`qBittorrent replied ${response.status}`);
+  }
+  const torrents = (await response.json()) as QbitTorrent[];
+  return torrents.map(toDownload);
+}
+
+export async function libraryCounts(jellyfinApiKey: string, signal?: AbortSignal) {
+  const response = await fetch("http://jellyfin:8096/Items/Counts", {
+    headers: { Authorization: `MediaBrowser Token="${jellyfinApiKey}"` },
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(`Jellyfin replied ${response.status}`);
+  }
+
+  const counts = (await response.json()) as JellyfinCounts;
+  return {
+    movies: counts.MovieCount,
+    series: counts.SeriesCount,
+    episodes: counts.EpisodeCount,
+  };
+}
+
 export const media: FastifyPluginAsync<Pick<Config, "qbitApiKey" | "jellyfinApiKey">> = async (app, options) => {
   const qbitAuth = `Bearer ${options.qbitApiKey}`;
   const jellyfinAuth = `MediaBrowser Token="${options.jellyfinApiKey}"`;
   app.get("/downloads", async () => {
-    const response = await fetch(
-      "http://qbittorrent:8081/api/v2/torrents/info?filter=downloading",
-      { headers: { Authorization: qbitAuth } },
-    );
-    if (!response.ok) {
-      throw new Error(`qBittorrent replied ${response.status}`);
-    }
-    const torrents = (await response.json()) as QbitTorrent[];
-    return torrents.map(toDownload);
+    return downloading(options.qbitApiKey);
   });
 
   app.get<{ Params: Pick<TorrentAction, "hash"> }>(
@@ -109,19 +130,7 @@ export const media: FastifyPluginAsync<Pick<Config, "qbitApiKey" | "jellyfinApiK
   );
 
   app.get("/library", async () => {
-    const response = await fetch("http://jellyfin:8096/Items/Counts", {
-      headers: { Authorization: jellyfinAuth },
-    });
-    if (!response.ok) {
-      throw new Error(`Jellyfin replied ${response.status}`);
-    }
-    
-    const counts = (await response.json()) as JellyfinCounts;
-    return {
-      movies: counts.MovieCount,
-      series: counts.SeriesCount,
-      episodes: counts.EpisodeCount,
-    };
+    return libraryCounts(options.jellyfinApiKey);
   });
 
   app.post("/library/scan", async () => {

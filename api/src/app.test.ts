@@ -5,6 +5,7 @@ import { createChangeFeed } from "./modules/trains/changes.js";
 import type { Config } from "./config.js";
 import type { DealWatcher } from "./modules/deals/watcher.js";
 import { createExpiryChecker } from "./modules/expiry/checker.js";
+import { createTries } from "./modules/system/doctor.js";
 
 const config: Config = {
   apiToken: "test-token",
@@ -126,7 +127,8 @@ const protectedRoutes = [
   ["POST", "/phone/find"],
   ["GET", "/trains"],
   ["GET", "/trains/changes"],
-  ["GET", "/expiry"]
+  ["GET", "/expiry"],
+  ["GET", "/system/doctor"]
 ] as const;
 
 for (const [method, url] of protectedRoutes) {
@@ -494,4 +496,40 @@ test("a problem with the expiry list shows in the alerts with the deal watcher's
   const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, expiryAlerts: false } }, expiryChecker: checker });
   const offProblems = (await off.inject({ method: "GET", url: "/system/alerts", headers: goodHeader })).json().problems as { code: string }[];
   assert.equal(offProblems.some((problem) => problem.code.startsWith("expiry")), false);
+});
+
+test("the server doctor is a route of the hub's, asking qBittorrent and Jellyfin with their keys and the board only with train times on", async () => {
+  const asked: string[] = [];
+  mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+    asked.push(`${url} ${new Headers(init?.headers).get("Authorization") ?? new Headers(init?.headers).get("x-apikey")} ${init?.signal instanceof AbortSignal}`);
+    if (url.startsWith("http://qbittorrent")) return Response.json([]);
+    if (url.startsWith("http://jellyfin")) return Response.json({ MovieCount: 1, SeriesCount: 2, EpisodeCount: 3 });
+    return new Response(null, { status: 503 });
+  });
+  const { checker } = fakeExpiryChecker();
+  const app = await buildRealApp({ logger: false, config, expiryChecker: checker, doctor: { inbox: async () => 0 } });
+  const response = await app.inject({ method: "GET", url: "/system/doctor", headers: goodHeader });
+  assert.equal(response.statusCode, 200);
+  const byName = Object.fromEntries(response.json().checks.map((check: { name: string; state: string; detail: string }) => [check.name, check]));
+  assert.deepEqual([byName.qBittorrent.state, byName.Jellyfin.detail, byName["Expiry list"].state], ["ok", "Answering, with 1 movie and 2 series.", "ok"]);
+  assert.equal(byName["Brain inbox"].detail, "No notes waiting.", "the inbox it was handed is used, not the real folder");
+  assert.equal(byName["Train times"].state, "problem");
+  assert.deepEqual(asked.filter((line) => !line.startsWith("https://api1.raildata.org.uk")), ["http://qbittorrent:8081/api/v2/torrents/info?filter=downloading Bearer test-qbit-key true", 'http://jellyfin:8096/Items/Counts MediaBrowser Token="test-jellyfin-key" true']);
+  assert.equal(asked.filter((line) => line.startsWith("https://api1.raildata.org.uk/test-board")).length, 1);
+  assert.ok(!response.body.includes("test-qbit-key") && !response.body.includes("test-jellyfin-key") && !response.body.includes("test-rail-key") && !response.body.includes("test-topic") && !response.body.includes("hc-ping"));
+  asked.length = 0;
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, trains: false, expiryAlerts: false, memoryInbox: false } }, expiryChecker: checker });
+  const offReport = (await off.inject({ method: "GET", url: "/system/doctor", headers: goodHeader })).json();
+  assert.equal(asked.some((line) => line.startsWith("https://")), false);
+  assert.deepEqual(offReport.checks.filter((check: { state: string }) => check.state === "off").map((check: { name: string }) => check.name), ["Backups", "Brain inbox", "Train times", "Expiry list"]);
+});
+
+test("the server doctor shows the heartbeat's and the alerts' latest outcomes from the tries it was handed", async () => {
+  mock.method(globalThis, "fetch", async () => Response.json([]));
+  const tries = { heartbeat: createTries(), alerts: createTries() };
+  tries.heartbeat.failed(new Date("2026-11-26T11:00:00Z"));
+  const app = await buildRealApp({ logger: false, config, tries, doctor: { inbox: async () => 0, trains: async () => ({}) } });
+  const report = (await app.inject({ method: "GET", url: "/system/doctor", headers: goodHeader })).json();
+  const byName = Object.fromEntries(report.checks.map((check: { name: string; state: string; detail: string }) => [check.name, check]));
+  assert.deepEqual([byName.Heartbeat.state, byName.Heartbeat.detail, byName["Phone alerts"].detail], ["problem", "The last ping to Healthchecks.io, 26 Nov at 11:00, failed.", "No alert check has finished since the API started."]);
 });

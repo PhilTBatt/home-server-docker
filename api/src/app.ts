@@ -1,21 +1,22 @@
 import Fastify from "fastify";
 import { health } from "./modules/health/routes.js";
-import { media } from "./modules/media/routes.js";
+import { downloading, libraryCounts, media } from "./modules/media/routes.js";
 import cookie from "@fastify/cookie";
 import { isAuthorized, tokenFromHeader } from "./token.js";
 import { auth } from "./modules/auth/routes.js";
 import { system } from "./modules/system/routes.js";
-import { memory } from "./modules/memory/routes.js";
+import { countWaiting, memory } from "./modules/memory/routes.js";
 import type { Config } from "./config.js";
 import { deals } from "./modules/deals/routes.js";
 import { phone } from "./modules/phone/routes.js";
-import { trains } from "./modules/trains/routes.js";
+import { boardFor, trains } from "./modules/trains/routes.js";
 import type { DealWatcher } from "./modules/deals/watcher.js";
 import type { ChangeFeed } from "./modules/trains/changes.js";
 import { expiry } from "./modules/expiry/routes.js";
 import type { ExpiryChecker } from "./modules/expiry/checker.js";
+import type { DoctorSources, Tries } from "./modules/system/doctor.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; doctor?: Partial<DoctorSources> }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
@@ -36,7 +37,17 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
       jellyfinApiKey: options.config.jellyfinApiKey,
     });
   app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
-  app.register(system, { prefix: "/system", features: options.config.features, moreProblems: () => [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])] });
+  const doctor: DoctorSources = {
+    heartbeat: options.tries?.heartbeat,
+    alerts: options.tries?.alerts,
+    downloads: (signal) => downloading(options.config.qbitApiKey, signal),
+    library: (signal) => libraryCounts(options.config.jellyfinApiKey, signal),
+    inbox: () => countWaiting(),
+    trains: boardFor(options.config.trains),
+    expiries: expiryChecker === undefined ? undefined : (now) => expiryChecker.list(now),
+    ...options.doctor,
+  };
+  app.register(system, { prefix: "/system", features: options.config.features, moreProblems: () => [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])], doctor });
   app.register(memory, { prefix: "/memory", features: options.config.features });
   app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic });
   app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains, changes: options.config.features.trainAlerts ? options.trainChanges : undefined });
