@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cancelledBeforeText, claimMs, clearedByCancel, clearedByMute, createEars, failedBeforeText, flippedBeforeText, movedOn, mutedBeforeText, notTakenWhy, saysStopListening, secondsText, speechLine, startsMuted, stopListeningWhy, stoppedListening, thatOneEnded } from "./ears.js";
+import { cancelledBeforeText, claimMs, clearedByCancel, clearedByMute, createEars, failedBeforeText, flippedBeforeText, movedOn, mutedBeforeText, notTakenWhy, saysStopListening, secondsText, speechLine, startsMuted, stopListeningWhy, stoppedListening, thatOneEnded, wordsLine } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
 import type { ToText } from "./whisper.js";
 
@@ -1062,4 +1062,44 @@ test("a recording's last says how it was set to end when the recording says so, 
   await ears.stop();
   assert.equal(ears.view().last !== null && "ender" in ears.view().last!, false);
   assert.equal(ears.view().last !== null && "pauseMs" in ears.view().last!, false);
+});
+
+test("a recording that comes with its text already made isn't sent to Whisper again, and its code word to stop still counts", async () => {
+  const whisper = pretendWhisper();
+  const { ears, lines, recordings } = setUp("card", whisper.toText);
+  await ears.unmute();
+  ears.start("wake");
+  recordings[0].end({ reason: "it went quiet for 0.7 seconds after you spoke", text: "What's the time?", words: { looks: 1, verdict: "done", by: "rules" }, speech: { firstMs: 900, speechMs: 1200, longestPauseMs: 100 } });
+  await tick();
+  await tick();
+  assert.equal(whisper.asked.length, 0);
+  assert.deepEqual([ears.view().state, ears.view().last?.text], ["idle", "What's the time?"]);
+  assert.deepEqual(lines.slice(-4), ["Recording stopped after 1.2 seconds: it went quiet for 0.7 seconds after you spoke.", "Speech in it: first heard after 0.9 seconds, 1.2 seconds of speech, longest pause between words 0.1 seconds.", "Judged by your words: finished, by the rules (1 look).", "Turned into text in 0 seconds: the text made while you paused was used."]);
+  assert.equal(lines.some((line) => line.includes("the time")), false);
+  ears.start("wake");
+  recordings[1].end({ text: "Stop listening.", words: { looks: 2, verdict: "done", by: "chat" } });
+  await tick();
+  await tick();
+  assert.deepEqual([ears.view().state, ears.view().last?.text, ears.view().last?.textProblem], ["muted", null, stoppedListening]);
+  const plain = setUp("card");
+  await plain.ears.unmute();
+  plain.ears.start("wake");
+  plain.recordings[0].end({ text: "What's the time?" });
+  await tick();
+  assert.deepEqual([plain.ears.view().state, plain.ears.view().last?.text], ["idle", null], "with no Whisper set up, nothing is turned into text, as before");
+});
+
+test("the log says how your words were judged, in numbers and never in words, and only for a recording with speech in it", async () => {
+  assert.equal(wordsLine({ looks: 0, verdict: null, by: null }), "Your words weren't looked at: it ended before a pause long enough to look.");
+  assert.equal(wordsLine({ looks: 1, verdict: null, by: null }), "Your words weren't judged in time (1 look).");
+  assert.equal(wordsLine({ looks: 3, verdict: null, by: null }), "Your words weren't judged in time (3 looks).");
+  assert.equal(wordsLine({ looks: 2, verdict: "more", by: "rules" }), "Judged by your words: more to come, by the rules (2 looks).");
+  assert.equal(wordsLine({ looks: 1, verdict: "unsure", by: "rules" }), "Judged by your words: unsure, by the rules (1 look).");
+  assert.equal(wordsLine({ looks: 1, verdict: "done", by: "chat" }), "Judged by your words: finished, by a Jarvis chat (1 look).");
+  const { ears, lines, recordings } = setUp("card");
+  await ears.unmute();
+  ears.start("wake");
+  recordings[0].end({ unheard: true, words: { looks: 0, verdict: null, by: null } });
+  await tick();
+  assert.equal(lines.some((line) => line.includes("words")), false, "nothing was said, so there's no line about words");
 });

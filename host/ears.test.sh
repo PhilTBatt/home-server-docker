@@ -620,6 +620,44 @@ check "an empty log reports nothing heard" "0|In ears's whole log, which goes ba
 check "and says no speech has been measured yet" "- Speech in wake recordings: none measured yet.
 - Speech in follow-up windows: none measured yet.
 - Speech in talk-button recordings: none measured yet." "$(tail -3 <<< "$output")"
+cat > "$work/words-log.txt" << 'LOG'
+Heard the wake word. The room's background is 200, so speech is anything above 600.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 2.4 seconds: it went quiet for 0.7 seconds after you spoke.
+Speech in it: first heard after 0.9 seconds, 0.8 seconds of speech, longest pause between words 0.1 seconds.
+Judged by your words: finished, by the rules (1 look).
+Turned into text in 0 seconds: the text made while you paused was used.
+Heard the wake word. The room's background is 200, so speech is anything above 600.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 6 seconds: it went quiet for 3.5 seconds after you spoke.
+Speech in it: first heard after 0.9 seconds, 1.6 seconds of speech, longest pause between words 0.6 seconds.
+Judged by your words: more to come, by a Jarvis chat (2 looks).
+Turned into text in 0 seconds: the text made while you paused was used.
+Recording started to hear a follow-up.
+Recording stopped after 4 seconds: it went quiet for 2.5 seconds after you spoke.
+Speech in it: first heard after 0.5 seconds, 1 second of speech, longest pause between words 0 seconds.
+Judged by your words: unsure, by the rules (1 look).
+Turned into text in 0 seconds: the text made while you paused was used.
+The talk button was pressed. The room's background is 200, so speech is anything above 600.
+Recording started by the talk button.
+A Jarvis chat took the talk-button recording.
+Recording stopped after 2.2 seconds: asked to stop.
+Speech in it: first heard after 1.1 seconds, 0.9 seconds of speech, longest pause between words 0.3 seconds.
+Your words weren't looked at: it ended before a pause long enough to look.
+Turned into text in 0.7 seconds.
+Heard the wake word. The room's background is 200, so speech is anything above 600.
+Recording started by the wake word.
+A Jarvis chat took the wake-word recording.
+Recording stopped after 3 seconds: it went quiet for 2.5 seconds after you spoke.
+Speech in it: first heard after 0.4 seconds, 0.2 seconds of speech, longest pause between words 0 seconds.
+Your words weren't judged in time (1 look).
+Turned into text in 1.4 seconds.
+LOG
+output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/words-log.txt" with_fakes wake-report)
+check "with the word check on, a last line counts how recordings were judged and how often the text made at a pause was used" "0|- Judged by your words: finished, 1; more to come, 1; unsure, 1; not judged, 2. A Jarvis chat gave the answer for 1 of them. The text made at a pause was used for 3, so Whisper wasn't asked again.|3" "$?|$(tail -1 <<< "$output")|$(grep -o 'turned into text, [0-9]*' <<< "$output" | head -1 | grep -o '[0-9]*')"
+check "and a log with none of those lines has no such line" "0" "$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" with_fakes wake-report | grep -c 'Judged by your words')"
 output=$(FAKE_EARS_LOG="$report_log" with_fakes wake-report)
 check "with no ears container, it says to start ears, and doesn't ask for a log" "1|Ears has no log yet. Start it with bash host/ears.sh start.|1" "$?|$output|$(wc -l < "$DOCKER_LOG")"
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$report_log" DOCKER_EXIT=1 with_fakes wake-report)

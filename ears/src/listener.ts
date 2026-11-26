@@ -2,7 +2,7 @@ import type { EarsState } from "./ears.js";
 import { backgroundLevel, createFrames, createQuietEnd, createSpeechEnd, frameMs, quietForMs, speakingLevel } from "./levels.js";
 import { bytesPerSecond, recordingRate, type Recording } from "./recorder.js";
 import type { Detector } from "./silero.js";
-import { startTap, type By, type Tap } from "./tap.js";
+import { startTap, type Asking, type By, type Tap } from "./tap.js";
 import type { WyomingConnection } from "./wyoming-client.js";
 
 export const wakeWord = "hey_jarvis";
@@ -49,13 +49,16 @@ export type ListenerDeps = {
   quietForMs?: number;
   limitMs?: number;
   detector?: () => Detector;
+  words?: (sound: Uint8Array, signal: AbortSignal) => Promise<string>;
 };
 
 export type Listener = {
   view(): WakeView;
   tap(by: By): Tap;
   update(): void;
-  waiting(): () => void;
+  waiting(judge?: boolean): () => void;
+  asking(): Asking | null;
+  judge(n: number, verdict: "done" | "more"): boolean;
   hold(by: string): void;
   release(by: string): void;
   follow<T>(withinMs: number, start: () => T): T | { ok: false; error: string };
@@ -98,6 +101,8 @@ export function createListener(deps: ListenerDeps): Listener {
   let feeding = false;
   let waits = 0;
   let lastWaitEnd = -Infinity;
+  let judges = 0;
+  let lastJudgeEnd = -Infinity;
   const holds = new Map<string, number>();
   let gapUntil = -Infinity;
   let closing: Promise<void> | null = null;
@@ -116,6 +121,7 @@ export function createListener(deps: ListenerDeps): Listener {
   let closed = false;
 
   const present = (at = now()) => waits > 0 || at < lastWaitEnd + (deps.presenceMs ?? presenceMs);
+  const judging = () => judges > 0 || now() < lastJudgeEnd + (deps.presenceMs ?? presenceMs);
   const heldUntil = () => {
     const at = now();
     for (const [by, until] of holds) if (until <= at) holds.delete(by);
@@ -364,6 +370,7 @@ export function createListener(deps: ListenerDeps): Listener {
         pauseMs: wake === null ? undefined : (deps.quietForMs ?? quietForMs),
         limitMs: deps.limitMs,
         now,
+        words: wake === null || deps.words === undefined ? null : { toText: deps.words, usualMs: deps.quietForMs ?? quietForMs, judging, changed: deps.changed },
       });
       tap = started;
       void started.ended.then(() => {
@@ -374,8 +381,9 @@ export function createListener(deps: ListenerDeps): Listener {
       return started;
     },
     update,
-    waiting() {
+    waiting(judge = false) {
       waits++;
+      if (judge) judges++;
       update();
       let done = false;
       return () => {
@@ -383,9 +391,15 @@ export function createListener(deps: ListenerDeps): Listener {
         done = true;
         waits--;
         lastWaitEnd = now();
+        if (judge) {
+          judges--;
+          lastJudgeEnd = lastWaitEnd;
+        }
         update();
       };
     },
+    asking: () => tap?.asking() ?? null,
+    judge: (n, verdict) => tap?.judge(n, verdict) ?? false,
     hold(by) {
       holds.set(by, now() + (deps.holdMs ?? holdMs));
       update();

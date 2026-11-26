@@ -294,3 +294,256 @@ test("a wake tap names how it was set to end, however it ended, a push tap names
   const push = startTap({ by: "push" });
   assert.equal("ender" in (await push.stop("asked to stop")), false);
 });
+
+function wordsTap(options: { judging?: boolean; usualMs?: number; by?: "wake" | "follow" | "button" } = {}) {
+  const asked: { sound: Uint8Array; signal: AbortSignal; answer: (text: string) => void; fail: () => void }[] = [];
+  let changes = 0;
+  const usualMs = options.usualMs ?? 1500;
+  const tap = startTap({
+    by: options.by ?? "wake",
+    quiet: createQuietEnd({ speakingAbove: 300, settleMs: 0, quietForMs: usualMs }),
+    words: {
+      toText: (sound, signal) => new Promise<string>((resolve, reject) => asked.push({ sound, signal, answer: resolve, fail: () => reject(new Error("no Whisper")) })),
+      usualMs,
+      judging: () => options.judging === true,
+      changed: () => changes++,
+    },
+  });
+  let stopped: Awaited<typeof tap.ended> | null = null;
+  void tap.ended.then((end) => (stopped = end));
+  const quiet = async (frames: number) => {
+    for (let frame = 0; frame < frames && stopped === null; frame++) {
+      tap.push(loud(0));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  const speak = async (frames = 3) => {
+    tap.push(loud(1000, frames));
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  return { tap, asked, quiet, speak, settle, ended: () => stopped, changes: () => changes };
+}
+
+test("with the word check, a tap looks at what's been said once the pause reaches 0.4 seconds, handing over all the sound so far", { timeout: 5_000 }, async () => {
+  const { tap, asked, quiet, speak } = wordsTap();
+  await speak(3);
+  await quiet(3);
+  assert.equal(asked.length, 0, "0.3 seconds of quiet isn't long enough to look");
+  await quiet(1);
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].sound.length, frameBytes * 7);
+  await quiet(5);
+  assert.equal(asked.length, 1, "one look for each pause");
+  await tap.stop("done");
+});
+
+test("words that read as finished end the recording 0.7 seconds after the last speech, and their text is handed on so Whisper isn't asked twice", { timeout: 5_000 }, async () => {
+  const { asked, quiet, speak, settle, ended } = wordsTap();
+  await speak();
+  await quiet(4);
+  asked[0].answer("  What's   the weather? ");
+  await settle();
+  assert.equal(ended(), null, "0.4 seconds isn't 0.7 yet");
+  await quiet(2);
+  assert.equal(ended(), null);
+  await quiet(1);
+  const stopped = ended();
+  assert.equal(stopped?.reason, "it went quiet for 0.7 seconds after you spoke");
+  assert.deepEqual([stopped?.text, stopped?.words], ["What's the weather?", { looks: 1, verdict: "done", by: "rules" }]);
+  const late = wordsTap();
+  await late.speak();
+  await late.quiet(10);
+  late.asked[0].answer("What's the weather?");
+  await late.settle();
+  await late.quiet(1);
+  assert.equal(late.ended()?.reason, "it went quiet for 0.7 seconds after you spoke", "an answer that comes after 0.7 seconds ends it on the next frame");
+  const slow = wordsTap({ usualMs: 500 });
+  await slow.speak();
+  await slow.quiet(4);
+  slow.asked[0].answer("What's the weather?");
+  await slow.settle();
+  await slow.quiet(1);
+  assert.equal(slow.ended()?.reason, "it went quiet for 0.5 seconds after you spoke", "a usual pause shorter than 0.7 seconds is kept");
+});
+
+test("words that read as unfinished make it wait 3.5 seconds, or the usual pause if that's longer, and speaking again starts over", { timeout: 5_000 }, async () => {
+  const { asked, quiet, speak, settle, ended } = wordsTap();
+  await speak();
+  await quiet(4);
+  asked[0].answer("Add milk, eggs and");
+  await settle();
+  await quiet(30);
+  assert.equal(ended(), null, "3.4 seconds of quiet, well past the usual 1.5");
+  await quiet(1);
+  assert.equal(ended()?.reason, "it went quiet for 3.5 seconds after you spoke");
+  assert.deepEqual([ended()?.text, ended()?.words], ["Add milk, eggs and", { looks: 1, verdict: "more", by: "rules" }]);
+  const long = wordsTap({ usualMs: 4000 });
+  await long.speak();
+  await long.quiet(4);
+  long.asked[0].answer("and");
+  await long.settle();
+  await long.quiet(36);
+  assert.equal(long.ended()?.reason, "it went quiet for 4 seconds after you spoke");
+  const again = wordsTap();
+  await again.speak();
+  await again.quiet(4);
+  again.asked[0].answer("Add milk, eggs and");
+  await again.settle();
+  await again.quiet(20);
+  await again.speak(2);
+  await again.quiet(4);
+  assert.equal(again.asked.length, 2, "the new pause is looked at afresh");
+  assert.equal(again.asked[1].sound.length, frameBytes * 33);
+  await again.quiet(10);
+  assert.equal(again.ended(), null);
+  await again.quiet(1);
+  assert.equal(again.ended()?.reason, "it went quiet for 1.5 seconds after you spoke", "with no answer for the new pause, the usual pause applies again");
+  assert.deepEqual([again.ended()?.text, again.ended()?.words], [undefined, { looks: 2, verdict: null, by: null }]);
+});
+
+test("unsure words keep the usual pause, and a look that fails or answers too late changes nothing", { timeout: 5_000 }, async () => {
+  const unsure = wordsTap();
+  await unsure.speak();
+  await unsure.quiet(4);
+  unsure.asked[0].answer("turn the lights off");
+  await unsure.settle();
+  assert.equal(unsure.tap.asking(), null, "no chat is judging, so nothing is asked");
+  await unsure.quiet(11);
+  assert.equal(unsure.ended()?.reason, "it went quiet for 1.5 seconds after you spoke");
+  assert.deepEqual([unsure.ended()?.text, unsure.ended()?.words], ["turn the lights off", { looks: 1, verdict: "unsure", by: "rules" }]);
+  const failing = wordsTap();
+  await failing.speak();
+  await failing.quiet(4);
+  failing.asked[0].fail();
+  await failing.settle();
+  await failing.quiet(11);
+  assert.deepEqual([failing.ended()?.reason, failing.ended()?.text, failing.ended()?.words], ["it went quiet for 1.5 seconds after you spoke", undefined, { looks: 1, verdict: null, by: null }]);
+  const stale = wordsTap();
+  await stale.speak();
+  await stale.quiet(4);
+  await stale.speak(1);
+  assert.equal(stale.asked[0].signal.aborted, true, "speaking again calls the look off");
+  stale.asked[0].answer("What's the weather?");
+  await stale.settle();
+  await stale.quiet(8);
+  assert.equal(stale.ended(), null, "the stale answer didn't shorten the new pause");
+  const ending = wordsTap();
+  await ending.speak();
+  await ending.quiet(4);
+  const stopped = await ending.tap.stop("asked to stop");
+  assert.equal(ending.asked[0].signal.aborted, true, "ending calls the look off");
+  ending.asked[0].answer("What's the weather?");
+  await ending.settle();
+  assert.deepEqual([stopped.text, stopped.words], [undefined, { looks: 1, verdict: null, by: null }]);
+});
+
+test("with a chat judging, unsure words are put to it, the recording waits up to 1.5 seconds more for its answer, and its answer is taken once", { timeout: 5_000 }, async () => {
+  const { tap, asked, quiet, speak, settle, ended, changes } = wordsTap({ judging: true });
+  await speak();
+  await quiet(6);
+  asked[0].answer("turn the lights off");
+  await settle();
+  assert.deepEqual(tap.asking(), { n: 1, text: "turn the lights off" });
+  assert.equal(changes(), 1);
+  await quiet(14);
+  assert.equal(ended(), null, "2 seconds of quiet: the chat has until 0.6 + 1.5");
+  assert.equal(tap.judge(2, "done"), false, "not the question that's waiting");
+  assert.equal(tap.judge(1, "more"), true);
+  assert.equal(tap.asking(), null);
+  assert.equal(tap.judge(1, "done"), false, "already answered");
+  assert.equal(changes(), 2);
+  await quiet(14);
+  assert.equal(ended(), null);
+  await quiet(1);
+  assert.equal(ended()?.reason, "it went quiet for 3.5 seconds after you spoke");
+  assert.deepEqual(ended()?.words, { looks: 1, verdict: "more", by: "chat" });
+  assert.equal(tap.asking(), null);
+  assert.equal(tap.judge(1, "done"), false, "it has ended");
+  const done = wordsTap({ judging: true });
+  await done.speak();
+  await done.quiet(4);
+  done.asked[0].answer("turn the lights off");
+  await done.settle();
+  await done.quiet(5);
+  assert.equal(done.tap.judge(1, "done"), true);
+  await done.quiet(1);
+  assert.deepEqual([done.ended()?.reason, done.ended()?.text, done.ended()?.words], ["it went quiet for 0.7 seconds after you spoke", "turn the lights off", { looks: 1, verdict: "done", by: "chat" }]);
+  const silent = wordsTap({ judging: true });
+  await silent.speak();
+  await silent.quiet(4);
+  silent.asked[0].answer("turn the lights off");
+  await silent.settle();
+  await silent.quiet(14);
+  assert.equal(silent.ended(), null, "1.8 seconds: still inside the chat's 1.5 from when it was asked at 0.4");
+  await silent.quiet(1);
+  assert.equal(silent.ended()?.reason, "it went quiet for 1.9 seconds after you spoke", "a chat that never answers costs at most its 1.5 seconds");
+  const moved = wordsTap({ judging: true });
+  await moved.speak();
+  await moved.quiet(4);
+  moved.asked[0].answer("turn the lights off");
+  await moved.settle();
+  await moved.speak(1);
+  assert.equal(moved.tap.asking(), null, "speaking again withdraws the question");
+  assert.equal(moved.tap.judge(1, "done"), false);
+  assert.equal(moved.changes(), 2);
+  await moved.tap.stop("done");
+});
+
+test("a tap with no pause check, like /talk's, never looks at the words, and one that heard no speech hands on no text", { timeout: 5_000 }, async () => {
+  let asked = 0;
+  const words = { toText: async () => (asked++, "hello."), usualMs: 1500 };
+  const push = startTap({ by: "push", words });
+  push.push(loud(1000, 3));
+  push.push(loud(0, 10));
+  await new Promise((resolve) => setImmediate(resolve));
+  const stopped = await push.stop("asked to stop");
+  assert.deepEqual([asked, stopped.words, stopped.text, push.asking(), push.judge(1, "done")], [0, undefined, undefined, null, false]);
+  const unheard = startTap({ by: "wake", quiet: createQuietEnd({ speakingAbove: 300, settleMs: 0, startWithinMs: 500, quietForMs: 1500 }), words });
+  unheard.push(loud(0, 5));
+  const ended = await unheard.ended;
+  assert.deepEqual([asked, ended.unheard, ended.text, ended.words], [0, true, undefined, { looks: 0, verdict: null, by: null }]);
+});
+
+test("the speech detector's taps look at the words the same way", { timeout: 5_000 }, async () => {
+  const answers: ((text: string) => void)[] = [];
+  const detector: Detector = { frame: async (frame) => (new DataView(frame.buffer, frame.byteOffset).getInt16(0, true) !== 0 ? [0.9] : [0.01]) };
+  const tap = startTap({
+    by: "wake",
+    judged: { detector, end: createSpeechEnd({ by: "silero", settleMs: 0, quietForMs: 1500 }), fallback: () => false },
+    words: { toText: () => new Promise<string>((resolve) => answers.push(resolve)), usualMs: 1500 },
+  });
+  const flush = async () => {
+    for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  tap.push(loud(1000, 3));
+  tap.push(loud(0, 4));
+  await flush();
+  assert.equal(answers.length, 1);
+  answers[0]("That's all.");
+  await flush();
+  tap.push(loud(0, 3));
+  const stopped = await tap.ended;
+  assert.deepEqual([stopped.reason, stopped.text], ["the speech detector heard no speech for 0.7 seconds after you spoke", "That's all."]);
+});
+
+test("words the rules can judge are never put to a chat, a recording that failed gives no text, and a recording that's over asks nothing", { timeout: 5_000 }, async () => {
+  const first = wordsTap({ judging: true });
+  await first.speak();
+  await first.quiet(4);
+  first.asked[0].answer("What time is it?");
+  await first.settle();
+  assert.equal(first.tap.asking(), null, "the rules said finished, so there's nothing to ask");
+  first.tap.fail("the microphone stopped (x)");
+  const failed = await first.tap.ended;
+  assert.deepEqual([failed.failed, failed.text, failed.words], [true, undefined, { looks: 1, verdict: "done", by: "rules" }]);
+  const second = wordsTap({ judging: true });
+  await second.speak();
+  await second.quiet(4);
+  second.asked[0].answer("turn the lights off");
+  await second.settle();
+  assert.deepEqual(second.tap.asking(), { n: 1, text: "turn the lights off" });
+  await second.tap.stop("asked to stop");
+  assert.equal(second.tap.asking(), null);
+  assert.equal(second.tap.judge(1, "done"), false);
+});

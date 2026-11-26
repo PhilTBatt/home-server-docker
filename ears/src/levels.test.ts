@@ -172,3 +172,23 @@ test("the speech end without a detector named words it as loudness, as the loudn
   assert.deepEqual(runSpeech(createSpeechEnd(), [...Array(9).fill(false), true, ...Array(15).fill(false)]), { at: 2500, why: "it went quiet for 1.5 seconds after you spoke", spoke: true });
   assert.deepEqual(runSpeech(createSpeechEnd({ by: "loudness", startWithinMs: 2000 }), Array(30).fill(false)), { at: 2000, why: "nothing loud enough to be speech came within 2 seconds, so it wasn't sent to Whisper", spoke: false });
 });
+
+test("the pause that ends a recording can be changed while it runs, and it says how long it has been quiet", () => {
+  const end = createSpeechEnd({ settleMs: 0, quietForMs: 500 });
+  assert.equal(end.quietMs(), null, "nothing has been said yet");
+  end.push(true);
+  assert.equal(end.quietMs(), 0);
+  end.push(false);
+  end.push(false);
+  assert.equal(end.quietMs(), 200);
+  end.quietFor(300);
+  assert.deepEqual(end.push(false), { reason: "it went quiet for 0.3 seconds after you spoke", spoke: true });
+  const longer = createQuietEnd({ speakingAbove: 300, settleMs: 0, quietForMs: 200 });
+  longer.push(1000);
+  longer.quietFor(400);
+  assert.equal(longer.push(0), null);
+  assert.equal(longer.push(0), null);
+  assert.equal(longer.quietMs(), 200);
+  assert.equal(longer.push(0), null);
+  assert.deepEqual(longer.push(0), { reason: "it went quiet for 0.4 seconds after you spoke", spoke: true });
+});

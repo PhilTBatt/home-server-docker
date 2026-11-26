@@ -134,6 +134,12 @@ if [ "$1" = wake-report ]; then
     }
     /^Turned into text in / && kind != "" { text[kind]++ }
     /^(Not turned into text|Couldn.t turn it into text): / && kind != "" { untext[kind]++ }
+    /^Judged by your words: finished, / { finished++ }
+    /^Judged by your words: more to come, / { more++ }
+    /^Judged by your words: unsure, / { unsure++ }
+    /^Judged by your words: .*, by a Jarvis chat \(/ { chat++ }
+    /^Your words weren.t (judged in time|looked at)/ { unjudged++ }
+    /^Turned into text in 0 seconds: the text made while you paused was used\.$/ { reused++ }
     function sort(k, which, count,   i, j, value) {
       for (i = 1; i <= count; i++) {
         value = which == "first" ? first[k, i] : which == "amount" ? amount[k, i] : pause[k, i]
@@ -167,6 +173,7 @@ if [ "$1" = wake-report ]; then
       print speech("wake", "wake recordings")
       print speech("follow", "follow-up windows")
       print speech("button", "talk-button recordings")
+      if (finished + more + unsure + unjudged > 0) printf "- Judged by your words: finished, %d; more to come, %d; unsure, %d; not judged, %d. A Jarvis chat gave the answer for %d of them. The text made at a pause was used for %d, so Whisper wasn\047t asked again.\n", finished, more, unsure, unjudged, chat, reused
     }' <<< "$log"
   exit 0
 fi

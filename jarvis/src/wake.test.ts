@@ -635,3 +635,126 @@ test("the pump hands over events that come later, and passes on a failure once t
   assert.deepEqual(await waiting, { done: false, value: "b" });
   await assert.rejects(pumped.next(), { message: "the watcher broke" });
 });
+
+test("with a quick check, the watcher tells ears it will judge, asks the check once for each question about its own recording, and passes the answer to ears without holding up the watching", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const recording = (version: number, asking?: { id: number; n: number; text: string }) => view({ version, state: "recording", current: { id: 7, by: "wake", claimed: true }, lastId: 7, ...(asking === undefined ? {} : { asking }) });
+  let answer: (verdict: "done" | "more" | null) => void = () => {};
+  const checked: string[] = [];
+  const turns: EarsAnswer[] = [view({ version: 9, state: "recording", current: { id: 7, by: "wake", claimed: true } })];
+  const ears = pretendEars(
+    [view({ version: 1, state: "recording", current: { id: 7, by: "wake", claimed: false } }), recording(3, { id: 7, n: 1, text: "turn the lights off" }), recording(4, { id: 7, n: 1, text: "turn the lights off" }), recording(5), view({ version: 6, state: "idle", lastId: 7, last: last("Turn the lights off.") })],
+    [view({ version: 2, state: "recording", current: { id: 7, by: "wake", claimed: true } })],
+  );
+  const call: EarsCall = async (method, path, ms, callSignal) => {
+    if (path.startsWith("/wake/turn")) {
+      ears.asked.push({ method, path, ms });
+      return turns.shift() ?? view({ status: 409, error: "gone" });
+    }
+    return ears.call(method, path, ms, callSignal);
+  };
+  let now = 1_000;
+  const events = watchWake({ call, signal: signal.signal, wait: noPause, now: () => now, judge: (text) => (checked.push(text), new Promise((resolve) => (answer = resolve))) });
+  assert.deepEqual(await take(events, 2), [{ kind: "status", line: "on: say Hey Jarvis" }, { kind: "wake", id: 7 }]);
+  const next = events.next();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(checked, ["turn the lights off"], "asked once, though ears showed the question twice");
+  assert.deepEqual(ears.asked.filter((one) => one.path.startsWith("/wait")).map((one) => one.path), ["/wait?after=-1&judge=on", "/wait?after=1&run=aa&judge=on", "/wait?after=3&run=aa&judge=on", "/wait?after=4&run=aa&judge=on", "/wait?after=5&run=aa&judge=on"], "the watching went on while the check was out");
+  now = 1_430;
+  assert.deepEqual((await next).value, { kind: "done", id: 7, answer: view({ version: 6, state: "idle", lastId: 7, last: last("Turn the lights off.") }), textMs: 0 }, "the recording was done before the check answered");
+  answer("done");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(ears.asked.filter((one) => one.path.startsWith("/wake/turn")), [{ method: "POST", path: "/wake/turn?id=7&n=1&verdict=done", ms: 4_000 }]);
+  signal.abort();
+});
+
+test("the quick check's answer is passed on as a note once ears has it, saying how long it took and whether ears used it, and only while that recording is the watcher's", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const recording = (version: number, asking?: { id: number; n: number; text: string }) => view({ version, state: "recording", current: { id: 7, by: "wake", claimed: true }, lastId: 7, ...(asking === undefined ? {} : { asking }) });
+  const hold: ((answer: EarsAnswer) => void)[] = [];
+  const held = () => new Promise<EarsAnswer>((resolve) => hold.push(resolve));
+  const turnReplies: (EarsAnswer | Error)[] = [recording(5), view({ status: 409, error: "gone" }), new Error("ears is away")];
+  const ears = pretendEars(
+    [view({ version: 1, state: "recording", current: { id: 7, by: "wake", claimed: false } }), recording(3, { id: 7, n: 1, text: "what's on" }), held, recording(6, { id: 7, n: 2, text: "what's on at" }), held, recording(8, { id: 7, n: 3, text: "what's on at the" }), held, recording(10, { id: 7, n: 4, text: "what's on at the cinema" }), held, recording(11, { id: 8, n: 1, text: "not this chat's" }), view({ version: 12, state: "idle", lastId: 7, last: last("What's on at the cinema?") }), held],
+    [view({ version: 2, state: "recording", current: { id: 7, by: "wake", claimed: true } })],
+  );
+  const posted: string[] = [];
+  const call: EarsCall = async (method, path, ms, callSignal) => {
+    if (!path.startsWith("/wake/turn")) return ears.call(method, path, ms, callSignal);
+    posted.push(path);
+    const reply = turnReplies.shift() ?? view({ status: 409 });
+    if (reply instanceof Error) throw reply;
+    return reply;
+  };
+  let now = 0;
+  const verdicts: ("done" | "more" | null)[] = ["more", "done", "done", null];
+  const checked: string[] = [];
+  const events = watchWake({ call, signal: signal.signal, wait: noPause, now: () => now, judge: async (text) => (checked.push(text), (now += 400), verdicts.shift() ?? null) });
+  await take(events, 2);
+  const pass = async () => {
+    const next = events.next();
+    await new Promise((resolve) => setImmediate(resolve));
+    hold.shift()?.(recording(99));
+    return (await next).value;
+  };
+  assert.deepEqual(await pass(), { kind: "turn", id: 7, verdict: "more", ms: 400, counted: true });
+  assert.deepEqual(await pass(), { kind: "turn", id: 7, verdict: "done", ms: 400, counted: false }, "ears had moved on");
+  assert.deepEqual(await pass(), { kind: "turn", id: 7, verdict: "done", ms: 400, counted: false }, "ears couldn't be told");
+  assert.deepEqual(await pass(), { kind: "turn", id: 7, verdict: null, ms: 400, counted: false }, "no answer in time, so ears isn't told anything");
+  assert.deepEqual(posted, ["/wake/turn?id=7&n=1&verdict=more", "/wake/turn?id=7&n=2&verdict=done", "/wake/turn?id=7&n=3&verdict=done"]);
+  assert.equal((await events.next()).value?.kind, "done");
+  assert.deepEqual(checked, ["what's on", "what's on at", "what's on at the", "what's on at the cinema"], "another recording's question isn't this chat's to answer");
+  signal.abort();
+});
+
+test("an answer from the quick check that comes after its recording is done is told to ears, which refuses it, and no note is passed on", { timeout: 5_000 }, async () => {
+  const signal = new AbortController();
+  const recording = (version: number, asking?: { id: number; n: number; text: string }) => view({ version, state: "recording", current: { id: 7, by: "wake", claimed: true }, lastId: 7, ...(asking === undefined ? {} : { asking }) });
+  let answer: (verdict: "done" | "more" | null) => void = () => {};
+  let release: (later: EarsAnswer) => void = () => {};
+  const ears = pretendEars(
+    [view({ version: 1, state: "recording", current: { id: 7, by: "wake", claimed: false } }), recording(3, { id: 7, n: 1, text: "turn the lights off" }), view({ version: 4, state: "idle", lastId: 7, last: last("Turn the lights off.") }), () => new Promise<EarsAnswer>((resolve) => (release = resolve)), view({ version: 6, state: "muted" })],
+    [view({ version: 2, state: "recording", current: { id: 7, by: "wake", claimed: true } })],
+  );
+  const posted: string[] = [];
+  const call: EarsCall = async (method, path, ms, callSignal) => {
+    if (!path.startsWith("/wake/turn")) return ears.call(method, path, ms, callSignal);
+    posted.push(path);
+    return view({ status: 409, error: "gone" });
+  };
+  const events = watchWake({ call, signal: signal.signal, wait: noPause, judge: () => new Promise((resolve) => (answer = resolve)) });
+  assert.deepEqual((await take(events, 3)).map((event) => event.kind), ["status", "wake", "done"]);
+  const next = events.next();
+  await new Promise((resolve) => setImmediate(resolve));
+  answer("done");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(posted, ["/wake/turn?id=7&n=1&verdict=done"]);
+  release(view({ version: 5, state: "idle", lastId: 7, last: last("Turn the lights off.") }));
+  assert.deepEqual((await next).value, { kind: "status", line: "off while ears is muted, so unmute it on the server with bash host/ears.sh unmute" }, "the late answer made no note");
+  signal.abort();
+});
+
+test("without a quick check the watcher never says it will judge and never answers a question, and a check still running when the watcher is called off is called off too", { timeout: 5_000 }, async () => {
+  const off = new AbortController();
+  const recording = (version: number) => view({ version, state: "recording", current: { id: 7, by: "wake", claimed: true }, lastId: 7, asking: { id: 7, n: 1, text: "turn the lights off" } });
+  const plain = pretendEars([view({ version: 1, state: "recording", current: { id: 7, by: "wake", claimed: false } }), recording(3)], [view({ version: 2, state: "recording", current: { id: 7, by: "wake", claimed: true } })]);
+  const cancelling = (ears: { call: EarsCall }): EarsCall => async (method, path, ms, signal) => (path.startsWith("/recording/cancel") ? view() : ears.call(method, path, ms, signal));
+  const events = watchWake({ call: cancelling(plain), signal: off.signal, wait: noPause });
+  await take(events, 2);
+  const next = events.next();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(plain.asked.map((one) => one.path), ["/wait?after=-1", "/wake/claim?id=7", "/wait?after=1&run=aa", "/wait?after=3&run=aa"]);
+  off.abort();
+  await next;
+  const second = new AbortController();
+  let checkSignal: AbortSignal | null = null;
+  const judged = pretendEars([view({ version: 1, state: "recording", current: { id: 7, by: "wake", claimed: false } }), recording(3)], [view({ version: 2, state: "recording", current: { id: 7, by: "wake", claimed: true } })]);
+  const watching = watchWake({ call: cancelling(judged), signal: second.signal, wait: noPause, judge: (_text, signal) => ((checkSignal = signal), new Promise(() => {})) });
+  await take(watching, 2);
+  const waiting = watching.next();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((checkSignal as AbortSignal | null)?.aborted, false);
+  second.abort();
+  await waiting;
+  assert.equal((checkSignal as AbortSignal | null)?.aborted, true);
+});

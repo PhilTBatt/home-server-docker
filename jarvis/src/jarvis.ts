@@ -24,6 +24,7 @@ import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes } from "./session-notes.js";
 import { startTalk } from "./talk.js";
 import { askHubForChanges, watchTrainChanges } from "./train-news.js";
+import { turnCheck } from "./turn-check.js";
 import { voiceFor } from "./voice.js";
 import { createFollowAsk, eager, spokenOf, startWakeHold, watchWake } from "./wake.js";
 
@@ -125,7 +126,7 @@ try {
   if (talk !== undefined) process.stdout.write(`${printable(await talk.check(starting.signal))}\n`);
   let chatReady = false;
   const follow = config.followUp === null ? undefined : createFollowAsk();
-  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady, follow }));
+  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady, follow, judge: config.turnCheck ? turnCheck({ apiKey: config.apiKey, model: chatModel }) : undefined }));
   const followSeconds = config.followUp;
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);

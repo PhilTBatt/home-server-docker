@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
 import { createEars, type Ears } from "./ears.js";
 import type { Recording, Stopped } from "./recorder.js";
-import { alreadyListening, earsHandler, earsPort, followWithinMs, notTakenAtAll, notTakenYet, stillSending, startEarsServer, takenWithinMs, tokenMatches, wakeOffError, type WakeApi } from "./server.js";
+import { alreadyListening, earsHandler, earsPort, followWithinMs, notAsking, notTakenAtAll, notTakenYet, stillSending, startEarsServer, takenWithinMs, tokenMatches, wakeOffError, type WakeApi } from "./server.js";
 
 const token = "t".repeat(64);
 
@@ -142,12 +142,12 @@ test("an unknown route is 404 and a wrong method 405 naming the right one", asyn
 function wakeApi(ears: Ears, on = true) {
   let version = 3;
   const calls: string[] = [];
-  const waits: { after: number; run: string | null }[] = [];
+  const waits: { after: number; run: string | null; judge?: true }[] = [];
   let release: () => void = () => {};
   const api: WakeApi = {
     full: () => ({ ...ears.view(), version, run: "abc123" }),
-    async wait(after, run, signal) {
-      waits.push({ after, run });
+    async wait(after, run, signal, judge) {
+      waits.push(judge === true ? { after, run, judge } : { after, run });
       if (after < version) return api.full();
       await new Promise<void>((resolve) => {
         release = resolve;
@@ -159,6 +159,7 @@ function wakeApi(ears: Ears, on = true) {
     release: (by) => (calls.push(`release ${by}`), on),
     follow: (withinMs) => (calls.push(`follow ${withinMs}`), on ? ears.start("follow") : { ok: false, error: wakeOffError }),
     press: () => (calls.push("press"), on ? ears.start("button") : { ok: false, error: wakeOffError }),
+    turn: (id, n, verdict) => (calls.push(`turn ${id} ${n} ${verdict}`), on && n === 1),
   };
   return { api, calls, waits, bump: () => (version++, release()) };
 }
@@ -178,13 +179,13 @@ async function serveWake(on = true, heard = { now: true }, claimAfterMs?: number
 
 test("without the wake word's routes, they don't exist", async () => {
   const { server, call } = await serve();
-  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold"], ["POST", "/wake/release"], ["POST", "/wake/follow?within=5000"], ["POST", "/wake/talk"]]) assert.equal((await call(method, path)).status, 404, path);
+  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold"], ["POST", "/wake/release"], ["POST", "/wake/follow?within=5000"], ["POST", "/wake/talk"], ["POST", "/wake/turn?id=1&n=1&verdict=done"]]) assert.equal((await call(method, path)).status, 404, path);
   await closed(server);
 });
 
 test("the wake word's routes need the token too", async () => {
   const { server, base } = await serveWake();
-  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold?by=aa"], ["POST", "/wake/release?by=aa"], ["POST", "/wake/follow?within=5000"], ["POST", "/wake/talk"]]) {
+  for (const [method, path] of [["GET", "/wait"], ["POST", "/wake/claim?id=1"], ["POST", "/wake/hold?by=aa"], ["POST", "/wake/release?by=aa"], ["POST", "/wake/follow?within=5000"], ["POST", "/wake/talk"], ["POST", "/wake/turn?id=1&n=1&verdict=done"]]) {
     const response = await fetch(`${base}${path}`, { method });
     assert.equal(response.status, 401, path);
     await response.body?.cancel();
@@ -432,5 +433,36 @@ test("a press nobody takes is given up on after the time set, even if ears hasn'
   ears.claim(2);
   assert.deepEqual([(await pressing).status, ears.current()?.claimed], [200, true]);
   await ears.cancel(2);
+  await closed(server);
+});
+
+test("a chat's verdict on whether you'd finished needs the recording's number, the question's number and done or more, and is refused once the question has gone", async () => {
+  const { server, wake, call } = await serveWake();
+  const taken = await call("POST", "/wake/turn?id=4&n=1&verdict=more");
+  assert.deepEqual([taken.status, taken.body.version, taken.body.state], [200, 3, "muted"]);
+  const gone = await call("POST", "/wake/turn?id=4&n=2&verdict=done");
+  assert.deepEqual([gone.status, gone.body.error, gone.body.version], [409, notAsking, 3]);
+  assert.deepEqual(wake.calls, ["turn 4 1 more", "turn 4 2 done"]);
+  for (const path of ["/wake/turn", "/wake/turn?id=0&n=1&verdict=done", "/wake/turn?id=x&n=1&verdict=done", "/wake/turn?id=4&verdict=done", "/wake/turn?id=4&n=0&verdict=done", "/wake/turn?id=4&n=1.5&verdict=done"]) {
+    const bad = await call("POST", path);
+    assert.deepEqual([bad.status, bad.body.error], [400, "id must be a recording's number and n the question's number, both from 1"], path);
+  }
+  for (const path of ["/wake/turn?id=4&n=1", "/wake/turn?id=4&n=1&verdict=unsure", "/wake/turn?id=4&n=1&verdict=DONE"]) {
+    const bad = await call("POST", path);
+    assert.deepEqual([bad.status, bad.body.error], [400, "verdict must be done or more"], path);
+  }
+  assert.equal(wake.calls.length, 2, "nothing refused reached ears");
+  const wrong = await call("GET", "/wake/turn?id=4&n=1&verdict=done");
+  assert.deepEqual([wrong.status, wrong.allow], [405, "POST"]);
+  await closed(server);
+});
+
+test("a wait that says judge=on tells ears a chat will answer its questions, and any other wait doesn't", async () => {
+  const { server, wake, call } = await serveWake();
+  await call("GET", "/wait?judge=on");
+  await call("GET", "/wait?judge=off");
+  await call("GET", "/wait?judge=yes");
+  await call("GET", "/wait");
+  assert.deepEqual(wake.waits, [{ after: -1, run: null, judge: true }, { after: -1, run: null }, { after: -1, run: null }, { after: -1, run: null }]);
   await closed(server);
 });

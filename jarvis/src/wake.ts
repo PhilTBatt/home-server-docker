@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { earsQuickMs, type EarsAnswer, type EarsCall } from "./ears-client.js";
 import { unmuteHint } from "./talk.js";
+import type { TurnCheck, TurnVerdict } from "./turn-check.js";
 
 export const waitAskMs = 30_000;
 export const retryMs = 2_000;
 export const holdEveryMs = 5_000;
 export const busyClaimMs = 1_000;
 
-export type WakeEvent = { kind: "wake"; id: number; follow?: true; button?: true } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string } | { kind: "late"; behindMs: number | null };
+export type WakeEvent = { kind: "wake"; id: number; follow?: true; button?: true } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string } | { kind: "late"; behindMs: number | null } | { kind: "turn"; id: number; verdict: TurnVerdict | null; ms: number; counted: boolean };
 
 export const oldEarsLine = "off: this ears doesn't know the wake word yet, so start it again with bash host/ears.sh start, which rebuilds it";
 export const oldFollowWhy = "this ears doesn't know follow-ups yet, so start it again with bash host/ears.sh start, which rebuilds it";
@@ -63,7 +64,7 @@ async function dropStrayFollow(call: EarsCall): Promise<void> {
   } catch {}
 }
 
-export type WatchDeps = { call: EarsCall; signal: AbortSignal; first?: string | null; now?: () => number; wait?: (ms: number, signal: AbortSignal) => Promise<void>; retryMs?: number; busy?: () => boolean; busyClaimMs?: number; follow?: FollowAsk };
+export type WatchDeps = { call: EarsCall; signal: AbortSignal; first?: string | null; now?: () => number; wait?: (ms: number, signal: AbortSignal) => Promise<void>; retryMs?: number; busy?: () => boolean; busyClaimMs?: number; follow?: FollowAsk; judge?: TurnCheck };
 
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -86,6 +87,16 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
   let status = deps.first ?? null;
   let lateSeen: { run: string | null; count: number } | null = null;
   let taken: { id: number; endedAt: number | null } | null = null;
+  let judged: { id: number; n: number } | null = null;
+  const judgements: { id: number; verdict: TurnVerdict | null; ms: number; counted: boolean }[] = [];
+  const waitPath = deps.judge === undefined ? "" : "&judge=on";
+  const answerEars = async (check: TurnCheck, id: number, n: number, text: string) => {
+    const began = now();
+    const verdict = await check(text, deps.signal).catch(() => null);
+    const ms = now() - began;
+    const told = verdict === null ? null : await deps.call("POST", `/wake/turn?id=${id}&n=${n}&verdict=${verdict}`, earsQuickMs, deps.signal).catch(() => null);
+    judgements.push({ id, verdict, ms, counted: told?.status === 200 });
+  };
   try {
     while (!deps.signal.aborted) {
       const within = deps.follow?.take() ?? null;
@@ -109,7 +120,7 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
       const unhook = deps.follow?.onAsk(() => nudge.abort()) ?? (() => {});
       let answer: EarsAnswer;
       try {
-        answer = await deps.call("GET", `/wait?after=${after}${run === null ? "" : `&run=${encodeURIComponent(run)}`}`, waitAskMs, deps.follow === undefined ? deps.signal : AbortSignal.any([deps.signal, nudge.signal]));
+        answer = await deps.call("GET", `/wait?after=${after}${run === null ? "" : `&run=${encodeURIComponent(run)}`}${waitPath}`, waitAskMs, deps.follow === undefined ? deps.signal : AbortSignal.any([deps.signal, nudge.signal]));
       } catch (error) {
         if (deps.signal.aborted) return;
         if (nudge.signal.aborted) continue;
@@ -117,6 +128,7 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
       } finally {
         unhook();
       }
+      for (const one of judgements.splice(0)) if (taken?.id === one.id) yield { kind: "turn", ...one };
       const line = answer.status === 0 ? `off: ${answer.error ?? "ears didn't answer"}` : wakeStatus(answer);
       if (line !== status) {
         status = line;
@@ -165,6 +177,11 @@ export async function* watchWake(deps: WatchDeps): AsyncGenerator<WakeEvent> {
         }
       }
       if (taken === null) continue;
+      const asking = answer.asking ?? null;
+      if (deps.judge !== undefined && asking !== null && asking.id === taken.id && (judged === null || judged.id !== asking.id || judged.n !== asking.n)) {
+        judged = { id: asking.id, n: asking.n };
+        void answerEars(deps.judge, asking.id, asking.n, asking.text);
+      }
       if (answer.state === "recording" && answer.current?.id === taken.id) continue;
       taken.endedAt ??= now();
       if (answer.state === "working" || (answer.state === "recording" && answer.lastId === taken.id && (answer.current ?? null) === null)) continue;

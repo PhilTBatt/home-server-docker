@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import { logLine, type LogContext, type Outcome } from "./answer-log.js";
 import type { AnswerSpeech } from "./answer-speech.js";
-import { buttonListeningNote, chatInputs, neverMindNote, droppedNote, lateNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
+import { buttonListeningNote, chatInputs, neverMindNote, droppedNote, lateNote, turnNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
 import { earsStoppedWhy, hubOffNote } from "./code-words.js";
 import type { EarsAnswer } from "./ears-client.js";
 import type { SpeechReport } from "./speech-queue.js";
@@ -245,6 +245,29 @@ test("a wake word ears ignored as too late is noted on a line of its own, with h
   assert.equal(lateNote(2909), "heard Hey Jarvis, but 2.91 s behind the sound, so ears ignored it rather than record from the wrong moment. If this keeps happening, docker compose logs ears shows each one");
   assert.equal(lateNote(null), "heard Hey Jarvis, but ears couldn't match it to the sound, so ears ignored it rather than record from the wrong moment. If this keeps happening, docker compose logs ears shows each one");
   assert.deepEqual(chat.events, ["interrupt"]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("what the quick check said about whether you'd finished is noted while that recording is still on, and not for any other", { timeout: 5_000 }, async () => {
+  assert.equal(turnNote("done", 430, true), "asked whether you'd finished: yes (0.4 s)");
+  assert.equal(turnNote("more", 1180, true), "asked whether you'd finished: not yet (1.2 s)");
+  assert.equal(turnNote("done", 960, false), "asked whether you'd finished: yes (1 s), too late for ears to use");
+  assert.equal(turnNote(null, 1204, false), "asked whether you'd finished, but got no answer in time (1.2 s), so ears kept to its usual pause");
+  const chat = wakeChat({});
+  chat.wake.push({ kind: "turn", id: 4, verdict: "done", ms: 430, counted: true });
+  await settled();
+  assert.equal(chat.output().includes("finished"), false, "nothing is being recorded");
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "turn", id: 3, verdict: "done", ms: 430, counted: true });
+  await settled();
+  assert.equal(chat.output().includes("finished"), false, "that was about another recording");
+  const before = chat.events.length;
+  chat.wake.push({ kind: "turn", id: 4, verdict: "more", ms: 1180, counted: true });
+  await settled();
+  assert.ok(chat.output().endsWith(`  (${turnNote("more", 1180, true)})\nYou: `), chat.output());
+  assert.deepEqual(chat.events.slice(before), ["interrupt"]);
   chat.lines.close();
   await chat.running;
 });

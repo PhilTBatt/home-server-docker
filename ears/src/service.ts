@@ -72,7 +72,12 @@ export async function startService(options: ServiceOptions): Promise<Service> {
     },
   });
   const run = randomUUID().replaceAll("-", "").slice(0, 16);
-  const full = () => ({ ...ears.view(), lastId: ears.lastId(), current: ears.current(), wake: listener?.view() ?? wakeOff });
+  const asked = () => {
+    const asking = listener?.asking() ?? null;
+    const current = ears.current();
+    return asking === null || current === null ? {} : { asking: { id: current.id, ...asking } };
+  };
+  const full = () => ({ ...ears.view(), lastId: ears.lastId(), current: ears.current(), wake: listener?.view() ?? wakeOff, ...asked() });
   changes = createChanges(full);
   const seen = changes;
   if (options.config.wake) {
@@ -83,6 +88,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
       stream: (onSound) => startRecording({ recorder, limitMs: null, keep: false, onSound }),
       connect: tuning.connect ?? ((signal) => connectWyoming({ host: wakeHost, port: wakePort, signal })),
       detector: silero === null ? undefined : () => createDetector(silero),
+      words: options.config.turnWords ? options.toText : undefined,
       log: options.log,
       changed: () => seen.check(),
       limitMs: options.limitMs,
@@ -91,8 +97,8 @@ export async function startService(options: ServiceOptions): Promise<Service> {
   const hearing = listener;
   const wake: WakeApi = {
     full: () => ({ ...full(), version: seen.version(), run }),
-    async wait(after, from, signal) {
-      const done = hearing?.waiting();
+    async wait(after, from, signal, judge = false) {
+      const done = hearing?.waiting(judge);
       try {
         if (from === null || from === run) await seen.wait(after, signal, tuning.waitMs);
       } finally {
@@ -110,6 +116,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
     },
     follow: (withinMs) => (hearing === null ? { ok: false, error: wakeOffError } : hearing.follow(withinMs, () => ears.start("follow"))),
     press: () => (hearing === null ? { ok: false, error: wakeOffError } : hearing.press(() => ears.start("button"))),
+    turn: (id, n, verdict) => hearing !== null && ears.current()?.id === id && hearing.judge(n, verdict),
   };
   const watch = await watchSwitch({ read: () => readFile(options.switchAt ?? switchFile, "utf8"), everyMs: options.everyMs ?? switchEveryMs, onMute: () => void ears.mute(null), onUnmute: () => void ears.unmute() });
   let server: Server;

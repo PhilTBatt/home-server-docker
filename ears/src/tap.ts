@@ -1,16 +1,21 @@
-import { createCutter, createFrames, frameLevel, type Ender, type QuietEnd, type SpeechEnd, type SpeechHeard } from "./levels.js";
+import { createCutter, createFrames, frameLevel, type Ender, type Pausing, type QuietEnd, type SpeechEnd, type SpeechHeard } from "./levels.js";
 import { bytesPerSecond, recordingLimitMs, type Recording, type Stopped } from "./recorder.js";
 import { heardSpeech, type Detector } from "./silero.js";
+import { checkAfterMs, doneAfterMs, judgeWithinMs, judgeWords, moreAfterMs, type Verdict } from "./turn.js";
 
 export const detectorBehindMs = 1_000;
 
 export type By = "push" | "wake" | "follow" | "button";
 
-export type Tap = Recording & { readonly by: By; push(sound: Uint8Array): void; fail(reason: string): void };
+export type Asking = { n: number; text: string };
+
+export type Tap = Recording & { readonly by: By; push(sound: Uint8Array): void; fail(reason: string): void; asking(): Asking | null; judge(n: number, verdict: "done" | "more"): boolean };
+
+export type Words = { toText: (sound: Uint8Array, signal: AbortSignal) => Promise<string>; usualMs: number; judging?: () => boolean; changed?: () => void };
 
 export type Judged = { detector: Detector; end: SpeechEnd; fallback: (level: number) => boolean; failed?: (why: string) => void };
 
-export type TapOptions = { by: By; limitMs?: number; maxBytes?: number; before?: Uint8Array; quiet?: QuietEnd | null; judged?: Judged | null; ender?: Ender; pauseMs?: number; now?: () => number };
+export type TapOptions = { by: By; limitMs?: number; maxBytes?: number; before?: Uint8Array; quiet?: QuietEnd | null; judged?: Judged | null; ender?: Ender; pauseMs?: number; now?: () => number; words?: Words | null };
 
 function reasonOf(error: unknown): string {
   const text = (error instanceof Error ? error.message : String(error)).replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/ {2,}/g, " ").trim();
@@ -40,10 +45,18 @@ export function startTap(options: TapOptions): Tap {
   let finish: (stopped: Stopped) => void = () => {};
   const ended = new Promise<Stopped>((resolve) => (finish = resolve));
   const limit = setTimeout(() => void end(`it reached the ${limitMs / 1000}-second limit`, false), limitMs);
+  const pausing: Pausing | null = options.judged?.end ?? options.quiet ?? null;
+  const words = pausing === null ? null : (options.words ?? null);
+  let verdict: Verdict | null = null;
+  let judgedBy: "rules" | "chat" | null = null;
+  let looked = false;
+  let looking: AbortController | null = null;
+  let looks = 0;
+  let text: string | null = null;
+  let ask: (Asking & { at: number }) | null = null;
+  let asks = 0;
 
-  function end(reason: string, failed: boolean, unheard = false): Promise<Stopped> {
-    if (over !== null) return ended;
-    clearTimeout(limit);
+  function soundSoFar(): Uint8Array {
     const sound = new Uint8Array(before.length + kept);
     sound.set(before, 0);
     let at = before.length;
@@ -51,10 +64,71 @@ export function startTap(options: TapOptions): Tap {
       sound.set(piece, at);
       at += piece.length;
     }
+    return sound.subarray(0, sound.length - (sound.length % 2));
+  }
+
+  function end(reason: string, failed: boolean, unheard = false): Promise<Stopped> {
+    if (over !== null) return ended;
+    clearTimeout(limit);
+    looking?.abort();
+    looking = null;
+    const sound = soundSoFar();
     pieces.length = 0;
-    over = { reason, failed, bytes, ms: now() - began, sound: sound.subarray(0, sound.length - (sound.length % 2)), ...(unheard ? { unheard: true as const } : {}), ...(options.ender === undefined ? {} : { ender: options.ender }), ...(options.pauseMs === undefined ? {} : { pauseMs: options.pauseMs }), ...speechOf(options) };
+    over = { reason, failed, bytes, ms: now() - began, sound, ...(unheard ? { unheard: true as const } : {}), ...(options.ender === undefined ? {} : { ender: options.ender }), ...(options.pauseMs === undefined ? {} : { pauseMs: options.pauseMs }), ...speechOf(options), ...(words === null ? {} : { words: { looks, verdict, by: judgedBy } }), ...(text === null || failed ? {} : { text }) };
     finish(over);
     return ended;
+  }
+
+  function pauseFor(usual: number): number {
+    if (verdict === "done") return Math.min(usual, doneAfterMs);
+    if (verdict === "more") return Math.max(usual, moreAfterMs);
+    return ask === null ? usual : Math.max(usual, ask.at + judgeWithinMs);
+  }
+
+  function look(listening: Words, timing: Pausing) {
+    const calledOff = new AbortController();
+    looking = calledOff;
+    looks++;
+    listening.toText(soundSoFar(), calledOff.signal).then(
+      (heard) => {
+        if (looking !== calledOff || over !== null) return;
+        looking = null;
+        text = heard.replace(/\s+/g, " ").trim();
+        verdict = judgeWords(text);
+        judgedBy = "rules";
+        if (verdict === "unsure" && listening.judging?.() === true) {
+          asks++;
+          ask = { n: asks, text, at: timing.quietMs() ?? 0 };
+        }
+        timing.quietFor(pauseFor(listening.usualMs));
+        listening.changed?.();
+      },
+      () => {
+        if (looking === calledOff) looking = null;
+      },
+    );
+  }
+
+  function afterFrame() {
+    if (words === null || pausing === null || over !== null) return;
+    const quiet = pausing.quietMs();
+    if (quiet === null) return;
+    if (quiet === 0) {
+      const asked = ask !== null;
+      looking?.abort();
+      looking = null;
+      looked = false;
+      verdict = null;
+      judgedBy = null;
+      text = null;
+      ask = null;
+      pausing.quietFor(words.usualMs);
+      if (asked) words.changed?.();
+      return;
+    }
+    if (looked || quiet < checkAfterMs) return;
+    looked = true;
+    look(words, pausing);
   }
 
   return {
@@ -64,6 +138,16 @@ export function startTap(options: TapOptions): Tap {
     stop: (reason) => end(reason, false),
     fail: (reason) => void end(reason, true),
     speechHeard: () => (options.judged?.end.heard() ?? options.quiet?.heard() ?? null) !== null,
+    asking: () => (ask === null || over !== null ? null : { n: ask.n, text: ask.text }),
+    judge(n, given) {
+      if (over !== null || ask === null || ask.n !== n || words === null || pausing === null) return false;
+      verdict = given;
+      judgedBy = "chat";
+      ask = null;
+      pausing.quietFor(pauseFor(words.usualMs));
+      words.changed?.();
+      return true;
+    },
     push(sound) {
       if (over !== null) return;
       bytes += sound.length;
@@ -78,6 +162,7 @@ export function startTap(options: TapOptions): Tap {
         const settle = (speech: boolean) => {
           const ended = judged.end.push(speech, broken ? "loudness" : "silero");
           if (ended !== null) void end(ended.reason, false, !ended.spoke);
+          else afterFrame();
         };
         const giveUp = (why: string) => {
           broken = true;
@@ -114,6 +199,7 @@ export function startTap(options: TapOptions): Tap {
           void end(ended.reason, false, !ended.spoke);
           return;
         }
+        afterFrame();
       }
     },
   };

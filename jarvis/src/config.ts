@@ -68,6 +68,7 @@ export type Config = {
   ears: EarsMode;
   earsToken: string | null;
   followUp: number | null;
+  turnCheck: boolean;
   trainAlerts: boolean;
   log: boolean;
 };
@@ -186,11 +187,14 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const followUp = followText === "off" ? null : Number(followText);
   if (followUp !== null && (!/^[0-9]+$/.test(followText) || followUp < followUpSeconds.least || followUp > followUpSeconds.most)) throw new Error(`JARVIS_FOLLOW_UP must be off or a whole number of seconds from ${followUpSeconds.least} to ${followUpSeconds.most}, like 5, not "${followText}"`);
   if (followUp !== null && ears !== "wake") throw new Error(`JARVIS_FOLLOW_UP is ${followUp}, but follow-ups come after questions asked with the wake word, so they need JARVIS_EARS=wake. Set that, or set JARVIS_FOLLOW_UP=off`);
+  const turnCheck = env.JARVIS_TURN_CHECK?.trim() || "off";
+  if (turnCheck !== "on" && turnCheck !== "off") throw new Error(`JARVIS_TURN_CHECK must be on or off, not "${turnCheck}"`);
+  if (turnCheck === "on" && ears !== "wake") throw new Error("JARVIS_TURN_CHECK is on, but it judges recordings made after the wake word, so it needs JARVIS_EARS=wake. Set that, or set JARVIS_TURN_CHECK=off");
   const trainAlerts = env.JARVIS_TRAIN_ALERTS?.trim() || "off";
   if (trainAlerts !== "on" && trainAlerts !== "off") throw new Error(`JARVIS_TRAIN_ALERTS must be on or off, not "${trainAlerts}"`);
   if (trainAlerts === "on" && hubTools !== "on") throw new Error("JARVIS_TRAIN_ALERTS is on, but train changes come from the hub, so it needs JARVIS_HUB_TOOLS=on too. Set that, or set JARVIS_TRAIN_ALERTS=off");
   const log = env.JARVIS_LOG ?? "";
   if (log === "") throw new Error("Missing setting: JARVIS_LOG (on or off)");
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, trainAlerts: trainAlerts === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", log: log === "on" };
 }

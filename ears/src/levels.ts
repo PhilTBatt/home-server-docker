@@ -66,11 +66,13 @@ export type QuietEnded = { reason: string; spoke: boolean };
 
 export type SpeechHeard = { firstMs: number; speechMs: number; longestPauseMs: number };
 
-export type SpeechEnd = { push(speech: boolean, by?: Ender): QuietEnded | null; heard(): SpeechHeard | null };
+export type Pausing = { quietMs(): number | null; quietFor(ms: number): void };
+
+export type SpeechEnd = Pausing & { push(speech: boolean, by?: Ender): QuietEnded | null; heard(): SpeechHeard | null };
 
 export type SpeechEndOptions = { by?: Ender; settleMs?: number; startWithinMs?: number; quietForMs?: number };
 
-export type QuietEnd = { push(level: number): QuietEnded | null; heard(): SpeechHeard | null };
+export type QuietEnd = Pausing & { push(level: number): QuietEnded | null; heard(): SpeechHeard | null };
 
 export type QuietOptions = { speakingAbove: number; settleMs?: number; startWithinMs?: number; quietForMs?: number };
 
@@ -82,7 +84,7 @@ function secondsOf(ms: number): string {
 export function createSpeechEnd(options: SpeechEndOptions = {}): SpeechEnd {
   const settle = options.settleMs ?? settleMs;
   const startWithin = options.startWithinMs ?? startWithinMs;
-  const quietFor = options.quietForMs ?? quietForMs;
+  let quietFor = options.quietForMs ?? quietForMs;
   let heard = 0;
   let lastSpeech: number | null = null;
   let firstSpeech: number | null = null;
@@ -103,10 +105,14 @@ export function createSpeechEnd(options: SpeechEndOptions = {}): SpeechEnd {
       return null;
     },
     heard: () => (firstSpeech === null ? null : { firstMs: firstSpeech, speechMs: speechFrames * frameMs, longestPauseMs: longestPause }),
+    quietMs: () => (lastSpeech === null ? null : heard - lastSpeech),
+    quietFor(ms) {
+      quietFor = ms;
+    },
   };
 }
 
 export function createQuietEnd(options: QuietOptions): QuietEnd {
   const end = createSpeechEnd(options);
-  return { push: (level) => end.push(level > options.speakingAbove), heard: end.heard };
+  return { push: (level) => end.push(level > options.speakingAbove), heard: end.heard, quietMs: end.quietMs, quietFor: end.quietFor };
 }

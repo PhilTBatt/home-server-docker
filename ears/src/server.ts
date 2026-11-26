@@ -4,9 +4,9 @@ import { claimMs, type Ears, type EarsView, type Refused } from "./ears.js";
 
 export const earsPort = 8090;
 
-const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST", "/wait": "GET", "/wake/claim": "POST", "/wake/hold": "POST", "/wake/release": "POST", "/wake/follow": "POST", "/wake/talk": "POST" };
+const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST", "/wait": "GET", "/wake/claim": "POST", "/wake/hold": "POST", "/wake/release": "POST", "/wake/follow": "POST", "/wake/talk": "POST", "/wake/turn": "POST" };
 
-export type WakeApi = { full(): Record<string, unknown>; wait(after: number, run: string | null, signal: AbortSignal): Promise<Record<string, unknown>>; hold(by: string): boolean; release(by: string): boolean; follow(withinMs: number): { ok: true; view: EarsView; id: number } | Refused; press(): { ok: true; view: EarsView; id: number } | Refused };
+export type WakeApi = { full(): Record<string, unknown>; wait(after: number, run: string | null, signal: AbortSignal, judge?: boolean): Promise<Record<string, unknown>>; hold(by: string): boolean; release(by: string): boolean; follow(withinMs: number): { ok: true; view: EarsView; id: number } | Refused; press(): { ok: true; view: EarsView; id: number } | Refused; turn(id: number, n: number, verdict: "done" | "more"): boolean };
 
 export const followWithinMs = { least: 1_000, most: 20_000 };
 
@@ -19,6 +19,8 @@ export const takenWithinMs = claimMs + 1_000;
 export const stillSending = "ears is still sending the last recording, so press again in a moment";
 
 export const alreadyListening = "ears is already listening, so just speak: it sends what you say when you stop talking";
+
+export const notAsking = "ears isn't waiting on that question any more: you spoke again, the recording ended, or it was already answered";
 
 export const wakeOffError = "ears has the wake word off, so set EARS_WAKE=on in ears/.env and start it again with bash host/ears.sh start";
 
@@ -61,7 +63,7 @@ export function earsHandler(ears: Ears, token: string, wake?: WakeApi, timing = 
       if (after === null) return send(response, 400, { error: "after must be a whole number from -1" });
       const gone = new AbortController();
       response.once("close", () => gone.abort());
-      const view = await wake.wait(after, query.get("run"), gone.signal);
+      const view = await wake.wait(after, query.get("run"), gone.signal, query.get("judge") === "on");
       if (!gone.signal.aborted && !response.writableEnded) send(response, 200, view);
       return;
     }
@@ -70,6 +72,14 @@ export function earsHandler(ears: Ears, token: string, wake?: WakeApi, timing = 
       if (id === null) return send(response, 400, { error: "id must be a recording's number, from 1" });
       const claimed = ears.claim(id);
       return claimed.ok ? send(response, 200, wake.full()) : send(response, 409, { error: claimed.error, ...wake.full() });
+    }
+    if (wake !== undefined && path === "/wake/turn") {
+      const id = whole(query.get("id"), 1);
+      const n = whole(query.get("n"), 1);
+      const verdict = query.get("verdict");
+      if (id === null || n === null) return send(response, 400, { error: "id must be a recording's number and n the question's number, both from 1" });
+      if (verdict !== "done" && verdict !== "more") return send(response, 400, { error: "verdict must be done or more" });
+      return wake.turn(id, n, verdict) ? send(response, 200, wake.full()) : send(response, 409, { error: notAsking, ...wake.full() });
     }
     if (wake !== undefined && path === "/wake/follow") {
       const within = whole(query.get("within"), followWithinMs.least);

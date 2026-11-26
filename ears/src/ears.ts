@@ -1,6 +1,6 @@
 import type { Microphone } from "./config.js";
 import type { Ender, SpeechHeard } from "./levels.js";
-import type { Recording, Stopped } from "./recorder.js";
+import type { Recording, Stopped, WordsJudged } from "./recorder.js";
 import type { By } from "./tap.js";
 import type { ToText } from "./whisper.js";
 
@@ -48,6 +48,13 @@ function stoppedLine(stopped: Stopped): string {
 
 export function speechLine(speech: SpeechHeard): string {
   return `Speech in it: first heard after ${secondsText(speech.firstMs)}, ${secondsText(speech.speechMs)} of speech, longest pause between words ${secondsText(speech.longestPauseMs)}.`;
+}
+
+export function wordsLine(words: WordsJudged): string {
+  if (words.looks === 0) return "Your words weren't looked at: it ended before a pause long enough to look.";
+  const looks = `${words.looks} look${words.looks === 1 ? "" : "s"}`;
+  if (words.verdict === null) return `Your words weren't judged in time (${looks}).`;
+  return `Judged by your words: ${words.verdict === "done" ? "finished" : words.verdict === "more" ? "more to come" : "unsure"}, by ${words.by === "chat" ? "a Jarvis chat" : "the rules"} (${looks}).`;
 }
 
 function problem(error: unknown): string {
@@ -119,10 +126,12 @@ export function createEars(deps: EarsDeps): Ears {
     }
     deps.log(stoppedLine(stopped));
     if (stopped.speech !== undefined) deps.log(speechLine(stopped.speech));
+    if (stopped.words !== undefined && stopped.speech !== undefined) deps.log(wordsLine(stopped.words));
     changed();
   };
   const toText = (stopped: Stopped): Promise<void> => {
-    const turn = deps.toText;
+    const made = stopped.text;
+    const turn = deps.toText === undefined || made === undefined ? deps.toText : async () => made;
     const heard = last;
     if (turn === undefined || heard === null) {
       state = "idle";
@@ -136,7 +145,7 @@ export function createEars(deps: EarsDeps): Ears {
       try {
         const text = await orCalledOff(turn(stopped.sound, calledOff.signal), calledOff.signal);
         if (calledOff.signal.aborted) return;
-        deps.log(`Turned into text in ${secondsText(now() - began)}.`);
+        deps.log(made === undefined ? `Turned into text in ${secondsText(now() - began)}.` : "Turned into text in 0 seconds: the text made while you paused was used.");
         if (saysStopListening(text)) {
           heard.textProblem = stoppedListening;
           deps.log("Heard its spoken code word to stop, so ears is muting itself.");

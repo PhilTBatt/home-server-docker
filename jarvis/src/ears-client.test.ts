@@ -175,3 +175,11 @@ test("a last recording keeps what ended it when that's loudness or silero, and d
   assert.deepEqual(readEarsAnswer(200, { state: "idle", last: { ...last, ender: "loudness" } }).last, { ...last, ender: "loudness" });
   for (const ender of ["Silero", 1, null, "vad"]) assert.deepEqual(readEarsAnswer(200, { state: "idle", last: { ...last, ender } }).last, last, JSON.stringify(ender));
 });
+
+test("a question ears is waiting on is read with its recording's number, its own number and the words, and anything else is read as none", () => {
+  assert.deepEqual(readEarsAnswer(200, { version: 3, state: "recording", asking: { id: 7, n: 2, text: "turn the lights off" } }).asking, { id: 7, n: 2, text: "turn the lights off" });
+  assert.deepEqual(readEarsAnswer(200, { version: 3, asking: { id: 7, n: 1, text: "" } }).asking, { id: 7, n: 1, text: "" });
+  assert.equal(readEarsAnswer(200, { version: 3, state: "recording" }).asking, null);
+  for (const asking of [null, 7, "x", {}, { id: 0, n: 1, text: "x" }, { id: 7, n: 0, text: "x" }, { id: 7, n: 1.5, text: "x" }, { id: "7", n: 1, text: "x" }, { id: 7, n: 1 }, { id: 7, n: 1, text: 4 }]) assert.equal(readEarsAnswer(200, { version: 3, asking }).asking, null, JSON.stringify(asking));
+  assert.equal("asking" in readEarsAnswer(200, { state: "idle" }), false, "a plain state answer has none");
+});
