@@ -1,3 +1,5 @@
+import { webModes, type WebMode } from "./look-up.js";
+
 export const brainDir = "/brain";
 
 export const engines = ["sdk", "api"] as const;
@@ -72,6 +74,9 @@ export type Config = {
   trainAlerts: boolean;
   brainQuestions: boolean;
   clock: boolean;
+  web: WebMode;
+  webToken: string | null;
+  webLog: boolean;
   log: boolean;
 };
 
@@ -99,6 +104,10 @@ export function readVolume(env: Record<string, string | undefined>): number {
 
 function tokenCount(value: string): number | null {
   return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
+}
+
+function isWebMode(value: string): value is WebMode {
+  return (webModes as readonly string[]).includes(value);
 }
 
 function isEngine(value: string): value is Engine {
@@ -203,5 +212,12 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
   const clock = env.JARVIS_CLOCK?.trim() || "off";
   if (clock !== "on" && clock !== "off") throw new Error(`JARVIS_CLOCK must be on or off, not "${clock}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", log: log === "on" };
+  const web = env.JARVIS_WEB?.trim() || "off";
+  if (!isWebMode(web)) throw new Error(`JARVIS_WEB must be ${webModes.join(" or ")}, not "${web}"`);
+  const webToken = env.JARVIS_WEB_TOKEN?.trim() || null;
+  if (web !== "off" && webToken === null) throw new Error("Missing setting: JARVIS_WEB_TOKEN (the token claude setup-token prints), which look-ups need");
+  if (web !== "off" && webToken !== null && /\s/.test(webToken)) throw new Error("JARVIS_WEB_TOKEN must be the token alone on one line, with no spaces in it");
+  const webLog = env.JARVIS_WEB_LOG?.trim() || "off";
+  if (webLog !== "on" && webLog !== "off") throw new Error(`JARVIS_WEB_LOG must be on or off, not "${webLog}"`);
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", web, webToken: web === "off" ? null : webToken, webLog: webLog === "on", log: log === "on" };
 }

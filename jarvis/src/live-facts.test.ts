@@ -3,8 +3,8 @@ import { test } from "node:test";
 import { codeWordIn } from "./code-words.js";
 import { factsLead, liveFacts, withLiveFacts, type FactsInput } from "./live-facts.js";
 
-const typed: FactsInput = { voice: "off", ears: "off", followUp: null, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: false, brainQuestions: false, clock: false };
-const all: FactsInput = { voice: "kokoro", ears: "wake", followUp: 6, hubTools: true, hubActions: true, codeWordsReachHub: true, trainAlerts: true, brainQuestions: true, clock: false };
+const typed: FactsInput = { voice: "off", ears: "off", followUp: null, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: false, brainQuestions: false, clock: false, web: "off" };
+const all: FactsInput = { voice: "kokoro", ears: "wake", followUp: 6, hubTools: true, hubActions: true, codeWordsReachHub: true, trainAlerts: true, brainQuestions: true, clock: false, web: "off" };
 const sentences = (text: string) => text.split(/(?<=[.:;]) /);
 
 test("live facts start by saying they're from his own code, written as the chat started, and outrank older notes about him", () => {
@@ -87,7 +87,7 @@ test("they never use double quotes, and every sentence ends cleanly, whatever is
   for (const voice of ["off", "kokoro", "piper"] as const) {
     for (const ears of ["off", "push", "wake"] as const) {
       for (const [hubTools, hubActions, codeWordsReachHub, trainAlerts] of [[false, false, false, false], [true, false, true, true], [true, true, true, false], [false, false, true, false]] as const) {
-        const facts = liveFacts({ voice, ears, followUp: ears === "wake" ? 4 : null, hubTools, hubActions, codeWordsReachHub, trainAlerts, brainQuestions: trainAlerts, clock: trainAlerts });
+        const facts = liveFacts({ voice, ears, followUp: ears === "wake" ? 4 : null, hubTools, hubActions, codeWordsReachHub, trainAlerts, brainQuestions: trainAlerts, clock: trainAlerts, web: hubTools ? "ask" : "off" });
         assert.ok(!facts.includes('"'), facts);
         assert.ok(facts.endsWith("."), facts);
         assert.ok(!/\s{2}|\.\./.test(facts), facts);
@@ -128,4 +128,15 @@ test("with the clock on and ears on, the facts say his code answers a bare quest
   assert.ok(!liveFacts({ ...all, clock: false }).includes("Time now"));
   assert.ok(!liveFacts({ ...typed, clock: true }).includes("Time now"), "with ears off nothing is said out loud, and the note in the system prompt covers the line");
   assert.ok(!on.includes('"'));
+});
+
+test("with look-ups on he's told his own code does them through a separate helper and that he can't, and with them off nothing is added", () => {
+  const typedOn = liveFacts({ ...typed, web: "ask" });
+  const sentence = "When he types /lookup and a question, your own code hands the question to a separate helper that searches the web and shows him the answer. You never see the question or the answer, and you can't look anything up yourself: if he asks you for something that needs the web, tell him to ask that way.";
+  assert.ok(typedOn.includes(` ${sentence} You can't run commands`), typedOn);
+  assert.equal(typedOn.replace(` ${sentence}`, ""), liveFacts(typed), "nothing else changes");
+  const spokenOn = liveFacts({ ...all, web: "ask" });
+  assert.ok(spokenOn.includes("When he types /lookup and a question, or starts what he says out loud with look up and a question, your own code hands the question to a separate helper that searches the web and reads him the answer."), spokenOn);
+  assert.ok(!liveFacts(all).includes("/lookup") && !liveFacts(typed).includes("helper"));
+  assert.ok(spokenOn.endsWith("You can't run commands, change files, browse the web, or set reminders or timers."));
 });

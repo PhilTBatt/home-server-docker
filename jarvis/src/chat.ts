@@ -4,6 +4,9 @@ import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
 import { answerMost, findInstruction, isEnd, isSkip, isYes, questionsNoteText, questionsOffNote, questionsWord, readQuestions, type BrainQuestions, type QuestionsRun } from "./brain-questions.js";
 import { clockReply, codeWordIn, earsStoppedWhy, hubOffNote, londonStamp, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply } from "./code-words.js";
 import type { SpeechReport } from "./speech-queue.js";
+import { createEvents, merged } from "./events.js";
+import { capped, lookingUp, lookUp, noQuestion, questionCap, type Helper, type LookedUp } from "./look-up.js";
+import type { LookUpMode } from "./look-up-log.js";
 import { brainDir, type ChatMode, type Config, type Engine, type LengthHints, type SpeechStop, type ThinkingHistory } from "./config.js";
 import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
 import type { Prices } from "./prices.js";
@@ -177,6 +180,7 @@ export type ChatDeps = {
   interrupt?: () => void;
   followUp?: { seconds: number; ask(): void; gapMs?: number };
   codeWords?: CodeWordActions;
+  web?: WebDeps;
   trains?: TrainNews;
   questions?: BrainQuestions;
 };
@@ -191,7 +195,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null };
 
 function sounds(state: ChatState, speech: AnswerSpeech | null): void {
   if (speech === null || state.sounding.has(speech)) return;
@@ -412,8 +416,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_LOG=${config.log ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "web" | "webLog" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -645,9 +649,9 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
   deps.write(`  (${why === null ? droppedNote : notDroppedNote(printable(why))})\n`);
 }
 
-export type ChatInput = { kind: "line"; text: string } | WakeEvent | TrainEvent;
+export type ChatInput = { kind: "line"; text: string } | WakeEvent | TrainEvent | LookedUpEvent;
 
-export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<TrainEvent>): AsyncGenerator<ChatInput> {
+export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<TrainEvent | LookedUpEvent>): AsyncGenerator<ChatInput> {
   if (events === undefined && news === undefined) {
     for await (const text of lines) yield { kind: "line", text };
     return;
@@ -655,7 +659,7 @@ export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIt
   const typed = lines[Symbol.asyncIterator]();
   const heard = events?.[Symbol.asyncIterator]();
   const told = news?.[Symbol.asyncIterator]();
-  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent>; why?: string } | { from: "news"; result: IteratorResult<TrainEvent> };
+  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent>; why?: string } | { from: "news"; result: IteratorResult<TrainEvent | LookedUpEvent> };
   let nextLine: Promise<Got> | null = null;
   let nextEvent: Promise<Got> | null = null;
   let nextNews: Promise<Got> | null = null;
@@ -753,7 +757,7 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     return "go";
   }
   deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
-  const word = codeWordIn(sent.heard.text, deps.clock !== undefined);
+  const word = codeWordIn(sent.heard.text, deps.clock !== undefined, deps.web !== undefined);
   if (state.questions !== null && word?.kind !== "stop listening") return onAnswer(deps, state, sent.heard.text, "spoken", voiced(sent.heard));
   if (word?.kind === "questions" && deps.questions !== undefined) {
     state.turn++;
@@ -781,6 +785,66 @@ async function sayLine(deps: ChatDeps, state: ChatState, reply: CodeWordReply): 
   sounds(state, speech);
 }
 
+export type LookedUpEvent = { kind: "looked up"; id: number; looked: LookedUp };
+
+export type WebDeps = { helper: Helper; now: () => number; record?: (mode: LookUpMode, looked: LookedUp) => Promise<void> };
+
+export const lookUpWord = "/lookup";
+export const lookUpsOffReply: CodeWordReply = { say: "Look-ups are off.", note: "JARVIS_WEB=ask in jarvis/.env turns them on" };
+export const lookUpStoppedNote = "look-up stopped";
+
+export function lookingUpNote(question: string): string {
+  return `looking up: ${question}`;
+}
+
+export function fromWebNote(looked: LookedUp): string {
+  const sites = [...new Set([...(looked.helped?.opened ?? []), ...(looked.helped?.found ?? [])])].slice(0, 4);
+  return `from the web in ${seconds(looked.ms)}${sites.length === 0 ? "" : `: ${sites.join(", ")}`}`;
+}
+
+export function lookUpFailedNote(looked: LookedUp): string | undefined {
+  const error = looked.helped?.error;
+  return looked.ended === "failed" && typeof error === "string" ? `look-up failed: ${error}` : undefined;
+}
+
+function stopLookUp(deps: ChatDeps, state: ChatState): void {
+  if (state.lookUp === null) return;
+  state.lookUp.stop.abort();
+  state.lookUp = null;
+  deps.write(`  (${lookUpStoppedNote})\n`);
+}
+
+async function onLookUp(deps: ChatDeps, state: ChatState, asked: string): Promise<void> {
+  const web = deps.web;
+  const tell = state.looked;
+  if (web === undefined || tell === null) {
+    await sayLine(deps, state, lookUpsOffReply);
+    return;
+  }
+  stopLookUp(deps, state);
+  const question = capped(asked, questionCap);
+  if (question === "") {
+    await sayLine(deps, state, { say: noQuestion });
+    return;
+  }
+  deps.write(`  (${printable(lookingUpNote(question))})\n`);
+  await sayLine(deps, state, { say: lookingUp });
+  const stop = new AbortController();
+  const id = ++state.lookUps;
+  state.lookUp = { id, stop };
+  void lookUp(question, { helper: web.helper, now: web.now, signal: deps.closing === undefined ? stop.signal : AbortSignal.any([stop.signal, deps.closing]) }).then((looked) => tell({ kind: "looked up", id, looked }));
+}
+
+async function onLookedUp(deps: ChatDeps, state: ChatState, event: LookedUpEvent): Promise<void> {
+  await deps.web?.record?.("ask", event.looked).catch(() => {});
+  if (state.lookUp?.id !== event.id) return;
+  state.lookUp = null;
+  if (event.looked.say === null) return;
+  deps.interrupt?.();
+  await sayLine(deps, state, { say: event.looked.say, note: event.looked.ended === "answered" ? fromWebNote(event.looked) : lookUpFailedNote(event.looked) });
+  deps.prompt();
+}
+
 async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWord, { kind: "questions" }>): Promise<void> {
   state.turn++;
   await hush(deps, state);
@@ -795,6 +859,10 @@ async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWo
   }
   if (word.kind === "time" || word.kind === "date") {
     if (deps.clock !== undefined) await sayLine(deps, state, clockReply(word.kind, deps.clock()));
+    return;
+  }
+  if (word.kind === "look up") {
+    await onLookUp(deps, state, word.text);
     return;
   }
   const signal = deps.closing ?? new AbortController().signal;
@@ -865,6 +933,7 @@ async function onWake(deps: ChatDeps, state: ChatState, event: WakeEvent): Promi
     }
     state.turn++;
     deps.interrupt?.();
+    stopLookUp(deps, state);
     await settle(deps, state, true, event.cut === true);
     state.listening = true;
     state.wakeId = event.id;
@@ -1045,12 +1114,18 @@ async function finishQuestions(deps: ChatDeps, state: ChatState): Promise<void> 
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null };
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
+  const found = deps.web === undefined ? null : createEvents<LookedUpEvent>();
+  state.looked = found?.push ?? null;
   try {
     current.prompt();
-    for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, current.trains?.events), deps.ready)) {
+    for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, found === null ? current.trains?.events : current.trains === undefined ? found.events : merged<TrainEvent | LookedUpEvent>(current.trains.events, found.events)), deps.ready)) {
+      if (input.kind === "looked up") {
+        await onLookedUp(current, state, input);
+        continue;
+      }
       if (input.kind === "trains" || input.kind === "trains note") {
         await onTrains(current, state, input);
         continue;
@@ -1087,6 +1162,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       }
       if (exitWords.includes(message.toLowerCase())) break;
       const rating = Object.hasOwn(ratingWords, message) ? ratingWords[message] : undefined;
+      if (message !== "" && rating === undefined) stopLookUp(current, state);
       if (message === "") {
         if (!early) await hush(current, state);
       } else if (newWords.includes(message.toLowerCase())) {
@@ -1098,6 +1174,9 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         else await startListening(talking, state);
       } else if (message.toLowerCase() === questionsWord) {
         if ((await startQuestions(current, state, false)) === "stop") break;
+      } else if (current.web !== undefined && (message.toLowerCase() === lookUpWord || message.toLowerCase().startsWith(`${lookUpWord} `))) {
+        await hush(current, state);
+        await onLookUp(current, state, message.slice(lookUpWord.length));
       } else if (looksLikeCommand(message)) {
         current.write(`  (${current.questions !== undefined ? questionsCommandNote(talking !== null) : talking === null ? commandNote : talkCommandNote})\n`);
       } else if (rating !== undefined) {
@@ -1108,6 +1187,9 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       current.prompt();
     }
   } finally {
+    state.lookUp?.stop.abort();
+    state.lookUp = null;
+    found?.end();
     if (state.questions !== null) await finishQuestions(current, state).catch(() => {});
     if (state.listening && current.talk !== undefined) await dropListening({ ...current, talk: current.talk }, state).catch(() => {});
     current.session.close();

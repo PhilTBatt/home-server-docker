@@ -16,11 +16,15 @@ import { liveFacts } from "./live-facts.js";
 import { readPersona } from "./persona.js";
 import { withTimeout } from "./run.js";
 import { readSessionNotes, withNotes } from "./session-notes.js";
-import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi, type StandInApi } from "./stand-in-api.js";
+import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi } from "./stand-in-api.js";
 import { standInHubFile, type HubCall } from "./stand-in-hub.js";
+import { claudeHelper } from "./look-up-claude.js";
+import { startStandInWeb } from "./stand-in-web.js";
+import { runWebCheck } from "./web-check.js";
+import { guardAllows } from "./web-guard.js";
 
 const folders: string[] = [];
-const apis: StandInApi[] = [];
+const apis: Array<{ close(): Promise<void> }> = [];
 const sessions: AgentSession[] = [];
 const hubs: HubTools[] = [];
 let engineEnv: Record<string, string | undefined> | undefined;
@@ -248,7 +252,7 @@ try {
   folders.push(personaHome);
   await writeFile(join(personaHome, "check.md"), `# Check\n- Calm and \"dry\", marker ${randomUUID()}\n`);
   const personaText = await readPersona("check", personaHome);
-  const factsText = liveFacts({ voice: "kokoro", ears: "wake", followUp: 6, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: true, brainQuestions: false, clock: false });
+  const factsText = liveFacts({ voice: "kokoro", ears: "wake", followUp: 6, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: true, brainQuestions: false, clock: false, web: "off" });
   const personaSdkApi = await startStandInApi(script, "sdk");
   const personaPlainApi = await startStandInApi(script, "api");
   apis.push(personaSdkApi, personaPlainApi);
@@ -269,7 +273,23 @@ try {
     commandLines,
     timeoutMs: 60_000,
   });
-  const results = [...shared, ...saved, ...hub, ...actions, ...notes, ...persona];
+  const webApi = await startStandInWeb();
+  apis.push(webApi);
+  const secrets = { ANTHROPIC_API_KEY: `sk-ant-jarvis-${randomUUID()}`, API_TOKEN: `hub-${randomUUID()}`, JARVIS_WEB_TOKEN: `plan-${randomUUID()}` };
+  const kept = { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, API_TOKEN: process.env.API_TOKEN, JARVIS_WEB_TOKEN: process.env.JARVIS_WEB_TOKEN };
+  Object.assign(process.env, secrets);
+  const guards = await mkdtemp(join(tmpdir(), "jarvis-check-guards-"));
+  folders.push(guards);
+  await writeFile(join(guards, "quiet.mjs"), "");
+  await writeFile(join(guards, "yes.mjs"), `process.stdout.write(${JSON.stringify(guardAllows)});\n`);
+  const webCredential = { ANTHROPIC_API_KEY: "sk-ant-test-key", ANTHROPIC_BASE_URL: webApi.url };
+  const web = await runWebCheck({ helper: claudeHelper({ model: chatModel, credential: webCredential }), quietGuard: claudeHelper({ model: chatModel, credential: webCredential, guard: join(guards, "quiet.mjs") }), yesGuard: claudeHelper({ model: chatModel, credential: webCredential, guard: join(guards, "yes.mjs") }), requests: webApi.requests, markers: Object.values(secrets), stopAfterMs: 1_500, stopWithinMs: 5_000 }).finally(() => {
+    for (const [name, value] of Object.entries(kept)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const results = [...shared, ...saved, ...hub, ...actions, ...notes, ...persona, ...web];
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;
 } catch (error) {

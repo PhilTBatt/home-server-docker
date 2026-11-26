@@ -420,3 +420,44 @@ test("the time and the date are said in London's, the date with its day of the w
   const endings = (days: number[]) => days.map((day) => clockReply("date", new Date(Date.UTC(2026, 0, day, 12))).say.replace(/^It's \w+ the (\w+) of January\.$/, "$1"));
   assert.deepEqual(endings([1, 2, 3, 4, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 30, 31]), ["1st", "2nd", "3rd", "4th", "10th", "11th", "12th", "13th", "14th", "20th", "21st", "22nd", "23rd", "24th", "30th", "31st"]);
 });
+
+test("with look-ups on, look up and its kin at the start of what he said are a code word carrying the rest as the question", () => {
+  const asked = (said: string) => codeWordIn(said, false, true);
+  assert.deepEqual(asked("Look up the latest Node version."), { kind: "look up", text: "the latest Node version." });
+  assert.deepEqual(asked("Hey Jarvis, look up: when does the town market open?"), { kind: "look up", text: "when does the town market open?" });
+  assert.deepEqual(asked("Can you look up, the weather in Paris tomorrow"), { kind: "look up", text: "the weather in Paris tomorrow" });
+  assert.deepEqual(asked("Jarvis, please look up who wrote Dune"), { kind: "look up", text: "who wrote Dune" });
+  assert.deepEqual(asked("Search the web for Fastify 6 release notes"), { kind: "look up", text: "Fastify 6 release notes" });
+  assert.deepEqual(asked("search online for cheap SFF PCs"), { kind: "look up", text: "cheap SFF PCs" });
+  assert.deepEqual(asked("Search the internet for restic docs"), { kind: "look up", text: "restic docs" });
+  assert.deepEqual(asked("Google the height of Mont Blanc"), { kind: "look up", text: "the height of Mont Blanc" });
+  assert.deepEqual(asked("Look up."), { kind: "look up", text: "" });
+  assert.deepEqual(asked("look up"), { kind: "look up", text: "" });
+});
+
+test("with look-ups off none of those is a code word, so everything reaches Claude as before", () => {
+  for (const said of ["Look up the latest Node version.", "Search the web for Fastify 6", "Google the height of Mont Blanc", "look up"]) {
+    assert.equal(codeWordIn(said), null, said);
+    assert.equal(codeWordIn(said, true), null, said);
+    assert.equal(codeWordIn(said, true, false), null, said);
+  }
+});
+
+test("a look-up phrase that isn't at the start, or is part of another word, isn't a code word", () => {
+  const asked = (said: string) => codeWordIn(said, false, true);
+  for (const said of ["Could I look up something later?", "I'll google it myself", "Lookup tables are fast", "Looking up the docs now", "Google's new phone looks good", "What does look up mean?", "Search for my keys", "Search the website for it", "I am going out. Look up the weather there.", "Hmm. Look up the weather."]) assert.equal(asked(said), null, said);
+});
+
+test("asking to look up his own things goes to Claude, not to the web", () => {
+  const asked = (said: string) => codeWordIn(said, false, true);
+  for (const said of ["Look up in my notes what I said about restic", "Look up in the brain what the plan is", "Look up from my memory the server plan", "Look up my train times", "Look up My notes on Jarvis", "Look up on the hub what's downloading", "Google my name"]) assert.equal(asked(said), null, said);
+  assert.deepEqual(asked("Look up myths about sleep"), { kind: "look up", text: "myths about sleep" });
+  assert.deepEqual(asked("Look up in the news what happened today"), { kind: "look up", text: "in the news what happened today" });
+});
+
+test("look up doesn't take anything away from the code words that were there before", () => {
+  assert.deepEqual(codeWordIn("Note this: look up the bins rota", false, true), { kind: "note", text: "look up the bins rota" });
+  assert.deepEqual(codeWordIn("What time is it?", true, true), { kind: "time" });
+  assert.deepEqual(codeWordIn("Find my phone", false, true), { kind: "phone" });
+  assert.deepEqual(codeWordIn("Never mind", false, true), { kind: "never mind" });
+});

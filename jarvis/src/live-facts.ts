@@ -1,4 +1,5 @@
 import type { EarsMode, VoiceMode } from "./config.js";
+import type { WebMode } from "./look-up.js";
 
 export type FactsInput = {
   voice: VoiceMode;
@@ -10,6 +11,7 @@ export type FactsInput = {
   trainAlerts: boolean;
   brainQuestions: boolean;
   clock: boolean;
+  web: WebMode;
 };
 
 const voiceNames: Record<Exclude<VoiceMode, "off">, string> = { kokoro: "Kokoro", piper: "Piper" };
@@ -31,6 +33,7 @@ export function liveFacts(input: FactsInput): string {
   }
   if (input.trainAlerts) facts.push(`When the hub finds a change to his morning trains, your own code ${input.voice === "off" ? "shows it on screen" : "says it aloud"} once you're quiet. You don't see what it says, so if he asks about it, tell him to ${input.ears === "off" ? "check his phone, where the hub sends it too" : "say train times, or check his phone"}.`);
   if (input.brainQuestions) facts.push(`When he types /questions${input.ears === "off" ? "" : " or says brain questions or any questions for me"}, your own code asks you to find up to two gaps or suspected mistakes in his brain, in a fixed format, then asks him them one at a time and files his answers in his brain's inbox itself. You never write to his brain, and you never raise brain questions unless he asks that way.`);
+  if (input.web !== "off") facts.push(`When he types /lookup and a question${input.ears === "off" ? "" : ", or starts what he says out loud with look up and a question"}, your own code hands the question to a separate helper that searches the web and ${input.voice === "off" ? "shows" : "reads"} him the answer. You never see the question or the answer, and you can't look anything up yourself: if he asks you for something that needs the web, tell him to ask that way.`);
   facts.push("You can't run commands, change files, browse the web, or set reminders or timers.");
   return facts.join(" ");
 }

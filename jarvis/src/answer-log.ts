@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import type { ChatMode, Engine, HubActionsMode, HubToolsMode, LengthHints, LiveFactsMode, SessionNotesMode, SpeechBundleMode, SpeechStart, SpeechStop, SpokenStyleMode, ThinkingHistory, VoiceMode } from "./config.js";
 import type { Ender } from "./ears-client.js";
+import type { LookUpNumbers } from "./look-up-log.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Answer } from "./timing.js";
 
@@ -54,11 +55,14 @@ export type SpeechLine = {
   tooLong: boolean;
 };
 
+export type LookUpLogLine = LookUpNumbers & { v: number; kind: "look-up"; at: string; chat: string; engine: Engine; voice: VoiceMode };
+
 export type AnswerLog = {
   record: (outcome: Outcome) => Promise<void>;
   rate: (rating: Rating) => Promise<RateResult>;
   newChat: (lastRequestTokens: number | null) => Promise<void>;
   speech: (report: Promise<SpeechReport>) => Promise<void>;
+  lookUp: (numbers: LookUpNumbers) => Promise<void>;
 };
 
 export type LogContext = {
@@ -227,7 +231,7 @@ export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): Answer
   let broken = false;
   let costBefore = deps.costSoFar();
 
-  async function write(line: LogLine | RatingLine | NewChatLine | SpeechLine): Promise<boolean> {
+  async function write(line: LogLine | RatingLine | NewChatLine | SpeechLine | LookUpLogLine): Promise<boolean> {
     try {
       await deps.append(`${JSON.stringify(line)}\n`);
       return true;
@@ -264,6 +268,10 @@ export function startAnswerLog(context: LogContext, deps: AnswerLogDeps): Answer
       const said = await report;
       if (broken || question === null) return;
       await write(speechLine(deps.chat, question, deps.now(), said));
+    },
+    async lookUp(numbers) {
+      if (broken) return;
+      await write({ v: logVersion, kind: "look-up", at: deps.now().toISOString(), chat: deps.chat, engine: context.engine, voice: context.voice, ...numbers });
     },
   };
 }

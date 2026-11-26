@@ -1,8 +1,9 @@
-import { logVersion, type LogLine, type NewChatLine, type Rating, type RatingLine, type SpeechLine } from "./answer-log.js";
+import { logVersion, type LogLine, type LookUpLogLine, type NewChatLine, type Rating, type RatingLine, type SpeechLine } from "./answer-log.js";
 import { chatModes, engines, hubActionsModes, hubToolsModes, kokoroSpeeds, lengthHintModes, liveFactsModes, personaNamePattern, sessionNotesModes, speechBundleModes, speechStarts, speechStops, spokenStyleModes, thinkingHistories, voiceModes, type ChatMode, type Engine, type HubActionsMode, type HubToolsMode, type LengthHints, type LiveFactsMode, type SessionNotesMode, type SpeechBundleMode, type SpeechStart, type SpeechStop, type SpokenStyleMode, type ThinkingHistory, type VoiceMode } from "./config.js";
+import { isLookUpLine, lookUpReport } from "./look-up-report.js";
 import { seconds, summarise } from "./timing.js";
 
-export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; speech?: SpeechLine[]; skipped: number };
+export type ReadLog = { lines: LogLine[]; ratings?: RatingLine[]; newChats?: NewChatLine[]; speech?: SpeechLine[]; lookUps?: LookUpLogLine[]; skipped: number };
 
 export type Group = {
   label: string;
@@ -145,6 +146,7 @@ export function readLog(text: string): ReadLog {
   const ratings: RatingLine[] = [];
   const newChats: NewChatLine[] = [];
   const speech: SpeechLine[] = [];
+  const lookUps: LookUpLogLine[] = [];
   let skipped = 0;
   for (const raw of text.split("\n")) {
     if (raw.trim() === "") continue;
@@ -158,10 +160,11 @@ export function readLog(text: string): ReadLog {
     if (isRatingLine(parsed)) ratings.push(parsed);
     else if (isNewChatLine(parsed)) newChats.push(parsed);
     else if (isSpeechLine(parsed)) speech.push(parsed);
+    else if (isLookUpLine(parsed)) lookUps.push(parsed);
     else if (isLogLine(parsed)) lines.push(parsed);
     else skipped++;
   }
-  return { lines, ratings, newChats, speech, skipped };
+  return { lines, ratings, newChats, speech, lookUps, skipped };
 }
 
 function settingName(engine: Engine, thinking: ThinkingHistory | null): string {
@@ -481,12 +484,14 @@ function failureLines(groups: Group[]): string[] {
   });
 }
 
-export function compareReport({ lines, ratings = [], newChats = [], speech = [], skipped }: ReadLog): string {
+export function compareReport({ lines, ratings = [], newChats = [], speech = [], lookUps = [], skipped }: ReadLog): string {
   const out: string[] = [];
+  const looked = lookUpReport(lookUps, table);
   const skippedNote = `${plural(skipped, "line")} couldn't be read and ${skipped === 1 ? "was" : "were"} left out.`;
   if (lines.length === 0) {
     out.push("No answers logged yet. Set JARVIS_LOG=on, chat for a while, then run this again.");
     if (skipped > 0) out.push(skippedNote);
+    if (looked.length > 0) out.push("", "Look-ups:", ...looked);
     return `${out.join("\n")}\n`;
   }
   const days = lines.map((line) => line.at.slice(0, 10)).sort();
@@ -524,5 +529,6 @@ export function compareReport({ lines, ratings = [], newChats = [], speech = [],
   const failures = failureLines(groups);
   if (failures.length > 0) out.push("", "Failures:", ...failures);
   out.push("", "Medians and averages leave out failed questions; the total cost includes them. Costs are estimates: the Agent SDK's own (apart from a resumed chat's first answer), and the plain API's from list prices.");
+  if (looked.length > 0) out.push("", "Look-ups:", ...looked);
   return `${out.join("\n")}\n`;
 }

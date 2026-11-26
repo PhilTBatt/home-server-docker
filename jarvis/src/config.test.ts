@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, web: "off", webToken: null, webLog: false, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, web: "off", webToken: null, webLog: false, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -543,4 +543,33 @@ test("JARVIS_CLOCK is off unless it's set to on, and anything else stops Jarvis 
   for (const value of [undefined, "", "  ", "off", " off "]) assert.equal(readConfig({ ...base, JARVIS_CLOCK: value }).clock, false, JSON.stringify(value));
   assert.equal(readConfig({ ...base, JARVIS_CLOCK: " on " }).clock, true);
   for (const value of ["yes", "On", "true", "1", "note"]) assert.throws(() => readConfig({ ...base, JARVIS_CLOCK: value }), { message: `JARVIS_CLOCK must be on or off, not "${value}"` });
+});
+
+test("JARVIS_WEB is off unless it's set to ask, and anything else stops Jarvis saying what it must be", () => {
+  for (const value of [undefined, "", "  ", "off", " off "]) assert.deepEqual([readConfig({ ...base, JARVIS_WEB: value }).web, readConfig({ ...base, JARVIS_WEB: value }).webToken], ["off", null], JSON.stringify(value));
+  assert.equal(readConfig({ ...base, JARVIS_WEB: " ask ", JARVIS_WEB_TOKEN: "plan-token" }).web, "ask");
+  for (const value of ["on", "Ask", "yes", "always", "auto"]) assert.throws(() => readConfig({ ...base, JARVIS_WEB: value, JARVIS_WEB_TOKEN: "plan-token" }), { message: `JARVIS_WEB must be off or ask, not "${value}"` });
+});
+
+test("look-ups need the plan token, alone on its line, and an error about it never repeats it", () => {
+  for (const token of [undefined, "", "   "]) assert.throws(() => readConfig({ ...base, JARVIS_WEB: "ask", JARVIS_WEB_TOKEN: token }), { message: "Missing setting: JARVIS_WEB_TOKEN (the token claude setup-token prints), which look-ups need" });
+  assert.equal(readConfig({ ...base, JARVIS_WEB: "ask", JARVIS_WEB_TOKEN: "  plan-token\n" }).webToken, "plan-token");
+  for (const token of ["plan token", "plan\ttoken", "export TOKEN=plan-token extra"]) {
+    assert.throws(
+      () => readConfig({ ...base, JARVIS_WEB: "ask", JARVIS_WEB_TOKEN: token }),
+      (error: Error) => error.message === "JARVIS_WEB_TOKEN must be the token alone on one line, with no spaces in it" && !error.message.includes("plan"),
+    );
+  }
+});
+
+test("with look-ups off the token isn't needed, isn't checked and isn't kept", () => {
+  assert.equal(readConfig({ ...base }).webToken, null);
+  assert.equal(readConfig({ ...base, JARVIS_WEB_TOKEN: "plan-token" }).webToken, null);
+  assert.equal(readConfig({ ...base, JARVIS_WEB: "off", JARVIS_WEB_TOKEN: "has spaces in it" }).webToken, null);
+});
+
+test("JARVIS_WEB_LOG is off unless it's set to on, and anything else stops Jarvis saying what it must be", () => {
+  for (const value of [undefined, "", "  ", "off", " off "]) assert.equal(readConfig({ ...base, JARVIS_WEB_LOG: value }).webLog, false, JSON.stringify(value));
+  assert.equal(readConfig({ ...base, JARVIS_WEB_LOG: " on " }).webLog, true);
+  for (const value of ["yes", "On", "true", "1", "words"]) assert.throws(() => readConfig({ ...base, JARVIS_WEB_LOG: value }), { message: `JARVIS_WEB_LOG must be on or off, not "${value}"` });
 });

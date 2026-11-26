@@ -50,8 +50,8 @@ test("reading the log keeps good lines and counts the rest as skipped", () => {
 });
 
 test("reading an empty log finds nothing and skips nothing", () => {
-  assert.deepEqual(readLog(""), { lines: [], ratings: [], newChats: [], speech: [], skipped: 0 });
-  assert.deepEqual(readLog("\n\n"), { lines: [], ratings: [], newChats: [], speech: [], skipped: 0 });
+  assert.deepEqual(readLog(""), { lines: [], ratings: [], newChats: [], speech: [], lookUps: [], skipped: 0 });
+  assert.deepEqual(readLog("\n\n"), { lines: [], ratings: [], newChats: [], speech: [], lookUps: [], skipped: 0 });
 });
 
 test("a line is only trusted if every field has the right shape", () => {

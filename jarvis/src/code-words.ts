@@ -1,10 +1,12 @@
 import { hubApiUrl } from "./hub-tools.js";
 
-export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" } | { kind: "questions" } | { kind: "time" } | { kind: "date" };
+export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" } | { kind: "questions" } | { kind: "time" } | { kind: "date" } | { kind: "look up"; text: string };
 
 const address = /^\s*(?:(?:hey|hi|ok|okay)\b[\s,.!?]*)?(?:\S*vis\b[\s,.!?]*)?/i;
 const askingWords = "can you|could you|would you|will you|can u|please|just|jarvis";
 const noteStart = new RegExp(`^(?:(?:${askingWords})[\\s,]+)*(?:note this(?: down)?|(?:make|take) a note(?: of this| of that| of it)?)(?: for me)?(?=[\\s,.:;!?\\u2013\\u2014\\u2026]|$)[\\s,.:;!?\\u2013\\u2014\\u2026-]*`, "i");
+const lookUpStart = new RegExp(`^(?:(?:${askingWords})[\\s,]+)*(?:look up|search (?:the web|the internet|online) for|google)(?=[\\s,.:;!?\\u2013\\u2014\\u2026]|$)[\\s,.:;!?\\u2013\\u2014\\u2026-]*`, "i");
+const ownThings = /^(?:(?:in|from|through|on) (?:the|my|your) (?:brain|notes?|memory|files?|server|hub)|my)\b/i;
 
 function plainWords(text: string): string {
   return text.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[^a-z0-9' ]+/g, " ").replace(/ {2,}/g, " ").trim();
@@ -33,10 +35,15 @@ export const trainWords = ["train times", "train time", "trains", "next train", 
 export const timeWords = ["what time is it", "what time's it", "what's the time", "what is the time", "tell me the time", "tell me what time it is", "do you know the time", "do you know what time it is"];
 export const dateWords = ["what's the date", "what is the date", "what's the date today", "what is the date today", "what's today's date", "what is today's date", "tell me the date", "tell me today's date", "what day is it", "what day is it today", "what day's it", "tell me what day it is", "do you know what day it is"];
 
-function codeWordAlone(said: string, clock: boolean): CodeWord | null {
+function codeWordAlone(said: string, clock: boolean, web: boolean): CodeWord | null {
   const text = said.replace(/[\u2018\u2019]/g, "'").replace(address, "");
   const note = noteStart.exec(text);
   if (note !== null) return { kind: "note", text: text.slice(note[0].length).trim() };
+  const lookUp = web ? lookUpStart.exec(text) : null;
+  if (lookUp !== null) {
+    const asked = text.slice(lookUp[0].length).trim();
+    if (!ownThings.test(asked)) return { kind: "look up", text: asked };
+  }
   const words = trimmed(text);
   const request = asked(words);
   if (phoneWords.includes(request)) return { kind: "phone" };
@@ -56,11 +63,11 @@ export function lastSentenceOf(said: string): string | null {
   return sentences.length > 1 ? sentences[sentences.length - 1] : null;
 }
 
-export function codeWordIn(said: string, clock = false): CodeWord | null {
-  const whole = codeWordAlone(said, clock);
+export function codeWordIn(said: string, clock = false, web = false): CodeWord | null {
+  const whole = codeWordAlone(said, clock, web);
   if (whole !== null) return whole;
   const last = lastSentenceOf(said);
-  return last === null ? null : codeWordAlone(last, false);
+  return last === null ? null : codeWordAlone(last, false, false);
 }
 
 export type CodeWordReply = { say: string; note?: string };

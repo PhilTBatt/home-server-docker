@@ -6,6 +6,9 @@ import { clearLine, createInterface, cursorTo } from "node:readline";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
 import { answerLogFile, loggingNote, startAnswerLog } from "./answer-log.js";
+import { lookUpsLine, type LookedUp } from "./look-up.js";
+import { claudeHelper, findProgram, guardFile, noGuard, noProgram, planToken } from "./look-up-claude.js";
+import { lookUpLogFile, lookUpLoggingNote, lookUpNumbers, startLookUpLog, type LookUpMode } from "./look-up-log.js";
 import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.js";
 import { startApiSession } from "./api-session.js";
 import { brainFileExists, fileBrainQuestions } from "./brain-questions.js";
@@ -49,6 +52,7 @@ lines.on("SIGINT", () => {
 
 try {
   const config = readConfig(process.env);
+  delete process.env.JARVIS_WEB_TOKEN;
   if (!existsSync(`${brainDir}/index.md`)) throw new Error(`No brain at ${brainDir}. Mount ~/hub-memory there, read-only.`);
   const now = () => performance.now();
   const warn = (message: string) => process.stdout.write(`  (${printable(message)})\n`);
@@ -61,10 +65,22 @@ try {
   const persona = config.persona === null ? null : await readPersona(config.persona);
   let voice: VoiceMode = "off";
   let speaker: Speaker | null = null;
+  const webHelper = config.webToken === null ? undefined : claudeHelper({ model: chatModel, credential: { [planToken]: config.webToken } });
+  const lookUpLog =
+    webHelper === undefined || !config.webLog
+      ? undefined
+      : startLookUpLog({
+          append: async (text) => {
+            await mkdir(dirname(lookUpLogFile), { recursive: true });
+            await appendFile(lookUpLogFile, text);
+          },
+          now: () => new Date(),
+          warn,
+        });
   const open = (setup: ChatSetup) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts, brainQuestions: config.brainQuestions, clock: config.clock }) : null;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts, web: config.web, brainQuestions: config.brainQuestions, clock: config.clock }) : null;
     const instructions = (base: string) => systemFor(base, { persona, facts, spoken, notes: notes ?? [], clock: config.clock });
     const chat =
       config.engine === "api"
@@ -103,6 +119,17 @@ try {
       rate: log?.rate,
       recordNewChat: log?.newChat,
       recordSpeech: log?.speech,
+      web:
+        webHelper === undefined
+          ? undefined
+          : {
+              helper: webHelper,
+              now,
+              record: async (mode: LookUpMode, looked: LookedUp) => {
+                await lookUpLog?.(mode, "claude", looked);
+                await log?.lookUp(lookUpNumbers(mode, "claude", looked));
+              },
+            },
       failureHint: setup.failureHint ?? undefined,
       lengthNote: hints.newLengthNote(),
       knownSize: setup.knownSize,
@@ -134,6 +161,8 @@ try {
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
+  if (webHelper !== undefined) process.stdout.write(`${lookUpsLine((await findProgram()) === null ? noProgram : existsSync(guardFile) ? null : noGuard)}\n`);
+  if (lookUpLog !== undefined) process.stdout.write(`${lookUpLoggingNote}\n`);
   await runChat({
     ...first,
     lines: heard.lines,

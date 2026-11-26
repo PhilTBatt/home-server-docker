@@ -3,8 +3,9 @@ import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import { logLine, type LogContext, type Outcome } from "./answer-log.js";
 import type { AnswerSpeech } from "./answer-speech.js";
-import { buttonListeningNote, chatInputs, hushNotes, neverMindNote, droppedNote, lateNote, otherChatNote, turnNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
+import { buttonListeningNote, chatInputs, hushNotes, neverMindNote, droppedNote, lateNote, otherChatNote, turnNote, stoppedWatchingLine, followGapMs, followLimitNote, followListeningNote, followUpsInARow, heardPrefix, listeningNote, fromWebNote, lookUpFailedNote, lookingUpNote, lookUpsOffReply, lookUpStoppedNote, type WebDeps, noFollowHeardNote, noFollowUpNote, notSentNote, runChat, wakeListeningNote, wakeStatusNote, type ChatDeps, type ChatInput } from "./chat.js";
 import { earsStoppedWhy, hubOffNote } from "./code-words.js";
+import { foundNothing, lookingUp, lookUpFailed, noNumbers, noQuestion, type Helped, type Helper, type LookedUp } from "./look-up.js";
 import type { EarsAnswer } from "./ears-client.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Heard, HeardBy, Sent, Talk } from "./talk.js";
@@ -1079,4 +1080,189 @@ test("without the clock, asking the time or the date out loud goes to Claude exa
   assert.ok(!chat.output().includes("It's "), chat.output());
   chat.lines.close();
   await chat.running;
+});
+
+function fakeWeb() {
+  const seen: string[] = [];
+  const stopped: string[] = [];
+  const recorded: Array<[string, LookedUp]> = [];
+  const waiting = new Map<string, (helped: Helped) => void>();
+  let at = 0;
+  const found = (answer: string | null, error: string | null = null): Helped => ({ answer, error, numbers: { ...noNumbers, searches: 1 }, found: ["example.org", "example.com"], opened: [], refused: [] });
+  const helper: Helper = (question, signal) =>
+    new Promise((resolve) => {
+      seen.push(question);
+      waiting.set(question, resolve);
+      signal.addEventListener("abort", () => {
+        stopped.push(question);
+        resolve(found(null, "stopped"));
+      });
+    });
+  const web: WebDeps = { helper, now: () => at, record: async (mode, looked) => void recorded.push([mode, looked]) };
+  return { web, seen, stopped, recorded, found, answer: (question: string, helped: Helped, tookMs = 2_300) => ((at += tookMs), waiting.get(question)?.(helped)) };
+}
+
+test("a spoken look up is handed to the helper without asking Claude: he says he's looking, then the answer with where it came from, and it's recorded once", { timeout: 5_000 }, async () => {
+  const spoken: string[] = [];
+  const looking = fakeWeb();
+  const chat = followChat({}, 0, { speak: () => ({ ...fakeSpeech([]), text: (text: string) => void spoken.push(text) }), web: looking.web });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("Hey Jarvis, look up the latest Node version."), textMs: 900 });
+  await pause(20);
+  assert.ok(chat.output().includes(`${heardPrefix}Hey Jarvis, look up the latest Node version.\n  (${lookingUpNote("the latest Node version.")})\nJarvis: ${lookingUp}\n`), chat.output());
+  assert.deepEqual([looking.seen, spoken, looking.recorded], [["the latest Node version."], [lookingUp], []]);
+  looking.answer("the latest Node version.", looking.found("It is **26**, per [the Node site](https://nodejs.org)."));
+  await pause(20);
+  assert.ok(chat.output().includes("Jarvis: It is 26, per the Node site.\n  (from the web in 2.30 s: example.org, example.com)\n"), chat.output());
+  assert.deepEqual(spoken, [lookingUp, "It is 26, per the Node site."]);
+  assert.deepEqual(looking.recorded.map(([mode, looked]) => [mode, looked.ended, looked.question, looked.ms]), [["ask", "answered", "the latest Node version.", 2_300]]);
+  assert.deepEqual([chat.events.filter((event) => event.startsWith("ask")), chat.recorded, chat.asks, looking.stopped], [[], [], [], []]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("the chat stays free while a look-up runs: a typed question stops the look-up, is answered, and the late result is recorded but never said", { timeout: 5_000 }, async () => {
+  const looking = fakeWeb();
+  const chat = wakeChat({ "What's two plus two?": said("Four.") }, [], { web: looking.web });
+  chat.lines.push("/lookup the weather in Paris");
+  await pause(20);
+  assert.ok(chat.output().includes(`  (${lookingUpNote("the weather in Paris")})\nJarvis: ${lookingUp}\n`), chat.output());
+  chat.lines.push("What's two plus two?");
+  await pause(20);
+  assert.ok(chat.output().includes(`  (${lookUpStoppedNote})\nJarvis: Four.`), chat.output());
+  assert.deepEqual(looking.stopped, ["the weather in Paris"]);
+  await pause(20);
+  assert.deepEqual(looking.recorded.map(([mode, looked]) => [mode, looked.ended, looked.say]), [["ask", "stopped", null]]);
+  assert.ok(!chat.output().includes("from the web"), chat.output());
+  chat.lines.close();
+  await chat.running;
+});
+
+test("saying Hey Jarvis during a look-up stops it, and a rating or an empty line typed during one doesn't", { timeout: 5_000 }, async () => {
+  const looking = fakeWeb();
+  const chat = wakeChat({ "First question": said("First answer.") }, [], { web: looking.web });
+  chat.lines.push("First question");
+  await pause(20);
+  chat.lines.push("/lookup something slow");
+  await pause(20);
+  chat.lines.push("+");
+  await pause(20);
+  chat.lines.push("");
+  await pause(20);
+  chat.lines.push("   ");
+  await pause(20);
+  assert.deepEqual(looking.stopped, []);
+  assert.ok(!chat.output().includes(lookUpStoppedNote), chat.output());
+  chat.wake.push({ kind: "wake", id: 9 });
+  await pause(20);
+  assert.deepEqual(looking.stopped, ["something slow"]);
+  assert.ok(chat.output().includes(`  (${lookUpStoppedNote})\n`), chat.output());
+  chat.lines.close();
+  await chat.running;
+});
+
+test("a second look-up takes the place of the first, and only the second's answer is said", { timeout: 5_000 }, async () => {
+  const looking = fakeWeb();
+  const chat = wakeChat({}, [], { web: looking.web });
+  chat.lines.push("/lookup first thing");
+  await pause(20);
+  chat.lines.push("/LOOKUP   second thing  ");
+  await pause(20);
+  assert.deepEqual([looking.seen, looking.stopped], [["first thing", "second thing"], ["first thing"]]);
+  looking.answer("first thing", looking.found("The first answer."));
+  looking.answer("second thing", looking.found("The second answer."));
+  await pause(20);
+  assert.ok(chat.output().includes("Jarvis: The second answer.\n"), chat.output());
+  assert.ok(!chat.output().includes("The first answer."), chat.output());
+  assert.deepEqual(looking.recorded.map(([, looked]) => looked.ended).sort(), ["answered", "stopped"]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("the first look-up's late ending doesn't lose track of the second: typing still stops it, and its answer is never said", { timeout: 5_000 }, async () => {
+  const looking = fakeWeb();
+  const chat = wakeChat({ "What's two plus two?": said("Four.") }, [], { web: looking.web });
+  chat.lines.push("/lookup first thing");
+  await pause(20);
+  chat.lines.push("/lookup second thing");
+  await pause(20);
+  assert.deepEqual(looking.stopped, ["first thing"]);
+  chat.lines.push("What's two plus two?");
+  await pause(20);
+  assert.deepEqual(looking.stopped, ["first thing", "second thing"]);
+  looking.answer("second thing", looking.found("The second answer."));
+  await pause(20);
+  assert.ok(chat.output().includes("Jarvis: Four."), chat.output());
+  assert.ok(!chat.output().includes("The second answer."), chat.output());
+  assert.deepEqual(looking.recorded.map(([, looked]) => looked.ended), ["stopped", "stopped"]);
+  chat.lines.close();
+  await chat.running;
+});
+
+test("a look-up that fails gets a plain line with why underneath, one that finds nothing gets a plain line, neither gets a source note, and one with no question asks for one without starting", { timeout: 5_000 }, async () => {
+  const looking = fakeWeb();
+  const chat = wakeChat({}, [], { web: looking.web });
+  chat.lines.push("/lookup a thing");
+  await pause(20);
+  looking.answer("a thing", looking.found(null, "Claude Code ended without a result."));
+  await pause(20);
+  assert.ok(chat.output().includes(`Jarvis: ${lookUpFailed}\n  (look-up failed: Claude Code ended without a result.)\nYou: `), chat.output());
+  chat.lines.push("/lookup another thing");
+  await pause(20);
+  looking.answer("another thing", looking.found(""));
+  await pause(20);
+  assert.ok(chat.output().includes(`Jarvis: ${foundNothing}\nYou: `), chat.output());
+  chat.lines.push("/lookup");
+  await pause(20);
+  chat.lines.push("/lookup    ");
+  await pause(20);
+  assert.equal(chat.output().split(`Jarvis: ${noQuestion}\n`).length - 1, 2, chat.output());
+  assert.deepEqual(looking.seen, ["a thing", "another thing"]);
+  assert.ok(!chat.output().includes("from the web"), chat.output());
+  chat.lines.close();
+  await chat.running;
+});
+
+test("with look-ups off, look up said out loud goes to Claude like anything else and the typed command isn't one", { timeout: 5_000 }, async () => {
+  const chat = followChat({ "Look up the latest Node version.": said("I can't look things up.") });
+  chat.wake.push({ kind: "wake", id: 4 });
+  await settled();
+  chat.wake.push({ kind: "done", id: 4, answer: earsDone("Look up the latest Node version."), textMs: 900 });
+  await pause(20);
+  assert.ok(chat.output().includes("Jarvis: I can't look things up."), chat.output());
+  assert.deepEqual(chat.events.filter((event) => event.startsWith("ask")), ["ask Look up the latest Node version."]);
+  chat.lines.push("/lookup the weather");
+  await pause(20);
+  assert.ok(!chat.output().includes(lookingUp), chat.output());
+  assert.ok(!chat.output().includes(lookUpsOffReply.say), chat.output());
+  chat.lines.close();
+  await chat.running;
+});
+
+test("ending the chat during a look-up stops the helper and the chat closes cleanly", { timeout: 5_000 }, async () => {
+  const looking = fakeWeb();
+  const chat = wakeChat({}, [], { web: looking.web });
+  chat.lines.push("/lookup something slow");
+  await pause(20);
+  chat.lines.push("exit");
+  await chat.running;
+  assert.deepEqual(looking.stopped, ["something slow"]);
+  assert.ok(!chat.output().includes("from the web"), chat.output());
+});
+
+test("the note under a web answer names up to four sites, opened pages first, and just the time when there are none", () => {
+  const looked = (helped: Partial<Helped>): LookedUp => ({ ended: "answered", say: "x", question: "q", ms: 12_668, helped: { answer: "x", error: null, numbers: noNumbers, found: [], opened: [], refused: [], ...helped } });
+  assert.equal(fromWebNote(looked({ found: ["a.example", "b.example"], opened: ["b.example", "c.example"] })), "from the web in 12.67 s: b.example, c.example, a.example");
+  assert.equal(fromWebNote(looked({ found: ["1.example", "2.example", "3.example", "4.example", "5.example"] })), "from the web in 12.67 s: 1.example, 2.example, 3.example, 4.example");
+  assert.equal(fromWebNote(looked({})), "from the web in 12.67 s");
+  assert.equal(fromWebNote({ ended: "answered", say: "x", question: "q", ms: 900, helped: null }), "from the web in 0.90 s");
+});
+
+test("a failed look-up's note says why in the helper's own words, and no other ending gets one", () => {
+  const ended = (how: LookedUp["ended"], error: string | null): LookedUp => ({ ended: how, say: "x", question: "q", ms: 900, helped: { answer: null, error, numbers: noNumbers, found: [], opened: [], refused: [] } });
+  assert.equal(lookUpFailedNote(ended("failed", "Claude Code ended without a result. It exited with 1. Not logged in")), "look-up failed: Claude Code ended without a result. It exited with 1. Not logged in");
+  assert.equal(lookUpFailedNote(ended("failed", null)), undefined);
+  assert.equal(lookUpFailedNote({ ended: "failed", say: "x", question: "q", ms: 1, helped: null }), undefined);
+  for (const how of ["answered", "nothing", "timed out", "stopped"] as const) assert.equal(lookUpFailedNote(ended(how, "stopped")), undefined, how);
 });
