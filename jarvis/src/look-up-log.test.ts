@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { logVersion, startAnswerLog, type LogContext, type LookUpLogLine } from "./answer-log.js";
 import { compareReport, readLog, table } from "./comparison.js";
 import { noNumbers, type Helped, type LookedUp } from "./look-up.js";
@@ -27,7 +28,7 @@ test("a look-up that never reached the helper, or didn't end in an answer, has e
 });
 
 test("the look-up log lives in jarvis/data, and its note says what it keeps and how to clear it", () => {
-  assert.match(lookUpLogFile, /[\\/]jarvis[\\/]data[\\/]look-ups\.jsonl$/);
+  assert.equal(lookUpLogFile, fileURLToPath(new URL("../data/look-ups.jsonl", import.meta.url)));
   assert.match(lookUpLoggingNote, /question that was sent, the sites it used and what went wrong if it failed/);
   assert.match(lookUpLoggingNote, /never the answer/);
   assert.match(lookUpLoggingNote, /Delete the file to clear it/);
