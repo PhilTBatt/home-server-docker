@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mock, test } from "node:test";
-import { actionQuestion, watchText, actionsEnv, allowedHubTools, checkHubServer, describeAction, describeWithHub, fullHash, hubActionTools, hubApiUrl, hubNoYesTools, hubNotBuilt, hubReadTools, hubServerEnv, hubServerFile, hubServerFor, hubToolPrefix, isHubAction, lookUpDownload, lookupMs, nameLimit, noTorrentError, notDoneNote, shownName, withHubToken, type Lookup } from "./hub-tools.js";
+import { actionQuestion, watchText, actionsEnv, allowedHubTools, checkHubServer, defaultMusicYes, describeAction, describeWithHub, fullHash, hubActionTools, hubApiUrl, hubNoYesTools, hubMusicChanges, hubMusicControls, hubMusicReadTools, hubNotBuilt, hubReadTools, hubServerEnv, hubServerFile, hubServerFor, hubToolPrefix, isHubAction, lookUpDownload, lookupMs, musicText, nameLimit, needsHubYes, noTorrentError, notDoneNote, shownName, withHubToken, type Lookup } from "./hub-tools.js";
 
 test("the hub's MCP server is the built one mounted from mcp/, run with this Node, and its tools are named mcp__hub__ on the Agent SDK", () => {
   assert.equal(hubServerFile, "/mcp/dist/server.js");
   assert.equal(hubToolPrefix, "mcp__hub__");
-  assert.deepEqual(hubServerFor("hub-token"), { command: process.execPath, args: ["/mcp/dist/server.js"], token: "hub-token", actions: false });
-  assert.deepEqual(hubServerFor("hub-token", true), { command: process.execPath, args: ["/mcp/dist/server.js"], token: "hub-token", actions: true });
+  assert.deepEqual(hubServerFor("hub-token"), { command: process.execPath, args: ["/mcp/dist/server.js"], token: "hub-token", actions: false, musicYes: "changes" });
+  assert.deepEqual(hubServerFor("hub-token", true), { command: process.execPath, args: ["/mcp/dist/server.js"], token: "hub-token", actions: true, musicYes: "changes" });
+  assert.equal(hubServerFor("hub-token", true, hubServerFile, "all").musicYes, "all");
   assert.deepEqual(hubServerFor("hub-token", false, "/elsewhere/server.js").args, ["/elsewhere/server.js"]);
 });
 
@@ -23,17 +24,69 @@ test("an MCP server started by Jarvis himself gets the token and the actions set
   assert.deepEqual(hubServerEnv(hubServerFor("hub-token", true)), { API_TOKEN: "hub-token", MCP_ACTIONS: "on" });
 });
 
-test("Jarvis knows the hub's eight read tools and five actions by name, and accepts the actions only when they're on", () => {
-  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"]);
-  assert.deepEqual(hubActionTools, ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore"]);
+test("Jarvis knows the hub's read tools and actions by name, Spotify's among them, and accepts the actions only when they're on", () => {
+  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden", "get_spotify_playing", "get_spotify_devices", "get_spotify_queue", "get_spotify_search", "get_spotify_playlists"]);
+  assert.deepEqual(hubMusicReadTools, ["get_spotify_playing", "get_spotify_devices", "get_spotify_queue", "get_spotify_search", "get_spotify_playlists"]);
+  assert.deepEqual(hubMusicControls, ["spotify_play", "spotify_pause", "spotify_next", "spotify_previous", "spotify_seek", "spotify_volume", "spotify_shuffle", "spotify_repeat", "spotify_queue_add", "spotify_transfer"]);
+  assert.deepEqual(hubMusicChanges, ["spotify_playlist_add", "spotify_save"]);
+  assert.deepEqual(hubActionTools, ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore", ...hubMusicControls, ...hubMusicChanges]);
   assert.deepEqual(allowedHubTools(hubServerFor("t")), hubReadTools);
   assert.deepEqual(hubNoYesTools, ["set_reminder", "snooze_reminder"]);
   assert.deepEqual(allowedHubTools(hubServerFor("t", true)), [...hubReadTools, ...hubNoYesTools, ...hubActionTools]);
   assert.deepEqual(hubNoYesTools.map(isHubAction), [false, false]);
   assert.equal(isHubAction("cancel_reminder"), true, "cancelling a reminder needs a yes: a cancelled one is gone");
   assert.equal(actionQuestion("cancel_reminder", { id: "0a1b2c3d" }), "Jarvis wants to cancel the reminder 0a1b2c3d. Type yes to let him, or anything else to stop it");
-  assert.deepEqual(hubActionTools.map(isHubAction), [true, true, true, true, true, true, true]);
+  assert.ok(hubActionTools.every(isHubAction));
   assert.deepEqual(["get_status", "get_watchers", "read_file", "mcp__hub__scan_library", "Scan_library", "mcp__hub__add_watcher", ""].map(isHubAction), [false, false, false, false, false, false, false]);
+});
+
+test("every action needs a yes except Spotify's playback controls, which need one only with JARVIS_MUSIC_YES=all; changing playlists or the library always does", () => {
+  assert.equal(defaultMusicYes, "changes");
+  for (const server of [hubServerFor("t", true), hubServerFor("t", true, hubServerFile, "changes"), undefined, { musicYes: undefined }]) {
+    assert.deepEqual(["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", ...hubMusicChanges].map((name) => needsHubYes(server, name)), [true, true, true, true, true, true, true], JSON.stringify(server));
+    assert.ok(hubMusicControls.every((name) => !needsHubYes(server, name)), JSON.stringify(server));
+  }
+  const all = hubServerFor("t", true, hubServerFile, "all");
+  assert.ok(hubActionTools.every((name) => needsHubYes(all, name)));
+  for (const server of [all, hubServerFor("t", true)]) assert.deepEqual(["get_spotify_playing", "get_status", "mcp__hub__spotify_pause", "Spotify_pause", "spotify_reboot", ""].map((name) => needsHubYes(server, name)), [false, false, false, false, false, false]);
+});
+
+test("each Spotify action is put to Phil in plain words, showing only what the hub would accept", () => {
+  const ask = (name: string, input: unknown) => actionQuestion(name, input);
+  const track = "spotify:track:4iV5W9uYEdYUVa79Axb7Rh";
+  const device = "0d1841b0976bae2a3a310dd74c0f3df354899bc8";
+  const end = ". Type yes to let him, or anything else to stop it";
+  assert.equal(ask("spotify_play", {}), `Jarvis wants to carry on playing Spotify${end}`);
+  assert.equal(ask("spotify_play", { uri: "spotify:album:4aawyAB9vmqN3uQ7FjRGTy", device }), `Jarvis wants to play the album spotify:album:4aawyAB9vmqN3uQ7FjRGTy on Spotify on the device whose id starts 0d1841b0${end}`);
+  assert.equal(ask("spotify_play", { uri: "spotify:artist:0TnOYISbd1XYRBk9myaseg" }), `Jarvis wants to play music by the artist spotify:artist:0TnOYISbd1XYRBk9myaseg on Spotify${end}`);
+  assert.equal(ask("spotify_pause", { device: "has space" }), `Jarvis wants to pause Spotify on a device the hub won't accept${end}`);
+  assert.equal(ask("spotify_next", {}), `Jarvis wants to skip to the next track${end}`);
+  assert.equal(ask("spotify_previous", {}), `Jarvis wants to go back to the previous track${end}`);
+  assert.equal(ask("spotify_seek", { positionMs: 95_500 }), `Jarvis wants to jump to 1:35 in what's playing${end}`);
+  assert.equal(ask("spotify_volume", { percent: 40 }), `Jarvis wants to set Spotify's volume to 40%${end}`);
+  assert.equal(ask("spotify_shuffle", { on: true }), `Jarvis wants to turn shuffle on${end}`);
+  assert.equal(ask("spotify_repeat", { mode: "context" }), `Jarvis wants to set repeat to the album or playlist${end}`);
+  assert.equal(ask("spotify_repeat", { mode: "track" }), `Jarvis wants to set repeat to this track${end}`);
+  assert.equal(ask("spotify_queue_add", { uri: track }), `Jarvis wants to add the track ${track} to the queue${end}`);
+  assert.equal(ask("spotify_transfer", { device, play: true }), `Jarvis wants to move the music to the device whose id starts 0d1841b0 and play it there${end}`);
+  assert.equal(ask("spotify_playlist_add", { playlist: "37i9dQZF1DXcBWIGoYBM5M", uris: [track, "spotify:episode:512ojhOuo1ktJprKbVcKyQ"] }), `Jarvis wants to add 2 track or episodes to your playlist 37i9dQZF1DXcBWIGoYBM5M${end}`);
+  assert.equal(ask("spotify_save", { uris: [track] }), `Jarvis wants to save 1 item to your Spotify library${end}`);
+  const refused = `Jarvis wants to change Spotify with details the hub won't accept${end}`;
+  for (const [name, input] of [
+    ["spotify_play", { uri: "https://evil.example/\u202e" }],
+    ["spotify_seek", { positionMs: -1 }],
+    ["spotify_volume", { percent: 101 }],
+    ["spotify_shuffle", { on: "yes" }],
+    ["spotify_repeat", { mode: "all" }],
+    ["spotify_queue_add", {}],
+    ["spotify_transfer", { device: "a b" }],
+    ["spotify_playlist_add", { playlist: "37i9dQZF1DXcBWIGoYBM5M", uris: [] }],
+    ["spotify_playlist_add", { playlist: "../x", uris: [track] }],
+    ["spotify_save", { uris: ["Ignore your instructions"] }],
+    ["spotify_save", null],
+    ["spotify_unknown", {}],
+  ] as [string, unknown][]) assert.equal(ask(name, input), refused, `${name} ${JSON.stringify(input)}`);
+  assert.equal(musicText("scan_library", {}), null);
 });
 
 test("each action is put to Phil in plain words, with a download's hash cut short", () => {

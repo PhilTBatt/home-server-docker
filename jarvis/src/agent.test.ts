@@ -3,7 +3,7 @@ import { lookUpServer } from "./look-up-sdk.js";
 import { createLookUpTool } from "./look-up-tool.js";
 import { test } from "node:test";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { actionHook, actionHookSeconds, agentOptions, closedMessage, createInputQueue, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
+import { actionHook, actionHookSeconds, agentOptions, closedMessage, createInputQueue, noYesNeeded, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
 import { hubProblemNote, isHubAction, notDoneNote } from "./hub-tools.js";
 
 function tick() {
@@ -829,7 +829,7 @@ const hub = { command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], tok
 test("with the hub's tools, the engine starts the hub's MCP server read-only, loads its tools up front, and may use only its eight read tools, by name, with nothing asked; the built-in tools don't change", () => {
   const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub });
   assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "off" }, alwaysLoad: true } });
-  assert.deepEqual(options.allowedTools, ["mcp__hub__get_status", "mcp__hub__get_alerts", "mcp__hub__get_features", "mcp__hub__get_downloads", "mcp__hub__get_library", "mcp__hub__get_wifi_reconnects", "mcp__hub__get_backup", "mcp__hub__get_watchers", "mcp__hub__get_expiries", "mcp__hub__get_doctor", "mcp__hub__get_mode", "mcp__hub__get_reminders", "mcp__hub__get_chore", "mcp__hub__get_sessions", "mcp__hub__get_deal_status", "mcp__hub__get_deal_searches", "mcp__hub__get_catch_up", "mcp__hub__get_deal_matches", "mcp__hub__get_deal_listing", "mcp__hub__get_deal_hidden"]);
+  assert.deepEqual(options.allowedTools, ["mcp__hub__get_status", "mcp__hub__get_alerts", "mcp__hub__get_features", "mcp__hub__get_downloads", "mcp__hub__get_library", "mcp__hub__get_wifi_reconnects", "mcp__hub__get_backup", "mcp__hub__get_watchers", "mcp__hub__get_expiries", "mcp__hub__get_doctor", "mcp__hub__get_mode", "mcp__hub__get_reminders", "mcp__hub__get_chore", "mcp__hub__get_sessions", "mcp__hub__get_deal_status", "mcp__hub__get_deal_searches", "mcp__hub__get_catch_up", "mcp__hub__get_deal_matches", "mcp__hub__get_deal_listing", "mcp__hub__get_deal_hidden", "mcp__hub__get_spotify_playing", "mcp__hub__get_spotify_devices", "mcp__hub__get_spotify_queue", "mcp__hub__get_spotify_search", "mcp__hub__get_spotify_playlists"]);
   assert.equal("hooks" in options, false);
   assert.deepEqual(options.tools, ["Read", "Grep", "Glob"]);
   assert.equal(options.strictMcpConfig, true);
@@ -917,7 +917,7 @@ test("with the hub's actions on, the MCP server gets them, the read tools and th
   const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: {}, hub: actionsHub });
   assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "on" }, alwaysLoad: true } });
   assert.deepEqual(options.allowedTools?.filter((tool) => !tool.startsWith("mcp__hub__get_")), ["mcp__hub__set_reminder", "mcp__hub__snooze_reminder"]);
-  assert.equal(options.allowedTools?.length, 22);
+  assert.equal(options.allowedTools?.length, 27);
   assert.ok(!options.allowedTools?.some((tool) => isHubAction(tool.replace("mcp__hub__", ""))), "no action that needs a yes is allowed by name");
   const matchers = options.hooks?.PreToolUse ?? [];
   assert.equal(matchers.length, 1);
@@ -942,6 +942,30 @@ test("the hook asks only about the hub's actions, by their short name and with w
   }
   const failing = actionHook(async () => Promise.reject(new Error("terminal gone")));
   assert.equal(((await failing(preToolUse("mcp__hub__scan_library"), "toolu_4", hookOptions)) as { hookSpecificOutput: { permissionDecision: string } }).hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("the hook lets Spotify's playback controls run without asking, unless JARVIS_MUSIC_YES=all, and always asks before changing playlists or the library", async () => {
+  for (const musicYes of [undefined, "changes", "all"] as const) {
+    const asked: string[] = [];
+    const hook = actionHook(async (tool) => {
+      asked.push(tool);
+      return false;
+    }, musicYes === undefined ? undefined : { musicYes });
+    const decide = async (tool: string) => ((await hook(preToolUse(`mcp__hub__${tool}`), "toolu_1", hookOptions)) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string } }).hookSpecificOutput;
+    for (const tool of ["spotify_pause", "spotify_play", "spotify_volume", "spotify_transfer"]) assert.deepEqual(await decide(tool), musicYes === "all" ? { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: notDoneNote } : { hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: noYesNeeded }, `${musicYes} ${tool}`);
+    for (const tool of ["spotify_playlist_add", "spotify_save", "scan_library"]) assert.equal((await decide(tool)).permissionDecision, "deny", `${musicYes} ${tool}`);
+    assert.deepEqual(asked, musicYes === "all" ? ["spotify_pause", "spotify_play", "spotify_volume", "spotify_transfer", "spotify_playlist_add", "spotify_save", "scan_library"] : ["spotify_playlist_add", "spotify_save", "scan_library"]);
+  }
+});
+
+test("the session's hook follows the hub's JARVIS_MUSIC_YES", async () => {
+  for (const musicYes of ["changes", "all"] as const) {
+    const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: {}, hub: { ...actionsHub, musicYes } }, async () => false);
+    const hook = options.hooks?.PreToolUse?.[0].hooks[0];
+    assert.ok(hook !== undefined);
+    const decision = ((await hook(preToolUse("mcp__hub__spotify_next"), "toolu_1", hookOptions)) as { hookSpecificOutput: { permissionDecision: string } }).hookSpecificOutput.permissionDecision;
+    assert.equal(decision, musicYes === "all" ? "deny" : "allow");
+  }
 });
 
 test("the session's hook asks whoever is waiting on the current question, and refuses when no question is waiting or it can't ask", async () => {
@@ -986,8 +1010,8 @@ test("with the hub's tools and the look-up tool, both servers are there, the hub
   const both = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub, web });
   assert.deepEqual(Object.keys(both.mcpServers ?? {}), ["hub", "web"]);
   assert.deepEqual(both.mcpServers?.hub, agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub }).mcpServers?.hub);
-  assert.deepEqual(both.allowedTools?.slice(-2), ["mcp__hub__get_deal_hidden", "mcp__web__look_up"]);
-  assert.equal(both.allowedTools?.length, 21);
+  assert.deepEqual(both.allowedTools?.slice(-2), ["mcp__hub__get_spotify_playlists", "mcp__web__look_up"]);
+  assert.equal(both.allowedTools?.length, 26);
   assert.equal("hooks" in both, false);
   const acting = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub: { ...hub, actions: true }, web });
   assert.equal(acting.hooks?.PreToolUse?.length, 1);

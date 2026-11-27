@@ -204,6 +204,20 @@ test("only the hub tools Jarvis knows are taken: the read tools, plus the action
   assert.deepEqual(notes, [hubProblemNote("no tools listed")]);
 });
 
+test("on the plain engine Spotify's playback controls need no yes unless JARVIS_MUSIC_YES=all, and its playlist and library changes always do", async () => {
+  const listed = ["get_spotify_playing", "spotify_pause", "spotify_volume", "spotify_playlist_add", "spotify_save"].map((name) => ({ name, inputSchema: { type: "object" } }));
+  const lister = fakeConnection({ listTools: async () => ({ tools: listed }) });
+  const changes = await startHubTools({ ...server, actions: true, musicYes: "changes" }, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(changes?.definitions.map((tool) => tool.name), ["get_spotify_playing", "spotify_pause", "spotify_volume", "spotify_playlist_add", "spotify_save"]);
+  assert.deepEqual(listed.map(({ name }) => changes?.needsYes?.(name)), [false, false, false, true, true]);
+  const unset = await startHubTools({ ...server, actions: true }, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(listed.map(({ name }) => unset?.needsYes?.(name)), [false, false, false, true, true]);
+  const all = await startHubTools({ ...server, actions: true, musicYes: "all" }, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(listed.map(({ name }) => all?.needsYes?.(name)), [false, true, true, true, true]);
+  const readOnly = await startHubTools({ ...server, musicYes: "changes" }, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(readOnly?.definitions.map((tool) => tool.name), ["get_spotify_playing"]);
+});
+
 test("combined with the brain tools, only the hub's own actions need a yes, and a brain tool never does", () => {
   const brain: BrainTools = { definitions: [{ name: "read_file", description: "Read.", input_schema: { type: "object" } }], run: async () => ({ content: "", isError: false }) };
   const hub = {

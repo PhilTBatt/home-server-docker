@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { BrainTools } from "./brain-tools.js";
 import type { ToolDefinition } from "./direct.js";
-import { allowedHubTools, hubProblemNote, hubServerEnv, isHubAction, type HubServer } from "./hub-tools.js";
+import { allowedHubTools, hubProblemNote, hubServerEnv, needsHubYes, type HubServer } from "./hub-tools.js";
 import { withTimeout } from "./run.js";
 
 export const hubStartMs = 10_000;
@@ -68,7 +68,7 @@ export async function startHubTools(server: HubServer, warn: (note: string) => v
           return { content: `The hub's tool didn't work: ${reason(error)}`, isError: true };
         }
       },
-      needsYes: (name) => isHubAction(name),
+      needsYes: (name) => needsHubYes(server, name),
       close: () => open.close(),
     };
   } catch {

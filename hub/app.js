@@ -89,6 +89,7 @@
  * @property {string | null} until
  * @property {string} by
  * @property {number} held
+ * @property {boolean} spotify
  */
 
 /**
@@ -303,7 +304,7 @@
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify" };
 
 /**
  * @param {string} id

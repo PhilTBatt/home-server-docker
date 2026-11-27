@@ -14,7 +14,19 @@
       "mcp__hub__run_chore",
       "mcp__hub__set_reminder",
       "mcp__hub__cancel_reminder",
-      "mcp__hub__snooze_reminder"
+      "mcp__hub__snooze_reminder",
+      "mcp__hub__spotify_play",
+      "mcp__hub__spotify_pause",
+      "mcp__hub__spotify_next",
+      "mcp__hub__spotify_previous",
+      "mcp__hub__spotify_seek",
+      "mcp__hub__spotify_volume",
+      "mcp__hub__spotify_shuffle",
+      "mcp__hub__spotify_repeat",
+      "mcp__hub__spotify_queue_add",
+      "mcp__hub__spotify_transfer",
+      "mcp__hub__spotify_playlist_add",
+      "mcp__hub__spotify_save"
     ],
     "allow": [
       "mcp__hub__get_status",
@@ -61,7 +73,12 @@
       "WebFetch(domain:www.mrmemory.co.uk)",
       "WebFetch(domain:jellyfin.org)",
       "WebFetch(domain:linux-hardware.org)",
-      "WebFetch(domain:www.servethehome.com)"
+      "WebFetch(domain:www.servethehome.com)",
+      "mcp__hub__get_spotify_playing",
+      "mcp__hub__get_spotify_devices",
+      "mcp__hub__get_spotify_queue",
+      "mcp__hub__get_spotify_search",
+      "mcp__hub__get_spotify_playlists"
     ],
     "deny": [
       "Read(**/.env)",
@@ -85,7 +102,8 @@
       "WebFetch(domain:*.ebay.co.uk)",
       "WebFetch(domain:ebay.com)",
       "WebFetch(domain:www.ebay.com)",
-      "WebFetch(domain:m.ebay.com)"
+      "WebFetch(domain:m.ebay.com)",
+      "Read(./spotify/**)"
     ]
   },
   "hooks": {

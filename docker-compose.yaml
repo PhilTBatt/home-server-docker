@@ -220,6 +220,11 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ./spotify
+        target: /spotify
+        bind:
+          create_host_path: false
     networks:
       - default
       - jarvis

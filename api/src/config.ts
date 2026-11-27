@@ -3,6 +3,7 @@ import { safeBoardUrl, type TrainSettings } from "./modules/trains/board.js";
 import { detailedBoardUrl } from "./modules/trains/journeys.js";
 import { mostRepos, readRepos, validToken } from "./modules/catchup/github.js";
 import { latestBedtimeFrom, latestBedtimeUntil, type ModeSettings } from "./modules/modes/modes.js";
+import { readRedirectUri, validClientId, type SpotifySettings } from "./modules/spotify/auth.js";
 
 export type Features = {
   alerts: boolean;
@@ -21,6 +22,7 @@ export type Features = {
   reminders: boolean;
   chores: boolean;
   sessions: boolean;
+  spotify: boolean;
 };
 
 export type DealSettings = {
@@ -53,6 +55,7 @@ export type Config = {
   catchUp: CatchUpSettings;
   modes: ModeSettings;
   phone: PhoneSettings;
+  spotify: SpotifySettings;
   features: Features;
 };
 
@@ -73,6 +76,7 @@ const featureLabels: Record<keyof Features, string> = {
   reminders: "reminders",
   chores: "dev chores",
   sessions: "sessions",
+  spotify: "Spotify",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -123,6 +127,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     reminders: readSwitch("REMINDERS"),
     chores: readSwitch("CHORES"),
     sessions: readSwitch("SESSIONS"),
+    spotify: readSwitch("SPOTIFY"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers || features.reminders);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
@@ -194,6 +199,12 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const seconds = /^[1-9]\d{1,2}$/.test(secondsText) && Number(secondsText) >= 10 && Number(secondsText) <= 120 ? Number(secondsText) : null;
   if (secondsText !== "" && seconds === null) notAllowed.push("FIND_PHONE_SECONDS (a whole number of seconds from 10 to 120, like 30)");
   const phone: PhoneSettings = { ring, seconds: seconds ?? 30 };
+  const spotifyClientId = read("SPOTIFY_CLIENT_ID", features.spotify);
+  if (spotifyClientId !== "" && !validClientId(spotifyClientId)) notAllowed.push("SPOTIFY_CLIENT_ID (your app's Client ID from Spotify's developer dashboard: 32 characters, 0 to 9 and a to f)");
+  const redirectText = read("SPOTIFY_REDIRECT_URI", features.spotify);
+  const redirectUri = redirectText === "" ? "" : readRedirectUri(redirectText);
+  if (redirectUri === null) notAllowed.push("SPOTIFY_REDIRECT_URI (exactly the Redirect URI in your app's settings: an https address, or http on 127.0.0.1 or [::1] with a port, with a path and no ?, # or spaces, like https://hub.home/spotify.html)");
+  const spotify: SpotifySettings = { clientId: spotifyClientId, redirectUri: redirectUri ?? "" };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -201,5 +212,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, features };
 }

@@ -7,7 +7,7 @@ import type { Board } from "./board.js";
 import { createChangeFeed, type ChangeFeed } from "./changes.js";
 import { trains } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true };
 const settings = { key: "test-rail-key", from: "AAA", to: "BBB", boardUrl: "https://api1.raildata.org.uk/test-board" };
 const board: Board = { from: "Alpha", to: "Beta", departures: [{ due: "08:14", expected: "On time", platform: "16", cancelled: false, reason: null, destination: "Beta" }], buses: 0, messages: [] };
 

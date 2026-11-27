@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import type { ApiDelete, ApiGet, ApiPost } from "./api.js";
+import { registerSpotifyActions, registerSpotifyReads } from "./spotify-tools.js";
 
 type ReadTool = {
   name: string;
@@ -323,6 +324,7 @@ export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGe
     },
     async ({ item, search }) => asText(await slowGet(lookupPath("/deals/ai/explain", { item, search }))),
   );
+  registerSpotifyReads(server, get);
   if (!actions) return server;
 
   server.registerTool(
@@ -390,5 +392,6 @@ export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGe
     { description: "Snoozes one of the hub's reminders by its id from get_reminders: it's sent again that many minutes from now (1 to 240), even after it has gone off; a repeating one keeps its next time too. A timed mode switch can't be snoozed (409).", inputSchema: snoozeInput },
     async ({ id, minutes }) => asText(await post(`/reminders/${id}/snooze`, { minutes })),
   );
+  registerSpotifyActions(server, post);
   return server;
 }

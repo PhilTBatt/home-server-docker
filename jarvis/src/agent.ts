@@ -1,5 +1,5 @@
 import type { HookCallback, McpSdkServerConfigWithInstance, Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { actionsEnv, hubNoYesTools, hubProblemNote, hubReadTools, hubServerName, hubToolPrefix, isHubAction, notDoneNote, withHubToken, type HubServer } from "./hub-tools.js";
+import { actionsEnv, hubNoYesTools, hubProblemNote, hubReadTools, hubServerName, hubToolPrefix, isHubAction, needsHubYes, notDoneNote, withHubToken, type HubServer } from "./hub-tools.js";
 import { answerCost, pricesPerMTok, type Prices, type TokenUse } from "./prices.js";
 import type { Answer } from "./timing.js";
 import { sdkLookUpTool, webServerName } from "./look-up-tool.js";
@@ -63,11 +63,14 @@ type Pending = {
   spokeFirst: boolean | null;
 };
 
-export function actionHook(confirm: Confirm): HookCallback {
+export const noYesNeeded = "Playback controls don't need Phil's yes";
+
+export function actionHook(confirm: Confirm, hub?: Pick<HubServer, "musicYes">): HookCallback {
   return async (input) => {
     if (input.hook_event_name !== "PreToolUse" || !input.tool_name.startsWith(hubToolPrefix)) return {};
     const tool = input.tool_name.slice(hubToolPrefix.length);
     if (!isHubAction(tool)) return {};
+    if (!needsHubYes(hub, tool)) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: noYesNeeded } };
     const yes = await confirm(tool, input.tool_input).catch(() => false);
     return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: yes ? "allow" : "deny", permissionDecisionReason: yes ? "Phil said yes" : notDoneNote } };
   };
@@ -97,7 +100,7 @@ export function agentOptions(settings: AgentSettings, confirm: Confirm = async (
           },
           allowedTools: [...(settings.hub === undefined ? [] : [...hubReadTools, ...(settings.hub.actions === true ? hubNoYesTools : [])].map((tool) => `${hubToolPrefix}${tool}`)), ...(settings.web === undefined ? [] : [sdkLookUpTool])],
         }),
-    ...(settings.hub?.actions === true ? { hooks: { PreToolUse: [{ hooks: [actionHook(confirm)], timeout: actionHookSeconds, onFailure: "block" as const }] } } : {}),
+    ...(settings.hub?.actions === true ? { hooks: { PreToolUse: [{ hooks: [actionHook(confirm, settings.hub)], timeout: actionHookSeconds, onFailure: "block" as const }] } } : {}),
   };
 }
 

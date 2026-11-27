@@ -9,7 +9,7 @@ import type { Problem } from "./alerts.js";
 import type { DoctorSources } from "./doctor.js";
 import { currentProblems, parseReconnects, system } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true };
 
 function buildApp(features = allOn, backupDir = join(tmpdir(), "no-such-backup-status-here")) {
   const app = Fastify();
@@ -124,15 +124,15 @@ test("currentProblems agrees with the alerts route", async () => {
 test("features returns the switches it's given", async () => {
   const allOnResponse = await buildApp().inject({ method: "GET", url: "/system/features" });
   assert.equal(allOnResponse.statusCode, 200);
-  assert.deepEqual(allOnResponse.json(), { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true });
-  const mixed = { alerts: false, heartbeat: true, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
+  assert.deepEqual(allOnResponse.json(), { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true });
+  const mixed = { alerts: false, heartbeat: true, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true };
   const mixedResponse = await buildApp(mixed).inject({ method: "GET", url: "/system/features" });
   assert.deepEqual(mixedResponse.json(), mixed);
 });
 
 test("features never includes any other settings", async () => {
   const response = await buildApp().inject({ method: "GET", url: "/system/features" });
-  assert.deepEqual(Object.keys(response.json()), ["alerts", "heartbeat", "dailySummary", "memoryInbox", "memoryUpload", "deals", "findPhone", "trains", "trainAlerts", "expiryAlerts", "watchers", "catchUp", "modes", "reminders", "chores", "sessions"]);
+  assert.deepEqual(Object.keys(response.json()), ["alerts", "heartbeat", "dailySummary", "memoryInbox", "memoryUpload", "deals", "findPhone", "trains", "trainAlerts", "expiryAlerts", "watchers", "catchUp", "modes", "reminders", "chores", "sessions", "spotify"]);
 });
 
 test("backup says never run when there's no status yet", async () => {

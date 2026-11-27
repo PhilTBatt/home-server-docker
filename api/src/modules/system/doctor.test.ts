@@ -6,8 +6,8 @@ import type { WatcherView } from "../watchers/watchers.js";
 import type { Problem, Status } from "./alerts.js";
 import { ask, createTries, doctorKeepMs, doctorWaitMs, examine, kept, runDoctor, summaryOf, type Check, type DoctorSources, type Seen } from "./doctor.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
-const allOff: Features = { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false, modes: false, reminders: false, chores: false, sessions: false };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true };
+const allOff: Features = { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false, modes: false, reminders: false, chores: false, sessions: false, spotify: false };
 const now = new Date("2026-11-26T12:00:00Z");
 const status: Status = { uptimeSeconds: 3600, memoryTotalMB: 8192, memoryAvailableMB: 4096, diskTotalGB: 100, diskAvailableGB: 40 };
 

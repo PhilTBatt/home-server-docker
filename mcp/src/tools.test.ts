@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { InMemoryTransport, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/server";
 import type { ApiDelete, ApiGet, ApiPost } from "./api.js";
 import { buildServer } from "./tools.js";
+import { spotifyChangeTools, spotifyPlaybackTools, spotifyReadTools } from "./spotify-tools.js";
 
 type Reply = {
   id: number;
@@ -117,10 +118,10 @@ test("names itself home-hub", async () => {
   assert.equal(result.serverInfo.name, "home-hub");
 });
 
-test("offers the fifteen read tools, get_catch_up, get_chore, the two listing tools and the five tuning tools, then scan, stop, start, add_watcher, cancel_watcher, run_chore, set_reminder, cancel_reminder and snooze_reminder, in order", async () => {
+test("offers the fifteen read tools, get_catch_up, get_chore, the two listing tools, the five tuning tools and Spotify's five read tools, then scan, stop, start, add_watcher, cancel_watcher, run_chore, set_reminder, cancel_reminder, snooze_reminder and Spotify's twelve actions, in order", async () => {
   const { listTools } = await connect(fakeApi());
   const names = (await listTools()).map((tool) => tool.name);
-  assert.deepEqual(names, [...Object.keys(readPaths), catchUpTool, choreTool, matchesTool, listingTool, ...tuningTools, ...Object.keys(actions)]);
+  assert.deepEqual(names, [...Object.keys(readPaths), catchUpTool, choreTool, matchesTool, listingTool, ...tuningTools, ...spotifyReadTools, ...Object.keys(actions), ...spotifyPlaybackTools, ...spotifyChangeTools]);
 });
 
 test("every tool has a description for Claude to read", async () => {
@@ -253,10 +254,10 @@ test("an unknown tool is refused without calling the API", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
-test("read-only offers only the fifteen read tools, get_catch_up, get_chore, the two listing tools and the five tuning tools, which all only read", async () => {
+test("read-only offers only the fifteen read tools, get_catch_up, get_chore, the two listing tools, the five tuning tools and Spotify's five read tools, which all only read", async () => {
   const { listTools } = await connect(fakeApi(), false);
   const names = (await listTools()).map((tool) => tool.name);
-  assert.deepEqual(names, [...Object.keys(readPaths), catchUpTool, choreTool, matchesTool, listingTool, ...tuningTools]);
+  assert.deepEqual(names, [...Object.keys(readPaths), catchUpTool, choreTool, matchesTool, listingTool, ...tuningTools, ...spotifyReadTools]);
 });
 
 for (const [name, { args }] of Object.entries(actions)) {

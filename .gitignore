@@ -43,3 +43,5 @@ chores/requests/*
 chores/results/*
 !chores/results/.keep
 host/hub-sessions.conf
+spotify/*
+!spotify/README.md

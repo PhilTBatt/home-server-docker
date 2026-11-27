@@ -1,13 +1,18 @@
 import { existsSync } from "node:fs";
+import type { MusicYes } from "./config.js";
 import { tidy } from "./session-notes.js";
 
 export const hubServerFile = "/mcp/dist/server.js";
 export const hubServerName = "hub";
 export const hubToolPrefix = `mcp__${hubServerName}__`;
 
-export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"];
-export const hubActionTools = ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore"];
+export const hubMusicReadTools = ["get_spotify_playing", "get_spotify_devices", "get_spotify_queue", "get_spotify_search", "get_spotify_playlists"];
+export const hubMusicControls = ["spotify_play", "spotify_pause", "spotify_next", "spotify_previous", "spotify_seek", "spotify_volume", "spotify_shuffle", "spotify_repeat", "spotify_queue_add", "spotify_transfer"];
+export const hubMusicChanges = ["spotify_playlist_add", "spotify_save"];
+export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden", ...hubMusicReadTools];
+export const hubActionTools = ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore", ...hubMusicControls, ...hubMusicChanges];
 export const hubNoYesTools = ["set_reminder", "snooze_reminder"];
+export const defaultMusicYes: MusicYes = "changes";
 export const notDoneNote = "Phil didn't say yes, so it wasn't done";
 export const hubApiUrl = "http://api:3000";
 export const lookupMs = 5_000;
@@ -15,10 +20,10 @@ export const nameLimit = 80;
 export const noTorrentError = "No torrent with that hash";
 const typeYes = "Type yes to let him, or anything else to stop it";
 
-export type HubServer = { command: string; args: string[]; token: string; actions?: boolean };
+export type HubServer = { command: string; args: string[]; token: string; actions?: boolean; musicYes?: MusicYes };
 
-export function hubServerFor(token: string, actions = false, file = hubServerFile): HubServer {
-  return { command: process.execPath, args: [file], token, actions };
+export function hubServerFor(token: string, actions = false, file = hubServerFile, musicYes: MusicYes = defaultMusicYes): HubServer {
+  return { command: process.execPath, args: [file], token, actions, musicYes };
 }
 
 export function actionsEnv(server: HubServer): Record<string, string> {
@@ -35,6 +40,82 @@ export function allowedHubTools(server: HubServer): string[] {
 
 export function isHubAction(name: string): boolean {
   return hubActionTools.includes(name);
+}
+
+export function needsHubYes(server: Pick<HubServer, "musicYes"> | undefined, name: string): boolean {
+  if (!isHubAction(name)) return false;
+  return !hubMusicControls.includes(name) || (server?.musicYes ?? defaultMusicYes) === "all";
+}
+
+const deviceIdPattern = /^[A-Za-z0-9_-]{1,128}$/;
+const musicUriPattern = /^spotify:(track|episode|album|artist|playlist|show):[A-Za-z0-9]{22}$/;
+const musicKinds: Record<string, string> = { track: "the track", episode: "the episode", album: "the album", artist: "music by the artist", playlist: "the playlist", show: "the show" };
+
+function fieldsOf(input: unknown): Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+}
+
+function musicThing(uri: unknown): string | null {
+  if (typeof uri !== "string" || !musicUriPattern.test(uri)) return null;
+  const [, kind] = uri.split(":");
+  return `${musicKinds[kind]} ${uri}`;
+}
+
+function onDevice(input: unknown): string {
+  const device = fieldsOf(input).device;
+  if (device === undefined) return "";
+  return typeof device === "string" && deviceIdPattern.test(device) ? ` on the device whose id starts ${device.slice(0, 8)}` : " on a device the hub won't accept";
+}
+
+function minutes(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function counted(items: unknown, one: string, most: number): string | null {
+  if (!Array.isArray(items) || items.length === 0 || items.length > most || !items.every((item) => typeof item === "string" && musicUriPattern.test(item))) return null;
+  return items.length === 1 ? `1 ${one}` : `${items.length} ${one}s`;
+}
+
+export function musicText(name: string, input: unknown): string | null {
+  const fields = fieldsOf(input);
+  const where = onDevice(input);
+  const whole = (value: unknown, lowest: number, highest: number) => typeof value === "number" && Number.isInteger(value) && value >= lowest && value <= highest;
+  switch (name) {
+    case "spotify_play":
+      if (fields.uri === undefined) return `carry on playing Spotify${where}`;
+      return musicThing(fields.uri) === null ? null : `play ${musicThing(fields.uri)} on Spotify${where}`;
+    case "spotify_pause":
+      return `pause Spotify${where}`;
+    case "spotify_next":
+      return `skip to the next track${where}`;
+    case "spotify_previous":
+      return `go back to the previous track${where}`;
+    case "spotify_seek":
+      return whole(fields.positionMs, 0, 86_400_000) ? `jump to ${minutes(fields.positionMs as number)} in what's playing${where}` : null;
+    case "spotify_volume":
+      return whole(fields.percent, 0, 100) ? `set Spotify's volume to ${String(fields.percent)}%${where}` : null;
+    case "spotify_shuffle":
+      return typeof fields.on === "boolean" ? `turn shuffle ${fields.on ? "on" : "off"}${where}` : null;
+    case "spotify_repeat":
+      return fields.mode === "off" || fields.mode === "track" || fields.mode === "context" ? `set repeat to ${fields.mode === "off" ? "off" : fields.mode === "track" ? "this track" : "the album or playlist"}${where}` : null;
+    case "spotify_queue_add":
+      return musicThing(fields.uri) === null ? null : `add ${musicThing(fields.uri)} to the queue${where}`;
+    case "spotify_transfer": {
+      const device = fields.device;
+      return typeof device === "string" && deviceIdPattern.test(device) ? `move the music to the device whose id starts ${device.slice(0, 8)}${fields.play === true ? " and play it there" : ""}` : null;
+    }
+    case "spotify_playlist_add": {
+      const what = counted(fields.uris, "track or episode", 100);
+      return what === null || typeof fields.playlist !== "string" || !/^[A-Za-z0-9]{22}$/.test(fields.playlist) ? null : `add ${what} to your playlist ${fields.playlist}`;
+    }
+    case "spotify_save": {
+      const what = counted(fields.uris, "item", 40);
+      return what === null ? null : `save ${what} to your Spotify library`;
+    }
+    default:
+      return null;
+  }
 }
 
 function download(input: unknown): string {
@@ -94,7 +175,8 @@ export function actionQuestion(name: string, input: unknown): string {
     cancel_reminder: `cancel ${reminderId(input)}`,
     run_chore: chore(input),
   };
-  return `Jarvis wants to ${what[name] ?? `use ${name}`}. ${typeYes}`;
+  const music = name.startsWith("spotify_") ? (musicText(name, input) ?? "change Spotify with details the hub won't accept") : undefined;
+  return `Jarvis wants to ${what[name] ?? music ?? `use ${name}`}. ${typeYes}`;
 }
 
 export type Download = { name: string; percent: number };

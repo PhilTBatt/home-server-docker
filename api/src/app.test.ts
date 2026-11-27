@@ -11,6 +11,7 @@ import { createModes } from "./modules/modes/modes.js";
 import { createReminders } from "./modules/reminders/reminders.js";
 import { createChores } from "./modules/chores/chores.js";
 import { createSessions } from "./modules/sessions/sessions.js";
+import type { SpotifyParts } from "./modules/spotify/routes.js";
 
 const config: Config = {
   apiToken: "test-token",
@@ -24,7 +25,8 @@ const config: Config = {
   catchUp: { repos: [], token: "" },
   modes: { bedtimeFrom: null, bedtimeUntil: null },
   phone: { ring: "once", seconds: 30 },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true }
+  spotify: { clientId: "", redirectUri: "" },
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -275,7 +277,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -714,4 +716,21 @@ test("the chores route takes session jobs only while sessions are on", async () 
   assert.notEqual(reply.statusCode, 400);
   const without = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, sessions: false } }, chores: createChores({ dir: "/no-such-folder" }) });
   assert.equal((await without.inject({ method: "POST", url: "/chores/session-start-docker", headers: goodHeader })).statusCode, 400);
+});
+
+test("Spotify's routes are the hub's, behind its token like every other, and a 404 with SPOTIFY off", async () => {
+  const fetched = mock.method(globalThis, "fetch", async () => new Response(null, { status: 599 }));
+  const status = { signedIn: false, scopes: null, signedInAt: null, refreshedAt: null, signingIn: false, problem: null };
+  const auth = { status: async () => status } as unknown as SpotifyParts["auth"];
+  const app = await buildRealApp({ logger: false, config, spotify: { auth, client: {} as SpotifyParts["client"] } });
+  assert.equal((await app.inject({ method: "GET", url: "/spotify/status" })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: "/spotify/callback", payload: { state: "abc", code: "def" } })).statusCode, 401);
+  const asked = await app.inject({ method: "GET", url: "/spotify/status", cookies: goodCookie });
+  assert.deepEqual([asked.statusCode, asked.json()], [200, status]);
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, spotify: false } } });
+  const refused = await off.inject({ method: "GET", url: "/spotify/status", headers: goodHeader });
+  assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "Spotify is switched off" }]);
+  const features = await off.inject({ method: "GET", url: "/system/features", headers: goodHeader });
+  assert.equal(features.json().spotify, false);
+  assert.equal(fetched.mock.callCount(), 0);
 });

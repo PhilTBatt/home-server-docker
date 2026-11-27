@@ -35,6 +35,8 @@ test("they say how Phil can speak to him: /talk with push, and the wake word and
 test("they say whether he has the hub's tools, and its actions, which only come with the tools", () => {
   assert.ok(liveFacts({ ...typed, hubTools: true }).includes("You have the hub's read-only tools."));
   assert.ok(liveFacts(all).includes("You have the hub's read-only tools, and actions that each need his yes before they run, apart from setting and snoozing reminders, which don't."));
+  assert.ok(liveFacts({ ...all, musicYes: "changes" }).includes("apart from setting and snoozing reminders and Spotify's playback controls, which don't."));
+  assert.ok(liveFacts({ ...all, musicYes: "all" }).includes("apart from setting and snoozing reminders, which don't."));
   assert.ok(liveFacts({ ...typed, hubActions: true }).includes("You don't have the hub's tools in this chat."));
 });
 

@@ -67,7 +67,7 @@ try {
   const warn = (message: string) => process.stdout.write(`  (${printable(message)})\n`);
   const hints = lengthHintsFor(config.lengthHints, lengthLineFor(pricesPerMTok[chatModel], config.lengthWarn, config.lengthCap, newChatAdvice));
   if (config.hubToken !== null) checkHubServer(hubServerFile);
-  const hub = config.hubToken === null ? undefined : hubServerFor(config.hubToken, config.hubActions);
+  const hub = config.hubToken === null ? undefined : hubServerFor(config.hubToken, config.hubActions, hubServerFile, config.musicYes);
   const hubNotes: string[] = [];
   hubTools = hub !== undefined && config.engine === "api" ? await startHubTools(hub, (note) => hubNotes.push(note)) : undefined;
   const notes = config.sessionNotes ? await readSessionNotes() : null;
@@ -93,7 +93,7 @@ try {
   const open = (setup: ChatSetup, guest = false) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = guest ? false : config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined }) : null;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined, musicYes: config.musicYes }) : null;
     const instructions = (base: string) => systemFor(guest ? guestChatSystem : base, { persona, intro, facts, spoken, notes: guest ? [] : (notes ?? []), clock: config.clock });
     const logged: { log?: AnswerLog } = {};
     const recordLookUp = async (mode: LookUpMode, looked: LookedUp) => {

@@ -6,7 +6,7 @@ import { createModes } from "../modes/modes.js";
 import { createReminders } from "./reminders.js";
 import { readAsked, reminders } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true };
 const clock = { now: new Date("2026-11-27T12:00:00.000Z") };
 
 async function buildApp(options: { features?: Features; withReminders?: boolean } = {}) {

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Spotify sign-in</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="module" src="spotify.js"></script>
+  </head>
+  <body>
+    <h1>Spotify sign-in</h1>
+    <p id="spotify-message">Loading...</p>
+    <p><a href="/">Back to the hub</a></p>
+
+    <section id="spotify-controls" hidden>
+      <p><button id="spotify-sign-in" type="button">Sign in to Spotify</button></p>
+      <form id="spotify-paste">
+        <label for="spotify-address">Or paste the address the browser ended on</label>
+        <input id="spotify-address" type="text" autocomplete="off" spellcheck="false">
+        <button type="submit">Finish signing in</button>
+      </form>
+      <p><button id="spotify-sign-out" type="button">Sign out of Spotify</button></p>
+    </section>
+  </body>
+</html>
