@@ -10,7 +10,10 @@
       "mcp__hub__stop_download",
       "mcp__hub__start_download",
       "mcp__hub__add_watcher",
-      "mcp__hub__cancel_watcher"
+      "mcp__hub__cancel_watcher",
+      "mcp__hub__set_reminder",
+      "mcp__hub__cancel_reminder",
+      "mcp__hub__snooze_reminder"
     ],
     "allow": [
       "mcp__hub__get_status",
@@ -24,6 +27,7 @@
       "mcp__hub__get_doctor",
       "mcp__hub__get_watchers",
       "mcp__hub__get_mode",
+      "mcp__hub__get_reminders",
       "mcp__hub__get_catch_up",
       "mcp__hub__get_deal_status",
       "mcp__hub__get_deal_searches",

@@ -5,7 +5,7 @@ import type { Features } from "../../config.js";
 import type { CatchUp } from "./catchup.js";
 import { catchUp, defaultDays, mostDays, readDays } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true };
 const now = () => new Date("2026-11-26T12:00:00Z");
 
 function recording() {
@@ -51,7 +51,7 @@ test("readDays reads only a whole number in range", () => {
 
 test("GET /catch-up is a 404 while catch-up is switched off, or with nothing to read", async () => {
   const { asked, reader } = recording();
-  for (const app of [buildApp({ ...allOn, catchUp: false, modes: false }, reader), buildApp(allOn)]) {
+  for (const app of [buildApp({ ...allOn, catchUp: false, modes: false, reminders: false }, reader), buildApp(allOn)]) {
     const reply = await app.inject({ method: "GET", url: "/catch-up" });
     assert.deepEqual([reply.statusCode, reply.json()], [404, { error: "Catch-up is switched off" }]);
   }

@@ -35,6 +35,7 @@ const readPaths: Record<string, string> = {
   get_doctor: "/system/doctor",
   get_watchers: "/watchers",
   get_mode: "/mode",
+  get_reminders: "/reminders",
   get_deal_status: "/deals/status",
   get_deal_searches: "/deals/searches",
 };
@@ -50,6 +51,9 @@ const actions: Record<string, { args: Record<string, unknown>; call: string }> =
   start_download: { args: { hash }, call: `POST /media/downloads/${hash}/start` },
   add_watcher: { args: { kind: "download-finished", name: "alpha beta", hours: 6 }, call: 'POST /watchers {"kind":"download-finished","name":"alpha beta","hours":6}' },
   cancel_watcher: { args: { id: "0a1b2c3d" }, call: "DELETE /watchers/0a1b2c3d" },
+  set_reminder: { args: { text: "Stretch", at: "2026-01-31T07:00:00Z" }, call: 'POST /reminders {"text":"Stretch","at":"2026-01-31T07:00:00Z"}' },
+  cancel_reminder: { args: { id: "0a1b2c3d" }, call: "DELETE /reminders/0a1b2c3d" },
+  snooze_reminder: { args: { id: "0a1b2c3d", minutes: 10 }, call: 'POST /reminders/0a1b2c3d/snooze {"minutes":10}' },
 };
 
 function fakeApi(data: unknown = { ok: true, problems: [] }) {
@@ -110,7 +114,7 @@ test("names itself home-hub", async () => {
   assert.equal(result.serverInfo.name, "home-hub");
 });
 
-test("offers the thirteen read tools, get_catch_up, the two listing tools and the five tuning tools, then scan, stop, start, add_watcher and cancel_watcher, in order", async () => {
+test("offers the fourteen read tools, get_catch_up, the two listing tools and the five tuning tools, then scan, stop, start, add_watcher, cancel_watcher, set_reminder, cancel_reminder and snooze_reminder, in order", async () => {
   const { listTools } = await connect(fakeApi());
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), catchUpTool, matchesTool, listingTool, ...tuningTools, ...Object.keys(actions)]);
@@ -246,7 +250,7 @@ test("an unknown tool is refused without calling the API", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
-test("read-only offers only the thirteen read tools, get_catch_up, the two listing tools and the five tuning tools, which all only read", async () => {
+test("read-only offers only the fourteen read tools, get_catch_up, the two listing tools and the five tuning tools, which all only read", async () => {
   const { listTools } = await connect(fakeApi(), false);
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), catchUpTool, matchesTool, listingTool, ...tuningTools]);
@@ -576,4 +580,32 @@ test("get_mode asks GET /mode, works read-only, and says it can't change the mod
   assert.match(tool?.description ?? "", /finding the phone, a cancelled train and a reminder marked urgent always get through/);
   await callTool("get_mode", {});
   assert.deepEqual(fake.calls, ["GET /mode"]);
+});
+
+test("set_reminder sends only the fields it was given, as JSON, never a timed mode switch, and refuses odd ones without calling the API", async () => {
+  const fake = fakeApi();
+  const { callTool } = await connect(fake);
+  await callTool("set_reminder", { text: "Gaming", at: "2026-01-31T19:00:00+00:00", repeat: "weekdays", kind: "mode", mode: "gaming", extra: "dropped" });
+  await callTool("set_reminder", { text: "Bins", at: "2026-01-31T19:00:00Z", urgent: true });
+  assert.deepEqual(fake.calls, ['POST /reminders {"text":"Gaming","at":"2026-01-31T19:00:00+00:00","repeat":"weekdays"}', 'POST /reminders {"text":"Bins","at":"2026-01-31T19:00:00Z","urgent":true}']);
+  for (const args of [{ text: "", at: "2026-01-31T19:00:00Z" }, { text: "x".repeat(201), at: "2026-01-31T19:00:00Z" }, { text: "a", at: "7pm" }, { text: "a", at: "2026-01-31T19:00:00Z", repeat: "hourly" }]) {
+    assert.ok(refused(await callTool("set_reminder", args)), JSON.stringify(args));
+  }
+  for (const args of [{ id: "0a1b2c3d", minutes: 0 }, { id: "0a1b2c3d", minutes: 241 }, { id: "0a1b2c3d", minutes: 1.5 }, { id: "bad", minutes: 5 }]) {
+    assert.ok(refused(await callTool("snooze_reminder", args)), JSON.stringify(args));
+  }
+  assert.equal(fake.calls.length, 2);
+});
+
+test("the reminder tools say what they do and when they fail, and get_reminders works read-only", async () => {
+  const fake = fakeApi();
+  const { listTools, callTool } = await connect(fake, false);
+  const tools = await listTools();
+  assert.match(tools.find((one) => one.name === "get_reminders")?.description ?? "", /404 while reminders are switched off \(REMINDERS\)/);
+  assert.equal(tools.some((one) => one.name === "set_reminder"), false);
+  await callTool("get_reminders", {});
+  assert.deepEqual(fake.calls, ["GET /reminders"]);
+  const all = await (await connect(fakeApi())).listTools();
+  assert.match(all.find((one) => one.name === "set_reminder")?.description ?? "", /404 while reminders are switched off \(REMINDERS\)/);
+  assert.match(all.find((one) => one.name === "snooze_reminder")?.description ?? "", /can't be snoozed/);
 });

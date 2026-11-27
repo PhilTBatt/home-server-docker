@@ -4,7 +4,7 @@ import { createLookUpTool } from "./look-up-tool.js";
 import { test } from "node:test";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { actionHook, actionHookSeconds, agentOptions, closedMessage, createInputQueue, startAgentSession, userMessage, type AgentSettings, type StartAgent } from "./agent.js";
-import { hubProblemNote, notDoneNote } from "./hub-tools.js";
+import { hubProblemNote, isHubAction, notDoneNote } from "./hub-tools.js";
 
 function tick() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -829,7 +829,7 @@ const hub = { command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], tok
 test("with the hub's tools, the engine starts the hub's MCP server read-only, loads its tools up front, and may use only its eight read tools, by name, with nothing asked; the built-in tools don't change", () => {
   const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub });
   assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "off" }, alwaysLoad: true } });
-  assert.deepEqual(options.allowedTools, ["mcp__hub__get_status", "mcp__hub__get_alerts", "mcp__hub__get_features", "mcp__hub__get_downloads", "mcp__hub__get_library", "mcp__hub__get_wifi_reconnects", "mcp__hub__get_backup", "mcp__hub__get_watchers", "mcp__hub__get_expiries", "mcp__hub__get_doctor", "mcp__hub__get_mode", "mcp__hub__get_deal_status", "mcp__hub__get_deal_searches", "mcp__hub__get_catch_up", "mcp__hub__get_deal_matches", "mcp__hub__get_deal_listing", "mcp__hub__get_deal_hidden"]);
+  assert.deepEqual(options.allowedTools, ["mcp__hub__get_status", "mcp__hub__get_alerts", "mcp__hub__get_features", "mcp__hub__get_downloads", "mcp__hub__get_library", "mcp__hub__get_wifi_reconnects", "mcp__hub__get_backup", "mcp__hub__get_watchers", "mcp__hub__get_expiries", "mcp__hub__get_doctor", "mcp__hub__get_mode", "mcp__hub__get_reminders", "mcp__hub__get_deal_status", "mcp__hub__get_deal_searches", "mcp__hub__get_catch_up", "mcp__hub__get_deal_matches", "mcp__hub__get_deal_listing", "mcp__hub__get_deal_hidden"]);
   assert.equal("hooks" in options, false);
   assert.deepEqual(options.tools, ["Read", "Grep", "Glob"]);
   assert.equal(options.strictMcpConfig, true);
@@ -913,11 +913,12 @@ function preToolUse(tool: string, toolInput: unknown = {}) {
 
 const hookOptions = { signal: new AbortController().signal };
 
-test("with the hub's actions on, the MCP server gets them, only the read tools are allowed by name, and a hook that blocks if it fails asks before each tool", () => {
+test("with the hub's actions on, the MCP server gets them, the read tools and the ones that need no yes are allowed by name, and a hook that blocks if it fails asks before each action", () => {
   const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: {}, hub: actionsHub });
   assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "on" }, alwaysLoad: true } });
-  assert.ok(options.allowedTools?.every((tool) => tool.startsWith("mcp__hub__get_")));
-  assert.equal(options.allowedTools?.length, 17);
+  assert.deepEqual(options.allowedTools?.filter((tool) => !tool.startsWith("mcp__hub__get_")), ["mcp__hub__set_reminder", "mcp__hub__snooze_reminder"]);
+  assert.equal(options.allowedTools?.length, 20);
+  assert.ok(!options.allowedTools?.some((tool) => isHubAction(tool.replace("mcp__hub__", ""))), "no action that needs a yes is allowed by name");
   const matchers = options.hooks?.PreToolUse ?? [];
   assert.equal(matchers.length, 1);
   assert.deepEqual({ ...matchers[0], hooks: matchers[0].hooks.length }, { hooks: 1, timeout: actionHookSeconds, onFailure: "block" });
@@ -986,7 +987,7 @@ test("with the hub's tools and the look-up tool, both servers are there, the hub
   assert.deepEqual(Object.keys(both.mcpServers ?? {}), ["hub", "web"]);
   assert.deepEqual(both.mcpServers?.hub, agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub }).mcpServers?.hub);
   assert.deepEqual(both.allowedTools?.slice(-2), ["mcp__hub__get_deal_hidden", "mcp__web__look_up"]);
-  assert.equal(both.allowedTools?.length, 18);
+  assert.equal(both.allowedTools?.length, 19);
   assert.equal("hooks" in both, false);
   const acting = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub: { ...hub, actions: true }, web });
   assert.equal(acting.hooks?.PreToolUse?.length, 1);

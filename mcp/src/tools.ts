@@ -65,6 +65,11 @@ export const readTools: ReadTool[] = [
     path: "/mode",
   },
   {
+    name: "get_reminders",
+    description: "Phil's reminders, timers and timed mode switches on the hub, soonest first: each one's id, text, kind (reminder, or mode for a timed mode switch, with its mode), first (the time it was set for), at (its next time, or null once a one-off has gone off), repeat (null, daily, weekdays or weekly, in London time), urgent (urgent ones get through bedtime), snoozedTo (a snoozed one's next time), firedAt (when it last went off) and createdAt, with the most allowed at once. A one-off reminder stays for a day after it goes off, so it can still be snoozed. When one is due the hub sends it to his phone, titled Reminder. Fails with a 404 while reminders are switched off (REMINDERS).",
+    path: "/reminders",
+  },
+  {
     name: "get_deal_status",
     description: "How the deal watcher is doing: when it last ran, today's counts of calls and alerts against their limits, quiet hours, when the digest goes and whether today's has, where it keeps seen listings, and any problems. Fails with a 404 while the deal watcher is switched off.",
     path: "/deals/status",
@@ -148,6 +153,31 @@ const explainInput = z.object({
 const catchUpInput = z.object({
   days: z.number().int().min(1).max(30).optional().describe("How many days back to look, from 1 to 30; 7 if left out."),
 });
+
+export const reminderRepeats = ["daily", "weekdays", "weekly"] as const;
+
+const reminderInput = z.object({
+  text: z.string().min(1).max(200).describe("What to remind Phil of, in plain words, like \"Take the bins out\". It's sent to his phone through ntfy.sh, so keep it general."),
+  at: z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?(?:Z|[+-]\d\d:\d\d)$/).describe("When, as an ISO 8601 time with Z or an offset, like 2026-01-31T07:00:00Z. It must be in the future and at most a year ahead. For a timer, now plus its length."),
+  repeat: z.enum(reminderRepeats).optional().describe("Leave out for once. daily, weekdays (Monday to Friday) or weekly repeat it at the same London time."),
+  urgent: z.boolean().optional().describe("True only when Phil says it's urgent: an urgent reminder is high priority and gets through bedtime."),
+});
+
+const reminderIdInput = z.object({
+  id: z.string().regex(/^[0-9a-f]{8}$/).describe("The reminder's id, from get_reminders"),
+});
+
+const snoozeInput = z.object({
+  id: z.string().regex(/^[0-9a-f]{8}$/).describe("The reminder's id, from get_reminders"),
+  minutes: z.number().int().min(1).max(240).describe("How many minutes from now to send it again, from 1 to 240."),
+});
+
+function reminderBody(input: z.infer<typeof reminderInput>): Record<string, unknown> {
+  const body: Record<string, unknown> = { text: input.text, at: input.at };
+  if (input.repeat !== undefined) body.repeat = input.repeat;
+  if (input.urgent !== undefined) body.urgent = input.urgent;
+  return body;
+}
 
 const hashInput = z.object({
   hash: z.string().regex(/^[0-9a-f]{40}$/).describe("The torrent's hash, from get_downloads"),
@@ -304,6 +334,27 @@ export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGe
     "cancel_watcher",
     { description: "Cancels one of the hub's watchers by its id from get_watchers, so it never sends its notification.", inputSchema: watcherIdInput },
     async ({ id }) => asText(await remove(`/watchers/${id}`)),
+  );
+
+  server.registerTool(
+    "set_reminder",
+    {
+      description: "Sets a reminder or a timer on the hub. It's sent to Phil's phone at its time, titled Reminder, and Jarvis hears it too. It can repeat daily, on weekdays or weekly, at the same London time. At most 50 at once. Answers with the reminder and its id. It can't set a timed mode switch: Jarvis's own code does that when Phil asks. Fails with a 400 saying why for anything it doesn't allow, a 409 when 50 are set, and a 404 while reminders are switched off (REMINDERS).",
+      inputSchema: reminderInput,
+    },
+    async (input) => asText(await post("/reminders", reminderBody(input))),
+  );
+
+  server.registerTool(
+    "cancel_reminder",
+    { description: "Cancels one of the hub's reminders, timers or timed mode switches by its id from get_reminders, repeats and all, so it never goes off again.", inputSchema: reminderIdInput },
+    async ({ id }) => asText(await remove(`/reminders/${id}`)),
+  );
+
+  server.registerTool(
+    "snooze_reminder",
+    { description: "Snoozes one of the hub's reminders by its id from get_reminders: it's sent again that many minutes from now (1 to 240), even after it has gone off; a repeating one keeps its next time too. A timed mode switch can't be snoozed (409).", inputSchema: snoozeInput },
+    async ({ id, minutes }) => asText(await post(`/reminders/${id}/snooze`, { minutes })),
   );
   return server;
 }

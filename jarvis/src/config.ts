@@ -77,6 +77,7 @@ export type Config = {
   intro: boolean;
   guest: boolean;
   modes: boolean;
+  reminders: boolean;
   web: WebMode;
   webBy: WebBy;
   webToken: string | null;
@@ -227,6 +228,9 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const modes = env.JARVIS_MODES?.trim() || "off";
   if (modes !== "on" && modes !== "off") throw new Error(`JARVIS_MODES must be on or off, not "${modes}"`);
   if (modes === "on" && hubTools !== "on") throw new Error("JARVIS_MODES is on, but modes live in the hub, so it needs JARVIS_HUB_TOOLS=on too. Set that, or set JARVIS_MODES=off");
+  const reminders = env.JARVIS_REMINDERS?.trim() || "off";
+  if (reminders !== "on" && reminders !== "off") throw new Error(`JARVIS_REMINDERS must be on or off, not "${reminders}"`);
+  if (reminders === "on" && hubTools !== "on") throw new Error("JARVIS_REMINDERS is on, but reminders live in the hub, so it needs JARVIS_HUB_TOOLS=on too. Set that, or set JARVIS_REMINDERS=off");
   const web = env.JARVIS_WEB?.trim() || "off";
   if (!isWebMode(web)) throw new Error(`JARVIS_WEB must be ${webModes.slice(0, -1).join(", ")} or ${webModes[webModes.length - 1]}, not "${web}"`);
   const webBy = env.JARVIS_WEB_BY?.trim() || "claude";
@@ -237,5 +241,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (needsToken && webToken !== null && /\s/.test(webToken)) throw new Error("JARVIS_WEB_TOKEN must be the token alone on one line, with no spaces in it");
   const webLog = env.JARVIS_WEB_LOG?.trim() || "off";
   if (webLog !== "on" && webLog !== "off") throw new Error(`JARVIS_WEB_LOG must be on or off, not "${webLog}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", intro: intro === "on", guest: guest === "on", modes: modes === "on", web, webBy, webToken: needsToken ? webToken : null, webLog: webLog === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", intro: intro === "on", guest: guest === "on", modes: modes === "on", reminders: reminders === "on", web, webBy, webToken: needsToken ? webToken : null, webLog: webLog === "on", log: log === "on" };
 }

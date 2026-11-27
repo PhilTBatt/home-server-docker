@@ -8,6 +8,7 @@ import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modeSays, whenBackAsk
 import type { SpeechReport } from "./speech-queue.js";
 import type { Sent, Talk } from "./talk.js";
 import type { TrainEvent } from "./train-news.js";
+import { guestRemindersNote, reminderSay, type DueReminder, type ReminderAnswer, type ReminderEvent } from "./reminders.js";
 import { trainSay } from "./train-news.js";
 import type { WakeEvent } from "./wake.js";
 
@@ -95,12 +96,15 @@ function fakeHub(fail: Partial<Record<Mode, string>> = {}) {
 
 const now = new Date("2026-11-27T10:00:00Z");
 
-function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Record<Mode, string>>; when?: Date | null } = {}) {
+function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Record<Mode, string>>; when?: Date | null; clock?: () => Date; follow?: boolean } = {}) {
   const lines = channel<string>();
   const wake = channel<WakeEvent>();
   const modeEvents = channel<ModeEvent>();
   const trainEvents = channel<TrainEvent>();
   let trainsWaiting: string[] = [];
+  const reminderEvents = channel<ReminderEvent>();
+  let remindersWaiting: DueReminder[] = [];
+  const answers: Array<[string, ReminderAnswer]> = [];
   const asked: string[] = [];
   const spoken: string[] = [];
   const follows: string[] = [];
@@ -127,8 +131,19 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
     speak: () => fakeSpeech(spoken),
     talk: fakeTalk(),
     wake: wake.items,
-    clock: () => now,
-    followUp: { seconds: 5, ask: () => void follows.push("follow"), gapMs: 0 },
+    clock: options.clock ?? (() => now),
+    reminders: {
+      news: {
+        events: reminderEvents.items,
+        take() {
+          const taken = remindersWaiting;
+          remindersWaiting = [];
+          return taken;
+        },
+      },
+      hub: { answer: async (id, answer) => void answers.push([id, answer]) },
+    },
+    ...(options.follow === false ? {} : { followUp: { seconds: 5, ask: () => void follows.push("follow"), gapMs: 0 } }),
     codeWords: { note: async () => ({ say: "Noted." }), phone: async () => (phone.push("rang"), { say: "I've sent your phone a notification." }), trains: async () => ({ say: "unused" }) },
     trains: {
       events: trainEvents.items,
@@ -174,6 +189,12 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
     async train(...more: string[]) {
       trainsWaiting.push(...more);
       trainEvents.push({ kind: "trains" });
+      await settled();
+    },
+    answers,
+    async remind(...more: DueReminder[]) {
+      remindersWaiting.push(...more);
+      reminderEvents.push({ kind: "reminders" });
       await settled();
     },
     async end() {
@@ -383,5 +404,56 @@ test("train changes are said in normal and coding mode, shown but not said in be
   assert.equal(chat.spoken.length, before);
   assert.ok(chat.output().includes(`(${guestTrainsNote})`));
   assert.ok(!chat.output().includes("The 08:45 is late."), "a guest never sees his trains");
+  await chat.end();
+});
+
+const bins: DueReminder = { id: "r1", text: "Take the bins out", at: "2026-11-27T10:00:00.000Z", late: false, urgent: false };
+
+test("a due reminder is said aloud with a follow-up window, and snooze, done or cancel straight after go to the hub, not to Claude", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true });
+  await chat.remind(bins);
+  assert.equal(chat.spoken.at(-1), reminderSay([bins]));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await settled();
+  assert.deepEqual(chat.follows, ["follow"]);
+  await chat.say("Snooze it for ten minutes.");
+  assert.deepEqual(chat.answers, [["r1", { kind: "snooze", minutes: 10 }]]);
+  assert.equal(chat.spoken.at(-1), "Snoozed for 10 minutes.");
+  await chat.type("Done.");
+  assert.deepEqual(chat.asked, ["normal: Done."], "only the first answer counts");
+  await chat.remind({ ...bins, id: "r2" });
+  await chat.type("done");
+  assert.deepEqual(chat.answers.at(-1), ["r2", { kind: "done" }]);
+  await chat.end();
+});
+
+test("a reminder is said in normal, coding and gaming mode, only if urgent in bedtime, and not at all away or in guest mode", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, follow: false });
+  for (const [mode, urgent, said] of [["gaming", false, true], ["coding", false, true], ["bedtime", false, false], ["bedtime", true, true], ["away", true, false]] as const) {
+    await chat.mode({ mode, until: null, by: "phone" });
+    const before = chat.spoken.length;
+    const one = { ...bins, urgent };
+    await chat.remind(one);
+    assert.equal(chat.spoken.length > before, said, `${mode} ${urgent}`);
+    if (!said) assert.ok(chat.output().includes(`(${unsaidNote(reminderSay([one]), mode)})`), mode);
+  }
+  await chat.mode({ mode: "guest", until: null, by: "phone" });
+  const before = chat.spoken.length;
+  await chat.remind({ ...bins, urgent: true });
+  assert.equal(chat.spoken.length, before);
+  assert.ok(chat.output().includes(`(${guestRemindersNote})`));
+  await chat.say("Cancel it.");
+  assert.deepEqual(chat.answers, [], "a guest can't answer one");
+  await chat.end();
+});
+
+test("more than five minutes after a reminder, snooze and done are ordinary words again", { timeout: 5_000 }, async () => {
+  let at = now.getTime();
+  const chat = modeChat({ modes: true, clock: () => new Date(at) });
+  await chat.remind(bins);
+  at += 5 * 60_000 + 1;
+  await chat.type("snooze");
+  assert.deepEqual(chat.answers, []);
+  assert.deepEqual(chat.asked, ["normal: snooze"]);
   await chat.end();
 });

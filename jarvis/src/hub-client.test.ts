@@ -235,3 +235,13 @@ test("over a real pipe with the actions on, the MCP server is started with them 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("with the actions on, the reminder tools are taken, and only cancelling one needs a yes; read-only, they aren't taken", async () => {
+  const listed = ["get_reminders", "set_reminder", "cancel_reminder", "snooze_reminder", "scan_library"].map((name) => ({ name, inputSchema: { type: "object" } }));
+  const lister = fakeConnection({ listTools: async () => ({ tools: listed }) });
+  const readOnly = await startHubTools(server, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(readOnly?.definitions.map((tool) => tool.name), ["get_reminders"]);
+  const withActions = await startHubTools({ ...server, actions: true }, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(withActions?.definitions.map((tool) => tool.name), ["get_reminders", "set_reminder", "cancel_reminder", "snooze_reminder", "scan_library"]);
+  assert.deepEqual(["get_reminders", "set_reminder", "cancel_reminder", "snooze_reminder", "scan_library"].map((name) => withActions?.needsYes?.(name)), [false, false, true, false, true]);
+});

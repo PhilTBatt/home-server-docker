@@ -17,6 +17,8 @@ import { watchersFor } from "./modules/watchers/setup.js";
 import { checkEveryMs } from "./modules/watchers/watchers.js";
 import { modesFor } from "./modules/modes/setup.js";
 import { tickMs as modeTickMs } from "./modules/modes/modes.js";
+import { remindersFor } from "./modules/reminders/setup.js";
+import { tickMs as reminderTickMs } from "./modules/reminders/reminders.js";
 
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
@@ -41,7 +43,14 @@ const modes = config.features.modes
     })
   : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes });
+const reminders = config.features.reminders
+  ? remindersFor(config, modes, {
+      info: (fields, message) => app.log.info({ reminders: fields }, message),
+      warn: (fields, message) => app.log.warn({ reminders: fields }, message),
+    })
+  : undefined;
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders });
 app.log.info({ features: config.features }, "feature switches");
 
 if (modes !== undefined) {
@@ -53,6 +62,15 @@ if (modes !== undefined) {
       app.log.error(error, "mode check failed");
     });
   }, modeTickMs);
+}
+
+if (reminders !== undefined) {
+  await reminders.load(new Date());
+  setInterval(() => {
+    reminders.tick(new Date()).catch((error: unknown) => {
+      app.log.error(error, "reminder check failed");
+    });
+  }, reminderTickMs);
 }
 
 await app.listen({ port: 3000, host: "0.0.0.0" });

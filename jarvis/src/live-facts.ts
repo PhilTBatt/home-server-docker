@@ -14,6 +14,7 @@ export type FactsInput = {
   web: WebMode;
   modes?: boolean;
   guest?: boolean;
+  reminders?: boolean;
 };
 
 const voiceNames: Record<Exclude<VoiceMode, "off">, string> = { kokoro: "Kokoro", piper: "Piper" };
@@ -26,7 +27,7 @@ export function liveFacts(input: FactsInput): string {
   if (input.ears === "off") facts.push("He can only type to you: you're not connected to ears, the service that listens for you.");
   else if (input.ears === "push") facts.push("He can type, or speak to you after typing /talk.");
   else facts.push(`He can type, or speak to you after typing /talk, saying Hey Jarvis or pressing his talk button.${input.followUp === null ? "" : ` After you answer something he said with Hey Jarvis or the button, you listen for ${input.followUp} seconds for a follow-up without the wake word.`}`);
-  facts.push(input.hubTools ? `You have the hub's read-only tools${input.hubActions ? ", and actions that each need his yes before they run" : ""}.` : "You don't have the hub's tools in this chat.");
+  facts.push(input.hubTools ? `You have the hub's read-only tools${input.hubActions ? ", and actions that each need his yes before they run, apart from setting and snoozing reminders, which don't" : ""}.` : "You don't have the hub's tools in this chat.");
   if (input.ears !== "off") {
     facts.push(`Some things he says out loud never reach you, because your own code acts on them first when they're all he says or the last sentence of it: note this, followed by anything, saves it as a voice note in his brain's inbox; find my phone sends his phone a notification; train times reads out his next three trains; server check, or how's the server, reads out the hub's check of the home server; never mind or that's all asks nothing; and stop listening, said on its own, makes ears mute itself until he unmutes it on the server.`);
     if (!input.codeWordsReachHub) facts.push("Notes, finding his phone, train times and the server check go through the hub, so they won't work until he turns your hub tools on.");
@@ -39,6 +40,7 @@ export function liveFacts(input: FactsInput): string {
   if (input.web !== "off") facts.push(`When he types /lookup and a question${input.ears === "off" ? "" : ", or starts what he says out loud with look up and a question"}, your own code hands the question to a separate helper that searches the web and ${input.voice === "off" ? "shows" : "reads"} him the answer. You never see ${input.web === "auto" ? "that question or its" : "the question or the"} answer${input.web === "auto" ? "." : ", and you can't look anything up yourself: if he asks you for something that needs the web, tell him to ask that way."}`);
   facts.push(input.web === "auto" ? "You can't run commands, change files, browse the web beyond that one tool, or set reminders or timers." : "You can't run commands, change files, browse the web, or set reminders or timers.");
   if (input.modes === true) facts.push("Your own code switches modes when Phil says one on its own: bedtime, gaming mode, coding mode, normal mode, I'm not here (it then asks when he's back), or bedtime at a time. You never see those. If he asks for a mode another way, tell him to say just its name. In bedtime, gaming and away modes your code keeps you quiet unless he asks you something.");
+  if (input.reminders === true) facts.push("When one of the hub's reminders is due, your own code says it aloud, if the mode allows, and then listens for snooze, done or cancel, which it handles itself. You don't see what it says. To set, list or cancel a reminder, use your reminder tools, without asking him yes first.");
   if (input.guest === true) facts.push("Your own code has a guest mode, for visitors: saying guest mode, or typing /guest, starts a fresh chat without his notes, hub or saved chats, and only typing /guest off or his phone page ends it.");
   return facts.join(" ");
 }

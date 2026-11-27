@@ -8,6 +8,7 @@ import { createExpiryChecker } from "./modules/expiry/checker.js";
 import { createTries } from "./modules/system/doctor.js";
 import { createWatchers } from "./modules/watchers/watchers.js";
 import { createModes } from "./modules/modes/modes.js";
+import { createReminders } from "./modules/reminders/reminders.js";
 
 const config: Config = {
   apiToken: "test-token",
@@ -20,7 +21,7 @@ const config: Config = {
   trainAlerts: { days: ["mon", "wed"], start: 420, end: 510, reminder: 405 },
   catchUp: { repos: [], token: "" },
   modes: { bedtimeFrom: null, bedtimeUntil: null },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true }
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -271,7 +272,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -664,4 +665,19 @@ test("modes are a route of the hub's, behind the token, given only the modes it 
   assert.deepEqual((await off.inject({ method: "GET", url: "/mode", headers: goodHeader })).json(), { error: "Modes are switched off" });
   const none = await buildRealApp({ logger: false, config });
   assert.equal((await none.inject({ method: "GET", url: "/mode", headers: goodHeader })).statusCode, 404);
+});
+
+test("reminders are a route of the hub's, behind the token, given only the reminders it was handed and only with the switch on", async () => {
+  const handed = createReminders({ store: { load: async () => "missing", save: async () => {} }, send: async () => {} });
+  await handed.load(new Date());
+  const app = await buildRealApp({ logger: false, config, reminders: handed });
+  assert.equal((await app.inject({ method: "GET", url: "/reminders" })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/reminders/due" })).statusCode, 401);
+  const posted = await app.inject({ method: "POST", url: "/reminders", headers: goodHeader, payload: { text: "Stretch", at: new Date(Date.now() + 60_000).toISOString() } });
+  assert.equal(posted.statusCode, 200);
+  assert.equal(handed.list().length, 1);
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, reminders: false } }, reminders: handed });
+  assert.deepEqual((await off.inject({ method: "GET", url: "/reminders", headers: goodHeader })).json(), { error: "Reminders are switched off" });
+  const none = await buildRealApp({ logger: false, config });
+  assert.equal((await none.inject({ method: "GET", url: "/reminders/due", headers: goodHeader })).statusCode, 404);
 });

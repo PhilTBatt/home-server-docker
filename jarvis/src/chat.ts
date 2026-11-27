@@ -19,6 +19,7 @@ import { withPersona } from "./persona.js";
 import { withNotes, type SessionNotes } from "./session-notes.js";
 import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { trainSay, type TrainEvent, type TrainNews } from "./train-news.js";
+import { answeredSay, guestRemindersNote, reminderAnswerFailedSay, reminderAnswerIn, reminderAnswerMs, reminderSay, type ReminderAnswer, type ReminderEvent, type ReminderHub, type ReminderNews } from "./reminders.js";
 import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, modeSays, modesOffSay, modeWordIn, speaksUnprompted, whenBackAsk, whenNotCaught, whenSaid, ModesOff, type Mode, type ModeEvent, type ModeHub, type ModeWord, type WhenCheck } from "./modes.js";
 import { seconds, type Answer } from "./timing.js";
 import type { EarsAnswer } from "./ears-client.js";
@@ -197,6 +198,7 @@ export type ChatDeps = {
   modes?: { hub: ModeHub; events: AsyncIterable<ModeEvent> };
   guest?: { open(): Promise<NewChat> };
   when?: WhenCheck;
+  reminders?: { news: ReminderNews; hub: ReminderHub };
 };
 
 export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply>; server?(signal: AbortSignal): Promise<CodeWordReply> };
@@ -209,7 +211,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null; lastReminder: { id: string; at: number } | null };
 
 function sounds(state: ChatState, speech: AnswerSpeech | null): void {
   if (speech === null || state.sounding.has(speech)) return;
@@ -431,8 +433,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "web" | "webBy" | "webLog" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "reminders" | "web" | "webBy" | "webLog" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_REMINDERS=${config.reminders ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -673,9 +675,10 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
   deps.write(`  (${why === null ? droppedNote : notDroppedNote(printable(why))})\n`);
 }
 
-export type ChatInput = { kind: "line"; text: string } | WakeEvent | TrainEvent | LookedUpEvent | ModeEvent;
+type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ReminderEvent;
+export type ChatInput = { kind: "line"; text: string } | WakeEvent | NewsEvent;
 
-export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<TrainEvent | LookedUpEvent | ModeEvent>): AsyncGenerator<ChatInput> {
+export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<NewsEvent>): AsyncGenerator<ChatInput> {
   if (events === undefined && news === undefined) {
     for await (const text of lines) yield { kind: "line", text };
     return;
@@ -683,7 +686,7 @@ export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIt
   const typed = lines[Symbol.asyncIterator]();
   const heard = events?.[Symbol.asyncIterator]();
   const told = news?.[Symbol.asyncIterator]();
-  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent>; why?: string } | { from: "news"; result: IteratorResult<TrainEvent | LookedUpEvent | ModeEvent> };
+  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent>; why?: string } | { from: "news"; result: IteratorResult<NewsEvent> };
   let nextLine: Promise<Got> | null = null;
   let nextEvent: Promise<Got> | null = null;
   let nextNews: Promise<Got> | null = null;
@@ -792,6 +795,12 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     return "go";
   }
   state.awaitingBack = false;
+  const reminderAnswer = state.questions === null ? answerToReminder(deps, state, sent.heard.text) : null;
+  if (reminderAnswer !== null) {
+    counted(sent.heard, state);
+    await onReminderAnswer(deps, state, reminderAnswer);
+    return "go";
+  }
   const modeWord = state.questions === null ? spokenModeWord(deps, state, sent.heard.text) : null;
   if (modeWord !== null) {
     counted(sent.heard, state);
@@ -1166,6 +1175,57 @@ async function onBackTime(deps: ChatDeps, state: ChatState, said: string, how: "
   if (await setMode(deps, state, "away", at, how === "spoken" ? "voice" : "typed")) await sayLine(deps, state, { say: awaySay(at, now) });
 }
 
+function answerToReminder(deps: ChatDeps, state: ChatState, said: string): ReminderAnswer | null {
+  const last = state.lastReminder;
+  if (deps.reminders === undefined || last === null || state.guest) return null;
+  if ((deps.clock?.() ?? new Date()).getTime() - last.at > reminderAnswerMs) {
+    state.lastReminder = null;
+    return null;
+  }
+  return reminderAnswerIn(said);
+}
+
+async function onReminderAnswer(deps: ChatDeps, state: ChatState, answer: ReminderAnswer): Promise<void> {
+  state.turn++;
+  await hush(deps, state);
+  const last = state.lastReminder;
+  state.lastReminder = null;
+  if (deps.reminders === undefined || last === null) return;
+  try {
+    await deps.reminders.hub.answer(last.id, answer, deps.closing ?? new AbortController().signal);
+    await sayLine(deps, state, { say: answeredSay(answer) });
+  } catch (error) {
+    deps.write(`  (${printable(`reminder: ${error instanceof Error ? error.message : String(error)}`)})\n`);
+    await sayLine(deps, state, { say: reminderAnswerFailedSay });
+  }
+}
+
+async function onReminders(deps: ChatDeps, state: ChatState, event: ReminderEvent): Promise<void> {
+  if (event.kind === "reminders note") {
+    deps.interrupt?.();
+    deps.write(`  (${printable(event.line)})\n`);
+    deps.prompt();
+    return;
+  }
+  if (deps.reminders === undefined || !quiet(state)) return;
+  const due = deps.reminders.news.take();
+  if (due.length === 0) return;
+  const mode = policyMode(state);
+  if (!speaksUnprompted(mode, "reminder", due.some((one) => one.urgent))) {
+    deps.interrupt?.();
+    deps.write(`  (${state.guest ? guestRemindersNote : printable(unsaidNote(reminderSay(due), mode))})\n`);
+    deps.prompt();
+    return;
+  }
+  deps.interrupt?.();
+  await settle(deps, state);
+  state.turn++;
+  await sayLine(deps, state, { say: reminderSay(due) });
+  state.lastReminder = { id: due[due.length - 1].id, at: (deps.clock?.() ?? new Date()).getTime() };
+  openFollow(deps, state);
+  deps.prompt();
+}
+
 async function onTrains(deps: ChatDeps, state: ChatState, event: TrainEvent): Promise<void> {
   if (event.kind === "trains note") {
     deps.interrupt?.();
@@ -1420,7 +1480,7 @@ async function finishQuestions(deps: ChatDeps, state: ChatState): Promise<void> 
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, awaitingBack: false, switching: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, awaitingBack: false, switching: null, lastReminder: null };
   const base = deps;
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
@@ -1428,8 +1488,12 @@ export async function runChat(deps: ChatDeps): Promise<void> {
   state.looked = found?.push ?? null;
   try {
     current.prompt();
-    const news = [current.trains?.events, found?.events, current.modes?.events].filter((source) => source !== undefined) as AsyncIterable<TrainEvent | LookedUpEvent | ModeEvent>[];
-    for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, news.length === 0 ? undefined : news.length === 1 ? news[0] : merged<TrainEvent | LookedUpEvent | ModeEvent>(...news)), deps.ready)) {
+    const news = [current.trains?.events, found?.events, current.modes?.events, current.reminders?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
+    for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, news.length === 0 ? undefined : news.length === 1 ? news[0] : merged<NewsEvent>(...news)), deps.ready)) {
+      if (input.kind === "reminders" || input.kind === "reminders note") {
+        await onReminders(current, state, input);
+        continue;
+      }
       if (input.kind === "looked up") {
         await onLookedUp(current, state, input);
         continue;
@@ -1484,6 +1548,12 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         continue;
       }
       if (message !== "") state.awaitingBack = false;
+      const typedAnswer = message === "" ? null : answerToReminder(current, state, message);
+      if (typedAnswer !== null) {
+        await onReminderAnswer(current, state, typedAnswer);
+        current.prompt();
+        continue;
+      }
       const typedMode = typedModeWord(current, state, message);
       if (typedMode !== null) {
         await onModeWord(current, state, typedMode, false);
