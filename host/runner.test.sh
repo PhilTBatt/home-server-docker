@@ -306,9 +306,13 @@ check "and tmux was never asked" "" "$(cat "$work/tmux.log")"
 fresh
 sessions_ok
 rm "$work/home/.local/bin/claude"
+mkdir -p "$work/no-claude"
+for tool in /usr/bin/* /bin/*; do
+  [ "${tool##*/}" = claude ] || ln -sf "$tool" "$work/no-claude/${tool##*/}"
+done
 ask "$id1" session-start-docker
-RUN_PATH=/usr/bin:/bin run > /dev/null
-check_has "without Claude Code installed it says so" "claude isn't installed for this user" "$(cat "$work/hub/chores/results/$id1.out")"
+RUN_PATH="$work/no-claude" run > /dev/null
+check_has "without Claude Code installed it says so, even on a machine where it's installed system-wide" "claude isn't installed for this user" "$(cat "$work/hub/chores/results/$id1.out")"
 printf '#!/bin/bash\n' > "$work/home/.local/bin/claude"
 chmod +x "$work/home/.local/bin/claude"
 
