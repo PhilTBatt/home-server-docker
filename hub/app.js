@@ -80,6 +80,32 @@
  * @property {boolean} watchers
  * @property {boolean} catchUp
  * @property {boolean} modes
+ * @property {boolean} [reminders]
+ * @property {boolean} [chores]
+ * @property {boolean} [sessions]
+ * @property {boolean} [spotify]
+ */
+
+/**
+ * @typedef {object} TrainLeg
+ * @property {string} leaves
+ * @property {string} expected
+ * @property {string | null} platform
+ * @property {boolean} cancelled
+ */
+
+/**
+ * @typedef {object} ReminderItem
+ * @property {string} text
+ * @property {string | null} at
+ * @property {string | null} snoozedTo
+ */
+
+/**
+ * @typedef {object} PlayingNow
+ * @property {boolean} playing
+ * @property {{ name: string, by: string[] } | null} item
+ * @property {{ name: string } | null} device
  */
 
 /**
@@ -360,8 +386,58 @@ const catchUpRepos = byId("catch-up-repos");
 const modeSection = byId("mode");
 const modeNow = byId("mode-now");
 const modeButtons = byId("mode-buttons");
+const loginView = byId("login-view");
+const homeStatus = byId("home-status");
+const findPhoneButton = /** @type {HTMLButtonElement} */ (byId("find-phone"));
+const openNoteButton = /** @type {HTMLButtonElement} */ (byId("open-note"));
+const noteDialog = /** @type {HTMLDialogElement} */ (byId("note-dialog"));
+const closeNoteButton = byId("close-note");
+const ringButton = byId("ring");
+const ringTitle = byId("ring-title");
+const ringSub = byId("ring-sub");
+const ringServices = byId("ring-services");
+const ringBackup = byId("ring-backup");
+const ringAlerts = byId("ring-alerts");
+const ringServicesText = byId("ring-services-text");
+const ringBackupText = byId("ring-backup-text");
+const ringAlertsText = byId("ring-alerts-text");
+const ringDiskText = byId("ring-disk-text");
+const trainCard = byId("train-card");
+const trainTime = byId("train-time");
+const trainTo = byId("train-to");
+const trainState = byId("train-state");
+const remindersCard = byId("reminders-card");
+const remindersList = byId("reminders-list");
+const spotifyCard = byId("spotify-card");
+const spotifyNow = byId("spotify-now");
+const nowPlaying = byId("now-playing");
+const playingTitle = byId("playing-title");
+const playingDevice = byId("playing-device");
+const playingPause = /** @type {HTMLButtonElement} */ (byId("playing-pause"));
+const playingNext = /** @type {HTMLButtonElement} */ (byId("playing-next"));
+const tabButtons = /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll(".tabs button[data-tab]")]);
 /** @type {[string, string][]} */
-const modeChoices = [["normal", "Normal"], ["bedtime", "Bedtime"], ["gaming", "Gaming"], ["coding", "Coding"], ["away", "Away"]];
+const modeChoices = [["normal", "Normal"], ["guest", "Guest"], ["bedtime", "Bedtime"], ["gaming", "Gaming"], ["coding", "Coding"], ["away", "Away"]];
+/** @type {Record<string, { colour: string, paths: string }>} */
+const modeIcons = {
+  normal: { colour: "currentColor", paths: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2"></path>' },
+  guest: { colour: "#5EE3B0", paths: '<circle cx="9" cy="8" r="3"></circle><path d="M3 20a6 6 0 0 1 12 0"></path><path d="M17 11v6M14 14h6"></path>' },
+  bedtime: { colour: "#8FA8FF", paths: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"></path>' },
+  gaming: { colour: "#FF9F5A", paths: '<rect x="2" y="7" width="20" height="11" rx="5"></rect><path d="M7 10.5v4M5 12.5h4M16 11.5h.01M18 13.5h.01"></path>' },
+  coding: { colour: "#F5D547", paths: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5"></path>' },
+  away: { colour: "#C9D4E0", paths: '<path d="M3 12h13M12 7l5 5-5 5"></path><path d="M20 4v16"></path>' },
+};
+const ringLength = 502.65;
+const ringParts = { services: [0, 200], backup: [218, 130], alerts: [366, 118.65] };
+const ringColours = { services: "#5EE3B0", backup: "#8FA8FF", alerts: "#F5D547", problem: "#FF9F5A", unknown: "#3A4A63" };
+/** @type {{ services: "ok" | "problem" | "unknown", backup: "ok" | "problem" | "unknown", alerts: "ok" | "problem" | "unknown", worst: string | null, doctor: "ok" | "warn" | "problem" | null }} */
+const ringState = { services: "unknown", backup: "unknown", alerts: "unknown", worst: null, doctor: null };
+/** @type {Features | null} */ let knownFeatures = null;
+/** @type {number | undefined} */ let homeTimer;
+/** @type {number | undefined} */ let phoneRingingTimer;
+let lastTrainAt = 0;
+const trainEveryMs = 120_000;
+const tabNames = ["home", "media", "deals", "server"];
 const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/", "https://www.hotukdeals.com/deals/"];
 /** @type {number | undefined} */ let refreshTimer;
 /** @type {Set<string>} */ const openDealSections = new Set();
@@ -378,8 +454,10 @@ const partTypes = [["whole pc", "Whole PCs"], ["server", "Servers"], ["cpu", "CP
  */
 function showView(loggedIn) {
   loginForm.hidden = loggedIn;
+  loginView.hidden = loggedIn;
   dashboard.hidden = !loggedIn;
   clearInterval(refreshTimer);
+  clearInterval(homeTimer);
 
   if (loggedIn) {
     loadDownloads();
@@ -392,6 +470,8 @@ function showView(loggedIn) {
     loadSwitches();
 
     refreshTimer = setInterval(refreshDownloads, 10_000);
+    homeTimer = setInterval(refreshHome, 30_000);
+    showTab(tabFromHash());
   }
 }
 
@@ -501,6 +581,7 @@ async function loadServer() {
   const memoryFree = (status.memoryAvailableMB / 1024).toFixed(1);
   const memoryTotal = (status.memoryTotalMB / 1024).toFixed(1);
   serverText.textContent = `Up ${formatUptime(status.uptimeSeconds)}. Memory: ${memoryFree} of ${memoryTotal} GB available. Disk: ${status.diskAvailableGB} of ${status.diskTotalGB} GB free.`;
+  ringDiskText.textContent = status.diskTotalGB > 0 ? `${Math.round((status.diskAvailableGB / status.diskTotalGB) * 100)}%` : "-";
 }
 
 /**
@@ -524,6 +605,9 @@ async function loadBackup() {
   /** @type {BackupState} */
   const backup = await response.json();
   backupText.textContent = backupSummary(backup);
+  ringState.backup = backup.lastRun === null ? "unknown" : backup.lastRun.problem === null ? "ok" : "problem";
+  ringBackupText.textContent = backup.lastRun === null ? "never" : new Date(backup.lastRun.time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  showRing();
 }
 
 async function loadAlerts() {
@@ -534,6 +618,9 @@ async function loadAlerts() {
   }
   /** @type {Alerts} */
   const alerts = await response.json();
+  ringState.alerts = alerts.ok ? "ok" : "problem";
+  ringAlertsText.textContent = String(alerts.ok ? 0 : alerts.problems.length);
+  showRing();
   if (alerts.ok) {
     alertsList.replaceChildren(listItem("All good."));
     return;
@@ -578,6 +665,13 @@ async function loadDoctor() {
   }
   doctorSummary.textContent = got.reply.summary;
   doctorChecks.replaceChildren(...doctorItems(got.reply));
+  const counted = got.reply.checks.filter((check) => check.state !== "off");
+  const bad = counted.filter((check) => check.state === "problem" || check.state === "warn");
+  ringState.services = bad.length === 0 ? "ok" : "problem";
+  ringState.doctor = got.reply.state;
+  ringState.worst = bad.length === 0 ? null : (bad.find((check) => check.state === "problem") ?? bad[0]).name;
+  ringServicesText.textContent = `${counted.length - bad.length}/${counted.length}`;
+  showRing();
 }
 
 async function loadSwitches() {
@@ -598,6 +692,7 @@ async function loadSwitches() {
   showWatchers(features);
   showCatchUp(features);
   showMode(features);
+  showHome(features);
 }
 
 /**
@@ -605,6 +700,7 @@ async function loadSwitches() {
  */
 function showBrain(features) {
   brainSection.hidden = !features.memoryInbox && !features.memoryUpload;
+  openNoteButton.hidden = brainSection.hidden;
   inboxText.hidden = !features.memoryInbox;
   noteForm.hidden = !features.memoryUpload;
   if (features.memoryInbox) loadInbox();
@@ -806,7 +902,15 @@ function modeText(now) {
 function modeButton(mode, label, current) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = label;
+  button.setAttribute("aria-pressed", String(current));
+  const icon = modeIcons[mode];
+  if (icon !== undefined) {
+    const holder = document.createElement("span");
+    holder.setAttribute("aria-hidden", "true");
+    holder.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${icon.colour}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icon.paths}</svg>`;
+    button.append(holder.firstElementChild ?? holder);
+  }
+  button.append(label);
   button.disabled = current;
   button.addEventListener("click", () => setMode(mode));
   return button;
@@ -817,8 +921,7 @@ function modeButton(mode, label, current) {
  */
 function showModeNow(now) {
   modeNow.textContent = modeText(now);
-  const guest = now.mode === "guest" ? modeButton("normal", "Guest off", false) : modeButton("guest", "Guest on", false);
-  modeButtons.replaceChildren(guest, ...modeChoices.map(([mode, label]) => modeButton(mode, label, now.mode === mode)));
+  modeButtons.replaceChildren(...modeChoices.map(([mode, label]) => modeButton(mode, label, now.mode === mode)));
 }
 
 async function loadMode() {
@@ -1373,6 +1476,300 @@ explainForm.addEventListener("submit", async (event) => {
   explainResult.replaceChildren(...("text" in got ? [listItem(got.text)] : isDealExplained(got.reply) ? explainedItems(got.reply) : [listItem("Couldn't read the API's reply.")]));
   explainButton.disabled = false;
 });
+
+/**
+ * @returns {string}
+ */
+function tabFromHash() {
+  const asked = location.hash.slice(1);
+  return tabNames.includes(asked) ? asked : "home";
+}
+
+/**
+ * @param {string} name
+ */
+function showTab(name) {
+  for (const button of tabButtons) {
+    const chosen = button.dataset.tab === name;
+    button.setAttribute("aria-selected", String(chosen));
+    button.tabIndex = chosen ? 0 : -1;
+    byId(`tab-${button.dataset.tab}`).hidden = !chosen;
+  }
+  const hash = name === "home" ? "" : `#${name}`;
+  if (location.hash !== hash) history.replaceState(null, "", `${location.pathname}${location.search}${hash}`);
+  window.scrollTo(0, 0);
+  if (name === "home") refreshHome();
+}
+
+/**
+ * @param {"services" | "backup" | "alerts"} part
+ * @returns {string}
+ */
+function ringColour(part) {
+  const state = ringState[part];
+  return state === "ok" ? ringColours[part] : state === "problem" ? ringColours.problem : ringColours.unknown;
+}
+
+function showRing() {
+  /** @type {["services" | "backup" | "alerts", HTMLElement, HTMLElement][]} */
+  const parts = [["services", ringServices, ringServicesText], ["backup", ringBackup, ringBackupText], ["alerts", ringAlerts, ringAlertsText]];
+  for (const [part, segment, text] of parts) {
+    segment.setAttribute("stroke", ringColour(part));
+    text.parentElement?.querySelector(".dot")?.classList.toggle("problem", ringState[part] === "problem");
+  }
+  const states = [ringState.services, ringState.backup, ringState.alerts];
+  if (states.includes("problem")) {
+    ringTitle.textContent = "Needs a look";
+    ringSub.textContent = ringState.worst ?? (ringState.backup === "problem" ? "Backup failed" : ringState.alerts === "problem" ? "Alerts are up" : "Tap for details");
+  } else if (states.includes("unknown")) {
+    ringTitle.textContent = "Checking";
+    ringSub.textContent = "Tap for details";
+  } else {
+    ringTitle.textContent = "All good";
+    ringSub.textContent = "Tap for details";
+  }
+}
+
+/**
+ * @param {Features} features
+ */
+function showHome(features) {
+  knownFeatures = features;
+  findPhoneButton.hidden = !features.findPhone;
+  trainCard.hidden = !features.trains;
+  remindersCard.hidden = features.reminders !== true;
+  spotifyCard.hidden = features.spotify !== true;
+  if (features.spotify !== true) nowPlaying.hidden = true;
+  lastTrainAt = 0;
+  refreshHome();
+}
+
+function refreshHome() {
+  if (document.hidden || knownFeatures === null || dashboard.hidden) return;
+  if (knownFeatures.spotify === true) loadPlaying();
+  if (byId("tab-home").hidden) return;
+  if (knownFeatures.reminders === true) loadReminders();
+  if (knownFeatures.trains && Date.now() - lastTrainAt >= trainEveryMs) {
+    lastTrainAt = Date.now();
+    loadTrain();
+  }
+}
+
+/**
+ * @param {unknown} leg
+ * @returns {leg is TrainLeg}
+ */
+function isTrainLeg(leg) {
+  return isObject(leg) && typeof leg.expected === "string" && typeof leg.cancelled === "boolean" && (leg.platform === null || typeof leg.platform === "string") && (typeof leg.leaves === "string" || typeof leg.due === "string");
+}
+
+/**
+ * @param {unknown} reply
+ * @returns {{ to: string, legs: TrainLeg[] } | null}
+ */
+function trainLegs(reply) {
+  if (!isObject(reply) || typeof reply.to !== "string") return null;
+  if (Array.isArray(reply.journeys)) return reply.journeys.every(isTrainLeg) ? { to: reply.to, legs: reply.journeys } : null;
+  if (!Array.isArray(reply.departures)) return null;
+  const legs = reply.departures.map((departure) => (isObject(departure) ? { ...departure, leaves: departure.due } : departure));
+  return legs.every(isTrainLeg) ? { to: reply.to, legs } : null;
+}
+
+/**
+ * @param {TrainLeg} leg
+ * @returns {{ text: string, late: boolean }}
+ */
+function trainStateText(leg) {
+  if (leg.cancelled) return { text: "Cancelled", late: true };
+  if (leg.expected === "On time") return { text: "On time", late: false };
+  if (/^\d\d:\d\d$/.test(leg.expected)) return { text: `Expected ${leg.expected}`, late: true };
+  return { text: leg.expected, late: true };
+}
+
+async function loadTrain() {
+  const got = await fetchReply("/api/trains", "Couldn't load the trains");
+  if ("text" in got) {
+    trainTime.textContent = "-";
+    trainTo.textContent = got.text;
+    trainState.textContent = "";
+    return;
+  }
+  const read = trainLegs(got.reply);
+  if (read === null) {
+    trainTime.textContent = "-";
+    trainTo.textContent = "Couldn't read the API's reply.";
+    trainState.textContent = "";
+    return;
+  }
+  const leg = read.legs[0];
+  if (leg === undefined) {
+    trainTime.textContent = "-";
+    trainTo.textContent = `No trains to ${read.to} listed right now.`;
+    trainState.textContent = "";
+    return;
+  }
+  const state = trainStateText(leg);
+  trainTime.textContent = leg.leaves;
+  trainTo.textContent = leg.platform === null ? `To ${read.to}` : `To ${read.to}, platform ${leg.platform}`;
+  trainState.textContent = state.text;
+  trainState.classList.toggle("late", state.late);
+}
+
+/**
+ * @param {unknown} reminder
+ * @returns {reminder is ReminderItem}
+ */
+function isReminderItem(reminder) {
+  return isObject(reminder) && typeof reminder.text === "string" && (reminder.at === null || typeof reminder.at === "string") && (reminder.snoozedTo === null || typeof reminder.snoozedTo === "string");
+}
+
+/**
+ * @param {Date} when
+ * @returns {string}
+ */
+function reminderTime(when) {
+  const today = when.toDateString() === new Date().toDateString();
+  return today ? when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : when.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadReminders() {
+  const got = await fetchReply("/api/reminders", "Couldn't load the reminders");
+  if ("text" in got) {
+    remindersList.replaceChildren(listItem(got.text));
+    return;
+  }
+  if (!isObject(got.reply) || !Array.isArray(got.reply.reminders) || !got.reply.reminders.every(isReminderItem)) {
+    remindersList.replaceChildren(listItem("Couldn't read the API's reply."));
+    return;
+  }
+  /** @type {ReminderItem[]} */
+  const reminders = got.reply.reminders;
+  const coming = reminders
+    .map((reminder) => ({ text: reminder.text, at: reminder.snoozedTo ?? reminder.at }))
+    .filter((reminder) => reminder.at !== null)
+    .map((reminder) => ({ text: reminder.text, when: new Date(/** @type {string} */ (reminder.at)) }))
+    .sort((a, b) => a.when.getTime() - b.when.getTime())
+    .slice(0, 3);
+  if (coming.length === 0) {
+    remindersList.replaceChildren(listItem("Nothing coming up."));
+    return;
+  }
+  remindersList.replaceChildren(
+    ...coming.map((reminder) => {
+      const item = document.createElement("li");
+      const text = document.createElement("span");
+      text.textContent = reminder.text;
+      const when = document.createElement("span");
+      when.className = reminder.when.getTime() - Date.now() < 60 * 60 * 1000 ? "when soon" : "when";
+      when.textContent = reminderTime(reminder.when);
+      item.append(text, when);
+      return item;
+    }),
+  );
+}
+
+/**
+ * @param {unknown} reply
+ * @returns {reply is PlayingNow}
+ */
+function isPlayingNow(reply) {
+  if (!isObject(reply) || typeof reply.playing !== "boolean") return false;
+  const item = reply.item;
+  const device = reply.device;
+  const itemOk = item === null || (isObject(item) && typeof item.name === "string" && Array.isArray(item.by) && item.by.every((name) => typeof name === "string"));
+  const deviceOk = device === null || (isObject(device) && typeof device.name === "string");
+  return itemOk && deviceOk;
+}
+
+async function loadPlaying() {
+  const got = await fetchReply("/api/spotify/playing", "Couldn't check Spotify");
+  if ("text" in got || !isPlayingNow(got.reply)) {
+    nowPlaying.hidden = true;
+    spotifyNow.textContent = "text" in got ? got.text : "Couldn't read the API's reply.";
+    return;
+  }
+  const playing = got.reply;
+  const item = playing.item;
+  const words = item === null ? "" : item.by.length === 0 ? item.name : `${item.name} - ${item.by.join(", ")}`;
+  spotifyNow.textContent = item === null ? "Nothing playing." : `${playing.playing ? "Playing" : "Paused"}: ${words}`;
+  nowPlaying.hidden = !playing.playing || item === null;
+  playingTitle.textContent = words;
+  playingDevice.textContent = playing.device === null ? "" : `On ${playing.device.name}`;
+}
+
+/**
+ * @param {"pause" | "next"} action
+ * @param {HTMLButtonElement} button
+ */
+async function controlPlaying(action, button) {
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/spotify/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    if (!response.ok) {
+      /** @type {unknown} */
+      const reply = await response.json().catch(() => null);
+      const error = isObject(reply) && typeof reply.error === "string" ? reply.error : `the API replied ${response.status}`;
+      homeStatus.textContent = `Couldn't ${action === "pause" ? "pause" : "skip"}: ${error}.`;
+    }
+  } catch {
+    homeStatus.textContent = "Couldn't reach the API.";
+  }
+  button.disabled = false;
+  setTimeout(loadPlaying, 600);
+}
+
+async function findPhone() {
+  findPhoneButton.disabled = true;
+  const ringing = phoneRingingTimer !== undefined;
+  try {
+    const response = await fetch(ringing ? "/api/phone/found" : "/api/phone/find", { method: "POST" });
+    /** @type {unknown} */
+    const reply = await response.json().catch(() => null);
+    if (!response.ok) {
+      const error = isObject(reply) && typeof reply.error === "string" ? reply.error : `the API replied ${response.status}`;
+      homeStatus.textContent = `Couldn't ${ringing ? "stop it" : "find the phone"}: ${error}.`;
+    } else if (ringing) {
+      clearTimeout(phoneRingingTimer);
+      phoneRingingTimer = undefined;
+      findPhoneButton.setAttribute("aria-label", "Find my phone");
+      homeStatus.textContent = "Stopped ringing.";
+    } else if (isObject(reply) && typeof reply.seconds === "number") {
+      homeStatus.textContent = "Ringing the phone. Tap the phone button again to stop it.";
+      findPhoneButton.setAttribute("aria-label", "Stop ringing");
+      phoneRingingTimer = setTimeout(() => {
+        phoneRingingTimer = undefined;
+        findPhoneButton.setAttribute("aria-label", "Find my phone");
+      }, reply.seconds * 1000);
+    } else {
+      homeStatus.textContent = "Sent to the phone.";
+    }
+  } catch {
+    homeStatus.textContent = "Couldn't reach the API.";
+  }
+  findPhoneButton.disabled = false;
+}
+
+for (const button of tabButtons) {
+  button.addEventListener("click", () => showTab(button.dataset.tab ?? "home"));
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const at = tabButtons.indexOf(button);
+    const next = tabButtons[(at + (event.key === "ArrowRight" ? 1 : tabButtons.length - 1)) % tabButtons.length];
+    showTab(next.dataset.tab ?? "home");
+    next.focus();
+  });
+}
+
+ringButton.addEventListener("click", () => showTab("server"));
+findPhoneButton.addEventListener("click", findPhone);
+openNoteButton.addEventListener("click", () => {
+  noteStatus.textContent = "";
+  noteDialog.showModal();
+});
+closeNoteButton.addEventListener("click", () => noteDialog.close());
+playingPause.addEventListener("click", () => controlPlaying("pause", playingPause));
+playingNext.addEventListener("click", () => controlPlaying("next", playingNext));
+document.addEventListener("visibilitychange", refreshHome);
 
 async function checkLogin() {
   const response = await fetch("/api/health");
