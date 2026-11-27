@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
-import { createChores, outputLines, pickUpMs, readResult } from "./chores.js";
+import { choreJobFor, createChores, outputLines, pickUpMs, readResult } from "./chores.js";
 import { chores } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
 const now = new Date("2026-11-27T12:00:00.000Z");
 
 async function folder() {
@@ -141,7 +141,7 @@ test("the routes refuse a job not on the list, an odd id, and an unknown one, an
   const dir = await folder();
   const app = await buildApp(dir);
   const odd = await app.inject({ method: "POST", url: "/chores/reboot" });
-  assert.deepEqual([odd.statusCode, odd.json()], [400, { error: "job must be one of rebuild-api, run-tests, pull-images" }]);
+  assert.deepEqual([odd.statusCode, odd.json()], [400, { error: "job must be one of rebuild-api, run-tests, pull-images, or session-start-<name> or session-stop-<name> for a session the runner knows" }]);
   assert.deepEqual((await app.inject({ method: "GET", url: "/chores/xyz" })).json(), { error: "id must be a chore's id, as POST /chores/<job> gave it" });
   assert.deepEqual((await app.inject({ method: "GET", url: "/chores/1111111111111111" })).json(), { error: "No chore with that id" });
   assert.deepEqual(await readdir(join(dir, "requests")), []);
@@ -151,4 +151,32 @@ test("the routes refuse a job not on the list, an odd id, and an unknown one, an
     assert.deepEqual([reply.statusCode, reply.json()], [404, { error: "Chores are switched off" }]);
   }
   assert.deepEqual(await readdir(join(dir, "requests")), []);
+});
+
+test("session jobs are chores only while sessions are on, and only with a plain name", () => {
+  const off = choreJobFor(false);
+  const on = choreJobFor(true);
+  assert.deepEqual(["rebuild-api", "session-start-docker", "session-stop-brain"].map(off), [true, false, false]);
+  assert.deepEqual(["rebuild-api", "session-start-docker", "session-stop-brain", "session-start-a-b-9"].map(on), [true, true, true, true]);
+  for (const job of ["session-start-", "session-start-Docker", "session-start-x y", "session-restart-docker", "session-start-docker;ls", `session-start-${"a".repeat(21)}`, "session-start-../x"]) assert.equal(on(job), false, job);
+});
+
+test("with sessions on, a session job is written like any chore, and with them off it's a 400 naming only the fixed jobs", async () => {
+  const dir = await folder();
+  const app = Fastify();
+  app.register(chores, { prefix: "/chores", features: allOn, chores: createChores({ dir, jobs: choreJobFor(true), makeId: () => "0123456789abcdef" }) });
+  assert.equal((await app.inject({ method: "POST", url: "/chores/session-start-docker" })).json().job, "session-start-docker");
+  assert.equal(await readFile(join(dir, "requests", "0123456789abcdef.job"), "utf8"), "session-start-docker\n");
+  const offDir = await folder();
+  const off = Fastify();
+  off.register(chores, { prefix: "/chores", features: { ...allOn, sessions: false }, chores: createChores({ dir: offDir, jobs: choreJobFor(false) }) });
+  const refused = await off.inject({ method: "POST", url: "/chores/session-start-docker" });
+  assert.deepEqual([refused.statusCode, refused.json()], [400, { error: "job must be one of rebuild-api, run-tests, pull-images" }]);
+  assert.deepEqual(await readdir(join(offDir, "requests")), []);
+});
+
+test("a session job's result keeps its name, and a job no list has is dropped from a result", () => {
+  const id = "0123456789abcdef";
+  assert.equal(readResult(id, JSON.stringify({ id, state: "done", job: "session-stop-brain" }))?.job, "session-stop-brain");
+  assert.equal(readResult(id, JSON.stringify({ id, state: "done", job: "session-stop-Brain!" }))?.job, null);
 });

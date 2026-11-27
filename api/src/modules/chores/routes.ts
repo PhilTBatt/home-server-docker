@@ -1,15 +1,15 @@
 import type { FastifyPluginAsync } from "fastify";
 import type { Features } from "../../config.js";
-import { choreJobs, idPattern, type Chores } from "./chores.js";
+import { choreJobFor, choreJobs, idPattern, type Chores } from "./chores.js";
 
-export const chores: FastifyPluginAsync<{ features: Features; chores?: Chores; jobs?: () => string[]; now?: () => Date }> = async (app, options) => {
+export const chores: FastifyPluginAsync<{ features: Features; chores?: Chores; now?: () => Date }> = async (app, options) => {
   const switchedOff = { error: "Chores are switched off" };
-  const jobs = options.jobs ?? (() => [...choreJobs]);
+  const isJob = choreJobFor(options.features.sessions);
+  const jobsText = `job must be one of ${choreJobs.join(", ")}${options.features.sessions ? ", or session-start-<name> or session-stop-<name> for a session the runner knows" : ""}`;
 
   app.post<{ Params: { job: string } }>("/:job", { bodyLimit: 1024 }, async (request, reply) => {
     if (!options.features.chores || options.chores === undefined) return reply.code(404).send(switchedOff);
-    const known = jobs();
-    if (!known.includes(request.params.job)) return reply.code(400).send({ error: `job must be one of ${known.join(", ")}` });
+    if (!isJob(request.params.job)) return reply.code(400).send({ error: jobsText });
     const asked = await options.chores.request(request.params.job, options.now?.() ?? new Date());
     if ("refused" in asked) return reply.code(asked.status).send({ error: asked.refused });
     return asked;

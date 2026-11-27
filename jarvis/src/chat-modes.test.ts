@@ -12,6 +12,7 @@ import { guestRemindersNote, reminderSay, type DueReminder, type ReminderAnswer,
 import { trainSay } from "./train-news.js";
 import type { WakeEvent } from "./wake.js";
 import type { OtherVoices } from "./config.js";
+import type { SessionChange, SessionEvent } from "./session-news.js";
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -110,6 +111,8 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
   let remindersWaiting: DueReminder[] = [];
   const answers: Array<[string, ReminderAnswer]> = [];
   const guestsThrough: boolean[] = [];
+  const sessionEvents = channel<SessionEvent>();
+  let sessionsWaiting: SessionChange[] = [];
   const asked: string[] = [];
   const spoken: string[] = [];
   const follows: string[] = [];
@@ -159,6 +162,14 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
       },
     },
     newChat: async () => chatFor("normal"),
+    sessions: {
+      events: sessionEvents.items,
+      take() {
+        const taken = sessionsWaiting;
+        sessionsWaiting = [];
+        return taken;
+      },
+    },
     ...(options.voices === undefined ? {} : { voices: { other: options.voices, guests: async (on: boolean) => void guestsThrough.push(on) } }),
     ...(options.guest === false ? {} : { guest: { open: async () => chatFor("guest") } }),
     ...(options.modes === true ? { modes: { hub: hub.hub, events: modeEvents.items }, when: async (said: string) => (whens.push(said), options.when === undefined ? new Date("2026-11-29T18:00:00Z") : options.when) } : {}),
@@ -178,6 +189,11 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
     running,
     output: () => output,
     guestsThrough,
+    async session(...more: SessionChange[]) {
+      sessionsWaiting.push(...more);
+      sessionEvents.push({ kind: "sessions" });
+      await settled();
+    },
     async say(text: string, voice?: EarsVoice) {
       id++;
       wake.push({ kind: "wake", id });
@@ -563,5 +579,21 @@ test("without voices on, a voice in ears's answer changes nothing and isn't show
   await chat.say("Guest mode off.", mine);
   assert.equal(chat.spoken.at(-1), guestOffByVoiceSay);
   assert.ok(!chat.output().includes("(voice:"));
+  await chat.end();
+});
+
+test("a session waiting on him is said in coding mode, shown in the others, and not even shown in guest mode", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, follow: false });
+  const waiting: SessionChange = { name: "docker", state: "waiting", was: "working", at: "2026-11-27T10:00:00.000Z" };
+  await chat.session(waiting);
+  assert.equal(chat.spoken.length, 0);
+  assert.ok(chat.output().includes("(The docker session is waiting on you. (not said in normal mode))"), chat.output());
+  await chat.mode({ mode: "coding", until: null, by: "phone" });
+  await chat.session(waiting);
+  assert.equal(chat.spoken.at(-1), "The docker session is waiting on you.");
+  await chat.mode({ mode: "guest", until: null, by: "phone" });
+  const shown = chat.output().length;
+  await chat.session(waiting);
+  assert.ok(!chat.output().slice(shown).includes("docker"), "a guest never sees his sessions");
   await chat.end();
 });

@@ -9,4 +9,5 @@ WorkingDirectory=~
 Environment=HOME_HUB_DIR=/home/%i/docker
 ExecStart=/usr/local/bin/home-hub-runner
 NoNewPrivileges=yes
+KillMode=process
 TimeoutStartSec=45min

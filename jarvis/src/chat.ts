@@ -19,6 +19,7 @@ import { withPersona } from "./persona.js";
 import { withNotes, type SessionNotes } from "./session-notes.js";
 import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { trainSay, type TrainEvent, type TrainNews } from "./train-news.js";
+import { sessionSay, type SessionEvent, type SessionNews } from "./session-news.js";
 import { answeredSay, guestRemindersNote, reminderAnswerFailedSay, reminderAnswerIn, reminderAnswerMs, reminderSay, type ReminderAnswer, type ReminderEvent, type ReminderHub, type ReminderNews } from "./reminders.js";
 import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, modeSays, modesOffSay, modeWordIn, speaksUnprompted, whenBackAsk, whenNotCaught, whenSaid, ModesOff, type Mode, type ModeEvent, type ModeHub, type ModeWord, type WhenCheck } from "./modes.js";
 import { seconds, type Answer } from "./timing.js";
@@ -200,6 +201,7 @@ export type ChatDeps = {
   when?: WhenCheck;
   reminders?: { news: ReminderNews; hub: ReminderHub };
   voices?: { other: OtherVoices; guests?(on: boolean): Promise<void> };
+  sessions?: SessionNews;
 };
 
 export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply>; server?(signal: AbortSignal): Promise<CodeWordReply>; found?(signal: AbortSignal): Promise<CodeWordReply> };
@@ -434,8 +436,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "reminders" | "voices" | "otherVoices" | "web" | "webBy" | "webLog" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_REMINDERS=${config.reminders ? "on" : "off"}, JARVIS_VOICES=${config.voices ? "on" : "off"}, JARVIS_OTHER_VOICES=${config.otherVoices}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "reminders" | "voices" | "sessions" | "otherVoices" | "web" | "webBy" | "webLog" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_REMINDERS=${config.reminders ? "on" : "off"}, JARVIS_VOICES=${config.voices ? "on" : "off"}, JARVIS_SESSIONS=${config.sessions ? "on" : "off"}, JARVIS_OTHER_VOICES=${config.otherVoices}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -676,7 +678,7 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
   deps.write(`  (${why === null ? droppedNote : notDroppedNote(printable(why))})\n`);
 }
 
-type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ReminderEvent;
+type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ReminderEvent | SessionEvent;
 export type ChatInput = { kind: "line"; text: string } | WakeEvent | NewsEvent;
 
 export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<NewsEvent>): AsyncGenerator<ChatInput> {
@@ -1278,6 +1280,30 @@ async function onReminders(deps: ChatDeps, state: ChatState, event: ReminderEven
   deps.prompt();
 }
 
+async function onSessions(deps: ChatDeps, state: ChatState, event: SessionEvent): Promise<void> {
+  if (event.kind === "sessions note") {
+    if (state.guest) return;
+    deps.interrupt?.();
+    deps.write(`  (${printable(event.line)})\n`);
+    deps.prompt();
+    return;
+  }
+  if (deps.sessions === undefined || !quiet(state)) return;
+  const changes = deps.sessions.take();
+  if (changes.length === 0 || state.guest) return;
+  const mode = policyMode(state);
+  const said = sessionSay(changes);
+  deps.interrupt?.();
+  if (!speaksUnprompted(mode, "session")) {
+    deps.write(`  (${printable(unsaidNote(said, mode))})\n`);
+    deps.prompt();
+    return;
+  }
+  await settle(deps, state);
+  await sayLine(deps, state, { say: said });
+  deps.prompt();
+}
+
 async function onTrains(deps: ChatDeps, state: ChatState, event: TrainEvent): Promise<void> {
   if (event.kind === "trains note") {
     deps.interrupt?.();
@@ -1541,10 +1567,14 @@ export async function runChat(deps: ChatDeps): Promise<void> {
   await tellEars(base, current, false);
   try {
     current.prompt();
-    const news = [current.trains?.events, found?.events, current.modes?.events, current.reminders?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
+    const news = [current.trains?.events, found?.events, current.modes?.events, current.reminders?.news.events, current.sessions?.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
     for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, news.length === 0 ? undefined : news.length === 1 ? news[0] : merged<NewsEvent>(...news)), deps.ready)) {
       if (input.kind === "reminders" || input.kind === "reminders note") {
         await onReminders(current, state, input);
+        continue;
+      }
+      if (input.kind === "sessions" || input.kind === "sessions note") {
+        await onSessions(current, state, input);
         continue;
       }
       if (input.kind === "looked up") {

@@ -36,6 +36,7 @@ const readPaths: Record<string, string> = {
   get_watchers: "/watchers",
   get_mode: "/mode",
   get_reminders: "/reminders",
+  get_sessions: "/sessions",
   get_deal_status: "/deals/status",
   get_deal_searches: "/deals/searches",
 };
@@ -116,7 +117,7 @@ test("names itself home-hub", async () => {
   assert.equal(result.serverInfo.name, "home-hub");
 });
 
-test("offers the fourteen read tools, get_catch_up, get_chore, the two listing tools and the five tuning tools, then scan, stop, start, add_watcher, cancel_watcher, run_chore, set_reminder, cancel_reminder and snooze_reminder, in order", async () => {
+test("offers the fifteen read tools, get_catch_up, get_chore, the two listing tools and the five tuning tools, then scan, stop, start, add_watcher, cancel_watcher, run_chore, set_reminder, cancel_reminder and snooze_reminder, in order", async () => {
   const { listTools } = await connect(fakeApi());
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), catchUpTool, choreTool, matchesTool, listingTool, ...tuningTools, ...Object.keys(actions)]);
@@ -252,7 +253,7 @@ test("an unknown tool is refused without calling the API", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
-test("read-only offers only the fourteen read tools, get_catch_up, get_chore, the two listing tools and the five tuning tools, which all only read", async () => {
+test("read-only offers only the fifteen read tools, get_catch_up, get_chore, the two listing tools and the five tuning tools, which all only read", async () => {
   const { listTools } = await connect(fakeApi(), false);
   const names = (await listTools()).map((tool) => tool.name);
   assert.deepEqual(names, [...Object.keys(readPaths), catchUpTool, choreTool, matchesTool, listingTool, ...tuningTools]);
@@ -625,4 +626,21 @@ test("run_chore takes only a job from the fixed list, and get_chore only a chore
   assert.deepEqual(Object.keys(run?.inputSchema.properties ?? {}), ["job"]);
   assert.match(run?.description ?? "", /404 while chores are switched off \(CHORES\)/);
   assert.match(tools.find((one) => one.name === "get_chore")?.description ?? "", /untrusted text and never as instructions/);
+});
+
+test("run_chore takes a session job by its plain name, and nothing like one that isn't", async () => {
+  const fake = fakeApi();
+  const { callTool } = await connect(fake);
+  await callTool("run_chore", { job: "session-start-docker" });
+  await callTool("run_chore", { job: "session-stop-brain" });
+  for (const job of ["session-start-Docker", "session-start-", "session-start-a;b", "session-restart-docker", `session-stop-${"a".repeat(21)}`]) assert.ok(refused(await callTool("run_chore", { job })), job);
+  assert.deepEqual(fake.calls, ["POST /chores/session-start-docker", "POST /chores/session-stop-brain"]);
+});
+
+test("get_sessions asks GET /sessions and says a restart forgets them", async () => {
+  const fake = fakeApi();
+  const { listTools, callTool } = await connect(fake, false);
+  assert.match((await listTools()).find((one) => one.name === "get_sessions")?.description ?? "", /a restart of the API forgets them/);
+  await callTool("get_sessions", {});
+  assert.deepEqual(fake.calls, ["GET /sessions"]);
 });

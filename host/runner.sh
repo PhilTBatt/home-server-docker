@@ -4,6 +4,7 @@ set -u
 
 hub="${HOME_HUB_DIR:-$HOME/docker}"
 requests="$hub/chores/requests"
+sessions="$hub/host/hub-sessions.conf"
 results="$hub/chores/results"
 kept_results=20
 output_lines=40
@@ -18,12 +19,51 @@ now() {
 }
 
 limit_for() {
+  if [[ "$1" =~ ^session-(start|stop)-[a-z0-9-]{1,20}$ ]]; then
+    echo 30
+    return
+  fi
   case "$1" in
     rebuild-api) echo 900 ;;
     run-tests) echo 2400 ;;
     pull-images) echo 1200 ;;
     *) echo 0 ;;
   esac
+}
+
+session_line() {
+  local wanted="$1" name tmux folder extra
+  [ -f "$sessions" ] && [ ! -L "$sessions" ] || return 1
+  while read -r name tmux folder extra; do
+    [ "$name" = "$wanted" ] || continue
+    [[ "$tmux" =~ ^[A-Za-z0-9_-]{1,30}$ ]] || return 1
+    [[ "$folder" =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
+    [[ "$folder" != *..* ]] && [[ "$folder" == "$HOME"/* ]] && [ -d "$folder" ] && [ -z "$extra" ] || return 1
+    echo "$tmux $folder"
+    return 0
+  done < <(head -n 10 -- "$sessions")
+  return 1
+}
+
+session_job() {
+  local action="$1" name="$2" line tmux folder claude
+  line=$(session_line "$name") || { echo "that session isn't in host/hub-sessions.conf"; return 65; }
+  tmux="${line%% *}"
+  folder="${line#* }"
+  if [ "$action" = start ]; then
+    if tmux -L home-hub has-session -t "=$tmux" 2> /dev/null; then
+      echo "the tmux session for $name is already running"
+      return 0
+    fi
+    claude=$(PATH="$HOME/.local/bin:$PATH" command -v claude) || { echo "claude isn't installed for this user"; return 66; }
+    timeout --kill-after=5 30 tmux -L home-hub new-session -d -s "$tmux" -c "$folder" "$claude" && echo "started the tmux session for $name"
+    return
+  fi
+  if ! tmux -L home-hub has-session -t "=$tmux" 2> /dev/null; then
+    echo "the tmux session for $name isn't running"
+    return 0
+  fi
+  timeout --kill-after=5 30 tmux -L home-hub kill-session -t "=$tmux" && echo "stopped the tmux session for $name"
 }
 
 write_result() {
@@ -46,6 +86,12 @@ run_job() {
       ;;
     pull-images)
       timeout --kill-after=30 1200 docker compose --ansi never pull --ignore-buildable
+      ;;
+    session-start-*)
+      session_job start "${1#session-start-}"
+      ;;
+    session-stop-*)
+      session_job stop "${1#session-stop-}"
       ;;
     *)
       return 64
@@ -86,6 +132,11 @@ handle() {
   if [ "$limit" = 0 ]; then
     write_result "$id" "{\"id\":\"$id\",\"state\":\"refused\",\"why\":\"that job isn't on the runner's list\",\"endedAt\":\"$(now)\"}"
     say "request $id refused: not a job on the list"
+    return
+  fi
+  if [[ "$job" =~ ^session-(start|stop)-(.*)$ ]] && ! session_line "${BASH_REMATCH[2]}" > /dev/null; then
+    write_result "$id" "{\"id\":\"$id\",\"job\":\"$job\",\"state\":\"refused\",\"why\":\"that session isn't in the runner's settings\",\"endedAt\":\"$(now)\"}"
+    say "request $id refused: a session that isn't in the settings"
     return
   fi
   started=$(now)

@@ -18,6 +18,17 @@ echo "fake docker ran"
 exit 0
 FAKE
 chmod +x "$work/bin/docker"
+cat > "$work/bin/tmux" <<'FAKE'
+#!/bin/bash
+echo "$PWD :: tmux $*" >> "$TMUX_LOG"
+[ "$1" = -L ] && shift 2
+if [ "$1" = has-session ]; then [ -n "${TMUX_HAS:-}" ]; exit $?; fi
+exit 0
+FAKE
+chmod +x "$work/bin/tmux"
+mkdir -p "$work/home/.local/bin" "$work/home/docker-copy" "$work/home/brain-copy"
+printf '#!/bin/bash\n' > "$work/home/.local/bin/claude"
+chmod +x "$work/home/.local/bin/claude"
 
 passed=0
 failed=0
@@ -56,9 +67,9 @@ check_lacks() {
 }
 
 fresh() {
-  rm -rf "$work/hub" "$work/docker.log"
-  mkdir -p "$work/hub/chores/requests" "$work/hub/chores/results"
-  touch "$work/docker.log"
+  rm -rf "$work/hub" "$work/docker.log" "$work/tmux.log"
+  mkdir -p "$work/hub/chores/requests" "$work/hub/chores/results" "$work/hub/host"
+  touch "$work/docker.log" "$work/tmux.log"
 }
 
 ask() {
@@ -66,7 +77,7 @@ ask() {
 }
 
 run() {
-  (cd "$work" && PATH="$work/bin:$PATH" HOME_HUB_DIR="$work/hub" DOCKER_LOG="$work/docker.log" bash "${RUNNER:-$script}" 2>&1)
+  (cd "$work" && PATH="$work/bin:${RUN_PATH:-$PATH}" HOME="$work/home" HOME_HUB_DIR="$work/hub" DOCKER_LOG="$work/docker.log" TMUX_LOG="$work/tmux.log" bash "${RUNNER:-$script}" 2>&1)
 }
 
 result() {
@@ -226,6 +237,81 @@ check "it keeps the last 20 results and their output" "20 20" "$(ls "$work/hub/c
 check "the newest ones" "yes" "$([ -e "$work/hub/chores/results/$(printf '%016x' 25).json" ] && [ ! -e "$work/hub/chores/results/$(printf '%016x' 1).json" ] && echo yes || echo no)"
 check "and never removes anything else" "keep" "$(cat "$work/hub/chores/results/README.md")"
 
+sessions_ok() {
+  printf 'docker hub-docker %s\nbrain hub-brain %s\n' "$work/home/docker-copy" "$work/home/brain-copy" > "$work/hub/host/hub-sessions.conf"
+}
+
+fresh
+sessions_ok
+ask "$id1" session-start-docker
+output=$(run)
+check "starting a session starts Claude Code in a detached tmux session named and placed as the settings say, on its own tmux server, so the runner's limits never reach my own tmux windows" "$work/hub :: tmux -L home-hub has-session -t =hub-docker
+$work/hub :: tmux -L home-hub new-session -d -s hub-docker -c $work/home/docker-copy $work/home/.local/bin/claude" "$(cat "$work/tmux.log")"
+check_has "and says so" "started the tmux session for docker" "$(cat "$work/hub/chores/results/$id1.out")"
+check_has "with its own short limit" '"job":"session-start-docker","state":"done","exit":0,"timedOut":false' "$(result "$id1")"
+check_has "of 30 seconds" '"limitSeconds":30}' "$(result "$id1")"
+check "and Docker isn't touched" "" "$(cat "$work/docker.log")"
+
+fresh
+sessions_ok
+ask "$id1" session-start-brain
+TMUX_HAS=1 run > /dev/null
+check "starting one that's already running leaves it alone" "$work/hub :: tmux -L home-hub has-session -t =hub-brain" "$(cat "$work/tmux.log")"
+check_has "and says so" "already running" "$(cat "$work/hub/chores/results/$id1.out")"
+
+fresh
+sessions_ok
+ask "$id1" session-stop-docker
+TMUX_HAS=1 run > /dev/null
+check "stopping one ends exactly that tmux session" "$work/hub :: tmux -L home-hub has-session -t =hub-docker
+$work/hub :: tmux -L home-hub kill-session -t =hub-docker" "$(cat "$work/tmux.log")"
+
+fresh
+sessions_ok
+ask "$id1" session-stop-docker
+run > /dev/null
+check "stopping one that isn't running does nothing" "$work/hub :: tmux -L home-hub has-session -t =hub-docker" "$(cat "$work/tmux.log")"
+
+fresh
+sessions_ok
+ask "$id1" session-start-other
+run > /dev/null
+check_has "a session that isn't in the settings is refused" '"job":"session-start-other","state":"refused","why":"that session isn'"'"'t in the runner'"'"'s settings"' "$(result "$id1")"
+check "and tmux isn't asked" "" "$(cat "$work/tmux.log")"
+
+fresh
+ask "$id1" session-start-docker
+run > /dev/null
+check_has "with no settings file, no session is known" '"state":"refused"' "$(result "$id1")"
+
+for bad in "docker bad;name $work/home/docker-copy" "docker hub-docker relative/folder" "docker hub-docker $work/home/docker-copy/../../etc" "docker hub-docker /etc" "docker hub-docker $work/home/missing" "docker hub-docker $work/home/docker-copy extra"; do
+  fresh
+  printf '%s\n' "$bad" > "$work/hub/host/hub-sessions.conf"
+  ask "$id1" session-start-docker
+  run > /dev/null
+  check_has "a settings line that isn't safe is refused: $bad" '"state":"refused"' "$(result "$id1")"
+  check "and nothing ran: $bad" "" "$(cat "$work/tmux.log")"
+done
+
+fresh
+sessions_ok
+for job in "session-start-Docker" "session-start-" "session-start-docker;ls" "session-restart-docker"; do
+  rm -f "$work/hub/chores/results/"*
+  ask "$id1" "$job"
+  run > /dev/null
+  check "an odd session job is refused as not on the list: $job" '"state":"refused","why":"that job isn'"'"'t on the runner'"'"'s list"' "$(result "$id1" | grep -o '"state":"refused","why":"[^"]*"')"
+done
+check "and tmux was never asked" "" "$(cat "$work/tmux.log")"
+
+fresh
+sessions_ok
+rm "$work/home/.local/bin/claude"
+ask "$id1" session-start-docker
+RUN_PATH=/usr/bin:/bin run > /dev/null
+check_has "without Claude Code installed it says so" "claude isn't installed for this user" "$(cat "$work/hub/chores/results/$id1.out")"
+printf '#!/bin/bash\n' > "$work/home/.local/bin/claude"
+chmod +x "$work/home/.local/bin/claude"
+
 service=$(cat "$here/home-hub-runner@.service")
 path=$(cat "$here/home-hub-runner@.path")
 check_has "the service runs as the user it's enabled for, never root" "User=%i" "$service"
@@ -237,6 +323,8 @@ check "and no user's home is written in either, only the one %i names" "" "$(gre
 check "and no user but %i" "User=%i" "$(grep '^User=' <<< "$service")"
 check_has "the installed copy, where hub-update.sh puts it" "ExecStart=/usr/local/bin/home-hub-runner" "$service"
 check_has "and can't gain rights it wasn't started with" "NoNewPrivileges=yes" "$service"
+check_has "and leaves a tmux session it started running when it ends" "KillMode=process" "$service"
+check "the example settings name no one" "" "$(grep -v '/home/you/' "$here/hub-sessions.example.conf")"
 check_has "the path unit starts it when a request appears" "PathExistsGlob=/home/%i/docker/chores/requests/*.job" "$path"
 check_has "and names the same user's service" "Unit=home-hub-runner@%i.service" "$path"
 

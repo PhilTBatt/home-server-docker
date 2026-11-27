@@ -24,7 +24,7 @@ test("an MCP server started by Jarvis himself gets the token and the actions set
 });
 
 test("Jarvis knows the hub's eight read tools and five actions by name, and accepts the actions only when they're on", () => {
-  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"]);
+  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"]);
   assert.deepEqual(hubActionTools, ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore"]);
   assert.deepEqual(allowedHubTools(hubServerFor("t")), hubReadTools);
   assert.deepEqual(hubNoYesTools, ["set_reminder", "snooze_reminder"]);
@@ -342,4 +342,10 @@ test("run_chore asks yes or no, saying which chore and what it does, and never r
   assert.equal(actionQuestion("run_chore", { job: "pull-images" }), "Jarvis wants to download newer images for the services, without restarting anything (the pull-images chore). Type yes to let him, or anything else to stop it");
   for (const input of [{ job: "reboot now" }, { job: "toString" }, {}, null]) assert.equal(actionQuestion("run_chore", input), "Jarvis wants to run a chore the runner won't accept. Type yes to let him, or anything else to stop it");
   assert.equal(isHubAction("run_chore"), true);
+});
+
+test("run_chore for a session says which session it starts or stops", () => {
+  assert.equal(actionQuestion("run_chore", { job: "session-start-docker" }), "Jarvis wants to start the Claude Code session docker. Type yes to let him, or anything else to stop it");
+  assert.equal(actionQuestion("run_chore", { job: "session-stop-brain" }), "Jarvis wants to stop the Claude Code session brain. Type yes to let him, or anything else to stop it");
+  for (const job of ["session-start-Docker", "session-start-", "session-start-a b"]) assert.equal(actionQuestion("run_chore", { job }), "Jarvis wants to run a chore the runner won't accept. Type yes to let him, or anything else to stop it", job);
 });

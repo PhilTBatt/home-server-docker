@@ -30,6 +30,7 @@
       "mcp__hub__get_mode",
       "mcp__hub__get_reminders",
       "mcp__hub__get_chore",
+      "mcp__hub__get_sessions",
       "mcp__hub__get_catch_up",
       "mcp__hub__get_deal_status",
       "mcp__hub__get_deal_searches",
@@ -76,6 +77,7 @@
       "Read(./media-stack/**)",
       "Read(~/hub-memory/**)",
       "Edit(./ears/switch/**)",
+    "Edit(./host/hub-session.sh)",
       "Read(./ears/voice/**)",
       "Bash(bash host/ears.sh unmute *)",
       "Bash(bash host/ears.sh talk *)",
@@ -84,6 +86,85 @@
       "WebFetch(domain:ebay.com)",
       "WebFetch(domain:www.ebay.com)",
       "WebFetch(domain:m.ebay.com)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/host/hub-session.sh\" docker waiting",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/host/hub-session.sh\" docker working",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/host/hub-session.sh\" docker working",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/host/hub-session.sh\" docker waiting",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/host/hub-session.sh\" docker waiting",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/host/hub-session.sh\" docker waiting",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/host/hub-session.sh\" docker stopped",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

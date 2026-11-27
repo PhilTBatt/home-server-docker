@@ -30,6 +30,7 @@ import { liveFacts } from "./live-facts.js";
 import { introLine, readIntro } from "./intro.js";
 import { hubModes as modeHub, watchModes, whenCheck } from "./modes.js";
 import { askHubForDue, hubReminders, watchReminders } from "./reminders.js";
+import { askHubForSessions, watchSessions } from "./session-news.js";
 import { personaLine, readPersona } from "./persona.js";
 import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes } from "./session-notes.js";
@@ -226,6 +227,7 @@ try {
       const answer = await earsCall("POST", `/wake/guests?on=${on ? 1 : 0}`, 3_000);
       if (answer.status !== 200) throw new Error(answer.error ?? `ears replied ${answer.status}`);
     } } : undefined,
+    sessions: config.sessions && config.hubToken !== null ? watchSessions({ ask: askHubForSessions(config.hubToken), signal: closing.signal }) : undefined,
     reminders: config.reminders && config.hubToken !== null ? { news: watchReminders({ ask: askHubForDue(config.hubToken), signal: closing.signal }), hub: hubReminders(config.hubToken) } : undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);

@@ -13,7 +13,7 @@ const status: Status = {
   diskAvailableGB: 180,
 };
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
 
 const neverRun: BackupState = { lastRun: null, lastSuccess: null };
 
@@ -207,7 +207,7 @@ test("a different hour can be chosen", async () => {
 });
 
 test("a summary names anything switched off, in a fixed order", () => {
-  const summary = summaryFor(status, [], { alerts: false, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true }, null, neverRun);
+  const summary = summaryFor(status, [], { alerts: false, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true }, null, neverRun);
   assert.equal(
     summary.message,
     [
@@ -222,7 +222,7 @@ test("a summary names anything switched off, in a fixed order", () => {
 });
 
 test("the switched-off line comes after the problems", () => {
-  const summary = summaryFor(status, [diskLow], { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true }, 2, neverRun);
+  const summary = summaryFor(status, [diskLow], { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true }, 2, neverRun);
   assert.deepEqual(summary.message.split("\n").slice(-5), ["Problems:", diskLow.message, "Brain: 2 notes waiting.", "Backups: never run.", "Switched off: heartbeat."]);
 });
 
@@ -231,9 +231,9 @@ test("a summary with everything on says nothing about switches", () => {
 });
 
 test("summaryFor leaves the switches unchanged", () => {
-  const features: Features = { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true };
+  const features: Features = { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
   summaryFor(status, [], features, 3, neverRun);
-  assert.deepEqual(features, { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true });
+  assert.deepEqual(features, { alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true });
 });
 
 test("the summary that's sent includes what's switched off", async () => {
@@ -254,6 +254,7 @@ test("the summary that's sent includes what's switched off", async () => {
     modes: true,
     reminders: true,
     chores: true,
+    sessions: true,
   }, async () => 0, async () => neverRun);
   assert.equal(await send(new Date("2026-11-13T08:00:00Z")), true);
   const body = String(fetchMock.mock.calls[0].arguments[1]?.body);

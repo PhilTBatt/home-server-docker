@@ -4,6 +4,11 @@ import { join } from "node:path";
 
 export const choreJobs = ["rebuild-api", "run-tests", "pull-images"] as const;
 export const idPattern = /^[0-9a-f]{16}$/;
+export const sessionJobPattern = /^session-(?:start|stop)-[a-z0-9-]{1,20}$/;
+
+export function choreJobFor(sessions: boolean): (job: string) => boolean {
+  return (job) => (choreJobs as readonly string[]).includes(job) || (sessions && sessionJobPattern.test(job));
+}
 export const pickUpMs = 2 * 60 * 1000;
 export const runningSlackMs = 2 * 60 * 1000;
 export const outputMostBytes = 4_000;
@@ -54,7 +59,7 @@ export function readResult(id: string, text: string): Omit<ChoreResult, "output"
   if (!isObject(parsed) || parsed.id !== id) return null;
   const state = (["running", "done", "refused"] as const).find((one) => one === parsed.state);
   if (state === undefined) return null;
-  const job = choreJobs.find((one) => one === parsed.job) ?? null;
+  const job = typeof parsed.job === "string" && (choreJobFor(true)(parsed.job)) ? parsed.job : null;
   return {
     id,
     state,
@@ -83,7 +88,7 @@ export function outputLines(text: string): string[] {
 export function createChores(options: { dir: string; jobs?: (job: string) => boolean; makeId?: () => string; log?: ChoreLog }): Chores {
   const requests = join(options.dir, "requests");
   const results = join(options.dir, "results");
-  const isJob = options.jobs ?? ((job: string) => (choreJobs as readonly string[]).includes(job));
+  const isJob = options.jobs ?? choreJobFor(false);
   const makeId = options.makeId ?? (() => randomBytes(8).toString("hex"));
   const dropped = new Map<string, string>();
   const { log } = options;

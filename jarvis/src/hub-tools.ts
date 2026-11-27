@@ -5,7 +5,7 @@ export const hubServerFile = "/mcp/dist/server.js";
 export const hubServerName = "hub";
 export const hubToolPrefix = `mcp__${hubServerName}__`;
 
-export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"];
+export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"];
 export const hubActionTools = ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore"];
 export const hubNoYesTools = ["set_reminder", "snooze_reminder"];
 export const notDoneNote = "Phil didn't say yes, so it wasn't done";
@@ -68,7 +68,10 @@ const choreText: Record<string, string> = {
 
 function chore(input: unknown): string {
   const job = typeof input === "object" && input !== null ? (input as Record<string, unknown>).job : undefined;
-  return typeof job === "string" && Object.hasOwn(choreText, job) ? `${choreText[job]} (the ${job} chore)` : "run a chore the runner won't accept";
+  if (typeof job === "string" && Object.hasOwn(choreText, job)) return `${choreText[job]} (the ${job} chore)`;
+  const session = typeof job === "string" ? /^session-(start|stop)-([a-z0-9-]{1,20})$/.exec(job) : null;
+  if (session !== null) return `${session[1]} the Claude Code session ${session[2]}`;
+  return "run a chore the runner won't accept";
 }
 
 function reminderId(input: unknown): string {

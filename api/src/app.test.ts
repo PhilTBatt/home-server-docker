@@ -10,6 +10,7 @@ import { createWatchers } from "./modules/watchers/watchers.js";
 import { createModes } from "./modules/modes/modes.js";
 import { createReminders } from "./modules/reminders/reminders.js";
 import { createChores } from "./modules/chores/chores.js";
+import { createSessions } from "./modules/sessions/sessions.js";
 
 const config: Config = {
   apiToken: "test-token",
@@ -23,7 +24,7 @@ const config: Config = {
   catchUp: { repos: [], token: "" },
   modes: { bedtimeFrom: null, bedtimeUntil: null },
   phone: { ring: "once", seconds: 30 },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true }
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -274,7 +275,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -693,4 +694,24 @@ test("chores are a route of the hub's, behind the token, given only the chores i
   assert.deepEqual((await off.inject({ method: "POST", url: "/chores/rebuild-api", headers: goodHeader })).json(), { error: "Chores are switched off" });
   const none = await buildRealApp({ logger: false, config });
   assert.equal((await none.inject({ method: "POST", url: "/chores/rebuild-api", headers: goodHeader })).statusCode, 404);
+});
+
+test("sessions are a route of the hub's, behind the token, given only the sessions it was handed and only with the switch on", async () => {
+  const handed = createSessions();
+  const app = await buildRealApp({ logger: false, config, sessions: handed });
+  assert.equal((await app.inject({ method: "POST", url: "/sessions/docker/state", payload: { state: "waiting" } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: "/sessions/docker/state", headers: goodHeader, payload: { state: "waiting" } })).statusCode, 200);
+  assert.deepEqual(handed.list().map((one) => one.state), ["waiting"]);
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, sessions: false } }, sessions: handed });
+  assert.deepEqual((await off.inject({ method: "GET", url: "/sessions", headers: goodHeader })).json(), { error: "Sessions are switched off" });
+  const none = await buildRealApp({ logger: false, config });
+  assert.equal((await none.inject({ method: "GET", url: "/sessions/changes", headers: goodHeader })).statusCode, 404);
+});
+
+test("the chores route takes session jobs only while sessions are on", async () => {
+  const withSessions = await buildRealApp({ logger: false, config, chores: createChores({ dir: "/no-such-folder" }) });
+  const reply = await withSessions.inject({ method: "POST", url: "/chores/session-start-docker", headers: goodHeader });
+  assert.notEqual(reply.statusCode, 400);
+  const without = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, sessions: false } }, chores: createChores({ dir: "/no-such-folder" }) });
+  assert.equal((await without.inject({ method: "POST", url: "/chores/session-start-docker", headers: goodHeader })).statusCode, 400);
 });

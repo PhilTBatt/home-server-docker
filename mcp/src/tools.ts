@@ -70,6 +70,11 @@ export const readTools: ReadTool[] = [
     path: "/reminders",
   },
   {
+    name: "get_sessions",
+    description: "Phil's Claude Code sessions that tell the hub how they're doing, through their hooks: each one's name, state (waiting: it's waiting on Phil, for an answer or a permission; working; stopped), since (when it got to that state) and lastSeen. Kept in memory only, so a restart of the API forgets them until each session's next change. Start or stop one with run_chore and session-start-<name> or session-stop-<name>. Fails with a 404 while sessions are switched off (SESSIONS).",
+    path: "/sessions",
+  },
+  {
     name: "get_deal_status",
     description: "How the deal watcher is doing: when it last ran, today's counts of calls and alerts against their limits, quiet hours, when the digest goes and whether today's has, where it keeps seen listings, and any problems. Fails with a 404 while the deal watcher is switched off.",
     path: "/deals/status",
@@ -182,7 +187,9 @@ function reminderBody(input: z.infer<typeof reminderInput>): Record<string, unkn
 export const choreJobs = ["rebuild-api", "run-tests", "pull-images"] as const;
 
 const choreInput = z.object({
-  job: z.enum(choreJobs).describe("rebuild-api rebuilds the API from the server's copy of the repo and restarts it (docker compose up -d --build --wait api). run-tests runs the api, mcp, jarvis and ears tests, each in a throwaway node:26-alpine container with its folder mounted read-only. pull-images downloads newer images for the services (docker compose pull --ignore-buildable) without restarting anything."),
+  job: z
+    .union([z.enum(choreJobs), z.string().regex(/^session-(?:start|stop)-[a-z0-9-]{1,20}$/)])
+    .describe("session-start-<name> and session-stop-<name> start or stop one of the Claude Code sessions the runner knows (from get_sessions' names), in tmux, and work only while sessions are switched on (SESSIONS). rebuild-api rebuilds the API from the server's copy of the repo and restarts it (docker compose up -d --build --wait api). run-tests runs the api, mcp, jarvis and ears tests, each in a throwaway node:26-alpine container with its folder mounted read-only. pull-images downloads newer images for the services (docker compose pull --ignore-buildable) without restarting anything."),
 });
 
 const choreIdInput = z.object({
@@ -357,7 +364,7 @@ export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGe
   server.registerTool(
     "run_chore",
     {
-      description: "Asks the server's runner to run one dev chore from a fixed list: rebuild-api, run-tests or pull-images. The runner is outside Docker and runs only these, with a time limit (15, 40 and 20 minutes). One at a time: a second while one waits or runs is refused with a 409 saying why. Answers with the chore's id; read how it went with get_chore. Fails with a 404 while chores are switched off (CHORES), and a 500 when the request can't be written.",
+      description: "Asks the server's runner to run one dev chore from a fixed list: rebuild-api, run-tests or pull-images, or session-start-<name> or session-stop-<name> for a Claude Code session in the runner's own list. The runner is outside Docker and runs only these, with a time limit (15, 40 and 20 minutes, 30 seconds for a session). One at a time: a second while one waits or runs is refused with a 409 saying why. Answers with the chore's id; read how it went with get_chore. Fails with a 404 while chores are switched off (CHORES), and a 500 when the request can't be written.",
       inputSchema: choreInput,
     },
     async ({ job }) => asText(await post(`/chores/${job}`)),

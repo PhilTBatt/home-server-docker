@@ -20,6 +20,7 @@ export type Features = {
   modes: boolean;
   reminders: boolean;
   chores: boolean;
+  sessions: boolean;
 };
 
 export type DealSettings = {
@@ -71,6 +72,7 @@ const featureLabels: Record<keyof Features, string> = {
   modes: "modes",
   reminders: "reminders",
   chores: "dev chores",
+  sessions: "sessions",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -120,6 +122,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     modes: readSwitch("MODES"),
     reminders: readSwitch("REMINDERS"),
     chores: readSwitch("CHORES"),
+    sessions: readSwitch("SESSIONS"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers || features.reminders);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
