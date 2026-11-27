@@ -149,5 +149,36 @@ check_has "and says what to run once it's fixed" "Once it's fixed, run these you
   $(in_node jarvis ci)
   $(in_node jarvis "run engine-check")" "$output"
 
+fresh_repos
+mkdir -p "$work/laptop/host"
+echo one > "$work/laptop/host/runner.sh"
+echo one > "$work/laptop/host/home-hub-runner@.path"
+echo one > "$work/laptop/host/home-hub-runner@.service"
+git -C "$work/laptop" add -A
+git -C "$work/laptop" commit -q -m runner
+git -C "$work/laptop" push -q 2>/dev/null
+output=$(update)
+check "new host files are never installed with no one there to answer" "" "$(cat "$work/docker.log")"
+check_has "the runner script goes to /usr/local/bin, as your user runs it" "Skipped. To install it later: sudo install host/runner.sh /usr/local/bin/home-hub-runner" "$output"
+check_has "its path unit goes with the other units, readable by all" "Skipped. To install it later: sudo install -m 644 host/home-hub-runner@.path /etc/systemd/system/home-hub-runner@.path" "$output"
+check_has "and its service too" "Skipped. To install it later: sudo install -m 644 host/home-hub-runner@.service /etc/systemd/system/home-hub-runner@.service" "$output"
+
+mkdir -p "$work/bin-sudo"
+cat > "$work/bin-sudo/sudo" <<'FAKE'
+#!/bin/bash
+echo "sudo $*" >> "$DOCKER_LOG"
+exit 0
+FAKE
+chmod +x "$work/bin-sudo/sudo"
+fresh_repos
+echo one > "$work/laptop/host/home-hub-runner@.path"
+git -C "$work/laptop" add -A
+git -C "$work/laptop" commit -q -m runner
+git -C "$work/laptop" push -q 2>/dev/null
+output=$(cd "$work/server" && echo y | PATH="$work/bin-sudo:$work/bin:$PATH" DOCKER_LOG="$work/docker.log" bash host/hub-update.sh 2>&1)
+check "a template path unit, once installed, is restarted for every user it's enabled for, never as the template itself" "sudo install -m 644 host/home-hub-runner@.path /etc/systemd/system/home-hub-runner@.path
+sudo systemctl daemon-reload
+sudo systemctl try-restart home-hub-runner@*.path" "$(cat "$work/docker.log")"
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

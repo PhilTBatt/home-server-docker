@@ -19,6 +19,7 @@ import { modesFor } from "./modules/modes/setup.js";
 import { tickMs as modeTickMs } from "./modules/modes/modes.js";
 import { remindersFor } from "./modules/reminders/setup.js";
 import { tickMs as reminderTickMs } from "./modules/reminders/reminders.js";
+import { choresFor } from "./modules/chores/setup.js";
 
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
@@ -50,7 +51,14 @@ const reminders = config.features.reminders
     })
   : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders });
+const chores = config.features.chores
+  ? choresFor({
+      info: (fields, message) => app.log.info({ chores: fields }, message),
+      warn: (fields, message) => app.log.warn({ chores: fields }, message),
+    })
+  : undefined;
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders, chores });
 app.log.info({ features: config.features }, "feature switches");
 
 if (modes !== undefined) {

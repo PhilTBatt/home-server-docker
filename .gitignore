@@ -34,3 +34,11 @@ expiry/*
 !expiry/README.md
 api/data/*
 !api/data/README.md
+chores/*
+!chores/README.md
+!chores/requests/
+chores/requests/*
+!chores/requests/.keep
+!chores/results/
+chores/results/*
+!chores/results/.keep

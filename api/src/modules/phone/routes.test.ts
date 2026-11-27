@@ -5,7 +5,7 @@ import type { Features, PhoneSettings } from "../../config.js";
 import type { Notification } from "../notify/notifier.js";
 import { findAgainMs, findNotification, phone, repeatEveryMs } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true };
 
 afterEach(() => {
   mock.timers.reset();

@@ -5,8 +5,8 @@ export const hubServerFile = "/mcp/dist/server.js";
 export const hubServerName = "hub";
 export const hubToolPrefix = `mcp__${hubServerName}__`;
 
-export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"];
-export const hubActionTools = ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder"];
+export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"];
+export const hubActionTools = ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore"];
 export const hubNoYesTools = ["set_reminder", "snooze_reminder"];
 export const notDoneNote = "Phil didn't say yes, so it wasn't done";
 export const hubApiUrl = "http://api:3000";
@@ -60,6 +60,17 @@ export function watchText(input: unknown): string | null {
   return what === null ? null : `watch for ${what}, for up to ${span}, and tell your phone once when it happens`;
 }
 
+const choreText: Record<string, string> = {
+  "rebuild-api": "rebuild the API and restart it",
+  "run-tests": "run the hub's tests in throwaway containers",
+  "pull-images": "download newer images for the services, without restarting anything",
+};
+
+function chore(input: unknown): string {
+  const job = typeof input === "object" && input !== null ? (input as Record<string, unknown>).job : undefined;
+  return typeof job === "string" && Object.hasOwn(choreText, job) ? `${choreText[job]} (the ${job} chore)` : "run a chore the runner won't accept";
+}
+
 function reminderId(input: unknown): string {
   const id = typeof input === "object" && input !== null ? (input as Record<string, unknown>).id : undefined;
   return typeof id === "string" && /^[0-9a-f]{8}$/.test(id) ? `the reminder ${id}` : "a reminder";
@@ -78,6 +89,7 @@ export function actionQuestion(name: string, input: unknown): string {
     add_watcher: watchText(input) ?? "add a watcher with details the hub won't accept",
     cancel_watcher: `cancel ${watcherId(input)}`,
     cancel_reminder: `cancel ${reminderId(input)}`,
+    run_chore: chore(input),
   };
   return `Jarvis wants to ${what[name] ?? `use ${name}`}. ${typeYes}`;
 }

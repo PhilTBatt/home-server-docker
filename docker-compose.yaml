@@ -209,6 +209,17 @@ services:
         target: /data
         bind:
           create_host_path: false
+      - type: bind
+        source: ./chores/requests
+        target: /chores/requests
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./chores/results
+        target: /chores/results
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - default
       - jarvis

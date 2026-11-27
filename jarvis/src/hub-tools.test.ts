@@ -24,15 +24,15 @@ test("an MCP server started by Jarvis himself gets the token and the actions set
 });
 
 test("Jarvis knows the hub's eight read tools and five actions by name, and accepts the actions only when they're on", () => {
-  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"]);
-  assert.deepEqual(hubActionTools, ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder"]);
+  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"]);
+  assert.deepEqual(hubActionTools, ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore"]);
   assert.deepEqual(allowedHubTools(hubServerFor("t")), hubReadTools);
   assert.deepEqual(hubNoYesTools, ["set_reminder", "snooze_reminder"]);
   assert.deepEqual(allowedHubTools(hubServerFor("t", true)), [...hubReadTools, ...hubNoYesTools, ...hubActionTools]);
   assert.deepEqual(hubNoYesTools.map(isHubAction), [false, false]);
   assert.equal(isHubAction("cancel_reminder"), true, "cancelling a reminder needs a yes: a cancelled one is gone");
   assert.equal(actionQuestion("cancel_reminder", { id: "0a1b2c3d" }), "Jarvis wants to cancel the reminder 0a1b2c3d. Type yes to let him, or anything else to stop it");
-  assert.deepEqual(hubActionTools.map(isHubAction), [true, true, true, true, true, true]);
+  assert.deepEqual(hubActionTools.map(isHubAction), [true, true, true, true, true, true, true]);
   assert.deepEqual(["get_status", "get_watchers", "read_file", "mcp__hub__scan_library", "Scan_library", "mcp__hub__add_watcher", ""].map(isHubAction), [false, false, false, false, false, false, false]);
 });
 
@@ -334,4 +334,12 @@ test("the hub's tools that ask eBay live are left out of Jarvis's read tools, so
   for (const tool of ["get_deal_search_cuts", "lookup_deal_categories", "lookup_deal_details", "explain_deal_listing"]) assert.ok(!hubReadTools.includes(tool), tool);
   assert.ok(hubReadTools.every((tool) => tool.startsWith("get_")));
   assert.equal(new Set(hubReadTools).size, hubReadTools.length);
+});
+
+test("run_chore asks yes or no, saying which chore and what it does, and never repeats a job it doesn't know", () => {
+  assert.equal(actionQuestion("run_chore", { job: "rebuild-api" }), "Jarvis wants to rebuild the API and restart it (the rebuild-api chore). Type yes to let him, or anything else to stop it");
+  assert.equal(actionQuestion("run_chore", { job: "run-tests" }), "Jarvis wants to run the hub's tests in throwaway containers (the run-tests chore). Type yes to let him, or anything else to stop it");
+  assert.equal(actionQuestion("run_chore", { job: "pull-images" }), "Jarvis wants to download newer images for the services, without restarting anything (the pull-images chore). Type yes to let him, or anything else to stop it");
+  for (const input of [{ job: "reboot now" }, { job: "toString" }, {}, null]) assert.equal(actionQuestion("run_chore", input), "Jarvis wants to run a chore the runner won't accept. Type yes to let him, or anything else to stop it");
+  assert.equal(isHubAction("run_chore"), true);
 });

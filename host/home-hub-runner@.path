@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for a Home Hub chore the API asked for, for %i
+
+[Path]
+PathExistsGlob=/home/%i/docker/chores/requests/*.job
+Unit=home-hub-runner@%i.service
+
+[Install]
+WantedBy=paths.target

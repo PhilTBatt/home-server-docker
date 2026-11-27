@@ -23,8 +23,10 @@ import { modes } from "./modules/modes/routes.js";
 import type { Modes } from "./modules/modes/modes.js";
 import { reminders } from "./modules/reminders/routes.js";
 import type { Reminders } from "./modules/reminders/reminders.js";
+import { chores } from "./modules/chores/routes.js";
+import type { Chores } from "./modules/chores/chores.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
@@ -81,6 +83,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   app.register(watchers, { prefix: "/watchers", features: options.config.features, watchers: watching });
   app.register(modes, { prefix: "/mode", features: options.config.features, modes: options.config.features.modes ? options.modes : undefined });
   app.register(reminders, { prefix: "/reminders", features: options.config.features, reminders: options.config.features.reminders ? options.reminders : undefined });
+  app.register(chores, { prefix: "/chores", features: options.config.features, chores: options.config.features.chores ? options.chores : undefined });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,

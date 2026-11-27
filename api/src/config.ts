@@ -19,6 +19,7 @@ export type Features = {
   catchUp: boolean;
   modes: boolean;
   reminders: boolean;
+  chores: boolean;
 };
 
 export type DealSettings = {
@@ -69,6 +70,7 @@ const featureLabels: Record<keyof Features, string> = {
   catchUp: "catch-up",
   modes: "modes",
   reminders: "reminders",
+  chores: "dev chores",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -117,6 +119,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     catchUp: readSwitch("CATCH_UP"),
     modes: readSwitch("MODES"),
     reminders: readSwitch("REMINDERS"),
+    chores: readSwitch("CHORES"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers || features.reminders);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);

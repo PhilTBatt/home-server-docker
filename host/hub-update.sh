@@ -48,13 +48,14 @@ destination() {
   case "$1" in
     host/wifi-watchdog.sh) echo /usr/local/sbin/wifi-watchdog ;;
     host/backup.sh) echo /usr/local/sbin/home-hub-backup ;;
-    host/*.service | host/*.timer) echo "/etc/systemd/system/${1#host/}" ;;
+    host/runner.sh) echo /usr/local/bin/home-hub-runner ;;
+    host/*.service | host/*.timer | host/*.path) echo "/etc/systemd/system/${1#host/}" ;;
   esac
 }
 
 install_command() {
   case "$1" in
-    host/*.service | host/*.timer) echo "sudo install -m 644 $1 $(destination "$1")" ;;
+    host/*.service | host/*.timer | host/*.path) echo "sudo install -m 644 $1 $(destination "$1")" ;;
     *) echo "sudo install $1 $(destination "$1")" ;;
   esac
 }
@@ -101,7 +102,7 @@ offer_installs() {
     echo "Installed."
     case "$file" in
       *.service) reload=yes ;;
-      *.timer) reload=yes; timers+=("${file#host/}") ;;
+      *.timer | *.path) reload=yes; timers+=("${file#host/}") ;;
     esac
   done
   if [ "$reload" = yes ]; then
@@ -109,6 +110,7 @@ offer_installs() {
     echo "Running: sudo systemctl daemon-reload"
     sudo systemctl daemon-reload
     for timer in "${timers[@]}"; do
+      timer="${timer/@./@*.}"
       echo "Running: sudo systemctl try-restart $timer"
       sudo systemctl try-restart "$timer"
     done
