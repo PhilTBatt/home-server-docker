@@ -74,6 +74,7 @@ export type Config = {
   trainAlerts: boolean;
   brainQuestions: boolean;
   clock: boolean;
+  intro: boolean;
   web: WebMode;
   webBy: WebBy;
   webToken: string | null;
@@ -217,6 +218,8 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (log !== "on" && log !== "off") throw new Error(`JARVIS_LOG must be on or off, not "${log}"`);
   const clock = env.JARVIS_CLOCK?.trim() || "off";
   if (clock !== "on" && clock !== "off") throw new Error(`JARVIS_CLOCK must be on or off, not "${clock}"`);
+  const intro = env.JARVIS_INTRO?.trim() || "off";
+  if (intro !== "on" && intro !== "off") throw new Error(`JARVIS_INTRO must be on or off, not "${intro}"`);
   const web = env.JARVIS_WEB?.trim() || "off";
   if (!isWebMode(web)) throw new Error(`JARVIS_WEB must be ${webModes.slice(0, -1).join(", ")} or ${webModes[webModes.length - 1]}, not "${web}"`);
   const webBy = env.JARVIS_WEB_BY?.trim() || "claude";
@@ -227,5 +230,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (needsToken && webToken !== null && /\s/.test(webToken)) throw new Error("JARVIS_WEB_TOKEN must be the token alone on one line, with no spaces in it");
   const webLog = env.JARVIS_WEB_LOG?.trim() || "off";
   if (webLog !== "on" && webLog !== "off") throw new Error(`JARVIS_WEB_LOG must be on or off, not "${webLog}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", web, webBy, webToken: needsToken ? webToken : null, webLog: webLog === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", intro: intro === "on", web, webBy, webToken: needsToken ? webToken : null, webLog: webLog === "on", log: log === "on" };
 }

@@ -26,6 +26,7 @@ import { earsCaller } from "./ears-client.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
 import { liveFacts } from "./live-facts.js";
+import { introLine, readIntro } from "./intro.js";
 import { personaLine, readPersona } from "./persona.js";
 import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes } from "./session-notes.js";
@@ -67,6 +68,7 @@ try {
   hubTools = hub !== undefined && config.engine === "api" ? await startHubTools(hub, (note) => hubNotes.push(note)) : undefined;
   const notes = config.sessionNotes ? await readSessionNotes() : null;
   const persona = config.persona === null ? null : await readPersona(config.persona);
+  const intro = config.intro ? await readIntro() : null;
   let voice: VoiceMode = "off";
   let speaker: Speaker | null = null;
   const webHelper = config.web === "off" ? undefined : config.webBy === "api" ? apiHelper({ apiKey: config.apiKey, model: chatModel, now, prices: pricesPerMTok[chatModel] }) : config.webToken === null ? undefined : claudeHelper({ model: chatModel, credential: { [planToken]: config.webToken } });
@@ -85,7 +87,7 @@ try {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = config.engine === "api" ? hubTools !== undefined : hub !== undefined;
     const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts, web: config.web, brainQuestions: config.brainQuestions, clock: config.clock }) : null;
-    const instructions = (base: string) => systemFor(base, { persona, facts, spoken, notes: notes ?? [], clock: config.clock });
+    const instructions = (base: string) => systemFor(base, { persona, intro, facts, spoken, notes: notes ?? [], clock: config.clock });
     const logged: { log?: AnswerLog } = {};
     const recordLookUp = async (mode: LookUpMode, looked: LookedUp) => {
       await lookUpLog?.(mode, config.webBy, looked);
@@ -153,6 +155,7 @@ try {
   for (const note of hubNotes) warn(note);
   if (notes !== null) process.stdout.write(`${notesLine(notes)}\n`);
   if (config.persona !== null) process.stdout.write(`${personaLine(config.persona, persona)}\n`);
+  if (config.intro) process.stdout.write(`${introLine(intro)}\n`);
   const earsCall = config.earsToken === null ? null : earsCaller(config.earsToken);
   const hold = earsCall === null || config.voice === "off" ? undefined : startWakeHold(earsCall);
   wakeHold = hold;
