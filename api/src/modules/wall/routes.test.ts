@@ -4,23 +4,24 @@ import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import type { Features, WallSettings } from "../../config.js";
 import { createJarvisDesk } from "./jarvis.js";
+import type { WallPicture } from "./picture.js";
 import { switchedOff, wall, wallCookie, wallCookieDays } from "./routes.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true };
 const settings: WallSettings = { token: "w".repeat(40), speaking: "wobble" };
 
-async function buildApp(features: Features = allOn, waitMs = 40) {
+async function buildApp(features: Features = allOn, waitMs = 40, picture?: () => Promise<WallPicture>) {
   const clock = { at: 1_000_000 };
   const desk = createJarvisDesk();
   const app = Fastify();
   await app.register(cookie);
-  app.register(wall, { prefix: "/wall", features, settings, desk, now: () => clock.at, waitMs });
+  app.register(wall, { prefix: "/wall", features, settings, desk, picture, now: () => clock.at, waitMs });
   return { app, clock, desk };
 }
 
 test("everything is a 404 that says so while WALL is off", async () => {
   const { app } = await buildApp({ ...allOn, wall: false });
-  for (const [method, url] of [["GET", "/wall/jarvis"], ["POST", "/wall/jarvis"], ["POST", "/wall/login"], ["POST", "/wall/logout"]] as const) {
+  for (const [method, url] of [["GET", "/wall"], ["GET", "/wall/jarvis"], ["POST", "/wall/jarvis"], ["POST", "/wall/login"], ["POST", "/wall/logout"]] as const) {
     const response = await app.inject({ method, url, payload: method === "POST" ? {} : undefined });
     assert.equal(response.statusCode, 404, url);
     assert.deepEqual(response.json(), switchedOff);
@@ -110,4 +111,24 @@ test("logging out clears the wall's cookie", async () => {
   assert.equal(response.statusCode, 200);
   const cleared = response.cookies.find((one) => one.name === wallCookie);
   assert.equal(cleared?.value, "");
+});
+
+const sample = { at: "2026-11-30T07:02:00.000Z", clock: "07:02", day: "Monday morning", phase: "morning", mode: "normal", modeUntil: null, speaking: "wobble", items: [], train: null, timers: [], playing: null } satisfies WallPicture;
+
+test("the wall's picture is given as it was made, never kept by the browser", async () => {
+  const { app } = await buildApp(allOn, 40, async () => sample);
+  for (const url of ["/wall", "/wall/"]) {
+    const response = await app.inject({ method: "GET", url });
+    assert.equal(response.statusCode, 200, url);
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.deepEqual(response.json(), sample);
+  }
+});
+
+test("with no picture to give it says so, and one that fails is a 502 in plain words", async () => {
+  const none = await buildApp();
+  assert.deepEqual([(await none.app.inject({ method: "GET", url: "/wall" })).statusCode, (await none.app.inject({ method: "GET", url: "/wall" })).json()], [503, { error: "The wall has nothing to show yet" }]);
+  const failing = await buildApp(allOn, 40, async () => Promise.reject(new Error("secret detail")));
+  const response = await failing.app.inject({ method: "GET", url: "/wall" });
+  assert.deepEqual([response.statusCode, response.json()], [502, { error: "Couldn't put the wall's picture together" }]);
 });

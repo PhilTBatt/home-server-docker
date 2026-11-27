@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#000000">
+    <title>Jarvis on the wall</title>
+    <link rel="icon" href="icons/icon-192.png" type="image/png">
+    <link rel="stylesheet" href="wall.css">
+    <script type="module" src="wall.js"></script>
+  </head>
+  <body class="phase-daytime">
+    <div id="stage" class="stage">
+      <header class="top">
+        <span id="day" class="day"></span>
+        <h1>Home Hub</h1>
+      </header>
+      <span id="clock" class="clock"></span>
+
+      <svg class="orbit" width="1280" height="720" viewBox="0 0 1280 720" aria-hidden="true">
+        <ellipse class="orbit-line" cx="640" cy="375" rx="440" ry="245"></ellipse>
+      </svg>
+      <div id="items" class="items"></div>
+
+      <div id="jarvis" class="jarvis">
+        <svg class="arcs" width="340" height="340" viewBox="0 0 340 340" aria-hidden="true">
+          <circle class="arcs-ring" cx="170" cy="170" r="165"></circle>
+          <circle id="arc-server" class="arc" cx="170" cy="170" r="165" stroke-dasharray="160 876.7" transform="rotate(-80 170 170)"></circle>
+          <circle id="arc-backup" class="arc" cx="170" cy="170" r="165" stroke-dasharray="110 926.7" transform="rotate(50 170 170)"></circle>
+          <circle id="arc-alerts" class="arc" cx="170" cy="170" r="165" stroke-dasharray="90 946.7" transform="rotate(160 170 170)"></circle>
+        </svg>
+        <div class="moons" aria-hidden="true"><span class="moon big"></span><span class="moon small"></span></div>
+        <div id="sun" class="sun" aria-hidden="true" hidden></div>
+        <svg id="countdown" class="countdown" width="260" height="260" viewBox="0 0 260 260" aria-hidden="true" hidden>
+          <circle class="countdown-track" cx="130" cy="130" r="118"></circle>
+          <circle id="countdown-left" class="countdown-left" cx="130" cy="130" r="118" transform="rotate(-90 130 130)"></circle>
+        </svg>
+        <div id="sparks" class="sparks" aria-hidden="true"></div>
+        <div id="pose" class="pose" role="img" aria-label="Jarvis"></div>
+        <p id="label" class="label"></p>
+      </div>
+
+      <section id="middle" class="middle" aria-live="polite" hidden>
+        <span id="middle-label" class="middle-label"></span>
+        <span id="middle-value" class="middle-value"></span>
+        <span id="middle-note" class="middle-note"></span>
+        <span id="middle-state" class="middle-state"></span>
+        <span id="middle-extra" class="middle-extra"></span>
+      </section>
+
+      <div id="quiet" class="quiet" aria-hidden="true">
+        <p id="quiet-clock" class="quiet-clock"></p>
+        <span class="quiet-line left"></span>
+        <span class="quiet-line right"></span>
+        <p id="quiet-words" class="quiet-words"></p>
+      </div>
+
+      <p id="caption" class="caption" aria-live="polite" hidden><span id="caption-who" class="caption-who"></span><span id="caption-text" class="caption-text"></span></p>
+    </div>
+
+    <form id="login" class="login" hidden>
+      <h1>Jarvis on the wall</h1>
+      <p>Type the wall's token once. This screen remembers it for a year, and it can only show the wall.</p>
+      <label for="token">Wall token</label>
+      <input id="token" type="password" autocomplete="off" required>
+      <button type="submit">Show the wall</button>
+      <p id="login-message" class="login-message" aria-live="polite"></p>
+    </form>
+
+    <template id="pose-waiting"><div class="p ring-soft breathe-5"></div><div class="p core breathe-5"></div></template>
+    <template id="pose-heard"><div class="p ring-flash"></div><div class="p core"></div></template>
+    <template id="pose-listening"><div class="p ripple"></div><div class="p ripple d8"></div><div class="p ripple d16"></div><div class="p core glow-more"></div></template>
+    <template id="pose-thinking"><div class="p dashed spin-8"></div><div class="p orbiter one"><span></span></div><div class="p orbiter two"><span></span></div><div class="p core small breathe-16"></div></template>
+    <template id="pose-looking"><div class="p globe"></div><div class="p globe turn"></div><div class="p globe turn late"></div><div class="p equator"></div></template>
+    <template id="pose-speaking"><div class="p buzz wobble"><div class="p ring-a"></div><div class="p ring-b"></div><div class="p ring-c"></div><div class="p bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div></div></template>
+    <template id="pose-string"><div class="p string"><div class="wave amp-11"><svg width="720" height="160" viewBox="0 0 720 160" aria-hidden="true" class="slide-12"><path d="M0 80 q22.5 -60 45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0"></path></svg></div><div class="wave second amp-15"><svg width="720" height="160" viewBox="0 0 720 160" aria-hidden="true" class="slide-20"><path d="M0 80 q22.5 -40 45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0 t45 0"></path></svg></div></div></template>
+    <template id="pose-done"><div class="p bloom"></div><div class="p core done"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#5EE3B0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></div></template>
+    <template id="pose-needs"><div class="p ripple warm fast"></div><div class="p ring-warm breathe-16"></div><div class="p core warm"></div></template>
+    <template id="pose-muted"><div class="p ring-grey"></div><div class="p flat"></div><svg class="p mic" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8A96A8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V6a3 3 0 0 0-5.9-.7"></path><path d="M17 16.9A7 7 0 0 1 5 12v-1M19 11v1a7 7 0 0 1-.1 1.3"></path><path d="M12 19v3"></path><path d="m2 2 20 20"></path></svg></template>
+    <template id="pose-sleepy"><div class="p ring-sleepy breathe-9"></div><div class="p core sleepy breathe-9"></div></template>
+    <template id="pose-guest"><div class="p ring-guest breathe-5"></div><div class="p twins"><span></span><span></span></div><div class="p core guest"></div></template>
+    <template id="pose-off"><div class="p ring-grey dashed-grey"></div><div class="p core off"></div></template>
+    <template id="pose-lost"><svg class="p broken" width="150" height="150" viewBox="0 0 150 150" aria-hidden="true"><circle cx="75" cy="75" r="64" fill="none" stroke="#FFB547" stroke-width="2.5" stroke-dasharray="138 34 104 126" stroke-linecap="round"></circle></svg><div class="p core off"></div></template>
+  </body>
+</html>

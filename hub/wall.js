@@ -1,0 +1,432 @@
+// @ts-check
+import { arrivalShownMs, arrivalsBetween, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
+
+/**
+ * @typedef {import("./wall-logic.js").WallPicture} WallPicture
+ * @typedef {import("./wall-logic.js").JarvisView} JarvisView
+ * @typedef {import("./wall-logic.js").WallItem} WallItem
+ * @typedef {import("./wall-logic.js").Pose} Pose
+ */
+
+export const pictureEveryMs = 30_000;
+export const retryMs = 3_000;
+export const tickMs = 1_000;
+export const failuresBeforeLost = 2;
+export const pictureLimitMs = 10_000;
+export const jarvisLimitMs = 30_000;
+export const width = 1280;
+export const height = 720;
+export const orbit = { cx: 640, cy: 375, rx: 440, ry: 245 };
+export const centre = { x: 640, y: 375 };
+export const aside = { x: 400, y: 375 };
+export const bedtimeSpot = { x: 640, y: 360, scale: 0.45 };
+export const circumference = 2 * Math.PI * 118;
+
+/**
+ * @param {string} id
+ * @returns {HTMLElement}
+ */
+function byId(id) {
+  const found = document.getElementById(id);
+  if (found === null) throw new Error(`No #${id} on the page`);
+  return found;
+}
+
+const stage = byId("stage");
+const items = byId("items");
+const jarvisBox = byId("jarvis");
+const poseBox = byId("pose");
+const label = byId("label");
+const sun = byId("sun");
+const countdown = byId("countdown");
+const countdownLeft = byId("countdown-left");
+const sparks = byId("sparks");
+const middle = byId("middle");
+const caption = byId("caption");
+const login = /** @type {HTMLFormElement} */ (byId("login"));
+const tokenInput = /** @type {HTMLInputElement} */ (byId("token"));
+
+/** @type {{ picture: WallPicture | null, pictureAt: number, jarvis: JarvisView | null, jarvisAt: number, seq: number, pictureFailures: number, jarvisFailures: number, arrival: string | null, arrivalUntil: number, lastItems: WallItem[] | null, pose: string | null, loggedOut: boolean, running: AbortController | null }} */
+const state = { picture: null, pictureAt: 0, jarvis: null, jarvisAt: 0, seq: -1, pictureFailures: 0, jarvisFailures: 0, arrival: null, arrivalUntil: 0, lastItems: null, pose: null, loggedOut: false, running: null };
+
+/** @type {Map<string, HTMLElement>} */
+const shown = new Map();
+
+/**
+ * @param {HTMLElement} element
+ * @param {string} text
+ */
+function setText(element, text) {
+  if (element.textContent !== text) element.textContent = text;
+}
+
+/**
+ * @param {AbortSignal} signal
+ * @param {number} ms
+ * @returns {AbortSignal}
+ */
+function limited(signal, ms) {
+  const both = new AbortController();
+  const timer = setTimeout(() => stop(), ms);
+  const stop = () => {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", stop);
+    both.abort();
+  };
+  if (signal.aborted) stop();
+  else signal.addEventListener("abort", stop, { once: true });
+  return both.signal;
+}
+
+/**
+ * @param {number} ms
+ * @param {AbortSignal} signal
+ * @returns {Promise<void>}
+ */
+function pause(ms, signal) {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+export function fitStage() {
+  const scale = Math.min(window.innerWidth / width, window.innerHeight / height);
+  const left = (window.innerWidth - width * scale) / 2;
+  const top = (window.innerHeight - height * scale) / 2;
+  stage.style.transform = `translate(${left}px, ${top}px) scale(${scale})`;
+}
+
+function buildRays() {
+  for (let i = 0; i < 24; i++) {
+    const ray = document.createElement("div");
+    ray.className = "ray";
+    ray.style.transform = `rotate(${i * 15}deg)`;
+    const bar = document.createElement("span");
+    bar.style.animationDelay = `${-((i * 0.23) % 0.6).toFixed(2)}s`;
+    ray.append(bar);
+    sun.append(ray);
+  }
+  for (let i = 0; i < 12; i++) {
+    const spark = document.createElement("div");
+    spark.className = "spark";
+    spark.style.transform = `rotate(${i * 30}deg)`;
+    const dot = document.createElement("span");
+    dot.style.animationDelay = `${(i % 3) * 0.08}s`;
+    spark.append(dot);
+    sparks.append(spark);
+  }
+  countdownLeft.setAttribute("stroke-dasharray", String(circumference));
+}
+
+function burst() {
+  sparks.classList.remove("burst");
+  void sparks.offsetWidth;
+  sparks.classList.add("burst");
+}
+
+/**
+ * @param {string} pose
+ */
+function showPose(pose) {
+  if (state.pose === pose) return;
+  state.pose = pose;
+  const template = /** @type {HTMLTemplateElement | null} */ (document.getElementById(`pose-${pose}`));
+  poseBox.replaceChildren(...(template === null ? [] : [template.content.cloneNode(true)]));
+}
+
+/**
+ * @param {WallItem} item
+ * @returns {HTMLElement}
+ */
+function itemElement(item) {
+  const known = shown.get(item.key);
+  if (known !== undefined) {
+    known.classList.remove("gone");
+    return known;
+  }
+  const element = document.createElement("div");
+  element.className = "item hidden";
+  element.dataset.key = item.key;
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  const words = document.createElement("div");
+  words.className = "words";
+  for (const part of ["label", "value", "note"]) {
+    const line = document.createElement("span");
+    line.className = `item-${part}`;
+    words.append(line);
+  }
+  element.append(dot, words);
+  const from = jarvisSpot();
+  element.style.transform = `translate(${from.x}px, ${from.y}px)`;
+  items.append(element);
+  shown.set(item.key, element);
+  return element;
+}
+
+/**
+ * @param {HTMLElement} element
+ * @param {WallItem} item
+ * @param {string} accent
+ */
+function fillItem(element, item, accent) {
+  const [labelLine, valueLine, noteLine] = /** @type {HTMLElement[]} */ ([...element.querySelectorAll(".words span")]);
+  setText(labelLine, item.label);
+  setText(valueLine, item.value);
+  setText(noteLine, item.note);
+  noteLine.classList.toggle("good", item.note === "all good" || item.note.startsWith("on time"));
+  noteLine.classList.toggle("bad", item.colour === "warm");
+  const dot = /** @type {HTMLElement} */ (element.querySelector(".dot"));
+  dot.style.setProperty("--dot", itemColour(item.colour, accent));
+  dot.classList.toggle("hollow", item.key === "alerts" && !item.needs);
+}
+
+/**
+ * @returns {{ x: number, y: number }}
+ */
+function jarvisSpot() {
+  const picture = state.picture;
+  if (picture?.phase === "bedtime") return bedtimeSpot;
+  return currentMiddle() === null ? centre : aside;
+}
+
+/**
+ * @returns {import("./wall-logic.js").Middle}
+ */
+function currentMiddle() {
+  const picture = state.picture;
+  if (picture === null || picture.phase === "bedtime") return null;
+  const now = Date.now();
+  if (state.arrival !== null && now >= state.arrivalUntil) state.arrival = null;
+  return middleFor({ items: picture.items, phase: picture.phase, train: picture.train, timers: picture.timers, arrival: state.arrival, now });
+}
+
+/**
+ * @param {import("./wall-logic.js").Middle} chosen
+ * @param {WallPicture} picture
+ */
+function showMiddle(chosen, picture) {
+  const parts = { label: byId("middle-label"), value: byId("middle-value"), note: byId("middle-note"), state: byId("middle-state"), extra: byId("middle-extra") };
+  middle.hidden = chosen === null;
+  middle.classList.toggle("warm", chosen?.kind === "needs");
+  if (chosen === null) return;
+  const since = Date.now() - state.pictureAt;
+  /** @type {{ label: string, value: string, note: string, state: string, extra: string, bad: boolean }} */
+  let words = { label: "", value: "", note: "", state: "", extra: "", bad: false };
+  if (chosen.kind === "train" && picture.train !== null) {
+    const train = picture.train;
+    words = { label: "Your train", value: train.leaves, note: [train.to === "" ? "" : `to ${train.to}`, train.platform === null ? "" : `platform ${train.platform}`].filter((part) => part !== "").join(" · "), state: trainState(train), extra: leavesText(train.inMinutes, since), bad: train.late };
+  } else if (chosen.kind === "timer") {
+    const counting = countdownOf([chosen.timer], Date.now());
+    words = { label: "Timer", value: countdownText(counting?.remainingMs ?? 0), note: chosen.timer.text, state: "", extra: "", bad: false };
+  } else if (chosen.kind === "needs" || chosen.kind === "arrival") {
+    const item = picture.items.find((one) => one.key === chosen.key);
+    if (item !== undefined) words = { label: item.label, value: item.value, note: item.note, state: chosen.kind === "needs" ? "Needs a look" : "", extra: "", bad: chosen.kind === "needs" };
+  }
+  setText(parts.label, words.label);
+  setText(parts.value, words.value);
+  setText(parts.note, words.note);
+  setText(parts.state, words.state);
+  setText(parts.extra, words.extra);
+  parts.state.classList.toggle("bad", words.bad);
+}
+
+/**
+ * @param {WallPicture} picture
+ * @param {string | null} away
+ * @param {string} accent
+ */
+function showOrbit(picture, away, accent) {
+  const circling = picture.items.filter((item) => item.key !== away);
+  const slots = orbitSlots(circling.length, orbit);
+  const keys = new Set(circling.map((item) => item.key));
+  circling.forEach((item, i) => {
+    const element = itemElement(item);
+    fillItem(element, item, accent);
+    const slot = slots[i];
+    element.classList.remove("left", "right", "top-side", "bottom-side");
+    element.classList.add(slot.side === "top" ? "top-side" : slot.side === "bottom" ? "bottom-side" : slot.side);
+    const target = `translate(${slot.x}px, ${slot.y}px)`;
+    if (element.classList.contains("hidden")) {
+      void element.offsetWidth;
+      element.classList.remove("hidden");
+    }
+    if (element.style.transform !== target) element.style.transform = target;
+  });
+  for (const [key, element] of shown) {
+    if (keys.has(key)) continue;
+    const inMiddle = key === away;
+    if (inMiddle) {
+      const spot = jarvisSpot();
+      element.classList.add("gone");
+      element.style.transform = `translate(${spot.x}px, ${spot.y}px)`;
+      continue;
+    }
+    if (!picture.items.some((item) => item.key === key)) {
+      element.classList.add("gone");
+      shown.delete(key);
+      setTimeout(() => element.remove(), 1000);
+    }
+  }
+}
+
+/**
+ * @param {WallPicture} picture
+ */
+function showArcs(picture) {
+  const bad = (/** @type {string} */ key) => picture.items.some((item) => item.key === key && (item.needs || item.colour === "warm"));
+  byId("arc-server").classList.toggle("bad", bad("server"));
+  byId("arc-backup").classList.toggle("bad", bad("backup"));
+  byId("arc-alerts").classList.toggle("bad", bad("alerts"));
+}
+
+export function render() {
+  const picture = state.picture;
+  const now = Date.now();
+  const accent = modeColour(picture?.mode ?? null);
+  document.documentElement.style.setProperty("--accent", accent);
+  document.body.className = `phase-${picture?.phase ?? "daytime"}`;
+  setText(byId("clock"), londonClock(new Date()));
+  setText(byId("day"), picture?.day ?? "");
+  const connected = state.pictureFailures < failuresBeforeLost && state.jarvisFailures < failuresBeforeLost;
+  const pose = poseFor({ jarvis: state.jarvis, connected, mode: picture?.mode ?? null, phase: picture?.phase ?? "daytime" });
+  showPose(pose === "speaking" && picture?.speaking === "string" ? "string" : pose);
+  setText(label, poseLabels[pose]);
+  poseBox.setAttribute("aria-label", `Jarvis: ${poseLabels[pose]}`);
+  const chosen = currentMiddle();
+  const spot = jarvisSpot();
+  const scale = picture?.phase === "bedtime" ? bedtimeSpot.scale : 1;
+  jarvisBox.style.transform = `translate(${spot.x - 120}px, ${spot.y - 120}px) scale(${scale})`;
+  jarvisBox.classList.toggle("centred-off", chosen !== null || picture?.phase !== "daytime");
+  const quietPoses = ["waiting", "guest", "done", "sleepy", "muted"];
+  sun.hidden = (picture?.playing ?? null) === null || !quietPoses.includes(pose);
+  const counting = picture === null ? null : countdownOf(picture.timers, now);
+  countdown.toggleAttribute("hidden", counting === null || picture?.phase === "bedtime");
+  if (counting !== null) countdownLeft.setAttribute("stroke-dashoffset", String(-(1 - counting.fraction) * circumference));
+  if (picture !== null) {
+    showMiddle(chosen, picture);
+    showOrbit(picture, middleKey(chosen), accent);
+    showArcs(picture);
+    setText(byId("quiet-clock"), londonClock(new Date()));
+    setText(byId("quiet-words"), bedtimeLine(picture));
+  }
+  const words = connected ? captionFor(state.jarvis, now - state.jarvisAt, accent) : null;
+  caption.hidden = words === null;
+  if (words !== null) {
+    setText(byId("caption-who"), words.who === "you" ? "You said" : words.who === "them" ? "Heard" : "Jarvis");
+    setText(byId("caption-text"), words.who === "him" ? words.text : `“${words.text}”`);
+    caption.style.setProperty("--voice", words.colour);
+  }
+}
+
+/**
+ * @param {Response} response
+ * @returns {boolean}
+ */
+function refused(response) {
+  if (response.status !== 401) return false;
+  showLogin();
+  return true;
+}
+
+/**
+ * @param {AbortSignal} signal
+ */
+async function followPicture(signal) {
+  while (!signal.aborted) {
+    try {
+      const response = await fetch("/api/wall", { cache: "no-store", signal: limited(signal, pictureLimitMs) });
+      if (refused(response)) return;
+      if (!response.ok) throw new Error(`the hub answered ${response.status}`);
+      /** @type {WallPicture} */
+      const picture = await response.json();
+      const arrived = arrivalsBetween(state.lastItems, picture.items);
+      state.lastItems = picture.items;
+      state.picture = picture;
+      state.pictureAt = Date.now();
+      state.pictureFailures = 0;
+      if (arrived.length > 0) {
+        state.arrival = arrived[0];
+        state.arrivalUntil = Date.now() + arrivalShownMs;
+        burst();
+      }
+    } catch {
+      if (signal.aborted) return;
+      state.pictureFailures++;
+    }
+    render();
+    await pause(state.pictureFailures > 0 ? retryMs * 2 : pictureEveryMs, signal);
+  }
+}
+
+/**
+ * @param {AbortSignal} signal
+ */
+async function followJarvis(signal) {
+  while (!signal.aborted) {
+    try {
+      const response = await fetch(`/api/wall/jarvis?after=${state.seq}`, { cache: "no-store", signal: limited(signal, jarvisLimitMs) });
+      if (refused(response)) return;
+      if (!response.ok) throw new Error(`the hub answered ${response.status}`);
+      /** @type {JarvisView} */
+      const jarvis = await response.json();
+      state.jarvis = jarvis;
+      state.jarvisAt = Date.now();
+      state.seq = jarvis.seq;
+      state.jarvisFailures = 0;
+      render();
+    } catch {
+      if (signal.aborted) return;
+      state.jarvisFailures++;
+      render();
+      await pause(retryMs, signal);
+    }
+  }
+}
+
+function start() {
+  state.running?.abort();
+  const running = new AbortController();
+  state.running = running;
+  login.hidden = true;
+  void followPicture(running.signal);
+  void followJarvis(running.signal);
+}
+
+function showLogin() {
+  state.running?.abort();
+  state.running = null;
+  login.hidden = false;
+  tokenInput.focus();
+}
+
+login.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = byId("login-message");
+  setText(message, "Checking...");
+  try {
+    const response = await fetch("/api/wall/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: tokenInput.value }), signal: limited(new AbortController().signal, pictureLimitMs) });
+    if (response.ok) {
+      tokenInput.value = "";
+      setText(message, "");
+      start();
+      return;
+    }
+    setText(message, response.status === 401 ? "That isn't the wall's token." : response.status === 404 ? "The wall is switched off on the hub." : `The hub answered ${response.status}.`);
+  } catch {
+    setText(message, "Couldn't reach the hub.");
+  }
+});
+
+window.addEventListener("resize", fitStage);
+buildRays();
+fitStage();
+render();
+start();
+setInterval(render, tickMs);

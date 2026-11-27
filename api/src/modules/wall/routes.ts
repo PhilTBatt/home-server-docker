@@ -2,17 +2,18 @@ import type { FastifyPluginAsync } from "fastify";
 import type { Features, WallSettings } from "../../config.js";
 import { isAuthorized } from "../../token.js";
 import { createJarvisDesk, readReport, type JarvisDesk } from "./jarvis.js";
+import type { WallPicture } from "./picture.js";
 
 export const nextWaitMs = 20_000;
 export const wallCookie = "wall_token";
 export const wallCookieDays = 365;
-export const wallReads = new Set(["GET /wall/jarvis"]);
+export const wallReads = new Set(["GET /wall", "GET /wall/jarvis"]);
 export const switchedOff = { error: "The wall is switched off" };
 
 const bodyLimit = 4 * 1024;
 const quiet = { logLevel: "warn" as const };
 
-export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; desk?: JarvisDesk; now?: () => number; waitMs?: number }> = async (app, options) => {
+export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; desk?: JarvisDesk; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number }> = async (app, options) => {
   const desk = options.desk ?? createJarvisDesk();
   const now = options.now ?? (() => Date.now());
   const waitMs = options.waitMs ?? nextWaitMs;
@@ -21,6 +22,15 @@ export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettin
 
   app.addHook("preHandler", async (_request, reply) => {
     if (!options.features.wall) return reply.code(404).send(switchedOff);
+  });
+
+  app.get("/", async (_request, reply) => {
+    if (options.picture === undefined) return reply.code(503).send({ error: "The wall has nothing to show yet" });
+    try {
+      return reply.header("cache-control", "no-store").send(await options.picture());
+    } catch {
+      return reply.code(502).send({ error: "Couldn't put the wall's picture together" });
+    }
   });
 
   app.post("/login", { bodyLimit }, async (request, reply) => {

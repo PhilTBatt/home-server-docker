@@ -827,3 +827,15 @@ test("the wall's logout needs no token, since all it does is clear the screen's 
   assert.equal(response.statusCode, 200);
   assert.equal(response.cookies.find((one) => one.name === "wall_token")?.value, "");
 });
+
+test("the wall's token reads the wall's picture, made from the hub's own reads", async () => {
+  const app = await buildRealApp({ logger: false, config, wallSources: { doctor: async () => ({ state: "ok", summary: "", checkedAt: "", checks: [] }), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
+  for (const url of ["/wall", "/wall/"]) {
+    const response = await app.inject({ method: "GET", url, cookies: { wall_token: wallToken } });
+    assert.equal(response.statusCode, 200, url);
+    assert.deepEqual(response.json().items.map((item: { key: string }) => item.key), ["server", "backup", "alerts"]);
+    assert.equal(response.json().speaking, "wobble");
+  }
+  assert.equal((await app.inject({ method: "HEAD", url: "/wall", cookies: { wall_token: wallToken } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/wall" })).statusCode, 401);
+});

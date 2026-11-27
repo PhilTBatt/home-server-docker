@@ -32,8 +32,9 @@ import { spotify, type SpotifyParts } from "./modules/spotify/routes.js";
 import { spotifyFor } from "./modules/spotify/setup.js";
 import { wall, wallCookie, wallReads } from "./modules/wall/routes.js";
 import type { JarvisDesk } from "./modules/wall/jarvis.js";
+import { buildPicture, keptPicture, wallDoctorMs, wallTrainsMs, type WallSources } from "./modules/wall/picture.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources> }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
@@ -98,7 +99,19 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   const spotifyParts = options.config.features.spotify ? (options.spotify ?? spotifyFor(options.config.spotify, (line) => app.log.info(line))) : undefined;
   app.register(spotify, { prefix: "/spotify", features: options.config.features, spotify: spotifyParts });
   app.register(talk, { prefix: "/talk", features: options.config.features });
-  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, desk: options.jarvisDesk });
+  const shown: WallSources = {
+    mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view() : undefined,
+    doctor: kept(() => runDoctor(features, doctor, doctorReads(undefined, moreProblems), new Date()), wallDoctorMs),
+    problems: () => doctorReads(undefined, moreProblems).problems(),
+    backup: () => doctorReads().backup(),
+    trains: features.trains ? kept(() => doctor.trains(), wallTrainsMs) : undefined,
+    reminders: features.reminders && options.reminders !== undefined ? () => (options.reminders as Reminders).list() : undefined,
+    deals: dealWatcher === undefined ? undefined : (now) => dealWatcher.status(now),
+    playing: spotifyParts === undefined ? undefined : () => spotifyParts.client.playing(),
+    ...options.wallSources,
+  };
+  const picture = keptPicture(() => buildPicture(shown, { speaking: options.config.wall.speaking, trainAlerts: features.trainAlerts ? options.config.trainAlerts : null }, new Date()));
+  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, desk: options.jarvisDesk, picture });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,
