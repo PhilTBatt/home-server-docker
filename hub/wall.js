@@ -1,4 +1,5 @@
 // @ts-check
+import { fitKey, letterbox, matrixFor, moveCorner, readFit, writeFit } from "./wall-fit.js";
 import { arrivalShownMs, arrivalsBetween, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -21,6 +22,7 @@ export const centre = { x: 640, y: 375 };
 export const aside = { x: 400, y: 375 };
 export const bedtimeSpot = { x: 640, y: 360, scale: 0.45 };
 export const circumference = 2 * Math.PI * 118;
+export const fitButtonMs = 5_000;
 
 /**
  * @param {string} id
@@ -45,6 +47,9 @@ const middle = byId("middle");
 const caption = byId("caption");
 const login = /** @type {HTMLFormElement} */ (byId("login"));
 const tokenInput = /** @type {HTMLInputElement} */ (byId("token"));
+const setup = byId("setup");
+const fitOpen = byId("fit-open");
+const handles = /** @type {HTMLElement[]} */ ([...document.querySelectorAll(".handle")]);
 
 /** @type {{ picture: WallPicture | null, pictureAt: number, jarvis: JarvisView | null, jarvisAt: number, seq: number, pictureFailures: number, jarvisFailures: number, arrival: string | null, arrivalUntil: number, lastItems: WallItem[] | null, pose: string | null, loggedOut: boolean, running: AbortController | null }} */
 const state = { picture: null, pictureAt: 0, jarvis: null, jarvisAt: 0, seq: -1, pictureFailures: 0, jarvisFailures: 0, arrival: null, arrivalUntil: 0, lastItems: null, pose: null, loggedOut: false, running: null };
@@ -95,11 +100,41 @@ function pause(ms, signal) {
   });
 }
 
+/** @type {string | null} */
+let unsaved = null;
+
+/**
+ * @returns {string | null}
+ */
+function savedFit() {
+  try {
+    return window.localStorage.getItem(fitKey);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @returns {import("./wall-fit.js").Corners}
+ */
+function cornersNow() {
+  return readFit(savedFit(), window.innerWidth, window.innerHeight) ?? readFit(unsaved, window.innerWidth, window.innerHeight) ?? letterbox(window.innerWidth, window.innerHeight, width, height);
+}
+
+/**
+ * @param {import("./wall-fit.js").Corners} corners
+ * @returns {boolean}
+ */
+function showFit(corners) {
+  const matrix = matrixFor(corners, width, height);
+  if (matrix === null) return false;
+  stage.style.transform = matrix;
+  return true;
+}
+
 export function fitStage() {
-  const scale = Math.min(window.innerWidth / width, window.innerHeight / height);
-  const left = (window.innerWidth - width * scale) / 2;
-  const top = (window.innerHeight - height * scale) / 2;
-  stage.style.transform = `translate(${left}px, ${top}px) scale(${scale})`;
+  if (!setup.hidden) return;
+  showFit(cornersNow());
 }
 
 function buildRays() {
@@ -291,7 +326,7 @@ export function render() {
   const now = Date.now();
   const accent = modeColour(picture?.mode ?? null);
   document.documentElement.style.setProperty("--accent", accent);
-  document.body.className = `phase-${picture?.phase ?? "daytime"}`;
+  for (const phase of ["morning", "daytime", "bedtime"]) document.body.classList.toggle(`phase-${phase}`, (picture?.phase ?? "daytime") === phase);
   setText(byId("clock"), londonClock(new Date()));
   setText(byId("day"), picture?.day ?? "");
   const connected = state.pictureFailures < failuresBeforeLost && state.jarvisFailures < failuresBeforeLost;
@@ -422,6 +457,119 @@ login.addEventListener("submit", async (event) => {
   } catch {
     setText(message, "Couldn't reach the hub.");
   }
+});
+
+/** @type {{ corners: import("./wall-fit.js").Corners, before: import("./wall-fit.js").Corners, picked: number | null, dragging: number | null, buttonTimer: ReturnType<typeof setTimeout> | null }} */
+const fitting = { corners: cornersNow(), before: cornersNow(), picked: null, dragging: null, buttonTimer: null };
+
+function placeHandles() {
+  handles.forEach((handle, i) => {
+    const [x, y] = fitting.corners[i];
+    handle.style.left = `${x}px`;
+    handle.style.top = `${y}px`;
+    handle.classList.toggle("picked", fitting.picked === i);
+  });
+}
+
+/**
+ * @param {import("./wall-fit.js").Corners} corners
+ */
+function tryCorners(corners) {
+  const message = byId("setup-message");
+  fitting.corners = corners;
+  placeHandles();
+  setText(message, showFit(corners) ? "" : "That shape folds over itself or is too small, so it isn't used: move a corner back.");
+}
+
+function openSetup() {
+  fitting.corners = cornersNow();
+  fitting.before = fitting.corners;
+  fitting.picked = null;
+  setup.hidden = false;
+  fitOpen.hidden = true;
+  document.body.classList.add("fitting");
+  setText(byId("setup-message"), "");
+  placeHandles();
+}
+
+function closeSetup() {
+  setup.hidden = true;
+  document.body.classList.remove("fitting");
+  fitStage();
+}
+
+function offerSetup() {
+  if (!setup.hidden || !login.hidden) return;
+  fitOpen.hidden = false;
+  if (fitting.buttonTimer !== null) clearTimeout(fitting.buttonTimer);
+  fitting.buttonTimer = setTimeout(() => (fitOpen.hidden = true), fitButtonMs);
+}
+
+handles.forEach((handle, i) => {
+  handle.addEventListener("pointerdown", (event) => {
+    fitting.picked = i;
+    fitting.dragging = i;
+    handle.setPointerCapture(event.pointerId);
+    placeHandles();
+  });
+  handle.addEventListener("pointermove", (event) => {
+    if (fitting.dragging !== i) return;
+    tryCorners(moveCorner(fitting.corners, i, [event.clientX, event.clientY], window.innerWidth, window.innerHeight));
+  });
+  const letGo = () => {
+    if (fitting.dragging === i) fitting.dragging = null;
+  };
+  handle.addEventListener("pointerup", letGo);
+  handle.addEventListener("pointercancel", letGo);
+  handle.addEventListener("click", () => {
+    fitting.picked = i;
+    placeHandles();
+  });
+});
+
+/** @type {Record<string, [number, number]>} */
+const nudges = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+
+window.addEventListener("keydown", (event) => {
+  if (!login.hidden) return;
+  if (setup.hidden) {
+    if (event.key === "f" || event.key === "F") openSetup();
+    else offerSetup();
+    return;
+  }
+  if (event.key === "Escape") {
+    showFit(fitting.before);
+    closeSetup();
+    return;
+  }
+  const step = nudges[event.key];
+  if (step === undefined || fitting.picked === null) return;
+  event.preventDefault();
+  const by = event.shiftKey ? 10 : 1;
+  const [x, y] = fitting.corners[fitting.picked];
+  tryCorners(moveCorner(fitting.corners, fitting.picked, [x + step[0] * by, y + step[1] * by], window.innerWidth, window.innerHeight));
+});
+
+window.addEventListener("pointermove", offerSetup);
+fitOpen.addEventListener("click", openSetup);
+byId("fit-save").addEventListener("click", () => {
+  if (matrixFor(fitting.corners, width, height) === null) return;
+  const fit = writeFit(fitting.corners, window.innerWidth, window.innerHeight);
+  try {
+    window.localStorage.setItem(fitKey, fit);
+    unsaved = null;
+  } catch {
+    unsaved = fit;
+  }
+  closeSetup();
+});
+byId("fit-reset").addEventListener("click", () => {
+  fitting.picked = null;
+  tryCorners(letterbox(window.innerWidth, window.innerHeight, width, height));
+});
+byId("fit-cancel").addEventListener("click", () => {
+  showFit(fitting.before);
+  closeSetup();
 });
 
 window.addEventListener("resize", fitStage);

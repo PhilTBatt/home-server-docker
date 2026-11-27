@@ -58,6 +58,30 @@
       <p id="caption" class="caption" aria-live="polite" hidden><span id="caption-who" class="caption-who"></span><span id="caption-text" class="caption-text"></span></p>
     </div>
 
+    <button id="fit-open" class="fit-open" type="button" hidden>Fit to the wall</button>
+    <div id="setup" class="setup" hidden>
+      <span class="setup-badge">Set-up mode</span>
+      <button class="handle" data-corner="0" type="button" aria-label="Corner 1, top left">1</button>
+      <button class="handle" data-corner="1" type="button" aria-label="Corner 2, top right">2</button>
+      <button class="handle" data-corner="2" type="button" aria-label="Corner 3, bottom right">3</button>
+      <button class="handle" data-corner="3" type="button" aria-label="Corner 4, bottom left">4</button>
+      <section class="setup-help" aria-labelledby="setup-heading">
+        <h1 id="setup-heading">Fit him to the wall</h1>
+        <ol>
+          <li><span>1</span><span>Drag each numbered corner onto a corner of the wall space.</span></li>
+          <li><span>2</span><span>Pick a corner and nudge it with the arrow keys, a pixel at a time, or ten with Shift.</span></li>
+          <li><span>3</span><span>Save. He stays fitted on this screen until the projector moves.</span></li>
+        </ol>
+        <p>Everything outside the shape stays black, so the wall only shows Jarvis.</p>
+        <p id="setup-message" class="setup-message" aria-live="polite"></p>
+        <div class="setup-buttons">
+          <button id="fit-save" class="primary" type="button">Save the fit</button>
+          <button id="fit-reset" type="button">Reset</button>
+          <button id="fit-cancel" type="button">Cancel</button>
+        </div>
+      </section>
+    </div>
+
     <form id="login" class="login" hidden>
       <h1>Jarvis on the wall</h1>
       <p>Type the wall's token once. This screen remembers it for a year, and it can only show the wall.</p>
