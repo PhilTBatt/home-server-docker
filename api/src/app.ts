@@ -22,6 +22,7 @@ import { catchUp } from "./modules/catchup/routes.js";
 import { modes } from "./modules/modes/routes.js";
 import type { Modes } from "./modules/modes/modes.js";
 import { reminders } from "./modules/reminders/routes.js";
+import { talk } from "./modules/talk/routes.js";
 import type { Reminders } from "./modules/reminders/reminders.js";
 import { chores } from "./modules/chores/routes.js";
 import type { Chores } from "./modules/chores/chores.js";
@@ -91,6 +92,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   app.register(sessions, { prefix: "/sessions", features: options.config.features, sessions: options.config.features.sessions ? options.sessions : undefined });
   const spotifyParts = options.config.features.spotify ? (options.spotify ?? spotifyFor(options.config.spotify, (line) => app.log.info(line))) : undefined;
   app.register(spotify, { prefix: "/spotify", features: options.config.features, spotify: spotifyParts });
+  app.register(talk, { prefix: "/talk", features: options.config.features });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,

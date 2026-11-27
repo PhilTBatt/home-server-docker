@@ -170,6 +170,33 @@ function claim(connection: WyomingConnection): void {
   busy.add(connection);
 }
 
+export const transcribeChunkBytes = 32_000;
+
+export async function transcribe(connection: WyomingConnection, sound: Uint8Array, format: AudioFormat, language: string | null, signal?: AbortSignal, chunkBytes = transcribeChunkBytes): Promise<string> {
+  claim(connection);
+  let finished = false;
+  try {
+    if (sound.length % (format.width * format.channels) !== 0) throw new Error("The sound to turn into text isn't a whole number of samples");
+    await connection.send({ type: "transcribe", data: language === null ? {} : { language }, payload: null }, signal);
+    await connection.send({ type: "audio-start", data: { ...format }, payload: null }, signal);
+    for (let at = 0; at < sound.length; at += chunkBytes) await connection.send({ type: "audio-chunk", data: { ...format }, payload: sound.subarray(at, at + chunkBytes) }, signal);
+    await connection.send({ type: "audio-stop", data: {}, payload: null }, signal);
+    for (;;) {
+      const event = await connection.next(signal);
+      if (event === null) throw new Error("The Wyoming server closed the connection without sending the text");
+      if (event.type === "error") throw refusal(event);
+      if (event.type === "transcript") {
+        if (typeof event.data.text !== "string") throw new Error("The Wyoming server sent a transcript without its text");
+        finished = true;
+        return event.data.text;
+      }
+    }
+  } finally {
+    busy.delete(connection);
+    if (!finished) connection.close();
+  }
+}
+
 export async function* synthesize(connection: WyomingConnection, text: string, voice: string | null, signal?: AbortSignal): AsyncGenerator<AudioPiece> {
   claim(connection);
   let finished = false;

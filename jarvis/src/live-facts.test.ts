@@ -167,3 +167,11 @@ test("with modes on they say his code switches modes from the mode's name alone 
   assert.ok(!liveFacts(all).includes("modes") && !liveFacts(all).includes("guest mode"));
   assert.ok(!modesOn.includes('"') && !guestOn.includes('"'));
 });
+
+test("with the phone on, the facts say how a phone question is marked, that it's answered there and not in the room, in his voice only when it's on, with any yes asked there, and that spoken words don't work from it, and with it off or in a guest's chat nothing is said", () => {
+  const phoneOn = liveFacts({ ...all, phone: true });
+  assert.ok(phoneOn.includes("He can also ask you from his phone, by holding a button on his hub page. Those questions come into this chat ending with [Asked from his phone, through the hub.] on a line of its own, added by your code. Your answer goes back to his phone as text and in your voice, nothing is said in the room, and a yes you need for one is asked on his phone. Your code's spoken words, like a mode's name, note this or find my phone, aren't caught from the phone, so don't tell him to say them: for a mode, tell him to use the mode buttons on his hub page."), phoneOn);
+  const quiet = liveFacts({ ...all, voice: "off", phone: true });
+  assert.ok(quiet.includes("Your answer goes back to his phone as text, nothing is said in the room"), quiet);
+  for (const input of [all, { ...all, phone: false }]) assert.ok(!liveFacts(input).includes("his phone, by holding"));
+});

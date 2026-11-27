@@ -10,6 +10,40 @@ export type SpeechEngine = {
 
 export type StartPlayer = (options: { device: string; rate: number }) => Player;
 
+export const wakePhraseSaid = "my wake word";
+
+const wakePhrase = /\bhey[\s,.!?;:'"\u2018\u2019\u201c\u201d-]*jarvis\b/giu;
+
+const endsInHey = /\bhey[\s,.!?;:'"\u2018\u2019\u201c\u201d-]*$/iu;
+
+export function withoutWakePhrase(text: string): string {
+  return text.replace(wakePhrase, wakePhraseSaid);
+}
+
+async function* saidWithoutWakePhrase(text: AsyncIterable<string>): AsyncGenerator<string> {
+  let held = "";
+  for await (const piece of text) {
+    const joined = held === "" ? piece : `${held} ${piece}`;
+    if (endsInHey.test(joined)) {
+      held = joined;
+      continue;
+    }
+    held = "";
+    yield withoutWakePhrase(joined);
+  }
+  if (held !== "") yield withoutWakePhrase(held);
+}
+
+export function neverSayingWakePhrase(engine: SpeechEngine): SpeechEngine {
+  return {
+    name: engine.name,
+    sampleRate: engine.sampleRate,
+    splitsSentences: engine.splitsSentences,
+    speak: (text, signal) => engine.speak(saidWithoutWakePhrase(text), signal),
+    check: (signal) => engine.check(signal),
+  };
+}
+
 async function* oneText(text: string): AsyncGenerator<string> {
   yield text;
 }

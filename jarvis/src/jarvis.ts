@@ -30,6 +30,7 @@ import { liveFacts } from "./live-facts.js";
 import { introLine, readIntro } from "./intro.js";
 import { hubModes as modeHub, watchModes, whenCheck } from "./modes.js";
 import { askHubForDue, hubReminders, watchReminders } from "./reminders.js";
+import { hubDesk, phoneVoice, watchPhone, whisperHears } from "./phone.js";
 import { askHubForSessions, watchSessions } from "./session-news.js";
 import { digestFor, digestLine, withDigest } from "./digest.js";
 import { personaLine, readPersona } from "./persona.js";
@@ -94,7 +95,7 @@ try {
   const open = (setup: ChatSetup, guest = false) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = guest ? false : config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined, musicYes: config.musicYes }) : null;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined, musicYes: config.musicYes, phone: !guest && config.phone }) : null;
     const digest = config.digest ? digestFor({ guest }) : null;
     const instructions = (base: string) => withDigest(systemFor(guest ? guestChatSystem : base, { persona, intro, facts, spoken, notes: guest ? [] : (notes ?? []), clock: config.clock }), digest);
     const logged: { log?: AnswerLog } = {};
@@ -232,6 +233,7 @@ try {
     } } : undefined,
     sessions: config.sessions && config.hubToken !== null ? watchSessions({ ask: askHubForSessions(config.hubToken), signal: closing.signal }) : undefined,
     reminders: config.reminders && config.hubToken !== null ? { news: watchReminders({ ask: askHubForDue(config.hubToken), signal: closing.signal }), hub: hubReminders(config.hubToken) } : undefined,
+    phone: config.phone && config.hubToken !== null ? { news: watchPhone({ desk: hubDesk(config.hubToken), signal: closing.signal }), desk: hubDesk(config.hubToken), hear: whisperHears(), voice: speaking === null ? null : (text, signal) => phoneVoice(speaking.engine, text, signal, config.spokenStyle) } : undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));

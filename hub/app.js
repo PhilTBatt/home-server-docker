@@ -84,6 +84,19 @@
  * @property {boolean} [chores]
  * @property {boolean} [sessions]
  * @property {boolean} [spotify]
+ * @property {boolean} [talk]
+ */
+
+/**
+ * @typedef {object} TalkView
+ * @property {string} id
+ * @property {"waiting" | "taken" | "heard" | "asking" | "answered" | "failed"} state
+ * @property {string | null} heard
+ * @property {string | null} text
+ * @property {string | null} question
+ * @property {number} asks
+ * @property {boolean} voiceComing
+ * @property {boolean} voice
  */
 
 /**
@@ -330,7 +343,7 @@
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify", talk: "talk to Jarvis" };
 
 /**
  * @param {string} id
@@ -416,6 +429,25 @@ const playingDevice = byId("playing-device");
 const playingPause = /** @type {HTMLButtonElement} */ (byId("playing-pause"));
 const playingNext = /** @type {HTMLButtonElement} */ (byId("playing-next"));
 const tabButtons = /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll(".tabs button[data-tab]")]);
+const talkButton = /** @type {HTMLButtonElement} */ (byId("talk"));
+const talkSheet = byId("talk-sheet");
+const talkStatus = byId("talk-status");
+const talkHeard = byId("talk-heard");
+const talkAnswer = byId("talk-answer");
+const talkAsking = byId("talk-asking");
+const talkQuestion = byId("talk-question");
+const talkYes = /** @type {HTMLButtonElement} */ (byId("talk-yes"));
+const talkNo = /** @type {HTMLButtonElement} */ (byId("talk-no"));
+const talkPlay = /** @type {HTMLButtonElement} */ (byId("talk-play"));
+const talkClose = byId("talk-close");
+const talkRate = 16_000;
+const talkMostMs = 30_000;
+const talkLeastMs = 400;
+const talkPollMs = 700;
+const talkGiveUpMs = 7 * 60_000;
+const talkMostMisses = 3;
+/** @type {{ attempt: number, asks: number, misses: number, context: AudioContext | null, worklet: boolean, stream: MediaStream | null, source: MediaStreamAudioSourceNode | null, node: AudioWorkletNode | null, mute: GainNode | null, chunks: Float32Array[], holding: boolean, startedAt: number, stopTimer: number | undefined, id: string | null, since: number, pollTimer: number | undefined, played: boolean, voice: AudioBuffer | null, playing: AudioBufferSourceNode | null }} */
+const talking = { attempt: 0, asks: 0, misses: 0, context: null, worklet: false, stream: null, source: null, node: null, mute: null, chunks: [], holding: false, startedAt: 0, stopTimer: undefined, id: null, since: 0, pollTimer: undefined, played: false, voice: null, playing: null };
 /** @type {[string, string][]} */
 const modeChoices = [["normal", "Normal"], ["guest", "Guest"], ["bedtime", "Bedtime"], ["gaming", "Gaming"], ["coding", "Coding"], ["away", "Away"]];
 /** @type {Record<string, { colour: string, paths: string }>} */
@@ -1491,8 +1523,8 @@ function tabFromHash() {
 function showTab(name) {
   for (const button of tabButtons) {
     const chosen = button.dataset.tab === name;
-    button.setAttribute("aria-selected", String(chosen));
-    button.tabIndex = chosen ? 0 : -1;
+    if (chosen) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
     byId(`tab-${button.dataset.tab}`).hidden = !chosen;
   }
   const hash = name === "home" ? "" : `#${name}`;
@@ -1539,6 +1571,7 @@ function showHome(features) {
   trainCard.hidden = !features.trains;
   remindersCard.hidden = features.reminders !== true;
   spotifyCard.hidden = features.spotify !== true;
+  talkButton.hidden = features.talk !== true;
   if (features.spotify !== true) nowPlaying.hidden = true;
   lastTrainAt = 0;
   refreshHome();
@@ -1547,6 +1580,7 @@ function showHome(features) {
 function refreshHome() {
   if (document.hidden || knownFeatures === null || dashboard.hidden) return;
   if (knownFeatures.spotify === true) loadPlaying();
+  if (knownFeatures.talk === true) loadTalkStatus();
   if (byId("tab-home").hidden) return;
   if (knownFeatures.reminders === true) loadReminders();
   if (knownFeatures.trains && Date.now() - lastTrainAt >= trainEveryMs) {
@@ -1749,16 +1783,356 @@ async function findPhone() {
   findPhoneButton.disabled = false;
 }
 
-for (const button of tabButtons) {
-  button.addEventListener("click", () => showTab(button.dataset.tab ?? "home"));
-  button.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    const at = tabButtons.indexOf(button);
-    const next = tabButtons[(at + (event.key === "ArrowRight" ? 1 : tabButtons.length - 1)) % tabButtons.length];
-    showTab(next.dataset.tab ?? "home");
-    next.focus();
-  });
+for (const button of tabButtons) button.addEventListener("click", () => showTab(button.dataset.tab ?? "home"));
+
+async function loadTalkStatus() {
+  const got = await fetchReply("/api/talk/status", "Couldn't check on Jarvis");
+  const running = !("text" in got) && isObject(got.reply) && got.reply.jarvis === true;
+  talkButton.classList.toggle("asleep", !running);
+  talkButton.setAttribute("aria-label", running ? "Hold to talk to Jarvis" : "Hold to talk to Jarvis, who isn't running right now");
 }
+
+/**
+ * @param {unknown} reply
+ * @returns {reply is TalkView}
+ */
+function isTalkView(reply) {
+  const text = (/** @type {unknown} */ value) => value === null || typeof value === "string";
+  return isObject(reply) && typeof reply.id === "string" && ["waiting", "taken", "heard", "asking", "answered", "failed"].includes(String(reply.state)) && text(reply.heard) && text(reply.text) && text(reply.question) && typeof reply.asks === "number" && typeof reply.voiceComing === "boolean" && typeof reply.voice === "boolean";
+}
+
+/**
+ * @param {Float32Array[]} chunks
+ * @param {number} fromRate
+ * @returns {Int16Array<ArrayBuffer>}
+ */
+function toPcm16(chunks, fromRate) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const all = new Float32Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, at);
+    at += chunk.length;
+  }
+  const step = fromRate / talkRate;
+  const pcm = new Int16Array(Math.floor(total / step));
+  for (let index = 0; index < pcm.length; index++) {
+    const start = Math.floor(index * step);
+    const end = Math.max(start + 1, Math.min(total, Math.floor((index + 1) * step)));
+    let sum = 0;
+    for (let sample = start; sample < end; sample++) sum += all[sample];
+    pcm[index] = Math.round(Math.max(-1, Math.min(1, sum / (end - start))) * 0x7fff);
+  }
+  return pcm;
+}
+
+function stopTalkPolling() {
+  clearTimeout(talking.pollTimer);
+  talking.pollTimer = undefined;
+  talking.id = null;
+}
+
+function stopVoice() {
+  try {
+    talking.playing?.stop();
+  } catch {}
+  talking.playing = null;
+}
+
+function releaseMicrophone() {
+  if (talking.node !== null) talking.node.port.onmessage = null;
+  talking.source?.disconnect();
+  talking.node?.disconnect();
+  talking.mute?.disconnect();
+  for (const track of talking.stream?.getTracks() ?? []) track.stop();
+  talking.stream = null;
+  talking.source = null;
+  talking.node = null;
+  talking.mute = null;
+  talkButton.classList.remove("recording");
+}
+
+/**
+ * @param {string} status
+ */
+function openTalk(status) {
+  talkSheet.hidden = false;
+  talkStatus.textContent = status;
+}
+
+function clearTalk() {
+  stopTalkPolling();
+  stopVoice();
+  talking.voice = null;
+  talking.played = false;
+  talking.asks = 0;
+  talking.misses = 0;
+  talkQuestion.textContent = "";
+  talkHeard.hidden = true;
+  talkAnswer.hidden = true;
+  talkAsking.hidden = true;
+  talkPlay.hidden = true;
+}
+
+function wakeSound() {
+  if (talkButton.hidden || typeof AudioContext === "undefined") return;
+  talking.context ??= new AudioContext();
+  talking.context.resume().catch(() => {});
+}
+
+async function startTalking() {
+  if (talking.holding) return;
+  talking.holding = true;
+  const attempt = ++talking.attempt;
+  const current = () => talking.attempt === attempt && talking.holding;
+  clearTalk();
+  if (!window.isSecureContext || navigator.mediaDevices?.getUserMedia === undefined || typeof AudioWorkletNode === "undefined") {
+    talking.holding = false;
+    openTalk("Talking needs the secure address: open https://hub.home on this phone.");
+    return;
+  }
+  if (talkButton.classList.contains("asleep")) {
+    talking.holding = false;
+    openTalk("Jarvis isn't running on the server right now, so there's no one to hear it.");
+    loadTalkStatus();
+    return;
+  }
+  openTalk("Getting the microphone...");
+  /** @type {MediaStream | null} */
+  let stream = null;
+  try {
+    wakeSound();
+    const context = /** @type {AudioContext} */ (talking.context);
+    if (!talking.worklet) {
+      await context.audioWorklet.addModule("talk-worklet.js");
+      talking.worklet = true;
+    }
+    if (!current()) {
+      if (talking.attempt === attempt) talkStatus.textContent = "Hold the button while you talk, then let go.";
+      return;
+    }
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    if (!current()) {
+      for (const track of stream.getTracks()) track.stop();
+      if (talking.attempt === attempt) talkStatus.textContent = "The microphone's ready: hold the button while you talk, then let go.";
+      return;
+    }
+    const source = context.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(context, "talk-recorder");
+    const mute = context.createGain();
+    mute.gain.value = 0;
+    talking.chunks = [];
+    node.port.onmessage = (event) => {
+      if (talking.node === node) talking.chunks.push(event.data);
+    };
+    source.connect(node);
+    node.connect(mute);
+    mute.connect(context.destination);
+    Object.assign(talking, { stream, source, node, mute, startedAt: performance.now() });
+    talking.stopTimer = setTimeout(() => {
+      if (talking.attempt === attempt) finishTalking();
+    }, talkMostMs - 250);
+    talkButton.classList.add("recording");
+    navigator.vibrate?.(15);
+    talkStatus.textContent = "Listening: let go to send.";
+  } catch (error) {
+    for (const track of stream?.getTracks() ?? []) track.stop();
+    if (talking.attempt !== attempt) return;
+    talking.holding = false;
+    releaseMicrophone();
+    const name = error instanceof Error ? error.name : "";
+    talkStatus.textContent = name === "NotAllowedError" ? "The microphone isn't allowed: allow it for hub.home in the browser's site settings." : `Couldn't start the microphone: ${error instanceof Error ? error.message : String(error)}.`;
+  }
+}
+
+async function finishTalking() {
+  if (!talking.holding) return;
+  talking.holding = false;
+  clearTimeout(talking.stopTimer);
+  const context = talking.context;
+  if (talking.node === null || context === null) return;
+  const chunks = talking.chunks;
+  talking.chunks = [];
+  const heldMs = performance.now() - talking.startedAt;
+  releaseMicrophone();
+  if (heldMs < talkLeastMs) {
+    talkStatus.textContent = "Hold the button while you talk, then let go.";
+    return;
+  }
+  if (chunks.length === 0) {
+    talkStatus.textContent = "Nothing was recorded: the browser hadn't let the page use sound yet. Hold the button again.";
+    return;
+  }
+  const pcm = toPcm16(chunks, context.sampleRate);
+  talkStatus.textContent = "Sending...";
+  try {
+    const response = await fetch("/api/talk", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: pcm.buffer });
+    /** @type {unknown} */
+    const reply = await response.json().catch(() => null);
+    if (response.status !== 202 || !isObject(reply) || typeof reply.id !== "string") {
+      const error = isObject(reply) && typeof reply.error === "string" ? reply.error : `the API replied ${response.status}`;
+      talkStatus.textContent = `Couldn't send it: ${error}.`;
+      if (response.status === 503) talkButton.classList.add("asleep");
+      return;
+    }
+    talkButton.classList.remove("asleep");
+    talking.id = reply.id;
+    talking.since = Date.now();
+    talkStatus.textContent = "Waiting for Jarvis to pick it up...";
+    talking.pollTimer = setTimeout(pollTalk, talkPollMs);
+  } catch {
+    talkStatus.textContent = "Couldn't reach the API.";
+  }
+}
+
+/**
+ * @param {TalkView} view
+ */
+function showTalkView(view) {
+  talkHeard.hidden = view.heard === null;
+  talkHeard.textContent = view.heard ?? "";
+  talkAnswer.hidden = view.text === null;
+  talkAnswer.textContent = view.text ?? "";
+  talkAsking.hidden = view.state !== "asking";
+  if (view.state === "asking" && view.asks !== talking.asks) {
+    talking.asks = view.asks;
+    talkQuestion.textContent = view.question ?? "";
+    talkYes.disabled = false;
+    talkNo.disabled = false;
+  }
+  const words = {
+    waiting: "Waiting for Jarvis to pick it up...",
+    taken: "Jarvis is listening to it...",
+    heard: "Jarvis is thinking...",
+    asking: "Jarvis needs a yes or no first:",
+    answered: view.voiceComing ? "His voice is on its way..." : "",
+    failed: "Jarvis couldn't answer.",
+  };
+  talkStatus.textContent = words[view.state];
+}
+
+async function pollTalk() {
+  const id = talking.id;
+  if (id === null) return;
+  const got = await fetchReply(`/api/talk/${id}`, "Couldn't check on Jarvis");
+  if (talking.id !== id) return;
+  if ("text" in got || !isTalkView(got.reply)) {
+    talking.misses += 1;
+    if (talking.misses < talkMostMisses) {
+      talking.pollTimer = setTimeout(pollTalk, talkPollMs * 3);
+      return;
+    }
+    talkStatus.textContent = "text" in got ? got.text : "Couldn't read the API's reply.";
+    stopTalkPolling();
+    return;
+  }
+  talking.misses = 0;
+  const view = got.reply;
+  showTalkView(view);
+  if (view.voice && !talking.played) {
+    talking.played = true;
+    playVoice(id);
+  }
+  const over = view.state === "failed" || (view.state === "answered" && !view.voiceComing);
+  if (over) {
+    talking.pollTimer = undefined;
+    return;
+  }
+  if (Date.now() - talking.since > talkGiveUpMs) {
+    talkStatus.textContent = "Stopped waiting: Jarvis took longer than 7 minutes.";
+    stopTalkPolling();
+    return;
+  }
+  talking.pollTimer = setTimeout(pollTalk, talkPollMs);
+}
+
+function playBuffer() {
+  const context = talking.context;
+  if (context === null || talking.voice === null) return;
+  stopVoice();
+  const source = context.createBufferSource();
+  source.buffer = talking.voice;
+  source.connect(context.destination);
+  source.start();
+  talking.playing = source;
+}
+
+/**
+ * @param {string} id
+ */
+async function playVoice(id) {
+  const context = talking.context;
+  if (context === null) return;
+  try {
+    const response = await fetch(`/api/talk/${id}/voice`);
+    if (!response.ok) throw new Error(`the API replied ${response.status}`);
+    talking.voice = await context.decodeAudioData(await response.arrayBuffer());
+    talkPlay.hidden = false;
+    await context.resume();
+    if (context.state !== "running") {
+      talkPlay.textContent = "Play";
+      return;
+    }
+    talkPlay.textContent = "Play again";
+    playBuffer();
+  } catch (error) {
+    talkStatus.textContent = `Couldn't play his voice: ${error instanceof Error ? error.message : String(error)}.`;
+  }
+}
+
+/**
+ * @param {boolean} yes
+ */
+async function answerTalk(yes) {
+  const id = talking.id;
+  if (id === null) return;
+  talkYes.disabled = true;
+  talkNo.disabled = true;
+  try {
+    const response = await fetch(`/api/talk/${id}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ yes }) });
+    if (!response.ok) {
+      /** @type {unknown} */
+      const reply = await response.json().catch(() => null);
+      talkStatus.textContent = `Couldn't send your answer: ${isObject(reply) && typeof reply.error === "string" ? reply.error : `the API replied ${response.status}`}.`;
+      return;
+    }
+    talkAsking.hidden = true;
+    talkStatus.textContent = yes ? "Told him yes." : "Told him no.";
+  } catch {
+    talkStatus.textContent = "Couldn't reach the API.";
+  }
+}
+
+talkButton.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  talkButton.setPointerCapture(event.pointerId);
+  startTalking();
+});
+talkButton.addEventListener("pointerup", finishTalking);
+talkButton.addEventListener("pointercancel", finishTalking);
+talkButton.addEventListener("lostpointercapture", finishTalking);
+talkButton.addEventListener("contextmenu", (event) => event.preventDefault());
+talkButton.addEventListener("keydown", (event) => {
+  if (event.key !== " " && event.key !== "Enter") return;
+  event.preventDefault();
+  if (!event.repeat) startTalking();
+});
+talkButton.addEventListener("keyup", (event) => {
+  if (event.key !== " " && event.key !== "Enter") return;
+  event.preventDefault();
+  finishTalking();
+});
+talkYes.addEventListener("click", () => answerTalk(true));
+talkNo.addEventListener("click", () => answerTalk(false));
+talkPlay.addEventListener("click", async () => {
+  await talking.context?.resume();
+  talkPlay.textContent = "Play again";
+  playBuffer();
+});
+talkClose.addEventListener("click", () => {
+  clearTalk();
+  talkSheet.hidden = true;
+});
 
 ringButton.addEventListener("click", () => showTab("server"));
 findPhoneButton.addEventListener("click", findPhone);
@@ -1770,6 +2144,7 @@ closeNoteButton.addEventListener("click", () => noteDialog.close());
 playingPause.addEventListener("click", () => controlPlaying("pause", playingPause));
 playingNext.addEventListener("click", () => controlPlaying("next", playingNext));
 document.addEventListener("visibilitychange", refreshHome);
+document.addEventListener("pointerup", wakeSound, { passive: true });
 
 async function checkLogin() {
   const response = await fetch("/api/health");

@@ -6,7 +6,7 @@ import { SpotifyProblem, type SpotifyAuth } from "./auth.js";
 import type { SpotifyClient } from "./client.js";
 import { readPage, readSearch, spotify, switchedOffError, type SpotifyParts } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true };
 const trackUri = "spotify:track:4iV5W9uYEdYUVa79Axb7Rh";
 const albumUri = "spotify:album:4aawyAB9vmqN3uQ7FjRGTy";
 const episodeUri = "spotify:episode:512ojhOuo1ktJprKbVcKyQ";

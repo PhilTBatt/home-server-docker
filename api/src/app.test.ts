@@ -26,7 +26,7 @@ const config: Config = {
   modes: { bedtimeFrom: null, bedtimeUntil: null },
   phone: { ring: "once", seconds: 30 },
   spotify: { clientId: "", redirectUri: "" },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true }
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -277,7 +277,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -716,6 +716,17 @@ test("the chores route takes session jobs only while sessions are on", async () 
   assert.notEqual(reply.statusCode, 400);
   const without = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, sessions: false } }, chores: createChores({ dir: "/no-such-folder" }) });
   assert.equal((await without.inject({ method: "POST", url: "/chores/session-start-docker", headers: goodHeader })).statusCode, 400);
+});
+
+test("talking to Jarvis from the phone is behind the hub's token like every other route, and a 404 with TALK off", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  assert.equal((await app.inject({ method: "GET", url: "/talk/status" })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: "/talk", headers: { "content-type": "application/octet-stream" }, payload: Buffer.alloc(32_000) })).statusCode, 401);
+  assert.deepEqual((await app.inject({ method: "GET", url: "/talk/status", cookies: goodCookie })).json(), { jarvis: false });
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, talk: false } } });
+  const refused = await off.inject({ method: "GET", url: "/talk/status", headers: goodHeader });
+  assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "Talking to Jarvis from the phone is switched off" }]);
+  assert.equal((await off.inject({ method: "GET", url: "/system/features", headers: goodHeader })).json().talk, false);
 });
 
 test("Spotify's routes are the hub's, behind its token like every other, and a 404 with SPOTIFY off", async () => {

@@ -6,7 +6,7 @@ import { createPiper } from "./piper.js";
 import { startPlayer } from "./player.js";
 import { findSoundCard, MicrophonePassedIn, setVolume, soundDir, type SoundCard } from "./sound-card.js";
 import { volumeLine } from "./sound-test.js";
-import { say, type SpeechEngine, type StartPlayer } from "./speech.js";
+import { neverSayingWakePhrase, say, type SpeechEngine, type StartPlayer } from "./speech.js";
 
 export const readySentence = "Jarvis is ready when you are.";
 export const voiceStartHint = "Start Jarvis with bash host/jarvis.sh, which passes them in";
@@ -38,7 +38,7 @@ export function voiceOffLine(reason: string): string {
 export function voiceParts(config: Pick<Config, "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume">, signal: AbortSignal, dir = soundDir): VoiceParts {
   const piper = config.voice === "piper";
   return {
-    engine: piper ? createPiper({ voice: config.piperVoice }) : createKokoro({ voice: config.kokoroVoice, speed: config.kokoroSpeed }),
+    engine: neverSayingWakePhrase(piper ? createPiper({ voice: config.piperVoice }) : createKokoro({ voice: config.kokoroVoice, speed: config.kokoroSpeed })),
     voice: piper ? config.piperVoice : config.kokoroVoice,
     volume: config.volume,
     findCard: () => findSoundCard(dir, undefined, voiceStartHint),

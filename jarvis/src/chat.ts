@@ -2,7 +2,7 @@ import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
 import { answerMost, findInstruction, isEnd, isSkip, isYes, questionsNoteText, questionsOffNote, questionsWord, readQuestions, type BrainQuestions, type QuestionsRun } from "./brain-questions.js";
-import { clockReply, codeWordIn, phoneFoundIn, earsStoppedWhy, hubOffNote, londonStamp, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply } from "./code-words.js";
+import { clockReply, codeWordIn, phoneFoundIn, earsStoppedWhy, hubOffNote, londonStamp, reasonOf, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply } from "./code-words.js";
 import type { SpeechReport } from "./speech-queue.js";
 import { createEvents, merged } from "./events.js";
 import { capped, lookingUp, lookUp, noQuestion, questionCap, type Earlier, type Helper, type LookedUp } from "./look-up.js";
@@ -20,6 +20,7 @@ import { withNotes, type SessionNotes } from "./session-notes.js";
 import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { trainSay, type TrainEvent, type TrainNews } from "./train-news.js";
 import { sessionSay, type SessionEvent, type SessionNews } from "./session-news.js";
+import { askOnPhone, phoneNothingToSayNote, withPhoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneEvent, type PhoneParts } from "./phone.js";
 import { answeredSay, guestRemindersNote, reminderAnswerFailedSay, reminderAnswerIn, reminderAnswerMs, reminderSay, type ReminderAnswer, type ReminderEvent, type ReminderHub, type ReminderNews } from "./reminders.js";
 import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, modeSays, modesOffSay, modeWordIn, speaksUnprompted, whenBackAsk, whenNotCaught, whenSaid, ModesOff, type Mode, type ModeEvent, type ModeHub, type ModeWord, type WhenCheck } from "./modes.js";
 import { seconds, type Answer } from "./timing.js";
@@ -181,6 +182,8 @@ export type ChatDeps = {
   recordNewChat?: (lastRequestTokens: number | null) => Promise<void>;
   newChat?: () => Promise<NewChat>;
   confirm?: (prompt: string, signal: AbortSignal) => Promise<string | null>;
+  askYes?: (question: string, signal: AbortSignal) => Promise<string | null>;
+  answered?: (result: { text: string } | { error: string }) => void;
   describe?: (tool: string, input: unknown, signal: AbortSignal) => Promise<string>;
   speak?: (after?: Promise<void>) => AnswerSpeech;
   speechStop?: SpeechStop;
@@ -202,6 +205,7 @@ export type ChatDeps = {
   reminders?: { news: ReminderNews; hub: ReminderHub };
   voices?: { other: OtherVoices; guests?(on: boolean): Promise<void> };
   sessions?: SessionNews;
+  phone?: PhoneParts;
 };
 
 export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply>; server?(signal: AbortSignal): Promise<CodeWordReply>; found?(signal: AbortSignal): Promise<CodeWordReply> };
@@ -436,8 +440,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "reminders" | "voices" | "sessions" | "otherVoices" | "musicYes" | "digest" | "web" | "webBy" | "webLog" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_REMINDERS=${config.reminders ? "on" : "off"}, JARVIS_VOICES=${config.voices ? "on" : "off"}, JARVIS_SESSIONS=${config.sessions ? "on" : "off"}, JARVIS_OTHER_VOICES=${config.otherVoices}, JARVIS_MUSIC_YES=${config.musicYes}, JARVIS_DIGEST=${config.digest ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "reminders" | "voices" | "sessions" | "otherVoices" | "musicYes" | "digest" | "phone" | "web" | "webBy" | "webLog" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_REMINDERS=${config.reminders ? "on" : "off"}, JARVIS_VOICES=${config.voices ? "on" : "off"}, JARVIS_SESSIONS=${config.sessions ? "on" : "off"}, JARVIS_OTHER_VOICES=${config.otherVoices}, JARVIS_MUSIC_YES=${config.musicYes}, JARVIS_DIGEST=${config.digest ? "on" : "off"}, JARVIS_PHONE=${config.phone ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -473,6 +477,7 @@ export function refusedNote(tools: string[]): string {
 async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: Heard): Promise<"answered" | "stopped" | "failed"> {
   const spoken = heard === undefined ? {} : { heard };
   let streamed = false;
+  let said = "";
   let lineEnded = false;
   const show = (text: string) => {
     deps.write(text);
@@ -484,15 +489,17 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
   state.speech = speech;
   let waiting: Promise<unknown> = Promise.resolve();
   const asking = new AbortController();
+  const typedYes = deps.confirm;
+  const answerer = deps.askYes ?? (typedYes === undefined ? undefined : (question: string, signal: AbortSignal) => typedYes(questionPrompt(question), signal));
   const confirm = (tool: string, input: unknown): Promise<boolean> => {
     const asked = waiting.then(async () => {
-      if (deps.confirm === undefined || asking.signal.aborted) return false;
+      if (answerer === undefined || asking.signal.aborted) return false;
       timer.pause();
       speech?.gap();
       show(newLine());
       const question = deps.describe === undefined ? actionQuestion(tool, input) : await deps.describe(tool, input, asking.signal).catch(() => actionQuestion(tool, input));
       if (asking.signal.aborted) return false;
-      const typed = await deps.confirm(questionPrompt(question), asking.signal).catch(() => null);
+      const typed = await answerer(question, asking.signal).catch(() => null);
       if (asking.signal.aborted) return false;
       const yes = typed !== null && typed.trim().toLowerCase() === "yes";
       show(`  (${yes ? confirmNotes.yes : typed === null ? confirmNotes.none : confirmNotes.no})\n`);
@@ -506,6 +513,7 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
     deps.session.ask(withSizeLine(withTimeLine(message, deps.clock === undefined ? null : timeLine(deps.clock())), deps.sizeLine?.(state.lastRequestTokens) ?? null), {
       text: (delta) => {
         streamed = true;
+        said += delta;
         show(printable(delta));
         speech?.text(delta);
       },
@@ -517,10 +525,12 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
         if (!action) show(`${newLine()}  (${printable(toolNote(name, input))})\n`);
       },
       restart: () => {
+        said = "";
         speech?.restart();
         show(`${newLine()}  (${restartNote})\n`);
       },
       retry: () => {
+        said = "";
         speech?.restart();
         show(`${newLine()}  (${retryNote})\n`);
       },
@@ -540,6 +550,7 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
     asking.abort();
     speech?.stop();
     const reason = printable(error instanceof Error ? error.message : String(error));
+    deps.answered?.({ error: reason });
     if (reason === closedMessage) {
       show(`${newLine()}  (stopped)\n`);
       return "stopped";
@@ -555,6 +566,7 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
     speech?.text(answer.text);
   }
   speech?.end();
+  deps.answered?.({ text: streamed ? said : answer.text });
   const refused = answer.stats?.refusedTools ?? [];
   if (refused.length > 0) show(`${newLine()}  (${printable(refusedNote(refused))})\n`);
   show(`${newLine()}  ${timingLine(answer)}\n`);
@@ -678,7 +690,7 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
   deps.write(`  (${why === null ? droppedNote : notDroppedNote(printable(why))})\n`);
 }
 
-type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ReminderEvent | SessionEvent;
+type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ReminderEvent | SessionEvent | PhoneEvent;
 export type ChatInput = { kind: "line"; text: string } | WakeEvent | NewsEvent;
 
 export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<NewsEvent>): AsyncGenerator<ChatInput> {
@@ -1280,6 +1292,89 @@ async function onReminders(deps: ChatDeps, state: ChatState, event: ReminderEven
   deps.prompt();
 }
 
+async function tellPhone(deps: ChatDeps, send: () => Promise<void>): Promise<void> {
+  try {
+    await send();
+  } catch (error) {
+    deps.write(`  (${printable(phoneTellNote(reasonOf(error)))})\n`);
+  }
+}
+
+async function onPhone(deps: ChatDeps, state: ChatState, event: PhoneEvent): Promise<"go" | "stop"> {
+  if (event.kind === "phone note") {
+    deps.interrupt?.();
+    deps.write(`  (${printable(event.line)})\n`);
+    deps.prompt();
+    return "go";
+  }
+  const phone = deps.phone;
+  if (phone === undefined || !quiet(state) || state.questions !== null || state.awaitingBack) return "go";
+  const request = phone.news.take();
+  if (request === null) return "go";
+  const signal = deps.closing ?? new AbortController().signal;
+  deps.interrupt?.();
+  if (state.guest || state.mode === "guest") {
+    deps.write(`  (${phoneGuestNote})\n`);
+    await tellPhone(deps, () => phone.desk.reply(request.id, phoneGuestSay, false, signal));
+    deps.prompt();
+    return "go";
+  }
+  let text: string;
+  try {
+    text = (await phone.hear(request.audio, signal)).replace(/\s+/g, " ").trim();
+  } catch (error) {
+    if (signal.aborted) return "go";
+    const why = reasonOf(error);
+    deps.write(`  (${printable(phoneUnheardNote(why))})\n`);
+    await tellPhone(deps, () => phone.desk.failed(request.id, `I couldn't turn your recording into words: ${why}`, signal));
+    deps.prompt();
+    return "go";
+  }
+  if (text === "") {
+    deps.write(`  (${phoneNothingNote})\n`);
+    await tellPhone(deps, () => phone.desk.failed(request.id, phoneNothingSay, signal));
+    deps.prompt();
+    return "go";
+  }
+  deps.write(`${phonePrefix}${printable(text)}\n`);
+  await tellPhone(deps, () => phone.desk.heard(request.id, text, signal));
+  state.turn++;
+  const outcome: { got: { text: string } | { error: string } | null } = { got: null };
+  const onPhoneDeps: ChatDeps = {
+    ...deps,
+    speak: undefined,
+    askYes: (question, asking) => {
+      deps.write(`  (${printable(phoneAskingNote(question))})\n`);
+      return askOnPhone(phone, request.id, question, asking);
+    },
+    answered: (got) => (outcome.got = got),
+  };
+  const going = await ask(onPhoneDeps, state, withPhoneTag(text));
+  const got = outcome.got;
+  if (got === null || "error" in got) {
+    await tellPhone(deps, () => phone.desk.failed(request.id, got === null ? "Jarvis didn't answer." : `Jarvis couldn't answer: ${got.error}`, signal));
+  } else {
+    const answer = got.text.trim() === "" ? phoneEmptySay : got.text;
+    const voice = phone.voice;
+    await tellPhone(deps, () => phone.desk.reply(request.id, answer, voice !== null, signal));
+    if (voice !== null) {
+      let wav: Uint8Array<ArrayBuffer> | null = null;
+      try {
+        wav = await voice(answer, signal);
+        if (wav === null) deps.write(`  (${phoneVoiceNote(phoneNothingToSayNote)})\n`);
+      } catch (error) {
+        if (!signal.aborted) deps.write(`  (${printable(phoneVoiceNote(reasonOf(error)))})\n`);
+      }
+      const made = wav;
+      if (made !== null) await tellPhone(deps, () => phone.desk.voice(request.id, made, signal));
+      else if (!signal.aborted) await tellPhone(deps, () => phone.desk.noVoice(request.id, signal));
+    }
+  }
+  if (going === "stop") return "stop";
+  deps.prompt();
+  return "go";
+}
+
 async function onSessions(deps: ChatDeps, state: ChatState, event: SessionEvent): Promise<void> {
   if (event.kind === "sessions note") {
     if (state.guest) return;
@@ -1567,7 +1662,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
   await tellEars(base, current, false);
   try {
     current.prompt();
-    const news = [current.trains?.events, found?.events, current.modes?.events, current.reminders?.news.events, current.sessions?.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
+    const news = [current.trains?.events, found?.events, current.modes?.events, current.reminders?.news.events, current.sessions?.events, current.phone?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
     for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, news.length === 0 ? undefined : news.length === 1 ? news[0] : merged<NewsEvent>(...news)), deps.ready)) {
       if (input.kind === "reminders" || input.kind === "reminders note") {
         await onReminders(current, state, input);
@@ -1575,6 +1670,10 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       }
       if (input.kind === "sessions" || input.kind === "sessions note") {
         await onSessions(current, state, input);
+        continue;
+      }
+      if (input.kind === "phone" || input.kind === "phone note") {
+        if ((await onPhone(current, state, input)) === "stop") break;
         continue;
       }
       if (input.kind === "looked up") {

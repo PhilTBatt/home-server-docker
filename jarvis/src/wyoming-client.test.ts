@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
 import { afterEach, test } from "node:test";
-import { connectWyoming, describe, synthesize, wyomingConnectMs, type AudioPiece, type WyomingConnection } from "./wyoming-client.js";
+import { connectWyoming, describe, synthesize, transcribe, transcribeChunkBytes, wyomingConnectMs, type AudioPiece, type WyomingConnection } from "./wyoming-client.js";
 import { createEventReader, encodeEvent, type WyomingEvent } from "./wyoming.js";
 
 type StandIn = { port: number; heard: WyomingEvent[]; closed: Promise<void>; server: Server };
@@ -366,5 +366,74 @@ test("connecting can be called off part-way, with the caller's reason", { timeou
   const connecting = connectWyoming({ host: "127.0.0.1", port: server.port, signal: control.signal });
   control.abort(new Error("stop now"));
   await assert.rejects(connecting, { message: "stop now" });
+  await stopped(server.server);
+});
+
+const heardFormat = { rate: 16000, width: 2, channels: 1 };
+
+function transcribes(text: string, before: WyomingEvent[] = []) {
+  return async (event: WyomingEvent, socket: Socket) => {
+    if (event.type !== "audio-stop") return;
+    for (const message of [...before, { type: "transcript", data: { text }, payload: null }].map(encodeEvent)) await sendInPieces(socket, message, [3, 50, 1, 700]);
+  };
+}
+
+test("turning the phone's sound into text sends transcribe, audio-start, the sound in one-second pieces and audio-stop, and gives back the transcript's text, passing over anything else", { timeout: 10_000 }, async () => {
+  assert.equal(transcribeChunkBytes, 32_000);
+  const server = await standIn(transcribes(" What's on today?", [{ type: "transcript-start", data: {}, payload: null }, { type: "transcript-chunk", data: { text: "What's" }, payload: null }]));
+  const connection = await connectWyoming({ host: "127.0.0.1", port: server.port });
+  const sound = audio(0, 65_000);
+  assert.equal(await transcribe(connection, sound, heardFormat, "en"), " What's on today?");
+  assert.deepEqual(
+    server.heard.map((event) => [event.type, event.data, event.payload?.length ?? null]),
+    [
+      ["transcribe", { language: "en" }, null],
+      ["audio-start", heardFormat, null],
+      ["audio-chunk", heardFormat, 32_000],
+      ["audio-chunk", heardFormat, 32_000],
+      ["audio-chunk", heardFormat, 1000],
+      ["audio-stop", {}, null],
+    ],
+  );
+  assert.deepEqual(Buffer.concat(server.heard.flatMap((event) => (event.payload === null ? [] : [event.payload]))), Buffer.from(sound));
+  connection.close();
+  await stopped(server.server);
+});
+
+test("turning sound into text refuses half a sample before sending anything, and with no language sends no data", { timeout: 10_000 }, async () => {
+  const server = await standIn(transcribes("Hi."));
+  await assert.rejects(transcribe(await connectWyoming({ host: "127.0.0.1", port: server.port }), audio(0, 3), heardFormat, "en"), { message: "The sound to turn into text isn't a whole number of samples" });
+  await pause(20);
+  assert.equal(server.heard.length, 0);
+  const connection = await connectWyoming({ host: "127.0.0.1", port: server.port });
+  assert.equal(await transcribe(connection, audio(0, 10), heardFormat, null, undefined, 4), "Hi.");
+  assert.deepEqual(server.heard[0], { type: "transcribe", data: {}, payload: null });
+  assert.deepEqual(server.heard.map((event) => event.payload?.length ?? null), [null, null, 4, 4, 2, null]);
+  await stopped(server.server);
+});
+
+test("turning sound into text passes on the server's error, or its closing without text, and closes the connection", { timeout: 10_000 }, async () => {
+  for (const [answer, message] of [
+    [(event: WyomingEvent, socket: Socket) => void (event.type === "audio-stop" && socket.write(encodeEvent({ type: "error", data: { text: "No model:\u0007 base-int8" }, payload: null }))), "The Wyoming server refused: No model: base-int8"],
+    [(event: WyomingEvent, socket: Socket) => void (event.type === "audio-stop" && socket.write(encodeEvent({ type: "transcript", data: { text: 3 }, payload: null }))), "The Wyoming server sent a transcript without its text"],
+    [(event: WyomingEvent, socket: Socket) => void (event.type === "audio-stop" && socket.end()), "The Wyoming server closed the connection without sending the text"],
+  ] as const) {
+    const server = await standIn(answer);
+    const connection = await connectWyoming({ host: "127.0.0.1", port: server.port });
+    await assert.rejects(transcribe(connection, audio(0, 4), heardFormat, "en"), { message });
+    await server.closed;
+    await stopped(server.server);
+  }
+});
+
+test("calling off turning sound into text stops at once, with the caller's reason, and closes the connection", { timeout: 10_000 }, async () => {
+  const server = await standIn(() => {});
+  const connection = await connectWyoming({ host: "127.0.0.1", port: server.port });
+  const control = new AbortController();
+  const asking = transcribe(connection, audio(0, 4), heardFormat, "en", control.signal);
+  await pause(30);
+  control.abort(new Error("Stopping"));
+  await assert.rejects(asking, { message: "Stopping" });
+  await server.closed;
   await stopped(server.server);
 });

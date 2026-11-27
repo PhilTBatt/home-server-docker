@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import { test } from "node:test";
 import type { Player } from "./player.js";
-import { playSound, say, soundFor, type SpeechEngine } from "./speech.js";
+import { neverSayingWakePhrase, playSound, say, soundFor, wakePhraseSaid, withoutWakePhrase, type SpeechEngine } from "./speech.js";
 
 type Seen = { steps: string[]; texts: string[]; signals: AbortSignal[]; players: { device: string; rate: number }[]; written: number[][] };
 
@@ -528,4 +528,45 @@ test("a player that can't be started passes its error on, and nothing is left li
   assert.equal(getEventListeners(stop.signal, "abort").length, 0);
   stop.abort();
   assert.deepEqual(seen.steps, ["start", "write", "finish"]);
+});
+
+test("Jarvis never says his wake phrase, so with interrupting on he can't set himself off: it becomes my wake word, in any case and with any marks between", () => {
+  assert.equal(withoutWakePhrase("I listen for Hey Jarvis, then I answer."), `I listen for ${wakePhraseSaid}, then I answer.`);
+  assert.equal(withoutWakePhrase("Just say hey, Jarvis! or “Hey Jarvis” again"), `Just say ${wakePhraseSaid}! or “${wakePhraseSaid}” again`);
+  assert.equal(withoutWakePhrase("HEY JARVIS"), wakePhraseSaid);
+  assert.equal(withoutWakePhrase("HeyJarvis, run together, sounds the same"), `${wakePhraseSaid}, run together, sounds the same`);
+  assert.equal(withoutWakePhrase("Jarvis is ready when you are. They said hey. Heyday for Jarvis."), "Jarvis is ready when you are. They said hey. Heyday for Jarvis.", "his name alone, hey alone, and words that only start with hey stay");
+});
+
+test("his voice gets the text without the wake phrase, even split across two pieces, and keeps the engine's name, rate and check", async () => {
+  const heard: string[] = [];
+  const checked: AbortSignal[] = [];
+  const engine: SpeechEngine = {
+    name: "Stand-in",
+    sampleRate: 24_000,
+    splitsSentences: true,
+    async *speak(text) {
+      for await (const piece of text) {
+        heard.push(piece);
+        yield new Uint8Array([1]);
+      }
+    },
+    async check(signal) {
+      checked.push(signal);
+    },
+  };
+  const wrapped = neverSayingWakePhrase(engine);
+  assert.deepEqual([wrapped.name, wrapped.sampleRate, wrapped.splitsSentences], ["Stand-in", 24_000, true]);
+  const signal = new AbortController().signal;
+  await wrapped.check(signal);
+  assert.deepEqual(checked, [signal]);
+  async function* pieces() {
+    yield "Say Hey Jarvis to wake me.";
+    yield "To ask again, say hey,";
+    yield "Jarvis, then your question.";
+    yield "That's all.";
+    yield "And at the very end, hey";
+  }
+  for await (const sound of wrapped.speak(pieces(), signal)) assert.deepEqual([...sound], [1]);
+  assert.deepEqual(heard, [`Say ${wakePhraseSaid} to wake me.`, `To ask again, say ${wakePhraseSaid}, then your question.`, "That's all.", "And at the very end, hey"]);
 });

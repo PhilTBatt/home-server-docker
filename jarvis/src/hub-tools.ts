@@ -18,7 +18,7 @@ export const hubApiUrl = "http://api:3000";
 export const lookupMs = 5_000;
 export const nameLimit = 80;
 export const noTorrentError = "No torrent with that hash";
-const typeYes = "Type yes to let him, or anything else to stop it";
+export const typeYes = "Type yes to let him, or anything else to stop it";
 
 export type HubServer = { command: string; args: string[]; token: string; actions?: boolean; musicYes?: MusicYes };
 

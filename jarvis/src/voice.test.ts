@@ -7,7 +7,7 @@ import { kokoroName, kokoroRate } from "./kokoro.js";
 import { piperName } from "./piper.js";
 import type { Player } from "./player.js";
 import { MicrophonePassedIn, type SoundCard } from "./sound-card.js";
-import type { SpeechEngine } from "./speech.js";
+import { wakePhraseSaid, type SpeechEngine } from "./speech.js";
 import { readySentence, startVoice, voiceFor, voiceOffLine, voiceOnLine, voiceParts, voiceSayMs, voiceStartHint, type Voice, type VoiceParts } from "./voice.js";
 
 const card: SoundCard = { number: 1, device: "plughw:1,0", speakers: "pcmC1D0p", mixer: "controlC1" };
@@ -443,4 +443,23 @@ test("end to end with the chat's own parts: a pretend amixer and aplay on the pa
     { url: "http://kokoro:8880/health", body: null },
     { url: "http://kokoro:8880/v1/audio/speech", body: { model: "kokoro", input: readySentence, voice: "bm_fable", speed: 0.85, response_format: "pcm", stream: false } },
   ]);
+});
+
+test("the voice his chats use never sends his wake phrase to Kokoro", async (context) => {
+  const bodies: string[] = [];
+  context.mock.method(globalThis, "fetch", async (_url: string, options: RequestInit = {}) => {
+    bodies.push(String(options.body));
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  });
+  const signal = new AbortController().signal;
+  const parts = voiceParts({ voice: "kokoro", kokoroVoice: "bm_fable", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 35 }, signal);
+  async function* pieces() {
+    yield "I listen for Hey Jarvis.";
+  }
+  await assert.rejects(async () => {
+    for await (const sound of parts.engine.speak(pieces(), signal)) assert.ok(sound);
+  });
+  assert.equal(bodies.length, 1);
+  assert.ok(bodies[0].includes(`I listen for ${wakePhraseSaid}.`), bodies[0]);
+  assert.ok(!/hey jarvis/i.test(bodies[0]), bodies[0]);
 });
