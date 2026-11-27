@@ -43,6 +43,8 @@ if grep -q '^caddy/Caddyfile$' <<< "$changed"; then steps+=("docker compose rest
 if grep -q '^mcp/' <<< "$changed"; then steps+=("$(npm_in mcp ci)" "$(npm_in mcp test)" "docker compose build mcp"); fi
 if grep -q '^jarvis/package-lock\.json$' <<< "$changed"; then steps+=("$(npm_in jarvis ci)" "$(npm_in jarvis "run engine-check")"); fi
 installs=$(grep '^host/' <<< "$changed" | grep -v '^host/hub-')
+always_on=no
+if tmux -L jarvis has-session -t jarvis 2> /dev/null; then always_on=yes; fi
 
 destination() {
   case "$1" in
@@ -50,6 +52,7 @@ destination() {
     host/backup.sh) echo /usr/local/sbin/home-hub-backup ;;
     host/runner.sh) echo /usr/local/bin/home-hub-runner ;;
     host/digest.sh) echo /usr/local/bin/home-hub-digest ;;
+    host/jarvis-always.sh) echo /usr/local/bin/home-hub-jarvis ;;
     host/*.service | host/*.timer | host/*.path) echo "/etc/systemd/system/${1#host/}" ;;
   esac
 }
@@ -133,6 +136,13 @@ if [ -n "$installs" ]; then
   printf '  %s\n' $installs
 fi
 
+if [ "$always_on" = yes ] && grep -qE '^(jarvis/package-lock\.json$|mcp/)' <<< "$changed"; then
+  echo
+  echo "Jarvis is running always on, and his packages or the hub's tools he runs changed: rebuilding them would replace folders he's using. Stop him first with: home-hub-jarvis stop"
+  echo "Then run this again, and start him with: home-hub-jarvis start"
+  [ "$dry_run" = yes ] || exit 1
+fi
+
 if [ "$dry_run" = yes ]; then
   echo
   echo "Dry run: your files weren't changed and nothing was run."
@@ -155,4 +165,7 @@ done
 
 echo
 echo "Up to date at $(git rev-parse --short HEAD)."
+if [ "$always_on" = yes ] && grep -qE '^(jarvis/|mcp/|host/jarvis\.sh$|docker-compose)' <<< "$changed"; then
+  echo "Jarvis is running always on, with what he had when he started. To use these changes, restart him: home-hub-jarvis restart"
+fi
 offer_installs

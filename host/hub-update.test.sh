@@ -17,6 +17,11 @@ if [ -n "${DOCKER_FAIL:-}" ] && [[ "$*" == *"$DOCKER_FAIL"* ]]; then exit 1; fi
 exit 0
 FAKE
 chmod +x "$work/bin/docker"
+cat > "$work/bin/tmux" <<'FAKE'
+#!/bin/bash
+[ "$*" = "-L jarvis has-session -t jarvis" ] && [ -n "${ALWAYS_ON:-}" ]
+FAKE
+chmod +x "$work/bin/tmux"
 
 passed=0
 failed=0
@@ -208,6 +213,50 @@ check "an installed template timer restarts every one of its instances, since th
 sudo systemctl daemon-reload
 sudo systemctl try-restart home-hub-digest@*.timer" "$(cat "$work/sudo.log")"
 rm "$work/bin/sudo"
+
+fresh_repos
+change jarvis/package-lock.json
+before=$(git -C "$work/server" rev-parse HEAD)
+output=$(ALWAYS_ON=yes update)
+status=$?
+check "with Jarvis running always on, new packages for him stop the update before anything changes" "1" "$status"
+check "so nothing runs" "" "$(cat "$work/docker.log")"
+check "and the files are left alone" "$before" "$(git -C "$work/server" rev-parse HEAD)"
+check_has "it says to stop him first, and how to start him after" "Jarvis is running always on, and his packages or the hub's tools he runs changed: rebuilding them would replace folders he's using. Stop him first with: home-hub-jarvis stop
+Then run this again, and start him with: home-hub-jarvis start" "$output"
+output=$(ALWAYS_ON=yes update --dry-run)
+check "a dry run says the same and runs nothing" "0" "$?"
+check_has "the dry run's note" "Stop him first with: home-hub-jarvis stop" "$output"
+
+fresh_repos
+change mcp/server.ts
+output=$(ALWAYS_ON=yes update)
+check "with Jarvis running always on, a change to the hub's tools he runs stops the update too" "1 " "$? $(cat "$work/docker.log")"
+
+for file in jarvis/src/chat.ts docker-compose.sound.yaml; do
+  fresh_repos
+  change "$file"
+  output=$(ALWAYS_ON=yes update)
+  check_has "with Jarvis running always on, a change to $file says to restart him" "Jarvis is running always on, with what he had when he started. To use these changes, restart him: home-hub-jarvis restart" "$output"
+done
+fresh_repos
+change api/server.ts
+output=$(ALWAYS_ON=yes update)
+if [[ "$output" == *"restart him"* ]]; then failed=$((failed + 1)); echo "FAIL: a change only to the API doesn't ask to restart Jarvis"; else passed=$((passed + 1)); fi
+fresh_repos
+change jarvis/src/chat.ts
+output=$(update)
+if [[ "$output" == *"always on"* ]]; then failed=$((failed + 1)); echo "FAIL: with Jarvis not running always on, nothing is said about him"; else passed=$((passed + 1)); fi
+
+fresh_repos
+printf '#!/bin/bash\n' > "$work/laptop/host/jarvis-always.sh"
+printf '[Service]\n' > "$work/laptop/host/home-hub-jarvis@.service"
+git -C "$work/laptop" add -A
+git -C "$work/laptop" commit -q -m always
+git -C "$work/laptop" push -q 2>/dev/null
+output=$(update)
+check_has "the always-on script is offered for /usr/local/bin as home-hub-jarvis" "Skipped. To install it later: sudo install host/jarvis-always.sh /usr/local/bin/home-hub-jarvis" "$output"
+check_has "and its template service for systemd's folder" "Skipped. To install it later: sudo install -m 644 host/home-hub-jarvis@.service /etc/systemd/system/home-hub-jarvis@.service" "$output"
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
