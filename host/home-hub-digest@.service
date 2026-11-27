@@ -1,0 +1,13 @@
+[Unit]
+Description=Write the weekly digest of the Claude Code sessions for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=~
+ExecStart=/bin/bash -c 'cd docker && exec /usr/local/bin/home-hub-digest'
+NoNewPrivileges=yes
+PrivateTmp=yes
+TimeoutStartSec=30min

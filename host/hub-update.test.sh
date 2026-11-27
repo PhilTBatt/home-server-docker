@@ -180,5 +180,34 @@ check "a template path unit, once installed, is restarted for every user it's en
 sudo systemctl daemon-reload
 sudo systemctl try-restart home-hub-runner@*.path" "$(cat "$work/docker.log")"
 
+fresh_repos
+printf '#!/bin/bash\n' > "$work/laptop/host/digest.sh"
+printf '[Service]\n' > "$work/laptop/host/home-hub-digest@.service"
+printf '[Timer]\n' > "$work/laptop/host/home-hub-digest@.timer"
+git -C "$work/laptop" add -A
+git -C "$work/laptop" commit -q -m digest
+git -C "$work/laptop" push -q 2>/dev/null
+output=$(update)
+check_has "the digest script is offered for /usr/local/bin, and skipped with no one to answer" "Skipped. To install it later: sudo install host/digest.sh /usr/local/bin/home-hub-digest" "$output"
+check_has "its template service goes to systemd's folder" "Skipped. To install it later: sudo install -m 644 host/home-hub-digest@.service /etc/systemd/system/home-hub-digest@.service" "$output"
+check_has "and so does its template timer" "Skipped. To install it later: sudo install -m 644 host/home-hub-digest@.timer /etc/systemd/system/home-hub-digest@.timer" "$output"
+
+fresh_repos
+cat > "$work/bin/sudo" <<'FAKE'
+#!/bin/bash
+echo "sudo $*" >> "$SUDO_LOG"
+FAKE
+chmod +x "$work/bin/sudo"
+printf '[Timer]\n' > "$work/laptop/host/home-hub-digest@.timer"
+git -C "$work/laptop" add -A
+git -C "$work/laptop" commit -q -m timer
+git -C "$work/laptop" push -q 2>/dev/null
+touch "$work/sudo.log"
+output=$(cd "$work/server" && printf 'y\n' | PATH="$work/bin:$PATH" DOCKER_LOG="$work/docker.log" SUDO_LOG="$work/sudo.log" bash host/hub-update.sh 2>&1)
+check "an installed template timer restarts every one of its instances, since the template itself has no instance to restart" "sudo install -m 644 host/home-hub-digest@.timer /etc/systemd/system/home-hub-digest@.timer
+sudo systemctl daemon-reload
+sudo systemctl try-restart home-hub-digest@*.timer" "$(cat "$work/sudo.log")"
+rm "$work/bin/sudo"
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

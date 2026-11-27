@@ -1,0 +1,10 @@
+[Unit]
+Description=Check every day whether the weekly digest is due for %i
+
+[Timer]
+OnCalendar=*-*-* 04:40:00 Europe/London
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

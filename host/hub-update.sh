@@ -49,6 +49,7 @@ destination() {
     host/wifi-watchdog.sh) echo /usr/local/sbin/wifi-watchdog ;;
     host/backup.sh) echo /usr/local/sbin/home-hub-backup ;;
     host/runner.sh) echo /usr/local/bin/home-hub-runner ;;
+    host/digest.sh) echo /usr/local/bin/home-hub-digest ;;
     host/*.service | host/*.timer | host/*.path) echo "/etc/systemd/system/${1#host/}" ;;
   esac
 }
@@ -102,6 +103,7 @@ offer_installs() {
     echo "Installed."
     case "$file" in
       *.service) reload=yes ;;
+      *@.timer) reload=yes; timer=${file#host/}; timers+=("${timer%@.timer}@*.timer") ;;
       *.timer | *.path) reload=yes; timers+=("${file#host/}") ;;
     esac
   done

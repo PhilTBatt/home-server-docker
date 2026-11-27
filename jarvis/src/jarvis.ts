@@ -31,6 +31,7 @@ import { introLine, readIntro } from "./intro.js";
 import { hubModes as modeHub, watchModes, whenCheck } from "./modes.js";
 import { askHubForDue, hubReminders, watchReminders } from "./reminders.js";
 import { askHubForSessions, watchSessions } from "./session-news.js";
+import { digestFor, digestLine, withDigest } from "./digest.js";
 import { personaLine, readPersona } from "./persona.js";
 import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes } from "./session-notes.js";
@@ -94,7 +95,8 @@ try {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = guest ? false : config.engine === "api" ? hubTools !== undefined : hub !== undefined;
     const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined, musicYes: config.musicYes }) : null;
-    const instructions = (base: string) => systemFor(guest ? guestChatSystem : base, { persona, intro, facts, spoken, notes: guest ? [] : (notes ?? []), clock: config.clock });
+    const digest = config.digest ? digestFor({ guest }) : null;
+    const instructions = (base: string) => withDigest(systemFor(guest ? guestChatSystem : base, { persona, intro, facts, spoken, notes: guest ? [] : (notes ?? []), clock: config.clock }), digest);
     const logged: { log?: AnswerLog } = {};
     const recordLookUp = async (mode: LookUpMode, looked: LookedUp) => {
       await lookUpLog?.(mode, config.webBy, looked, guest);
@@ -163,6 +165,7 @@ try {
   if (notes !== null) process.stdout.write(`${notesLine(notes)}\n`);
   if (config.persona !== null) process.stdout.write(`${personaLine(config.persona, persona)}\n`);
   if (config.intro) process.stdout.write(`${introLine(intro)}\n`);
+  if (config.digest) process.stdout.write(`${digestLine(digestFor({ guest: false }))}\n`);
   const earsCall = config.earsToken === null ? null : earsCaller(config.earsToken);
   const hold = earsCall === null || config.voice === "off" ? undefined : startWakeHold(earsCall);
   wakeHold = hold;

@@ -45,3 +45,4 @@ chores/results/*
 host/hub-sessions.conf
 spotify/*
 !spotify/README.md
+host/digest.env
