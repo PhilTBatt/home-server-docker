@@ -30,8 +30,10 @@ import { sessions } from "./modules/sessions/routes.js";
 import type { Sessions } from "./modules/sessions/sessions.js";
 import { spotify, type SpotifyParts } from "./modules/spotify/routes.js";
 import { spotifyFor } from "./modules/spotify/setup.js";
+import { wall, wallCookie, wallReads } from "./modules/wall/routes.js";
+import type { JarvisDesk } from "./modules/wall/jarvis.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
@@ -40,10 +42,13 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   await app.register(cookie);
 
   app.addHook("onRequest", async (request, reply) => {
-    if (request.routeOptions.url === "/auth/login") return;
+    if (request.routeOptions.url === "/auth/login" || request.routeOptions.url === "/wall/login" || request.routeOptions.url === "/wall/logout") return;
 
     const token = tokenFromHeader(request.headers.authorization) ?? request.cookies.hub_token ?? "";
-    if (!isAuthorized(token, options.config.apiToken)) return reply.code(401).send({ error: "Unauthorized" }); 
+    if (isAuthorized(token, options.config.apiToken)) return;
+    const shown = tokenFromHeader(request.headers.authorization) ?? request.cookies[wallCookie] ?? "";
+    if (options.config.features.wall && wallReads.has(`${request.method} ${request.routeOptions.url}`) && isAuthorized(shown, options.config.wall.token)) return;
+    return reply.code(401).send({ error: "Unauthorized" });
   });
 
   app.register(health);
@@ -93,6 +98,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   const spotifyParts = options.config.features.spotify ? (options.spotify ?? spotifyFor(options.config.spotify, (line) => app.log.info(line))) : undefined;
   app.register(spotify, { prefix: "/spotify", features: options.config.features, spotify: spotifyParts });
   app.register(talk, { prefix: "/talk", features: options.config.features });
+  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, desk: options.jarvisDesk });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,

@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, musicYes: "changes", sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, digest: false, phone: false, intro: false, guest: false, modes: false, reminders: false, voices: false, sessions: false, otherVoices: "answer", web: "off", webBy: "claude", webToken: null, webLog: false, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, musicYes: "changes", sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, digest: false, phone: false, wall: false, intro: false, guest: false, modes: false, reminders: false, voices: false, sessions: false, otherVoices: "answer", web: "off", webBy: "claude", webToken: null, webLog: false, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, musicYes: "changes", sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, digest: false, phone: false, intro: false, guest: false, modes: false, reminders: false, voices: false, sessions: false, otherVoices: "answer", web: "off", webBy: "claude", webToken: null, webLog: false, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, musicYes: "changes", sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, digest: false, phone: false, wall: false, intro: false, guest: false, modes: false, reminders: false, voices: false, sessions: false, otherVoices: "answer", web: "off", webBy: "claude", webToken: null, webLog: false, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -585,6 +585,14 @@ test("JARVIS_PHONE is off unless set to on, anything else stops Jarvis, and it n
   for (const value of ["yes", "On", "1"]) assert.throws(() => readConfig({ ...ready, JARVIS_PHONE: value }), { message: `JARVIS_PHONE must be on or off, not "${value}"` });
   assert.throws(() => readConfig({ ...ready, JARVIS_HUB_TOOLS: "off", JARVIS_PHONE: "on" }), { message: "JARVIS_PHONE is on, but recordings from the phone come through the hub, so it needs JARVIS_HUB_TOOLS=on too. Set that, or set JARVIS_PHONE=off" });
   assert.throws(() => readConfig({ ...ready, JARVIS_EARS: "off", JARVIS_PHONE: "on" }), { message: "JARVIS_PHONE is on, but recordings from the phone are turned into words by ears' Whisper, so it needs JARVIS_EARS=push or wake too. Set that, or set JARVIS_PHONE=off" });
+});
+
+test("JARVIS_WALL is off unless set to on, anything else stops Jarvis, and it needs the hub's tools", () => {
+  const ready = { ...base, JARVIS_HUB_TOOLS: "on", API_TOKEN: "a-token" };
+  for (const value of [undefined, "", "off", " off "]) assert.equal(readConfig({ ...ready, JARVIS_WALL: value }).wall, false, JSON.stringify(value));
+  assert.equal(readConfig({ ...ready, JARVIS_WALL: " on " }).wall, true);
+  for (const value of ["yes", "On", "1"]) assert.throws(() => readConfig({ ...ready, JARVIS_WALL: value }), { message: `JARVIS_WALL must be on or off, not "${value}"` });
+  assert.throws(() => readConfig({ ...base, JARVIS_WALL: "on" }), { message: "JARVIS_WALL is on, but the wall reads him from the hub, so it needs JARVIS_HUB_TOOLS=on too. Set that, or set JARVIS_WALL=off" });
 });
 
 test("JARVIS_VOICES needs ears, JARVIS_OTHER_VOICES is answer, name or guest, the last two need voices on, and guest needs guest mode", () => {

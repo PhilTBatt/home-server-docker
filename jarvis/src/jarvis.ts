@@ -41,7 +41,8 @@ import { askHubForChanges, watchTrainChanges } from "./train-news.js";
 import { turnCheck } from "./turn-check.js";
 import { followOnCheck } from "./look-up-follow.js";
 import { voiceFor } from "./voice.js";
-import { createFollowAsk, eager, spokenOf, startWakeHold, stopOnCutIn, watchWake } from "./wake.js";
+import { createFollowAsk, eager, mutedFrom, spokenOf, startWakeHold, stopOnCutIn, watchWake } from "./wake.js";
+import { createWall, hubWall, lookingOnWall, playOnWall, type Wall } from "./wall.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
 const heard = heardLines(lines, promptWhileOpen(lines));
@@ -51,6 +52,7 @@ const starting = new AbortController();
 const closing = new AbortController();
 const watching = new AbortController();
 let wakeHold: { close(): void } | undefined;
+let wall: Wall | undefined;
 lines.on("close", () => closing.abort());
 lines.on("SIGINT", () => {
   if (session === null) {
@@ -67,6 +69,16 @@ try {
   if (!existsSync(`${brainDir}/index.md`)) throw new Error(`No brain at ${brainDir}. Mount ~/hub-memory there, read-only.`);
   const now = () => performance.now();
   const warn = (message: string) => process.stdout.write(`  (${printable(message)})\n`);
+  const noteLine = (line: string) => {
+    if (process.stdout.isTTY) {
+      cursorTo(process.stdout, 0);
+      clearLine(process.stdout, 0);
+    }
+    process.stdout.write(`  (${printable(line)})\n`);
+    heard.prompt();
+  };
+  wall = config.wall && config.hubToken !== null ? createWall({ send: hubWall(config.hubToken), now, note: noteLine }) : undefined;
+  const shown = wall;
   const hints = lengthHintsFor(config.lengthHints, lengthLineFor(pricesPerMTok[chatModel], config.lengthWarn, config.lengthCap, newChatAdvice));
   if (config.hubToken !== null) checkHubServer(hubServerFile);
   const hub = config.hubToken === null ? undefined : hubServerFor(config.hubToken, config.hubActions, hubServerFile, config.musicYes);
@@ -77,7 +89,8 @@ try {
   const intro = config.intro ? await readIntro() : null;
   let voice: VoiceMode = "off";
   let speaker: Speaker | null = null;
-  const webHelper = config.web === "off" ? undefined : config.webBy === "api" ? apiHelper({ apiKey: config.apiKey, model: chatModel, now, prices: pricesPerMTok[chatModel] }) : config.webToken === null ? undefined : claudeHelper({ model: chatModel, credential: { [planToken]: config.webToken } });
+  const anyHelper = config.web === "off" ? undefined : config.webBy === "api" ? apiHelper({ apiKey: config.apiKey, model: chatModel, now, prices: pricesPerMTok[chatModel] }) : config.webToken === null ? undefined : claudeHelper({ model: chatModel, credential: { [planToken]: config.webToken } });
+  const webHelper = anyHelper === undefined ? undefined : lookingOnWall(anyHelper, shown);
   const lookUpLog =
     webHelper === undefined || !config.webLog
       ? undefined
@@ -95,7 +108,7 @@ try {
   const open = (setup: ChatSetup, guest = false) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = guest ? false : config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined, musicYes: config.musicYes, phone: !guest && config.phone }) : null;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined, musicYes: config.musicYes, phone: !guest && config.phone, wall: config.wall }) : null;
     const digest = config.digest ? digestFor({ guest }) : null;
     const instructions = (base: string) => withDigest(systemFor(guest ? guestChatSystem : base, { persona, intro, facts, spoken, notes: guest ? [] : (notes ?? []), clock: config.clock }), digest);
     const logged: { log?: AnswerLog } = {};
@@ -167,6 +180,7 @@ try {
   if (config.persona !== null) process.stdout.write(`${personaLine(config.persona, persona)}\n`);
   if (config.intro) process.stdout.write(`${introLine(intro)}\n`);
   if (config.digest) process.stdout.write(`${digestLine(digestFor({ guest: false }))}\n`);
+  if (shown !== undefined) process.stdout.write(`${printable(await shown.ready())}\n`);
   const earsCall = config.earsToken === null ? null : earsCaller(config.earsToken);
   const hold = earsCall === null || config.voice === "off" ? undefined : startWakeHold(earsCall);
   wakeHold = hold;
@@ -180,7 +194,10 @@ try {
   const speeches = new Set<{ stop(): void }>();
   const cutIn = stopOnCutIn(speeches);
   const follow = config.followUp === null ? undefined : createFollowAsk();
-  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady, follow, judge: config.turnCheck ? turnCheck({ apiKey: config.apiKey, model: chatModel }) : undefined, speaking: () => hold?.active() ?? false }), cutIn);
+  const wake = earsCall === null || config.ears !== "wake" ? undefined : eager(watchWake({ call: earsCall, signal: AbortSignal.any([closing.signal, watching.signal]), busy: () => !chatReady, follow, judge: config.turnCheck ? turnCheck({ apiKey: config.apiKey, model: chatModel }) : undefined, speaking: () => hold?.active() ?? false }), (event) => {
+    cutIn(event);
+    if (event.kind === "status") shown?.muted(mutedFrom(event.line));
+  });
   const followSeconds = config.followUp;
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
@@ -203,10 +220,11 @@ try {
       speaking === null
         ? undefined
         : (after) => {
-            const speech = startAnswerSpeech({ ...speakerParts(speaking), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after, ...(config.filler ? { filler: fillerFor(speaking) } : {}) });
+            const speech = startAnswerSpeech({ ...playOnWall(speakerParts(speaking), shown), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after, ...(config.filler ? { filler: fillerFor(speaking) } : {}) });
             speeches.add(speech);
             const over = spokenOf(speech)().finally(() => speeches.delete(speech));
             hold?.during(() => over);
+            shown?.speech(over);
             return speech;
           },
     speechStop: config.speechStop,
@@ -233,6 +251,7 @@ try {
     } } : undefined,
     sessions: config.sessions && config.hubToken !== null ? watchSessions({ ask: askHubForSessions(config.hubToken), signal: closing.signal }) : undefined,
     reminders: config.reminders && config.hubToken !== null ? { news: watchReminders({ ask: askHubForDue(config.hubToken), signal: closing.signal }), hub: hubReminders(config.hubToken) } : undefined,
+    wall: shown?.chat,
     phone: config.phone && config.hubToken !== null ? { news: watchPhone({ desk: hubDesk(config.hubToken), signal: closing.signal }), desk: hubDesk(config.hubToken), hear: whisperHears(), voice: speaking === null ? null : (text, signal) => phoneVoice(speaking.engine, text, signal, config.spokenStyle) } : undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
@@ -246,6 +265,7 @@ try {
 } finally {
   watching.abort();
   wakeHold?.close();
+  wall?.close();
   lines.close();
   await hubTools?.close().catch(() => {});
 }

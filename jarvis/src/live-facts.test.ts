@@ -175,3 +175,9 @@ test("with the phone on, the facts say how a phone question is marked, that it's
   assert.ok(quiet.includes("Your answer goes back to his phone as text, nothing is said in the room"), quiet);
   for (const input of [all, { ...all, phone: false }]) assert.ok(!liveFacts(input).includes("his phone, by holding"));
 });
+
+test("with the wall on, the facts say a screen in the room shows his answers to what's said aloud, to anyone there, and not typed or phone ones; with it off nothing is said", () => {
+  const wallOn = liveFacts({ ...all, wall: true });
+  assert.ok(wallOn.includes("A screen in the room shows what you're doing, what he says out loud and your answers to it as words, for anyone in the room to read, guests included. Answers to what he types or asks from his phone aren't shown."), wallOn);
+  for (const input of [all, { ...all, wall: false }]) assert.ok(!liveFacts(input).includes("A screen in the room"));
+});

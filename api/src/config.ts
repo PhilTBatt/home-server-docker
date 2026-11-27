@@ -24,6 +24,7 @@ export type Features = {
   sessions: boolean;
   spotify: boolean;
   talk: boolean;
+  wall: boolean;
 };
 
 export type DealSettings = {
@@ -37,6 +38,13 @@ export type DealSettings = {
 export type PhoneSettings = {
   ring: "once" | "clear" | "repeat";
   seconds: number;
+};
+
+export const wallSpeakings = ["wobble", "string"] as const;
+
+export type WallSettings = {
+  token: string;
+  speaking: (typeof wallSpeakings)[number];
 };
 
 export type CatchUpSettings = {
@@ -57,6 +65,7 @@ export type Config = {
   modes: ModeSettings;
   phone: PhoneSettings;
   spotify: SpotifySettings;
+  wall: WallSettings;
   features: Features;
 };
 
@@ -79,6 +88,7 @@ const featureLabels: Record<keyof Features, string> = {
   sessions: "sessions",
   spotify: "Spotify",
   talk: "talk to Jarvis",
+  wall: "the wall",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -131,6 +141,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     sessions: readSwitch("SESSIONS"),
     spotify: readSwitch("SPOTIFY"),
     talk: readSwitch("TALK"),
+    wall: readSwitch("WALL"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers || features.reminders);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
@@ -208,6 +219,10 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const redirectUri = redirectText === "" ? "" : readRedirectUri(redirectText);
   if (redirectUri === null) notAllowed.push("SPOTIFY_REDIRECT_URI (exactly the Redirect URI in your app's settings: an https address, or http on 127.0.0.1 or [::1] with a port, with a path and no ?, # or spaces, like https://hub.home/spotify.html)");
   const spotify: SpotifySettings = { clientId: spotifyClientId, redirectUri: redirectUri ?? "" };
+  const wallToken = read("WALL_TOKEN", features.wall);
+  if (wallToken !== "" && !/^[\x21-\x7E]{32,200}$/.test(wallToken)) notAllowed.push("WALL_TOKEN (32 to 200 printable characters with no spaces, like what openssl rand -hex 24 prints)");
+  else if (wallToken !== "" && wallToken === apiToken) notAllowed.push("WALL_TOKEN (a different token from API_TOKEN, since it only lets a screen show the wall)");
+  const wall: WallSettings = { token: wallToken, speaking: readChoice("WALL_SPEAKING", wallSpeakings, features.wall) };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -215,5 +230,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, wall, features };
 }

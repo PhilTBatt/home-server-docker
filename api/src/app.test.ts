@@ -26,7 +26,8 @@ const config: Config = {
   modes: { bedtimeFrom: null, bedtimeUntil: null },
   phone: { ring: "once", seconds: 30 },
   spotify: { clientId: "", redirectUri: "" },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true }
+  wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble" },
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -277,7 +278,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -744,4 +745,85 @@ test("Spotify's routes are the hub's, behind its token like every other, and a 4
   const features = await off.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(features.json().spotify, false);
   assert.equal(fetched.mock.callCount(), 0);
+});
+
+const wallToken = config.wall.token;
+
+test("the wall's token reads Jarvis's state for the wall and nothing else", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", headers: { authorization: `Bearer ${wallToken}` } })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: wallToken } })).statusCode, 200);
+  for (const [method, url] of [["GET", "/health"], ["GET", "/system/features"], ["GET", "/mode"], ["POST", "/mode"], ["POST", "/wall/jarvis"], ["GET", "/talk/status"], ["POST", "/phone/find"], ["GET", "/wall/jarvis/"], ["HEAD", "/wall/jarvis"]] as const) {
+    assert.equal((await app.inject({ method, url, cookies: { wall_token: wallToken }, payload: method === "POST" ? {} : undefined })).statusCode, 401, `${method} ${url} with the cookie`);
+    assert.equal((await app.inject({ method, url, headers: { authorization: `Bearer ${wallToken}` }, payload: method === "POST" ? {} : undefined })).statusCode, 401, `${method} ${url} with the header`);
+  }
+});
+
+test("the wall's token in the hub's own cookie lets nothing in", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { hub_token: wallToken } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/health", cookies: { hub_token: wallToken } })).statusCode, 401);
+});
+
+test("the hub's token in the wall's cookie is not the wall's token, so it opens nothing", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: "test-token" } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/health", cookies: { wall_token: "test-token" } })).statusCode, 401);
+});
+
+test("a wrong header isn't rescued by the wall's cookie", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", headers: { authorization: "Bearer wrong" }, cookies: { wall_token: wallToken } })).statusCode, 401);
+});
+
+test("only Jarvis, with the hub's token, can report his state", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  const report = { activity: "thinking", muted: false, heard: null, said: null };
+  assert.equal((await app.inject({ method: "POST", url: "/wall/jarvis", payload: report })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/jarvis", payload: report, cookies: { wall_token: wallToken } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/jarvis", payload: report, headers: goodHeader })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: wallToken } })).json().activity, "thinking");
+});
+
+test("the wall's login needs no token, takes only the wall's, and gives a cookie that reads the wall", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  assert.equal((await app.inject({ method: "POST", url: "/wall/login", payload: { token: "test-token" } })).statusCode, 401);
+  const login = await app.inject({ method: "POST", url: "/wall/login", payload: { token: wallToken } });
+  assert.equal(login.statusCode, 200);
+  const given = login.cookies.find((one) => one.name === "wall_token");
+  assert.equal(given?.value, wallToken);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: given?.value ?? "" } })).statusCode, 200);
+});
+
+test("with WALL off, the wall's token opens nothing, its login is a 404, and the hub's token gets a 404 that says so", async () => {
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, wall: false } } });
+  assert.equal((await off.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: wallToken } })).statusCode, 401);
+  assert.equal((await off.inject({ method: "POST", url: "/wall/login", payload: { token: wallToken } })).statusCode, 404);
+  const refused = await off.inject({ method: "GET", url: "/wall/jarvis", headers: goodHeader });
+  assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "The wall is switched off" }]);
+  assert.equal((await off.inject({ method: "GET", url: "/system/features", headers: goodHeader })).json().wall, false);
+});
+
+test("with no wall token set, an empty one opens nothing", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, wall: { token: "", speaking: "wobble" } } });
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", headers: { authorization: "Bearer " } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: "" } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/login", payload: { token: "" } })).statusCode, 401);
+});
+
+for (const [method, url] of protectedRoutes) {
+  test(`${method} ${url} is refused with the wall's token, in the cookie or the header, and calls nothing else`, async () => {
+    const fetchMock = mock.method(globalThis, "fetch", async () => new Response(null, { status: 200 }));
+    const app = await buildApp({ logger: false });
+    assert.equal((await app.inject({ method, url, cookies: { wall_token: wallToken } })).statusCode, 401);
+    assert.equal((await app.inject({ method, url, headers: { authorization: `Bearer ${wallToken}` } })).statusCode, 401);
+    assert.equal(fetchMock.mock.callCount(), 0);
+  });
+}
+
+test("the wall's logout needs no token, since all it does is clear the screen's own cookie", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  const response = await app.inject({ method: "POST", url: "/wall/logout" });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.cookies.find((one) => one.name === "wall_token")?.value, "");
 });

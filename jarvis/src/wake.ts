@@ -10,6 +10,15 @@ export const busyClaimMs = 1_000;
 
 export type WakeEvent = { kind: "wake"; id: number; follow?: true; button?: true; cut?: true } | { kind: "hush"; id: number } | { kind: "done"; id: number; answer: EarsAnswer; textMs: number } | { kind: "status"; line: string } | { kind: "no follow-up"; why: string } | { kind: "late"; behindMs: number | null } | { kind: "turn"; id: number; verdict: TurnVerdict | null; ms: number; counted: boolean };
 
+export const mutedLine = `off while ears is muted, so ${unmuteHint}`;
+export const onLine = "on: say Hey Jarvis";
+
+export function mutedFrom(line: string): boolean | null {
+  if (line === mutedLine) return true;
+  if (line === onLine) return false;
+  return null;
+}
+
 export const oldEarsLine = "off: this ears doesn't know the wake word yet, so start it again with bash host/ears.sh start, which rebuilds it";
 export const oldFollowWhy = "this ears doesn't know follow-ups yet, so start it again with bash host/ears.sh start, which rebuilds it";
 
@@ -50,11 +59,11 @@ function reasonOf(error: unknown): string {
 export function wakeStatus(answer: EarsAnswer): string {
   if (answer.status === 404 || (answer.status === 200 && (answer.version === undefined || answer.version === null))) return oldEarsLine;
   if (answer.status !== 200) return `off: ears answered ${answer.status}${answer.error === null ? "" : ` (${answer.error})`}`;
-  if (answer.state === "muted") return `off while ears is muted, so ${unmuteHint}`;
+  if (answer.state === "muted") return mutedLine;
   if (answer.state === "failed") return `off: ears failed (${answer.reason ?? "no reason given"}), so ${unmuteHint} to start it again`;
   if (answer.wake === undefined || answer.wake === null || !answer.wake.on) return "off: ears has the wake word off, so set EARS_WAKE=on in ears/.env and start it again with bash host/ears.sh start";
   if (answer.wake.problem !== null) return `off: ${answer.wake.problem}`;
-  return "on: say Hey Jarvis";
+  return onLine;
 }
 
 async function dropStrayFollow(call: EarsCall): Promise<void> {
