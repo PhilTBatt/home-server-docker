@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExpiryStatus } from "../expiry/checker.js";
 import type { WatcherView } from "../watchers/watchers.js";
-import { byDay, catchUpDoctorMs, createCatchUp, hubWaitMs, keepCommitsMs, retryCommitsMs, summaryOf, type CatchUpReport, type HubSources } from "./catchup.js";
+import { byDay, londonDaysStart, catchUpDoctorMs, createCatchUp, hubWaitMs, keepCommitsMs, retryCommitsMs, summaryOf, type CatchUpReport, type HubSources } from "./catchup.js";
 
 const now = new Date("2026-11-26T12:00:00Z");
 const sha = (n: number) => String(n).repeat(40);
@@ -62,8 +62,18 @@ test("each repo's commits come per day in London, newest first, with a count, th
     },
     { repo: "beta/two", count: 0, more: false, latestAt: null, days: [] },
   ]);
-  assert.deepEqual([report.days, report.since, report.checkedAt, report.commitsAskedAt], [7, "2026-11-19T12:00:00.000Z", "2026-11-26T12:00:00.000Z", "2026-11-26T12:00:00.000Z"]);
-  assert.deepEqual(stand.asked, ["https://api.github.com/repos/alpha/one/commits?since=2026-11-19T12:00:00Z&per_page=30", "https://api.github.com/repos/beta/two/commits?since=2026-11-19T12:00:00Z&per_page=30"]);
+  assert.deepEqual([report.days, report.since, report.checkedAt, report.commitsAskedAt], [7, "2026-11-20T00:00:00.000Z", "2026-11-26T12:00:00.000Z", "2026-11-26T12:00:00.000Z"]);
+  assert.deepEqual(stand.asked, ["https://api.github.com/repos/alpha/one/commits?since=2026-11-20T00:00:00Z&per_page=30", "https://api.github.com/repos/beta/two/commits?since=2026-11-20T00:00:00Z&per_page=30"]);
+});
+
+test("the days asked for are whole London days counting today, from midnight there in winter and in summer", () => {
+  assert.equal(londonDaysStart(new Date("2026-11-26T12:00:00Z"), 7).toISOString(), "2026-11-20T00:00:00.000Z");
+  assert.equal(londonDaysStart(new Date("2026-11-26T00:30:00Z"), 1).toISOString(), "2026-11-26T00:00:00.000Z");
+  assert.equal(londonDaysStart(new Date("2026-07-10T12:00:00Z"), 1).toISOString(), "2026-07-09T23:00:00.000Z");
+  assert.equal(londonDaysStart(new Date("2026-07-09T23:30:00Z"), 2).toISOString(), "2026-07-08T23:00:00.000Z");
+  assert.equal(londonDaysStart(new Date("2026-03-30T12:00:00Z"), 3).toISOString(), "2026-03-28T00:00:00.000Z", "back across the clocks going forward");
+  assert.equal(londonDaysStart(new Date("2026-10-26T12:00:00Z"), 2).toISOString(), "2026-10-24T23:00:00.000Z", "back across the clocks going back");
+  assert.equal(londonDaysStart(new Date("2027-01-01T09:00:00Z"), 3).toISOString(), "2026-12-30T00:00:00.000Z", "across a new year");
 });
 
 test("days are London days, so in summer a commit just after midnight there counts for the next day", () => {

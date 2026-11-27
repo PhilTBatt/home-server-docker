@@ -14,6 +14,19 @@ test("reads each item's name, date and note, in the order written", () => {
   ]);
 });
 
+test("a note can hold a web address, as long as no part of it between dots and slashes could be a key", () => {
+  assert.deepEqual(readList(list([{ name: "Alpha", date: "2027-01-01", note: "Renew at https://login.example.com/admin/machines" }]))[0].note, "Renew at https://login.example.com/admin/machines");
+  assert.equal(readList(list([{ name: "Alpha", date: "2027-01-01", note: "https://example.org/a-long-ish-path/settings_page." }]))[0].note, "https://example.org/a-long-ish-path/settings_page.");
+  for (const note of ["Reset at https://example.com/reset/made1up2key3x", "See https://example.com/abcdefghijklmnopqrstuv", "Go to https://abcdefghijklmnopqrstuvw.example.com", "Use http://login.example.com/admin/machines-and-more-pages"]) {
+    assert.throws(() => readList(list([{ name: "Alpha", date: "2027-01-01", note }])), (error: Error) => error.message.includes("note was refused because it could be a key or token") && !error.message.includes("example"), note);
+  }
+  assert.throws(() => readList(list([{ name: "https://login.example.com/admin/machines", date: "2027-01-01" }])), (error: Error) => error.message.includes("name was refused"), "names don't get the web address allowance");
+});
+
+test("a note of null counts as no note, like an empty one", () => {
+  assert.deepEqual(readList(list([{ name: "Alpha", date: "2027-01-01", note: null }])), [{ name: "Alpha", date: "2027-01-01", note: null }]);
+});
+
 test("an empty list is fine, and an empty note counts as no note", () => {
   assert.deepEqual(readList(list([])), []);
   assert.deepEqual(readList(list([{ name: "Alpha", date: "2027-01-01", note: "" }])), [{ name: "Alpha", date: "2027-01-01", note: null }]);
@@ -61,7 +74,7 @@ test("a name or note that could be a key or token is refused without repeating i
     );
     assert.throws(
       () => readList(list([{ name: "Alpha", date: "2027-01-01", note: `Renew ${name}` }])),
-      (error: Error) => error.message === "expiry/items.json: entry 1 (Alpha)'s note was refused because it could be a key or token (a word over 20 characters, or one of 12 or more mixing letters and digits)" && !error.message.includes(name),
+      (error: Error) => error.message === "expiry/items.json: entry 1 (Alpha)'s note was refused because it could be a key or token (a word over 20 characters, or one of 12 or more mixing letters and digits; in a web address, each part between dots and slashes counts as a word)" && !error.message.includes(name),
       name,
     );
   }
@@ -83,7 +96,7 @@ test("isPlain needs at least one character, no more than the most, and nothing e
 
 test("a note is up to 100 plain characters, said by the entry's name once the name is fine", () => {
   assert.equal(readList(list([{ name: "Alpha", date: "2027-01-01", note: "word ".repeat(19) + "words" }]))[0].note?.length, 100);
-  for (const note of ["word ".repeat(20) + "w", " Leading", "Trailing ", "Key=value", 7, null]) {
+  for (const note of ["word ".repeat(20) + "w", " Leading", "Trailing ", "Key=value", 7, false]) {
     assert.throws(() => readList(list([{ name: "Alpha", date: "2027-01-01", note }])), { message: "expiry/items.json: entry 1 (Alpha)'s note must be 1 to 100 characters of letters, digits, spaces and ' - . , ( ) & / + : _, with no space at either end" }, String(note));
   }
 });

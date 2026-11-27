@@ -38,7 +38,7 @@ test("a request the fixed kinds don't allow is a 400 saying why, and nothing is 
   const cases: [unknown, string][] = [
     [{ kind: "shell", command: "reboot" }, "kind must be one of download-finished, disk-free-below, service-answering"],
     [{ kind: "disk-free-below", percent: 100 }, "percent must be a whole number from 1 to 99"],
-    [{ kind: "download-finished", name: "$(reboot)" }, "name must be 2 to 40 characters of letters, digits, spaces and ' - . , ( ) & / + : _, with no space at either end"],
+    [{ kind: "download-finished", name: "$(reboot)" }, "name must be 2 to 40 characters of letters, digits, single spaces and ' - . , ( ) & / + : _, with no space at either end"],
     [[{ kind: "disk-free-below", percent: 10 }], "Send a JSON object with a kind"],
   ];
   for (const [payload, error] of cases) {

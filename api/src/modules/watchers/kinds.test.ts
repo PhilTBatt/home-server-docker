@@ -48,8 +48,8 @@ test("service must be one of the two the hub already asks", () => {
 });
 
 test("a download's name is short plain text only, never anything a shell would read, and the refusal never repeats it", () => {
-  const plain = "name must be 2 to 40 characters of letters, digits, spaces and ' - . , ( ) & / + : _, with no space at either end";
-  for (const name of ["A", "", "A".repeat(41), " Alpha", "Alpha ", "Alpha; reboot", "$(reboot)", "`id`", "Alpha\nBeta", 'Say "hi"', "Alpha|Beta", "Alpha>out", "Alpha*", "Ünïcode", 42, null, ["Alpha"]]) {
+  const plain = "name must be 2 to 40 characters of letters, digits, single spaces and ' - . , ( ) & / + : _, with no space at either end";
+  for (const name of ["A", "", "A".repeat(41), " Alpha", "Alpha ", "Alpha; reboot", "$(reboot)", "`id`", "Alpha\nBeta", 'Say "hi"', "Alpha|Beta", "Alpha>out", "Alpha*", "Ünïcode", "Alpha  Beta", 42, null, ["Alpha"]]) {
     const refused = readAsked({ kind: "download-finished", name });
     assert.deepEqual(refused, { refused: plain }, String(name));
   }

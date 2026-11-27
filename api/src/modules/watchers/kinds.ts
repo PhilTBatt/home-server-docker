@@ -48,7 +48,7 @@ export function readAsked(body: unknown): Asked | { refused: string } {
   const hours = body.hours === undefined ? hoursDefault : body.hours;
   if (kind === "download-finished") {
     const name = body.name;
-    if (typeof name !== "string" || name.length < nameShortest || !isPlain(name, nameLongest)) return { refused: `name must be ${nameShortest} to ${nameLongest} characters of letters, digits, spaces and ' - . , ( ) & / + : _, with no space at either end` };
+    if (typeof name !== "string" || name.length < nameShortest || !isPlain(name, nameLongest) || name.includes("  ")) return { refused: `name must be ${nameShortest} to ${nameLongest} characters of letters, digits, single spaces and ' - . , ( ) & / + : _, with no space at either end` };
     if (couldBeSecret(name)) return { refused: "name was refused because it could be a key or token" };
     return { watch: { kind, name }, hours };
   }

@@ -27,8 +27,18 @@ export function isPlain(text: string, most: number): boolean {
   return text.length <= most && plainCharacters.test(text) && text.trim() === text;
 }
 
+function wordCouldBeSecret(word: string): boolean {
+  return word.length > longestWord || (word.length >= mixedWord && /[A-Za-z]/.test(word) && /[0-9]/.test(word));
+}
+
 export function couldBeSecret(text: string): boolean {
-  return text.split(" ").some((word) => word.length > longestWord || (word.length >= mixedWord && /[A-Za-z]/.test(word) && /[0-9]/.test(word)));
+  return text.split(" ").some(wordCouldBeSecret);
+}
+
+const webAddress = /^https:\/\/[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(\/[A-Za-z0-9._\-]*)*$/;
+
+export function noteCouldBeSecret(text: string): boolean {
+  return text.split(" ").some((word) => (webAddress.test(word) ? word.slice("https://".length).split(/[./]/).some(wordCouldBeSecret) : wordCouldBeSecret(word)));
 }
 
 export function isRealDate(text: string): boolean {
@@ -39,9 +49,9 @@ export function isRealDate(text: string): boolean {
   return year >= 2000 && year <= 2099 && date.getUTCMonth() === month - 1;
 }
 
-function textProblem(label: string, field: string, value: unknown, most: number): string | null {
+function textProblem(label: string, field: string, value: unknown, most: number, secret: (text: string) => boolean = couldBeSecret): string | null {
   if (typeof value !== "string" || !isPlain(value, most)) return `${label}'s ${field} must be 1 to ${most} characters of letters, digits, spaces and ' - . , ( ) & / + : _, with no space at either end`;
-  if (couldBeSecret(value)) return `${label}'s ${field} was refused because it could be a key or token (a word over ${longestWord} characters, or one of ${mixedWord} or more mixing letters and digits)`;
+  if (secret(value)) return `${label}'s ${field} was refused because it could be a key or token (a word over ${longestWord} characters, or one of ${mixedWord} or more mixing letters and digits${field === "note" ? "; in a web address, each part between dots and slashes counts as a word" : ""})`;
   return null;
 }
 
@@ -77,7 +87,7 @@ export function readList(text: string): ExpiryItem[] {
     const label = name === null ? entry : `${entry} (${name})`;
     const dateOk = typeof raw.date === "string" && isRealDate(raw.date);
     if (!dateOk) problems.push(`${label}'s date must be a real date written YYYY-MM-DD, like 2027-03-31`);
-    const noteProblem = raw.note === undefined || raw.note === "" ? null : textProblem(label, "note", raw.note, noteLength);
+    const noteProblem = raw.note === undefined || raw.note === null || raw.note === "" ? null : textProblem(label, "note", raw.note, noteLength, noteCouldBeSecret);
     if (noteProblem !== null) problems.push(noteProblem);
     if (name !== null) {
       const first = names.get(name.toLowerCase());

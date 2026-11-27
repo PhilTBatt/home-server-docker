@@ -48,6 +48,8 @@ export function watchText(input: unknown): string | null {
   const fields = typeof input === "object" && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
   const whole = (value: unknown, lowest: number, highest: number) => typeof value === "number" && Number.isInteger(value) && value >= lowest && value <= highest;
   if (fields.hours !== undefined && !whole(fields.hours, 1, 168)) return null;
+  const own: Record<string, string> = { "download-finished": "name", "disk-free-below": "percent", "service-answering": "service" };
+  if (typeof fields.kind !== "string" || !Object.hasOwn(own, fields.kind) || Object.keys(fields).some((key) => key !== "kind" && key !== "hours" && key !== own[fields.kind as string])) return null;
   const hours = typeof fields.hours === "number" ? fields.hours : 24;
   const span = hours === 1 ? "an hour" : `${hours} hours`;
   let what: string | null = null;

@@ -58,6 +58,15 @@ export const catchUpDoctorMs = 4_000;
 export const keepCommitsMs = 10 * 60 * 1000;
 export const retryCommitsMs = 60 * 1000;
 const dayMs = 24 * 60 * 60 * 1000;
+const hourMs = 60 * 60 * 1000;
+
+export function londonDaysStart(now: Date, days: number): Date {
+  const [year, month, day] = londonTime(now).day.split("-").map(Number);
+  const target = new Date(Date.UTC(year, month - 1, day - (days - 1)));
+  const targetDay = target.toISOString().slice(0, 10);
+  const start = [0, 1].map((hours) => new Date(target.getTime() - hours * hourMs)).find((at) => londonTime(at).day === targetDay && londonTime(at).hour === 0);
+  return start ?? target;
+}
 
 type Asked = { at: number | null; answer: Promise<RepoReport>; failed: boolean | null };
 
@@ -139,7 +148,7 @@ export function createCatchUp(options: CatchUpOptions): CatchUp {
     const entry: Asked = {
       at: now.getTime(),
       failed: null,
-      answer: fetchCommits(repo, new Date(now.getTime() - days * dayMs), { token: options.token, fetcher: options.fetcher, ms: options.githubMs, now: now.getTime() }).then(
+      answer: fetchCommits(repo, londonDaysStart(now, days), { token: options.token, fetcher: options.fetcher, ms: options.githubMs, now: now.getTime() }).then(
         (got) => {
           entry.failed = false;
           return repoReport(repo, got);
@@ -181,7 +190,7 @@ export function createCatchUp(options: CatchUpOptions): CatchUp {
       ]);
       const report = {
         days,
-        since: new Date(now.getTime() - days * dayMs).toISOString(),
+        since: londonDaysStart(now, days).toISOString(),
         checkedAt: now.toISOString(),
         commitsAskedAt: askedAt.length === 0 ? null : new Date(Math.min(...askedAt)).toISOString(),
         repos,

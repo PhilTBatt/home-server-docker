@@ -82,6 +82,10 @@ test("a watcher Jarvis can't describe exactly is put to Phil as one the hub won'
     { kind: "disk-free-below", percent: 15, hours: 0 },
     { kind: "disk-free-below", percent: 15, hours: 169 },
     { kind: "disk-free-below", percent: 15, hours: 1.5 },
+    { kind: "disk-free-below", percent: 10, name: "extra" },
+    { kind: "download-finished", name: "Alpha", service: "jellyfin" },
+    { kind: "service-answering", service: "jellyfin", percent: 5 },
+    { kind: "disk-free-below", percent: 10, note: "x" },
   ]) assert.equal(actionQuestion("add_watcher", input), refused, JSON.stringify(input));
 });
 
