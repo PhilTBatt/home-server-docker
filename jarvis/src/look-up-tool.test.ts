@@ -85,6 +85,26 @@ test("a look-up stopped by the chat closing says so, and its helper is told to s
   assert.equal(stopped, true);
 });
 
+test("stopping the tool stops the look-up that's running and tells its helper, and the next allowed look-up runs as usual", async () => {
+  let stopped = 0;
+  let calls = 0;
+  const tool = createLookUpTool({
+    helper: (_question, signal) => (++calls === 1 ? new Promise((resolve) => signal.addEventListener("abort", () => (stopped++, resolve(helped(null, "stopped"))))) : Promise.resolve(helped("Second answer."))),
+    now: () => 0,
+  });
+  tool.stop();
+  tool.allow();
+  const running = tool.run({ question: "first" });
+  await new Promise((resolve) => setImmediate(resolve));
+  tool.stop();
+  assert.deepEqual(await running, { content: lookUpEndings.stopped, isError: true });
+  assert.equal(stopped, 1);
+  tool.stop();
+  tool.allow();
+  assert.equal((await tool.run({ question: "second" })).content.startsWith(`${webLabel}\nSecond answer.`), true);
+  assert.equal(stopped, 1, "stopping when nothing runs does nothing");
+});
+
 test("the answer's markup and links are stripped before Jarvis sees it, up to four sites are named with opened pages first, and a failing record doesn't lose the answer", async () => {
   const tool = createLookUpTool({ helper: async () => helped("**26**, per [the site](https://nodejs.org/x).\n\nSources:\n- [a](https://a.example)", null, { found: ["a.example", "b.example", "c.example", "d.example"], opened: ["z.example", "a.example"] }), now: () => 0, record: async () => Promise.reject(new Error("disk full")) });
   tool.allow();

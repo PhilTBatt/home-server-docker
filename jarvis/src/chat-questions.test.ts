@@ -4,7 +4,7 @@ import { closedMessage, type AgentSession, type AnswerListener } from "./agent.j
 import type { Outcome } from "./answer-log.js";
 import type { AnswerSpeech } from "./answer-speech.js";
 import { beginLine, endLine, questionsOffNote, type BrainQuestions, type FiledReply } from "./brain-questions.js";
-import { capNote, capReachedNote, costLine, fileItNotes, followLimitNote, fileItReply, heardPrefix, keptHereNote, lookingNote, noQuestionsReply, nothingFiledReply, questionNote, questionsCommandNote, questionsOpenNote, runChat, skippedNote, stoppedMessage, talkCommandNote, tooLongNote, unreadableSay, type ChatDeps } from "./chat.js";
+import { capNote, capReachedNote, costLine, fileItNotes, followLimitNote, fileItReply, heardPrefix, keptHereNote, lookingNote, lookUpInQuestionsNote, noQuestionsReply, nothingFiledReply, questionNote, questionsCommandNote, questionsOpenNote, runChat, skippedNote, stoppedMessage, talkCommandNote, tooLongNote, unreadableSay, type ChatDeps } from "./chat.js";
 import { questionWords, stopMyselfReply, stoppedReply } from "./code-words.js";
 import type { EarsAnswer } from "./ears-client.js";
 import type { SpeechReport } from "./speech-queue.js";
@@ -182,6 +182,26 @@ test("typed /questions asks the engine once through the chat, then asks each que
   chat.lines.close();
   await chat.running;
   assert.ok(chat.output().endsWith(`${costLine(0.0123)}\n`), "the chat's cost line still comes last, and counts the look");
+});
+
+test("typing /lookup during brain questions says no look-ups until the round is done, without asking the helper or filing it as an answer", { timeout: 5_000 }, async () => {
+  const helped: string[] = [];
+  const chat = questionsChat(replying(both), { web: { helper: async (question) => (helped.push(question), Promise.reject(new Error("unused"))), now: () => 0 } });
+  chat.lines.push("/questions");
+  await settled();
+  chat.lines.push("/lookup the boiler's service interval");
+  await settled();
+  assert.ok(chat.output().endsWith(`You:   (${lookUpInQuestionsNote})\nYou: `), chat.output());
+  assert.deepEqual(helped, []);
+  chat.lines.push("The one on the ring road.");
+  await settled();
+  assert.ok(chat.output().endsWith(`Jarvis: Is the boiler service in March or May?\n  (${secondNote})\nYou: `), chat.output(), "the round carries on from where it was");
+  chat.lines.push("never mind");
+  await settled();
+  assert.equal(chat.notes.length, 1);
+  assert.ok(!chat.notes[0].includes("lookup"), "the look-up wasn't filed as an answer");
+  chat.lines.close();
+  await chat.running;
 });
 
 test("the question's note says which of how many it is, its kind, its files and what looked wrong, without doubling a full stop", () => {

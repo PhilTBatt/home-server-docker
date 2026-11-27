@@ -1522,14 +1522,14 @@ test("with the spoken style on, his instructions gain a paragraph on writing for
 
 test("a look-up is allowed for each question he asks and blocked again once it's answered or has failed", async () => {
   const calls: string[] = [];
-  const tool = { allow: () => void calls.push("allow"), block: () => void calls.push("block") };
+  const tool = { allow: () => void calls.push("allow"), block: () => void calls.push("block"), stop: () => void calls.push("stop") };
   const session = fakeSession({
     First: async () => (calls.push("answering first"), answer("One.", 100, 200)),
     Second: async () => (calls.push("answering second"), Promise.reject(new Error("the API said no"))),
   });
   const { run } = chat(session, ["First", "Second"], { web: { helper: async () => Promise.reject(new Error("unused")), now: () => 0, tool } });
   await run();
-  assert.deepEqual(calls, ["allow", "answering first", "block", "allow", "answering second", "block"]);
+  assert.deepEqual(calls, ["stop", "allow", "answering first", "block", "stop", "allow", "answering second", "block", "stop"], "anything he types stops a look-up of Jarvis's own that's still running, and so does the chat ending");
 });
 
 test("the note for a look-up shows the question, or nothing after the colon when there isn't one", () => {

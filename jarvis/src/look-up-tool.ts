@@ -18,7 +18,7 @@ export function tooLong(length: number): string {
   return `That question is ${length} characters, and a look-up takes at most ${questionCap}. Ask again with a shorter one.`;
 }
 
-export type LookUpTool = { run(input: unknown): Promise<ToolOutcome>; allow(): void; block(): void };
+export type LookUpTool = { run(input: unknown): Promise<ToolOutcome>; allow(): void; block(): void; stop(): void };
 
 export type LookUpToolDeps = { helper: Helper; now: () => number; record?: (looked: LookedUp) => Promise<void>; closing?: AbortSignal };
 
@@ -33,6 +33,7 @@ export function questionIn(input: unknown): string | null {
 
 export function createLookUpTool(deps: LookUpToolDeps): LookUpTool {
   let left = 0;
+  let running: AbortController | null = null;
   return {
     allow() {
       left = 1;
@@ -40,13 +41,18 @@ export function createLookUpTool(deps: LookUpToolDeps): LookUpTool {
     block() {
       left = 0;
     },
+    stop() {
+      running?.abort();
+    },
     async run(input) {
       const question = questionIn(input);
       if (question === null || question === "") return { content: noQuestionGiven, isError: true };
       if (question.length > questionCap) return { content: tooLong(question.length), isError: true };
       if (left < 1) return { content: oneLookUp, isError: true, refused: true };
       left--;
-      const looked = await lookUp(question, { helper: deps.helper, now: deps.now, signal: deps.closing });
+      const stop = new AbortController();
+      running = stop;
+      const looked = await lookUp(question, { helper: deps.helper, now: deps.now, signal: deps.closing === undefined ? stop.signal : AbortSignal.any([stop.signal, deps.closing]) });
       await deps.record?.(looked).catch(() => {});
       if (looked.ended !== "answered" || looked.say === null) return { content: lookUpEndings[looked.ended === "answered" ? "nothing" : looked.ended], isError: true };
       const sites = [...new Set([...(looked.helped?.opened ?? []), ...(looked.helped?.found ?? [])])].slice(0, 4);

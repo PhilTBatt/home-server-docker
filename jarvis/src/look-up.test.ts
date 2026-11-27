@@ -31,7 +31,7 @@ test("a question longer than the cap is cut at a word before it leaves, and an e
   assert.ok(seen[0].length <= questionCap + 1, String(seen[0].length));
   assert.ok(seen[0].endsWith("word…"), seen[0].slice(-12));
   assert.equal(result.question, seen[0]);
-  for (const empty of ["", "   ", "\n\t"]) assert.deepEqual(await lookUp(empty, { helper, now: Date.now }), { ended: "nothing", say: noQuestion, question: "", ms: 0, helped: null });
+  for (const empty of ["", "   ", "\n\t"]) assert.deepEqual(await lookUp(empty, { helper, now: () => 5 }), { ended: "nothing", say: noQuestion, question: "", ms: 0, helped: null });
   assert.equal(seen.length, 1);
 });
 

@@ -814,11 +814,12 @@ async function sayLine(deps: ChatDeps, state: ChatState, reply: CodeWordReply): 
 
 export type LookedUpEvent = { kind: "looked up"; id: number; looked: LookedUp };
 
-export type WebDeps = { helper: Helper; now: () => number; record?: (mode: LookUpMode, looked: LookedUp) => Promise<void>; tool?: { allow(): void; block(): void }; followOn?: FollowOnCheck };
+export type WebDeps = { helper: Helper; now: () => number; record?: (mode: LookUpMode, looked: LookedUp) => Promise<void>; tool?: { allow(): void; block(): void; stop(): void }; followOn?: FollowOnCheck };
 
 export const lookUpWord = "/lookup";
 export const lookUpsOffReply: CodeWordReply = { say: "Look-ups are off.", note: "JARVIS_WEB=ask in jarvis/.env turns them on" };
 export const lookUpStoppedNote = "look-up stopped";
+export const lookUpInQuestionsNote = "no look-ups during brain questions: answer the last one, or type skip or never mind, then look it up";
 
 export function lookingUpNote(question: string): string {
   return `looking up: ${question}`;
@@ -835,6 +836,7 @@ export function lookUpFailedNote(looked: LookedUp): string | undefined {
 }
 
 function stopLookUp(deps: ChatDeps, state: ChatState): void {
+  deps.web?.tool?.stop();
   if (state.lookUp === null) return;
   state.lookUp.stop.abort();
   state.lookUp = null;
@@ -1217,6 +1219,11 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       } else if (message.toLowerCase() === questionsWord) {
         if ((await startQuestions(current, state, false)) === "stop") break;
       } else if (current.web !== undefined && (message.toLowerCase() === lookUpWord || message.toLowerCase().startsWith(`${lookUpWord} `))) {
+        if (state.questions !== null) {
+          current.write(`  (${lookUpInQuestionsNote})\n`);
+          current.prompt();
+          continue;
+        }
         await hush(current, state);
         await onLookUp(current, state, message.slice(lookUpWord.length));
       } else if (looksLikeCommand(message)) {
@@ -1229,6 +1236,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       current.prompt();
     }
   } finally {
+    current.web?.tool?.stop();
     state.lookUp?.stop.abort();
     state.lookUp = null;
     found?.end();
