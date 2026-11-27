@@ -21,7 +21,7 @@ export const readTools: ReadTool[] = [
   },
   {
     name: "get_features",
-    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads, the deal watcher, finding the phone, train times, train alerts, expiry alerts and watchers.",
+    description: "Which Home Hub features are switched on: alerts, the heartbeat, the daily summary, the brain inbox, note uploads, the deal watcher, finding the phone, train times, train alerts, expiry alerts, watchers, catch-up and modes.",
     path: "/system/features",
   },
   {
@@ -58,6 +58,11 @@ export const readTools: ReadTool[] = [
     name: "get_watchers",
     description: "What the hub is watching for Phil, each to send one notification to his phone when it happens: each watcher's id, kind (download-finished, disk-free-below or service-answering), its name, percent or service, what in plain words, how many hours it lasts, when it was made and when it gives up, its last check (ok is false when the source couldn't be read) and whether it happened but the notification is still waiting to be sent, with the most allowed at once. Watchers are kept in memory, so a restart of the API forgets them. Fails with a 404 while watchers are switched off (WATCHERS).",
     path: "/watchers",
+  },
+  {
+    name: "get_mode",
+    description: "Which mode the hub is in: mode is normal, guest, bedtime, gaming, coding or away; since is when it started; until is when it ends by itself and goes back to normal (null when it doesn't); by says how it was set (voice, typed, phone, schedule for a timer or a mode's end, or start when the API started with nothing saved); held is how many phone alerts are being held until bedtime ends. In bedtime the hub holds phone alerts that aren't urgent and sends them as one message when it ends; finding the phone, a cancelled train and a reminder marked urgent always get through. It only reads: nothing here can change the mode. Fails with a 404 while modes are switched off (MODES).",
+    path: "/mode",
   },
   {
     name: "get_deal_status",

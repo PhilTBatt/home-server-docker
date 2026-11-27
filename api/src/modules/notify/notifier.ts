@@ -6,7 +6,16 @@ export type Notification = {
   tags: string;
   click?: string;
   priority?: 1 | 2 | 3 | 4 | 5;
+  urgent?: boolean;
 };
+
+export type Holder = (topic: string, notification: Notification) => boolean;
+
+let holder: Holder | undefined;
+
+export function holdWith(next: Holder | undefined): void {
+  holder = next;
+}
 
 export function notificationFor(previousCodes: string[], problems: Problem[]): Notification | null {
   const before = [...previousCodes].sort().join(",");
@@ -36,6 +45,11 @@ export function safeLink(link: string | undefined): string | null {
 }
 
 export async function sendToNtfy(topic: string, notification: Notification, timeoutMs = 10_000): Promise<void> {
+  if (notification.urgent !== true && holder?.(topic, notification) === true) return;
+  await postToNtfy(topic, notification, timeoutMs);
+}
+
+export async function postToNtfy(topic: string, notification: Notification, timeoutMs = 10_000): Promise<void> {
   const headers: Record<string, string> = { Title: notification.title, Tags: notification.tags };
   const link = safeLink(notification.click);
   if (link !== null) headers.Click = link;

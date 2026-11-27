@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { appendFile, mkdir, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { clearLine, createInterface, cursorTo } from "node:readline";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
@@ -15,18 +16,19 @@ import { lookUpLogFile, lookUpLoggingNote, lookUpNumbers, startLookUpLog, type L
 import { speakerParts, startAnswerSpeech, type Speaker } from "./answer-speech.js";
 import { startApiSession } from "./api-session.js";
 import { brainFileExists, fileBrainQuestions } from "./brain-questions.js";
-import { createBrainTools } from "./brain-tools.js";
+import { createBrainTools, noBrainTools } from "./brain-tools.js";
 import { chimeFor } from "./chime.js";
 import { findPhone, saveVoiceNote, serverCheck, trainTimes } from "./code-words.js";
 import { fillerFor } from "./filler.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
-import { apiChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, systemFor } from "./chat.js";
+import { apiChatSystem, guestChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, systemFor } from "./chat.js";
 import { brainDir, readConfig, type VoiceMode } from "./config.js";
 import { earsCaller } from "./ears-client.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
 import { liveFacts } from "./live-facts.js";
 import { introLine, readIntro } from "./intro.js";
+import { hubModes as modeHub, watchModes, whenCheck } from "./modes.js";
 import { personaLine, readPersona } from "./persona.js";
 import { pricesPerMTok } from "./prices.js";
 import { notesFound, notesLine, readSessionNotes } from "./session-notes.js";
@@ -83,15 +85,18 @@ try {
           now: () => new Date(),
           warn,
         });
-  const open = (setup: ChatSetup) => {
+  const guestDir = config.guest ? await mkdtemp(join(tmpdir(), "jarvis-guest-")) : null;
+  const guestSetup: ChatSetup = { chats: "fresh", history: [], earlierQuestions: null, problem: null, failureHint: null };
+  const modes = config.modes && config.hubToken !== null ? modeHub(config.hubToken) : undefined;
+  const open = (setup: ChatSetup, guest = false) => {
     const spoken = voice !== "off" && config.spokenStyle;
-    const hubOn = config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: config.hubToken !== null, trainAlerts: config.trainAlerts, web: config.web, brainQuestions: config.brainQuestions, clock: config.clock }) : null;
-    const instructions = (base: string) => systemFor(base, { persona, intro, facts, spoken, notes: notes ?? [], clock: config.clock });
+    const hubOn = guest ? false : config.engine === "api" ? hubTools !== undefined : hub !== undefined;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest }) : null;
+    const instructions = (base: string) => systemFor(guest ? guestChatSystem : base, { persona, intro, facts, spoken, notes: guest ? [] : (notes ?? []), clock: config.clock });
     const logged: { log?: AnswerLog } = {};
     const recordLookUp = async (mode: LookUpMode, looked: LookedUp) => {
-      await lookUpLog?.(mode, config.webBy, looked);
-      await logged.log?.lookUp(lookUpNumbers(mode, config.webBy, looked));
+      await lookUpLog?.(mode, config.webBy, looked, guest);
+      await logged.log?.lookUp(lookUpNumbers(mode, config.webBy, looked, guest));
     };
     const lookUpTool = config.web === "auto" && webHelper !== undefined ? createLookUpTool({ helper: webHelper, now, record: (looked) => recordLookUp("auto", looked), closing: closing.signal }) : undefined;
     const chat =
@@ -103,16 +108,16 @@ try {
             maxTokens: apiMaxTokens,
             timeoutMs: questionTimeoutMs,
             now,
-            tools: withLookUp(withHubTools(createBrainTools(brainDir), hubTools), lookUpTool),
+            tools: withLookUp(guest ? noBrainTools : withHubTools(createBrainTools(brainDir), hubTools), lookUpTool),
             thinkingHistory: config.thinkingHistory,
             history: setup.history,
             save: setup.save,
           })
-        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: instructions(chatSystem), cwd: brainDir, now, savedChats: setup.savedChats, hub, web: lookUpTool === undefined ? undefined : lookUpServer(lookUpTool) });
+        : startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: instructions(chatSystem), cwd: guest && guestDir !== null ? guestDir : brainDir, now, savedChats: guest ? undefined : setup.savedChats, hub: guest ? undefined : hub, web: lookUpTool === undefined ? undefined : lookUpServer(lookUpTool), ...(guest ? { brain: false } : {}) });
     session = chat;
     const log = config.log
       ? startAnswerLog(
-          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: hubOn ? "on" : "off", hubActions: hubOn && config.hubActions ? "on" : "off", sessionNotes: notes !== null && notesFound(notes) ? "on" : "off", voice, kokoroSpeed: config.kokoroSpeed, speechStart: config.speechStart, speechStop: config.speechStop, speechBundle: config.speechBundle ? "on" : "off", spokenStyle: config.spokenStyle ? "on" : "off", persona: config.persona ?? "off", liveFacts: config.liveFacts ? "on" : "off" },
+          { engine: config.engine, thinking: config.thinkingHistory, model: chatModel, chats: setup.chats, lengthHints: config.lengthHints, hubTools: hubOn ? "on" : "off", hubActions: hubOn && config.hubActions ? "on" : "off", sessionNotes: !guest && notes !== null && notesFound(notes) ? "on" : "off", voice, kokoroSpeed: config.kokoroSpeed, speechStart: config.speechStart, speechStop: config.speechStop, speechBundle: config.speechBundle ? "on" : "off", spokenStyle: config.spokenStyle ? "on" : "off", persona: config.persona ?? "off", liveFacts: config.liveFacts ? "on" : "off", ...(guest ? { guest: true } : {}) },
           {
             append: async (text) => {
               await mkdir(dirname(answerLogFile), { recursive: true });
@@ -213,6 +218,9 @@ try {
       cursorTo(process.stdout, 0);
       clearLine(process.stdout, 0);
     },
+    modes: modes === undefined ? undefined : { hub: modes, events: watchModes({ hub: modes, signal: closing.signal }) },
+    guest: config.guest ? { open: async () => ({ ...open(guestSetup, true), notes: [] }) } : undefined,
+    when: config.modes ? whenCheck({ apiKey: config.apiKey, model: chatModel }) : undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));

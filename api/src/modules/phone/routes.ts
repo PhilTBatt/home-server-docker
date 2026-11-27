@@ -4,7 +4,7 @@ import { sendToNtfy, type Notification } from "../notify/notifier.js";
 
 export const findAgainMs = 10_000;
 
-export const findNotification: Notification = { title: "Here's your phone", message: "Jarvis was asked to find your phone.", tags: "telephone_receiver", priority: 5 };
+export const findNotification: Notification = { title: "Here's your phone", message: "Jarvis was asked to find your phone.", tags: "telephone_receiver", priority: 5, urgent: true };
 
 export const phone: FastifyPluginAsync<{ features: Features; ntfyTopic: string; send?: (topic: string, notification: Notification) => Promise<void>; now?: () => number }> = async (app, options) => {
   const send = options.send ?? sendToNtfy;

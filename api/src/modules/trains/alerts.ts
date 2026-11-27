@@ -196,7 +196,7 @@ export function changesFor(trains: Departure[], told: Map<string, Told>, board?:
 }
 
 export function changeNotification(lines: string[], cancelled: boolean): Notification {
-  return { title: lines.length === 1 ? "Train change" : "Train changes", message: lines.join("\n"), tags: "warning", ...(cancelled ? { priority: 4 as const } : {}) };
+  return { title: lines.length === 1 ? "Train change" : "Train changes", message: lines.join("\n"), tags: "warning", ...(cancelled ? { priority: 4 as const, urgent: true } : {}) };
 }
 
 export type AlertHooks = { settings: AlertSettings; send: (notification: Notification) => Promise<void>; changed?: (lines: string[], at: Date) => void; warn?: (message: string) => void; info?: (message: string) => void };

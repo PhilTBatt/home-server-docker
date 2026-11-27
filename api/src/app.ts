@@ -19,8 +19,10 @@ import { watchers } from "./modules/watchers/routes.js";
 import type { Watchers } from "./modules/watchers/watchers.js";
 import { catchUpDoctorMs, createCatchUp } from "./modules/catchup/catchup.js";
 import { catchUp } from "./modules/catchup/routes.js";
+import { modes } from "./modules/modes/routes.js";
+import type { Modes } from "./modules/modes/modes.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources> }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
@@ -75,6 +77,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains, changes: options.config.features.trainAlerts ? options.trainChanges : undefined });
   app.register(expiry, { prefix: "/expiry", features: options.config.features, checker: expiryChecker });
   app.register(watchers, { prefix: "/watchers", features: options.config.features, watchers: watching });
+  app.register(modes, { prefix: "/mode", features: options.config.features, modes: options.config.features.modes ? options.modes : undefined });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,

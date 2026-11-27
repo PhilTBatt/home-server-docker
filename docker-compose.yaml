@@ -204,6 +204,11 @@ services:
         target: /expiry
         bind:
           create_host_path: false
+      - type: bind
+        source: ./api/data
+        target: /data
+        bind:
+          create_host_path: false
     networks:
       - default
       - jarvis

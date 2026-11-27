@@ -79,6 +79,16 @@
  * @property {boolean} expiryAlerts
  * @property {boolean} watchers
  * @property {boolean} catchUp
+ * @property {boolean} modes
+ */
+
+/**
+ * @typedef {object} ModeNow
+ * @property {string} mode
+ * @property {string} since
+ * @property {string | null} until
+ * @property {string} by
+ * @property {number} held
  */
 
 /**
@@ -293,7 +303,7 @@
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes" };
 
 /**
  * @param {string} id
@@ -346,6 +356,11 @@ const watchersList = byId("watchers-list");
 const catchUpSection = byId("catch-up");
 const catchUpSummary = byId("catch-up-summary");
 const catchUpRepos = byId("catch-up-repos");
+const modeSection = byId("mode");
+const modeNow = byId("mode-now");
+const modeButtons = byId("mode-buttons");
+/** @type {[string, string][]} */
+const modeChoices = [["normal", "Normal"], ["bedtime", "Bedtime"], ["gaming", "Gaming"], ["coding", "Coding"], ["away", "Away"]];
 const listingLinkStarts = ["https://www.ebay.co.uk/itm/", "https://www.sandbox.ebay.co.uk/itm/", "https://www.hotukdeals.com/deals/"];
 /** @type {number | undefined} */ let refreshTimer;
 /** @type {Set<string>} */ const openDealSections = new Set();
@@ -581,6 +596,7 @@ async function loadSwitches() {
   showExpiry(features);
   showWatchers(features);
   showCatchUp(features);
+  showMode(features);
 }
 
 /**
@@ -750,6 +766,93 @@ async function loadCatchUp() {
   }
   catchUpSummary.textContent = got.reply.summary;
   catchUpRepos.replaceChildren(...got.reply.repos.map((repo) => listItem(catchUpText(repo))));
+}
+
+/**
+ * @param {Features} features
+ */
+function showMode(features) {
+  modeSection.hidden = !features.modes;
+  if (features.modes) loadMode();
+}
+
+/**
+ * @param {unknown} reply
+ * @returns {reply is ModeNow}
+ */
+function isModeNow(reply) {
+  return isObject(reply) && typeof reply.mode === "string" && typeof reply.since === "string" && (reply.until === null || typeof reply.until === "string") && typeof reply.by === "string" && typeof reply.held === "number";
+}
+
+/**
+ * @param {ModeNow} now
+ * @returns {string}
+ */
+function modeText(now) {
+  const time = (/** @type {string} */ iso) => new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const by = now.by === "start" ? "since the API started" : now.by === "schedule" ? "set on a timer" : `set by ${now.by}`;
+  const until = now.until === null ? "" : `, until ${time(now.until)}`;
+  const held = now.held === 0 ? "" : ` ${now.held} phone alert${now.held === 1 ? " is" : "s are"} held until bedtime ends.`;
+  return `${now.mode[0].toUpperCase()}${now.mode.slice(1)} since ${time(now.since)}${until} (${by}).${held}`;
+}
+
+/**
+ * @param {string} mode
+ * @param {string} label
+ * @param {boolean} current
+ * @returns {HTMLButtonElement}
+ */
+function modeButton(mode, label, current) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  button.disabled = current;
+  button.addEventListener("click", () => setMode(mode));
+  return button;
+}
+
+/**
+ * @param {ModeNow} now
+ */
+function showModeNow(now) {
+  modeNow.textContent = modeText(now);
+  const guest = now.mode === "guest" ? modeButton("normal", "Guest off", false) : modeButton("guest", "Guest on", false);
+  modeButtons.replaceChildren(guest, ...modeChoices.map(([mode, label]) => modeButton(mode, label, now.mode === mode)));
+}
+
+async function loadMode() {
+  const got = await fetchReply("/api/mode", "Couldn't load the mode");
+  if ("text" in got) {
+    modeNow.textContent = got.text;
+    modeButtons.replaceChildren();
+    return;
+  }
+  if (!isModeNow(got.reply)) {
+    modeNow.textContent = "Couldn't read the API's reply.";
+    return;
+  }
+  showModeNow(got.reply);
+}
+
+/**
+ * @param {string} mode
+ */
+async function setMode(mode) {
+  for (const button of modeButtons.querySelectorAll("button")) button.disabled = true;
+  try {
+    const response = await fetch("/api/mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode, by: "phone" }) });
+    /** @type {unknown} */
+    const reply = await response.json().catch(() => null);
+    if (response.ok && isModeNow(reply)) {
+      showModeNow(reply);
+      return;
+    }
+    const error = isObject(reply) && typeof reply.error === "string" ? reply.error : `the API replied ${response.status}`;
+    modeNow.textContent = `Couldn't switch the mode: ${error}.`;
+  } catch {
+    modeNow.textContent = "Couldn't reach the API.";
+  }
+  await loadMode();
 }
 
 /**

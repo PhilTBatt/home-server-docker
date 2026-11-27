@@ -1,5 +1,5 @@
 import { buildApp } from "./app.js";
-import { createNotifier, sendToNtfy } from "./modules/notify/notifier.js";
+import { createNotifier, holdWith, sendToNtfy } from "./modules/notify/notifier.js";
 import { currentProblems, readStatus } from "./modules/system/routes.js";
 import { sendHeartbeat } from "./modules/notify/heartbeat.js";
 import { createDailySummary } from "./modules/notify/daily.js";
@@ -15,6 +15,8 @@ import { expiringLine } from "./modules/expiry/checker.js";
 import { createTries } from "./modules/system/doctor.js";
 import { watchersFor } from "./modules/watchers/setup.js";
 import { checkEveryMs } from "./modules/watchers/watchers.js";
+import { modesFor } from "./modules/modes/setup.js";
+import { tickMs as modeTickMs } from "./modules/modes/modes.js";
 
 const config = readConfig(process.env);
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
@@ -32,8 +34,26 @@ const tries = { heartbeat: createTries(), alerts: createTries() };
 
 const watchers = config.features.watchers ? watchersFor(config) : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers });
+const modes = config.features.modes
+  ? modesFor(config, {
+      info: (fields, message) => app.log.info({ modes: fields }, message),
+      warn: (fields, message) => app.log.warn({ modes: fields }, message),
+    })
+  : undefined;
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes });
 app.log.info({ features: config.features }, "feature switches");
+
+if (modes !== undefined) {
+  await modes.load(new Date());
+  holdWith((topic, notification) => modes.take(topic, notification, new Date()));
+  app.log.info({ modes: { bedtimeFrom: config.modes.bedtimeFrom, bedtimeUntil: config.modes.bedtimeUntil, tickMs: modeTickMs } }, "modes are on: bedtime holds phone alerts that aren't urgent");
+  setInterval(() => {
+    modes.tick(new Date()).catch((error: unknown) => {
+      app.log.error(error, "mode check failed");
+    });
+  }, modeTickMs);
+}
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
 

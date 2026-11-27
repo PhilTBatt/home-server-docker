@@ -6,7 +6,7 @@ import { aiNote, deals, fitted, itemNumberFrom } from "./routes.js";
 import type { Categories, CategoryDetails, Listing } from "./source.js";
 import type { DealWatcher, Explained, ExplainReply, FullReply, LookupReply, MatchGroup, MatchedListing, NamesReply, RunSummary, SearchCuts, SearchStatus, WatcherStatus } from "./watcher.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true };
 const start = Date.parse("2026-11-18T12:00:00.000Z");
 
 const status: WatcherStatus = {

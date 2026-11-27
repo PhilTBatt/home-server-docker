@@ -82,6 +82,7 @@ export type LogContext = {
   spokenStyle: SpokenStyleMode;
   persona: string;
   liveFacts: LiveFactsMode;
+  guest?: boolean;
 };
 
 export type LogLine = {
@@ -105,6 +106,7 @@ export type LogLine = {
   spokenStyle?: SpokenStyleMode;
   persona?: string;
   liveFacts?: LiveFactsMode;
+  guest?: true;
   ok: boolean;
   error: string | null;
   firstWordsMs: number | null;
@@ -180,6 +182,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     ...(context.voice === "off" ? {} : { speechStart: context.speechStart, speechStop: context.speechStop, speechBundle: context.speechBundle, spokenStyle: context.spokenStyle }),
     persona: context.persona,
     liveFacts: context.liveFacts,
+    ...(context.guest === true ? { guest: true as const } : {}),
     ok: answer !== null,
     error: "error" in outcome ? errorKind(outcome.error) : null,
     firstWordsMs: wholeMs(answer?.firstWordsMs ?? null),

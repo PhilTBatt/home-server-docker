@@ -5,7 +5,7 @@ import type { Features } from "../../config.js";
 import type { Notification } from "../notify/notifier.js";
 import { findAgainMs, findNotification, phone } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true };
 
 function buildApp(options: { features?: Features; fail?: boolean } = {}) {
   const sent: { topic: string; notification: Notification }[] = [];
@@ -29,7 +29,7 @@ test("finding the phone sends a top-priority notification to the hub's ntfy topi
   const reply = await app.inject({ method: "POST", url: "/phone/find" });
   assert.deepEqual([reply.statusCode, reply.json()], [200, { sent: true }]);
   assert.deepEqual(sent, [{ topic: "test-topic", notification: findNotification }]);
-  assert.deepEqual(findNotification, { title: "Here's your phone", message: "Jarvis was asked to find your phone.", tags: "telephone_receiver", priority: 5 });
+  assert.deepEqual(findNotification, { title: "Here's your phone", message: "Jarvis was asked to find your phone.", tags: "telephone_receiver", priority: 5, urgent: true });
 });
 
 test("with it switched off, nothing is sent", async () => {

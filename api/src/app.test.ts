@@ -7,6 +7,7 @@ import type { DealWatcher } from "./modules/deals/watcher.js";
 import { createExpiryChecker } from "./modules/expiry/checker.js";
 import { createTries } from "./modules/system/doctor.js";
 import { createWatchers } from "./modules/watchers/watchers.js";
+import { createModes } from "./modules/modes/modes.js";
 
 const config: Config = {
   apiToken: "test-token",
@@ -18,7 +19,8 @@ const config: Config = {
   trains: { key: "test-rail-key", from: "AAA", to: "BBB", boardUrl: "https://api1.raildata.org.uk/test-board" },
   trainAlerts: { days: ["mon", "wed"], start: 420, end: 510, reminder: 405 },
   catchUp: { repos: [], token: "" },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true }
+  modes: { bedtimeFrom: null, bedtimeUntil: null },
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -269,7 +271,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -646,4 +648,20 @@ test("catch-up gives the doctor's line even when a service it asks doesn't answe
   const report = (await app.inject({ method: "GET", url: "/catch-up", headers: goodHeader })).json();
   assert.equal(report.server.state, "problem");
   assert.match(report.server.summary, /qBittorrent/);
+});
+
+test("modes are a route of the hub's, behind the token, given only the modes it was handed and only with the switch on", async () => {
+  const handed = createModes({ store: { load: async () => "missing", save: async () => {} }, settings: config.modes, topic: "test-topic", send: async () => {} });
+  await handed.load(new Date("2026-11-27T12:00:00.000Z"));
+  const app = await buildRealApp({ logger: false, config, modes: handed });
+  assert.equal((await app.inject({ method: "GET", url: "/mode" })).statusCode, 401);
+  const reply = await app.inject({ method: "GET", url: "/mode", headers: goodHeader });
+  assert.deepEqual([reply.statusCode, reply.json().mode], [200, "normal"]);
+  const posted = await app.inject({ method: "POST", url: "/mode", headers: goodHeader, payload: { mode: "gaming", by: "phone" } });
+  assert.equal(posted.json().mode, "gaming");
+  assert.equal(handed.view().mode, "gaming");
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, modes: false } }, modes: handed });
+  assert.deepEqual((await off.inject({ method: "GET", url: "/mode", headers: goodHeader })).json(), { error: "Modes are switched off" });
+  const none = await buildRealApp({ logger: false, config });
+  assert.equal((await none.inject({ method: "GET", url: "/mode", headers: goodHeader })).statusCode, 404);
 });

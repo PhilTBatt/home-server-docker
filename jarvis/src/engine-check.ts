@@ -566,6 +566,33 @@ export async function runPersonaCheck(deps: PersonaCheckDeps): Promise<CheckResu
   return instructionsCheck({ ...deps, texts: [deps.persona, deps.facts] }, "the persona and live facts", "a persona and live facts reach the model in his instructions, quotes and all, and no command line");
 }
 
+export type GuestEngine = { engine: "sdk" | "api"; session: AgentSession; requests: SeenRequest[] };
+
+export async function runGuestCheck(deps: { engines: GuestEngine[]; question: string; secret: string; timeoutMs: number }): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+  for (const one of deps.engines) {
+    const name = `${one.engine === "sdk" ? "Agent SDK" : "plain API"}: a guest chat offers the model no tools, says it's guest mode, and can't read the brain`;
+    let answer = "";
+    let threw: string | null = null;
+    try {
+      answer = (await withTimeout(one.session.ask(deps.question), deps.timeoutMs, () => one.session.close())).text;
+    } catch (error) {
+      threw = error instanceof Error ? error.message : String(error);
+    }
+    const asked = one.requests.filter((request) => request.lastUserText.includes(deps.question) || request.lastUserText.includes("[tool result]"));
+    const offered = [...new Set(asked.flatMap((request) => request.tools))];
+    const problems = [
+      ...(threw === null ? [] : [`it failed: ${threw}`]),
+      ...(asked.length === 0 ? ["the model was never asked"] : []),
+      ...(offered.length === 0 ? [] : [`it was offered ${offered.join(", ")}`]),
+      ...(asked.every((request) => request.systemText.includes("Guest mode is on")) ? [] : ["its instructions don't say guest mode is on"]),
+      ...(answer.includes(deps.secret) || asked.some((request) => request.toolResults.some((result) => result.text.includes(deps.secret))) ? ["the brain was read"] : []),
+    ];
+    results.push({ name, ok: problems.length === 0, detail: problems.join("; ") });
+  }
+  return results;
+}
+
 export function formatCheck(results: CheckResult[]): string[] {
   const lines = results.map((result) => (result.ok ? `✓ ${result.name}` : `✗ ${result.name}: ${result.detail}`));
   const failed = results.filter((result) => !result.ok).length;

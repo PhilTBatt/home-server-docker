@@ -32,3 +32,5 @@ deals/*
 !deals/README.md
 expiry/*
 !expiry/README.md
+api/data/*
+!api/data/README.md

@@ -5,18 +5,18 @@ import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { startAgentSession, type AgentSession } from "./agent.js";
 import { startApiSession } from "./api-session.js";
-import { createBrainTools } from "./brain-tools.js";
+import { createBrainTools, noBrainTools } from "./brain-tools.js";
 import { savedSdkChats, setUpChats, setUpNewChat } from "./chat-store.js";
-import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, questionTimeoutMs, systemFor } from "./chat.js";
+import { apiChatSystem, apiMaxTokens, chatModel, chatSystem, guestChatSystem, questionTimeoutMs, systemFor } from "./chat.js";
 import { askDirect } from "./direct.js";
-import { apiUnderTest, formatCheck, runActionsCheck, runEngineCheck, runHubCheck, runNotesCheck, runPersonaCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
+import { apiUnderTest, formatCheck, runActionsCheck, runEngineCheck, runGuestCheck, runHubCheck, runNotesCheck, runPersonaCheck, runSavedChatsCheck, sdkUnderTest } from "./engine-check.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { hubProblemNote, hubToolPrefix, type HubServer } from "./hub-tools.js";
 import { liveFacts } from "./live-facts.js";
 import { readPersona } from "./persona.js";
 import { withTimeout } from "./run.js";
 import { readSessionNotes, withNotes } from "./session-notes.js";
-import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, startStandInApi } from "./stand-in-api.js";
+import { caseText, hiddenText, ignoredName, ignoredText, longName, longText, readInsideWord, startStandInApi } from "./stand-in-api.js";
 import { standInHubFile, type HubCall } from "./stand-in-hub.js";
 import { claudeHelper } from "./look-up-claude.js";
 import { startStandInWeb } from "./stand-in-web.js";
@@ -275,6 +275,27 @@ try {
     commandLines,
     timeoutMs: 60_000,
   });
+  const guestSdkApi = await startStandInApi(script, "sdk");
+  const guestPlainApi = await startStandInApi(script, "api");
+  apis.push(guestSdkApi, guestPlainApi);
+  const guestHome = await mkdtemp(join(tmpdir(), "jarvis-check-guest-"));
+  folders.push(guestHome);
+  const guestSystem = systemFor(guestChatSystem, { persona: null, facts: null, spoken: false, notes: [], clock: false });
+  const guestSdk = startAgentSession((prompt, options) => query({ prompt, options }), { model: chatModel, system: guestSystem, cwd: guestHome, now, env: { ...process.env, ANTHROPIC_BASE_URL: guestSdkApi.url }, brain: false });
+  const guestPlain = startApiSession(
+    { apiKey: "sk-ant-test-key", model: chatModel, system: guestSystem, maxTokens: apiMaxTokens, timeoutMs: questionTimeoutMs, now, tools: noBrainTools, thinkingHistory: "keep" },
+    (request) => askDirect({ ...request, url: `${guestPlainApi.url}/v1/messages` }),
+  );
+  sessions.push(guestSdk, guestPlain);
+  const guests = await runGuestCheck({
+    engines: [
+      { engine: "sdk", session: guestSdk, requests: guestSdkApi.requests },
+      { engine: "api", session: guestPlain, requests: guestPlainApi.requests },
+    ],
+    question: `Please ${readInsideWord} for me.`,
+    secret: markers.inside,
+    timeoutMs: 60_000,
+  });
   const webApi = await startStandInWeb();
   apis.push(webApi);
   const secrets = { ANTHROPIC_API_KEY: `sk-ant-jarvis-${randomUUID()}`, API_TOKEN: `hub-${randomUUID()}`, JARVIS_WEB_TOKEN: `plan-${randomUUID()}` };
@@ -308,7 +329,7 @@ try {
   );
   sessions.push(lookSdkSession, lookPlainSession);
   const lookUps = await runLookUpToolCheck({ engines: [{ ...lookSdk, session: lookSdkSession, requests: lookSdkApi.requests }, { ...lookPlain, session: lookPlainSession, requests: lookPlainApi.requests }], timeoutMs: 90_000 });
-  const results = [...shared, ...saved, ...hub, ...actions, ...notes, ...persona, ...web, ...lookUps];
+  const results = [...shared, ...saved, ...hub, ...actions, ...notes, ...persona, ...guests, ...web, ...lookUps];
   for (const line of formatCheck(results)) console.log(line);
   if (results.some((result) => !result.ok)) process.exitCode = 1;
 } catch (error) {

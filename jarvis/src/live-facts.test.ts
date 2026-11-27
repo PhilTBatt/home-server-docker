@@ -156,3 +156,12 @@ test("with look-ups on auto he's told he has one look-up tool, what must stay ou
   assert.ok(!asking.includes("look_up") && asking.includes("you can't look anything up yourself"));
   assert.ok(!liveFacts(all).includes("look_up"));
 });
+
+test("with modes on they say his code switches modes from the mode's name alone and keeps him quiet in some, and with guest mode on how guests come and go", () => {
+  const modesOn = liveFacts({ ...all, modes: true });
+  for (const part of ["bedtime, gaming mode, coding mode, normal mode, I'm not here", "tell him to say just its name", "keeps you quiet unless he asks"]) assert.ok(modesOn.includes(part), part);
+  const guestOn = liveFacts({ ...all, guest: true });
+  for (const part of ["guest mode, or typing /guest", "only typing /guest off or his phone page ends it"]) assert.ok(guestOn.includes(part), part);
+  assert.ok(!liveFacts(all).includes("modes") && !liveFacts(all).includes("guest mode"));
+  assert.ok(!modesOn.includes('"') && !guestOn.includes('"'));
+});

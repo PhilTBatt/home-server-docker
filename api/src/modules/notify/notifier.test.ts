@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
 import type { Problem } from "../system/alerts.js";
-import { createNotifier, notificationFor, safeLink, sendToNtfy, type Notification } from "./notifier.js";
+import { createNotifier, holdWith, notificationFor, postToNtfy, safeLink, sendToNtfy, type Notification } from "./notifier.js";
 
 const diskLow: Problem = { code: "disk-low", message: "Disk is low: 22 of 230 GB free." };
 const memoryLow: Problem = { code: "memory-low", message: "Memory is low: 700 of 8000 MB available." };
@@ -11,6 +11,7 @@ const sample: Notification = { title: "Home Hub: 1 problem", message: diskLow.me
 
 afterEach(() => {
   mock.restoreAll();
+  holdWith(undefined);
 });
 
 function fakeNtfy(status = 200) {
@@ -305,4 +306,63 @@ test("sendToNtfy sends a priority only when it isn't the default", async () => {
   assert.equal(await sent(undefined), null);
   assert.equal(await sent(9 as unknown as 5), null);
   assert.equal(await sent("5\r\nX-Evil: 1" as unknown as 5), null);
+});
+test("with no holder, as with MODES off, every message goes straight to ntfy", async () => {
+  const fetchMock = fakeNtfy();
+  await sendToNtfy("my-topic", sample);
+  await sendToNtfy("my-topic", { ...sample, urgent: true });
+  assert.equal(fetchMock.mock.callCount(), 2);
+});
+
+test("a holder that takes a message keeps it from ntfy, and the sender still hears it went", async () => {
+  const fetchMock = fakeNtfy();
+  const held: { topic: string; notification: Notification }[] = [];
+  holdWith((topic, notification) => {
+    held.push({ topic, notification });
+    return true;
+  });
+  await sendToNtfy("my-topic", sample);
+  assert.equal(fetchMock.mock.callCount(), 0);
+  assert.deepEqual(held, [{ topic: "my-topic", notification: sample }]);
+});
+
+test("an urgent message is never offered to the holder", async () => {
+  const fetchMock = fakeNtfy();
+  let asked = 0;
+  holdWith(() => {
+    asked++;
+    return true;
+  });
+  await sendToNtfy("my-topic", { ...sample, urgent: true });
+  assert.equal(asked, 0);
+  assert.equal(fetchMock.mock.callCount(), 1);
+});
+
+test("a holder that doesn't take a message lets it through", async () => {
+  const fetchMock = fakeNtfy();
+  holdWith(() => false);
+  await sendToNtfy("my-topic", sample);
+  assert.equal(fetchMock.mock.callCount(), 1);
+});
+
+test("postToNtfy never asks the holder, so held messages can be sent later", async () => {
+  const fetchMock = fakeNtfy();
+  holdWith(() => true);
+  await postToNtfy("my-topic", sample);
+  assert.equal(fetchMock.mock.callCount(), 1);
+});
+
+test("the urgent mark is never sent to ntfy as a header", async () => {
+  const fetchMock = fakeNtfy();
+  await sendToNtfy("my-topic", { ...sample, urgent: true });
+  const headers = new Headers(fetchMock.mock.calls[0].arguments[1]?.headers);
+  assert.deepEqual([...headers.keys()].sort(), ["tags", "title"]);
+});
+
+test("the notifier's own checks go through the holder too", async () => {
+  const fetchMock = fakeNtfy();
+  holdWith(() => true);
+  const check = createNotifier("my-topic", async () => [diskLow]);
+  assert.equal(await check(), true);
+  assert.equal(fetchMock.mock.callCount(), 0);
 });

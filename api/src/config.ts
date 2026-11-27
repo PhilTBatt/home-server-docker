@@ -2,6 +2,7 @@ import { boardAheadMinutes, clockMinutes, readDays, readWindow, type AlertSettin
 import { safeBoardUrl, type TrainSettings } from "./modules/trains/board.js";
 import { detailedBoardUrl } from "./modules/trains/journeys.js";
 import { mostRepos, readRepos, validToken } from "./modules/catchup/github.js";
+import { latestBedtimeFrom, latestBedtimeUntil, type ModeSettings } from "./modules/modes/modes.js";
 
 export type Features = {
   alerts: boolean;
@@ -16,6 +17,7 @@ export type Features = {
   expiryAlerts: boolean;
   watchers: boolean;
   catchUp: boolean;
+  modes: boolean;
 };
 
 export type DealSettings = {
@@ -41,6 +43,7 @@ export type Config = {
   trains: TrainSettings;
   trainAlerts: AlertSettings;
   catchUp: CatchUpSettings;
+  modes: ModeSettings;
   features: Features;
 };
 
@@ -57,6 +60,7 @@ const featureLabels: Record<keyof Features, string> = {
   expiryAlerts: "expiry alerts",
   watchers: "watchers",
   catchUp: "catch-up",
+  modes: "modes",
 };
 
 export function switchedOff(features: Features): string[] {
@@ -103,6 +107,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     expiryAlerts: readSwitch("EXPIRY_ALERTS"),
     watchers: readSwitch("WATCHERS"),
     catchUp: readSwitch("CATCH_UP"),
+    modes: readSwitch("MODES"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
@@ -160,6 +165,15 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const githubToken = read("CATCH_UP_GITHUB_TOKEN", false);
   if (githubToken !== "" && !validToken(githubToken)) notAllowed.push("CATCH_UP_GITHUB_TOKEN (a fine-grained GitHub token, starting github_pat_)");
   const catchUp: CatchUpSettings = { repos: repos ?? [], token: githubToken };
+  const fromText = read("BEDTIME_FROM", false);
+  const from24 = fromText === "" || fromText === "off" ? null : clockMinutes(fromText);
+  if (fromText !== "" && fromText !== "off" && (from24 === null || from24 > latestBedtimeFrom)) notAllowed.push("BEDTIME_FROM (off, or a 24-hour time from 00:00 to 05:59, like 00:30)");
+  const bedtimeFrom = from24 !== null && from24 <= latestBedtimeFrom ? from24 : null;
+  const untilText = read("BEDTIME_UNTIL", features.modes && bedtimeFrom !== null);
+  const until24 = untilText === "" ? null : clockMinutes(untilText);
+  if (untilText !== "" && (until24 === null || until24 > latestBedtimeUntil)) notAllowed.push("BEDTIME_UNTIL (a 24-hour time before midday, like 07:30)");
+  else if (until24 !== null && bedtimeFrom !== null && until24 <= bedtimeFrom) notAllowed.push("BEDTIME_UNTIL (a time later than BEDTIME_FROM)");
+  const modes: ModeSettings = { bedtimeFrom, bedtimeUntil: until24 !== null && until24 <= latestBedtimeUntil && (bedtimeFrom === null || until24 > bedtimeFrom) ? until24 : null };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -167,5 +181,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, features };
 }

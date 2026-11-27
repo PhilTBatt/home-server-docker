@@ -5,7 +5,7 @@ export const hubServerFile = "/mcp/dist/server.js";
 export const hubServerName = "hub";
 export const hubToolPrefix = `mcp__${hubServerName}__`;
 
-export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"];
+export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden"];
 export const hubActionTools = ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher"];
 export const notDoneNote = "Phil didn't say yes, so it wasn't done";
 export const hubApiUrl = "http://api:3000";

@@ -301,3 +301,5 @@ export function createBrainTools(root: string): BrainTools {
     },
   };
 }
+
+export const noBrainTools: BrainTools = { definitions: [], run: async () => ({ content: "There are no tools in guest mode.", isError: true }), needsYes: () => false };

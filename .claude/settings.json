@@ -23,6 +23,7 @@
       "mcp__hub__get_expiries",
       "mcp__hub__get_doctor",
       "mcp__hub__get_watchers",
+      "mcp__hub__get_mode",
       "mcp__hub__get_catch_up",
       "mcp__hub__get_deal_status",
       "mcp__hub__get_deal_searches",

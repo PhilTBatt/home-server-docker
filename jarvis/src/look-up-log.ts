@@ -10,6 +10,7 @@ export type LookUpMode = "ask" | "auto";
 export type LookUpNumbers = {
   mode: LookUpMode;
   by: WebBy;
+  guest?: true;
   ended: Ended;
   ms: number;
   questionChars: number;
@@ -32,7 +33,7 @@ export type LookUpNumbers = {
 
 export type LookUpLine = LookUpNumbers & { v: number; at: string; question: string; found: string[]; openedSites: string[]; refusedSites: string[]; errorDetail: string | null };
 
-export type LookUpLog = (mode: LookUpMode, by: WebBy, looked: LookedUp) => Promise<void>;
+export type LookUpLog = (mode: LookUpMode, by: WebBy, looked: LookedUp, guest?: boolean) => Promise<void>;
 
 export type LookUpLogDeps = { append: (text: string) => Promise<void>; now: () => Date; warn: (text: string) => void };
 
@@ -56,11 +57,12 @@ export function lookUpErrorKind(message: string): string {
   return errorKinds.find(([pattern]) => pattern.test(message))?.[1] ?? "other";
 }
 
-export function lookUpNumbers(mode: LookUpMode, by: WebBy, looked: LookedUp): LookUpNumbers {
+export function lookUpNumbers(mode: LookUpMode, by: WebBy, looked: LookedUp, guest = false): LookUpNumbers {
   const numbers = looked.helped?.numbers;
   return {
     mode,
     by,
+    ...(guest ? { guest: true as const } : {}),
     ended: looked.ended,
     ms: looked.ms,
     questionChars: looked.question.length,
@@ -82,16 +84,16 @@ export function lookUpNumbers(mode: LookUpMode, by: WebBy, looked: LookedUp): Lo
   };
 }
 
-export function lookUpLine(mode: LookUpMode, by: WebBy, looked: LookedUp, at: Date): LookUpLine {
-  return { v: lookUpLogVersion, at: at.toISOString(), ...lookUpNumbers(mode, by, looked), question: looked.question, found: looked.helped?.found ?? [], openedSites: looked.helped?.opened ?? [], refusedSites: looked.helped?.refused ?? [], errorDetail: looked.helped?.error ?? null };
+export function lookUpLine(mode: LookUpMode, by: WebBy, looked: LookedUp, at: Date, guest = false): LookUpLine {
+  return { v: lookUpLogVersion, at: at.toISOString(), ...lookUpNumbers(mode, by, looked, guest), question: looked.question, found: looked.helped?.found ?? [], openedSites: looked.helped?.opened ?? [], refusedSites: looked.helped?.refused ?? [], errorDetail: looked.helped?.error ?? null };
 }
 
 export function startLookUpLog(deps: LookUpLogDeps): LookUpLog {
   let broken = false;
-  return async (mode, by, looked) => {
+  return async (mode, by, looked, guest = false) => {
     if (broken) return;
     try {
-      await deps.append(`${JSON.stringify(lookUpLine(mode, by, looked, deps.now()))}\n`);
+      await deps.append(`${JSON.stringify(lookUpLine(mode, by, looked, deps.now(), guest))}\n`);
     } catch (error) {
       broken = true;
       deps.warn(`Couldn't write to the look-up log, so the rest of this chat's look-ups won't be logged there: ${error instanceof Error ? error.message : String(error)}`);

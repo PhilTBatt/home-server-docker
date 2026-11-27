@@ -233,7 +233,7 @@ test("trains with the same time but different destinations are kept apart", () =
 
 test("changes are one notification, at high priority only when a train is cancelled", () => {
   assert.deepEqual(changeNotification(["The 07:14 is now expected 07:24, 10 minutes late."], false), { title: "Train change", message: "The 07:14 is now expected 07:24, 10 minutes late.", tags: "warning" });
-  assert.deepEqual(changeNotification(["a", "b"], true), { title: "Train changes", message: "a\nb", tags: "warning", priority: 4 });
+  assert.deepEqual(changeNotification(["a", "b"], true), { title: "Train changes", message: "a\nb", tags: "warning", priority: 4, urgent: true });
 });
 
 function harness(boards: Array<Board | Error>, sendFails = 0) {
@@ -322,7 +322,7 @@ test("a change that couldn't be sent is sent with the next check", async () => {
   await assert.rejects(check(monday("06:47")));
   fail = false;
   assert.equal(await check(monday("06:49")), "changed");
-  assert.deepEqual(sent.at(-1), { title: "Train change", message: "The 07:14 is cancelled.", tags: "warning", priority: 4 });
+  assert.deepEqual(sent.at(-1), { title: "Train change", message: "The 07:14 is cancelled.", tags: "warning", priority: 4, urgent: true });
 });
 
 test("each check's new change lines are passed on once, as they're found, whether or not ntfy takes them, and never the reminder or outage notices", async () => {

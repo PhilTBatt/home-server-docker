@@ -23,6 +23,10 @@ function asked(words: string): string {
   return words.replace(new RegExp(`^(?:(?:${askingWords}) )+`), "").replace(/ for me$/, "");
 }
 
+export function requestIn(text: string): string {
+  return asked(trimmed(text.replace(/[\u2018\u2019]/g, "'").replace(address, "")));
+}
+
 const trainAsking = /^(?:(?:tell me|give me|check|get|show me) (?:the |my )?|(?:what are|what're|what's|what is) (?:the|my) |(?:the|my) )/;
 
 export const neverMindWords = ["never mind", "nevermind", "that's all", "that is all"];

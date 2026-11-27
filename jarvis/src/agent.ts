@@ -20,6 +20,7 @@ export type AgentSettings = {
   savedChats?: string;
   hub?: HubServer;
   web?: McpSdkServerConfigWithInstance;
+  brain?: boolean;
 };
 
 export const privacyEnv = { DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" };
@@ -77,8 +78,8 @@ export function agentOptions(settings: AgentSettings, confirm: Confirm = async (
     model: settings.model,
     cwd: settings.cwd,
     systemPrompt: settings.system,
-    tools: ["Read", "Grep", "Glob"],
-    disallowedTools: ["Read(./.git/**)"],
+    tools: settings.brain === false ? [] : ["Read", "Grep", "Glob"],
+    disallowedTools: settings.brain === false ? [] : ["Read(./.git/**)"],
     permissionMode: "dontAsk",
     settingSources: [],
     persistSession: settings.savedChats !== undefined,

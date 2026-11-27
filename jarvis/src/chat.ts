@@ -19,6 +19,7 @@ import { withPersona } from "./persona.js";
 import { withNotes, type SessionNotes } from "./session-notes.js";
 import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { trainSay, type TrainEvent, type TrainNews } from "./train-news.js";
+import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, modeSays, modesOffSay, modeWordIn, speaksUnprompted, whenBackAsk, whenNotCaught, whenSaid, ModesOff, type Mode, type ModeEvent, type ModeHub, type ModeWord, type WhenCheck } from "./modes.js";
 import { seconds, type Answer } from "./timing.js";
 import type { EarsAnswer } from "./ears-client.js";
 import { spokenOf, type WakeEvent } from "./wake.js";
@@ -53,6 +54,13 @@ export const apiChatSystem = [
   "His notes, which he calls his brain, can be read with your read_file and list_folder tools, and searched with search_files and find_files. Start with index.md to find your way around, and search when you don't know where something is.",
   style,
   ...reading,
+].join(" ");
+export const guestChatSystem = [
+  intro,
+  "Guest mode is on: you are talking with a guest of Phil's, not Phil. In this mode you have no access to Phil's notes, his hub, his saved chats or anything else of his, and you can't do anything on the server.",
+  "Never share anything about Phil, his home, his people or his plans beyond what your introduction says. If someone asks for something you can't do here, say it isn't available in guest mode. You can chat, answer general questions and say who you are.",
+  style,
+  "A line in square brackets at the end of a message, starting with Chat size, comes from your own code, not from the guest, and they don't see it. It means the chat is getting long: when you see one, suggest once, in a few words, that they type new to start a new chat.",
 ].join(" ");
 export const spokenStyle = [
   "Phil hears your answers read aloud, a sentence at a time, as well as seeing them on screen, so write for the ear.",
@@ -186,6 +194,9 @@ export type ChatDeps = {
   web?: WebDeps;
   trains?: TrainNews;
   questions?: BrainQuestions;
+  modes?: { hub: ModeHub; events: AsyncIterable<ModeEvent> };
+  guest?: { open(): Promise<NewChat> };
+  when?: WhenCheck;
 };
 
 export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply>; server?(signal: AbortSignal): Promise<CodeWordReply> };
@@ -198,7 +209,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null };
 
 function sounds(state: ChatState, speech: AnswerSpeech | null): void {
   if (speech === null || state.sounding.has(speech)) return;
@@ -420,8 +431,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "web" | "webBy" | "webLog" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "web" | "webBy" | "webLog" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -604,15 +615,16 @@ async function hush(deps: ChatDeps, state: ChatState): Promise<void> {
   writeSpeechNotes(deps, report, going && report.stopped ? hushNote(report, playing) : null);
 }
 
-async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps> {
-  if (deps.newChat === undefined) {
+async function startNewChat(deps: ChatDeps, state: ChatState, guest?: { open(): Promise<NewChat> }): Promise<ChatDeps> {
+  const opening = guest?.open ?? deps.newChat;
+  if (opening === undefined) {
     deps.write(`  (${noNewChatNote})\n`);
     return deps;
   }
   await deps.recordNewChat?.(state.lastRequestTokens);
   deps.session.close();
   deps.write(`${costLine(deps.session.costUsd())}\n`);
-  const next = await deps.newChat();
+  const next = await opening();
   state.lastRequestTokens = next.knownSize ?? null;
   const { notes, ...chat } = next;
   for (const note of notes) deps.write(`${note}\n`);
@@ -620,6 +632,12 @@ async function startNewChat(deps: ChatDeps, state: ChatState): Promise<ChatDeps>
 }
 
 async function ask(deps: ChatDeps, state: ChatState, message: string, heard?: Heard): Promise<"answered" | "go" | "stop"> {
+  if (heldForGuest(state)) {
+    await hush(deps, state);
+    deps.write(`  (${guestHeldNote})\n`);
+    await sayLine(deps, state, { say: guestHeldSay });
+    return "go";
+  }
   if (overCap(deps, state.lastRequestTokens)) {
     deps.write(`  (${capNote(deps.lengthCap)})\n`);
     return "go";
@@ -655,9 +673,9 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
   deps.write(`  (${why === null ? droppedNote : notDroppedNote(printable(why))})\n`);
 }
 
-export type ChatInput = { kind: "line"; text: string } | WakeEvent | TrainEvent | LookedUpEvent;
+export type ChatInput = { kind: "line"; text: string } | WakeEvent | TrainEvent | LookedUpEvent | ModeEvent;
 
-export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<TrainEvent | LookedUpEvent>): AsyncGenerator<ChatInput> {
+export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<TrainEvent | LookedUpEvent | ModeEvent>): AsyncGenerator<ChatInput> {
   if (events === undefined && news === undefined) {
     for await (const text of lines) yield { kind: "line", text };
     return;
@@ -665,7 +683,7 @@ export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIt
   const typed = lines[Symbol.asyncIterator]();
   const heard = events?.[Symbol.asyncIterator]();
   const told = news?.[Symbol.asyncIterator]();
-  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent>; why?: string } | { from: "news"; result: IteratorResult<TrainEvent | LookedUpEvent> };
+  type Got = { from: "line"; result: IteratorResult<string> } | { from: "event"; result: IteratorResult<WakeEvent>; why?: string } | { from: "news"; result: IteratorResult<TrainEvent | LookedUpEvent | ModeEvent> };
   let nextLine: Promise<Got> | null = null;
   let nextEvent: Promise<Got> | null = null;
   let nextNews: Promise<Got> | null = null;
@@ -767,8 +785,27 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
   deps.write(`${heardPrefix}${printable(sent.heard.text)}\n`);
   const afterLookUp = sent.heard.follow === true ? state.followLookUp : null;
   state.followLookUp = null;
+  if (state.awaitingBack && state.questions === null) {
+    state.awaitingBack = false;
+    counted(sent.heard, state);
+    await onBackTime(deps, state, sent.heard.text, "spoken");
+    return "go";
+  }
+  state.awaitingBack = false;
+  const modeWord = state.questions === null ? spokenModeWord(deps, state, sent.heard.text) : null;
+  if (modeWord !== null) {
+    counted(sent.heard, state);
+    await onModeWord(deps, state, modeWord, voiced(sent.heard));
+    return "go";
+  }
   const word = codeWordIn(sent.heard.text, deps.clock !== undefined, deps.web !== undefined);
   if (state.questions !== null && word?.kind !== "stop listening") return onAnswer(deps, state, sent.heard.text, "spoken", voiced(sent.heard));
+  if (word?.kind === "questions" && (state.guest || heldForGuest(state))) {
+    state.turn++;
+    await hush(deps, state);
+    await sayLine(deps, state, { say: notInGuestSay });
+    return "go";
+  }
   if (word?.kind === "questions" && deps.questions !== undefined) {
     state.turn++;
     if (sent.heard.wake === true || sent.heard.button === true) state.followed = 0;
@@ -849,6 +886,11 @@ export function followingOnNote(earlier: Earlier): string {
 }
 
 async function onLookUp(deps: ChatDeps, state: ChatState, asked: string, spoken = false, judgedMs: number | null = null): Promise<void> {
+  if (heldForGuest(state)) {
+    deps.write(`  (${guestHeldNote})\n`);
+    await sayLine(deps, state, { say: guestHeldSay });
+    return;
+  }
   const web = deps.web;
   const tell = state.looked;
   if (web === undefined || tell === null) {
@@ -907,10 +949,221 @@ async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWo
     await onLookUp(deps, state, word.text, spoken);
     return;
   }
+  if (state.guest || heldForGuest(state)) {
+    await sayLine(deps, state, { say: state.guest ? notInGuestSay : guestHeldSay });
+    return;
+  }
   const signal = deps.closing ?? new AbortController().signal;
   const failed = { note: "I couldn't save that note.", phone: "I couldn't reach your phone.", trains: "I couldn't get the train times.", server: "I couldn't check the server." } as const;
   const reply = deps.codeWords === undefined ? { say: failed[word.kind], note: hubOffNote } : word.kind === "note" ? await deps.codeWords.note(word.text, signal) : word.kind === "phone" ? await deps.codeWords.phone(signal) : word.kind === "trains" ? await deps.codeWords.trains(signal) : ((await deps.codeWords.server?.(signal)) ?? { say: failed.server, note: hubOffNote });
   await sayLine(deps, state, reply);
+}
+
+export const notInGuestSay = "That isn't available in guest mode.";
+export const guestTrainsNote = "a train change came in; it isn't said in guest mode";
+export const guestOnNote = "guest mode: a fresh chat with no brain, notes, hub, brain questions or saved chats. Type /guest off to leave it";
+export const guestOffNote = "guest mode is off: a fresh chat with everything back";
+export const guestHeldNote = "the hub is in guest mode but JARVIS_GUEST is off, so Jarvis won't answer, look things up or use the hub until guest mode is off at the hub (type /mode normal, or use the phone page)";
+export const guestHeldSay = "The hub's in guest mode, but guest chats are switched off for me, so I won't answer until it's off.";
+
+function heldForGuest(state: ChatState): boolean {
+  return state.mode === "guest" && !state.guest;
+}
+export const guestOffSay = "Guest mode is off.";
+export const guestAlreadySay = "Guest mode is already on.";
+export const guestNotOnSay = "Guest mode isn't on.";
+export const modeCommand = "/mode";
+export const guestCommand = "/guest";
+export const notCaughtBedtimeSay = "I didn't catch when bedtime should be.";
+export const modeFailedSay = "I couldn't change the mode.";
+export const modeUsageNote = `type ${modeCommand} to see the mode, or ${modeCommand} followed by normal, bedtime, gaming, coding or away to change it; guest mode is ${guestCommand} and ${guestCommand} off`;
+
+export function unsaidNote(said: string, mode: Mode): string {
+  return `${said} (not said in ${mode} mode)`;
+}
+
+export function modeNote(mode: Mode, until: string | null, by?: string): string {
+  return `mode: ${mode}${until === null ? "" : `, until ${until}`}${by === undefined ? "" : `, set by ${by}`}`;
+}
+
+function policyMode(state: ChatState): Mode {
+  return state.guest ? "guest" : state.mode;
+}
+
+function onModeEvent(deps: ChatDeps, state: ChatState, event: ModeEvent): void {
+  if (event.kind === "mode note") {
+    deps.interrupt?.();
+    deps.write(`  (${printable(event.line)})\n`);
+    deps.prompt();
+    return;
+  }
+  const next = event.state;
+  const changed = next.mode !== state.mode || next.until !== state.modeUntil;
+  state.mode = next.mode;
+  state.modeUntil = next.until;
+  if (next.mode === "guest" && !state.guest) state.switching = "guest";
+  if (next.mode !== "guest" && state.guest) state.switching = "normal";
+  if (changed) {
+    deps.interrupt?.();
+    deps.write(`  (${printable(modeNote(next.mode, next.until, next.by))})\n`);
+    deps.prompt();
+  }
+}
+
+async function applySwitch(base: ChatDeps, current: ChatDeps, state: ChatState): Promise<ChatDeps> {
+  const to = state.switching;
+  state.switching = null;
+  if (to === null || (to === "guest") === state.guest) return current;
+  const opening = to === "guest" ? base.guest?.open : base.newChat;
+  if (opening === undefined) {
+    if (to === "guest") {
+      stopLookUp(current, state);
+      state.lastLookUp = null;
+      state.followLookUp = null;
+      current.write(`  (${guestHeldNote})\n`);
+      await sayLine(current, state, { say: guestHeldSay });
+    }
+    return current;
+  }
+  if (state.questions !== null) await finishQuestions(current, state);
+  stopLookUp(current, state);
+  state.lastLookUp = null;
+  state.followLookUp = null;
+  state.awaitingBack = false;
+  await settle(current, state);
+  await current.recordNewChat?.(state.lastRequestTokens);
+  current.session.close();
+  current.write(`${costLine(current.session.costUsd())}\n`);
+  const next = await opening();
+  state.lastRequestTokens = next.knownSize ?? null;
+  const { notes, ...chat } = next;
+  for (const note of notes) current.write(`${note}\n`);
+  state.guest = to === "guest";
+  if (!state.guest && state.mode === "guest") state.mode = "normal";
+  const switched: ChatDeps = state.guest ? { ...base, ...chat, codeWords: undefined, questions: undefined } : { ...base, ...chat };
+  switched.write(`  (${state.guest ? guestOnNote : guestOffNote})\n`);
+  await sayLine(switched, state, { say: state.guest ? (modeSays.guest) : guestOffSay });
+  return switched;
+}
+
+function spokenModeWord(deps: ChatDeps, state: ChatState, said: string): ModeWord | null {
+  const word = modeWordIn(said, policyMode(state));
+  if (word === null) return null;
+  if (word.kind === "guest on" || word.kind === "guest off") return deps.guest === undefined ? null : word;
+  return deps.modes === undefined ? null : word;
+}
+
+type TypedModeWord = ModeWord | { kind: "show mode" } | { kind: "mode usage" } | { kind: "guest typed off" };
+
+function typedModeWord(deps: ChatDeps, state: ChatState, message: string): TypedModeWord | null {
+  const lower = message.toLowerCase().replace(/\s+/g, " ");
+  if (lower === guestCommand) return deps.guest === undefined ? null : { kind: "guest on" };
+  if (lower === `${guestCommand} off`) return deps.guest === undefined ? null : { kind: "guest typed off" };
+  if (lower === modeCommand) return deps.modes === undefined && deps.guest === undefined ? null : { kind: "show mode" };
+  if (!lower.startsWith(`${modeCommand} `)) return null;
+  if (deps.modes === undefined) return null;
+  const asked = lower.slice(modeCommand.length + 1);
+  if (asked === "away") return { kind: "away", until: null };
+  const mode = modeNames.find((known) => known === asked && known !== "guest" && known !== "away");
+  return mode === undefined ? { kind: "mode usage" } : { kind: "set mode", mode: mode as Exclude<Mode, "away" | "guest"> };
+}
+
+async function setMode(deps: ChatDeps, state: ChatState, mode: Mode, until: Date | null, by: "voice" | "typed"): Promise<boolean> {
+  if (deps.modes === undefined) {
+    if (mode === "guest" || mode === "normal") {
+      state.mode = mode;
+      state.modeUntil = null;
+      state.switching = mode;
+      return true;
+    }
+    await sayLine(deps, state, { say: modesOffSay });
+    return false;
+  }
+  try {
+    const set = await deps.modes.hub.set(mode, until, by, deps.closing ?? new AbortController().signal);
+    state.mode = set.mode;
+    state.modeUntil = set.until;
+    if (set.mode === "guest" && !state.guest) state.switching = "guest";
+    if (set.mode !== "guest" && state.guest) state.switching = "normal";
+    return true;
+  } catch (error) {
+    deps.write(`  (${printable(error instanceof ModesOff ? error.message : `couldn't change the mode: ${error instanceof Error ? error.message : String(error)}`)})\n`);
+    await sayLine(deps, state, { say: modeFailedSay });
+    return false;
+  }
+}
+
+async function onModeWord(deps: ChatDeps, state: ChatState, word: TypedModeWord, spoken: boolean): Promise<void> {
+  state.turn++;
+  await hush(deps, state);
+  const by = spoken ? "voice" : "typed";
+  if (word.kind === "show mode") {
+    deps.write(`  (${printable(modeNote(policyMode(state), state.modeUntil))})\n`);
+    return;
+  }
+  if (word.kind === "mode usage") {
+    deps.write(`  (${modeUsageNote})\n`);
+    return;
+  }
+  if (word.kind === "guest on") {
+    if (state.guest) await sayLine(deps, state, { say: guestAlreadySay });
+    else await setMode(deps, state, "guest", null, by);
+    return;
+  }
+  if (word.kind === "guest typed off") {
+    if (!state.guest) await sayLine(deps, state, { say: guestNotOnSay });
+    else await setMode(deps, state, "normal", null, "typed");
+    return;
+  }
+  if (word.kind === "guest off") {
+    await sayLine(deps, state, { say: state.guest ? guestOffByVoiceSay : guestNotOnSay });
+    return;
+  }
+  if (state.guest && spoken) {
+    await sayLine(deps, state, { say: guestModeRefusedSay });
+    return;
+  }
+  const now = deps.clock?.() ?? new Date();
+  if (word.kind === "set mode") {
+    if (await setMode(deps, state, word.mode, null, by)) await sayLine(deps, state, { say: modeSays[word.mode] });
+    return;
+  }
+  if (word.kind === "bedtime at") {
+    const at = (await deps.when?.(word.at, now, deps.closing ?? new AbortController().signal)) ?? null;
+    if (at === null || deps.modes === undefined) {
+      await sayLine(deps, state, { say: deps.modes === undefined ? modesOffSay : notCaughtBedtimeSay });
+      return;
+    }
+    try {
+      await deps.modes.hub.schedule("bedtime", at, deps.closing ?? new AbortController().signal);
+      await sayLine(deps, state, { say: `Bedtime ${whenSaid(at, now)}.` });
+    } catch (error) {
+      deps.write(`  (${printable(error instanceof ModesOff ? error.message : `couldn't set bedtime: ${error instanceof Error ? error.message : String(error)}`)})\n`);
+      await sayLine(deps, state, { say: modeFailedSay });
+    }
+    return;
+  }
+  const until = word.until === null ? null : ((await deps.when?.(word.until, now, deps.closing ?? new AbortController().signal)) ?? null);
+  if (!(await setMode(deps, state, "away", until, by))) return;
+  if (word.until !== null) {
+    await sayLine(deps, state, { say: until === null ? `${awaySay(null, now)} ${whenNotCaught}` : awaySay(until, now) });
+    return;
+  }
+  await sayLine(deps, state, { say: whenBackAsk });
+  state.awaitingBack = true;
+  if (spoken) openFollow(deps, state);
+}
+
+async function onBackTime(deps: ChatDeps, state: ChatState, said: string, how: "spoken" | "typed"): Promise<void> {
+  state.turn++;
+  await hush(deps, state);
+  const now = deps.clock?.() ?? new Date();
+  const at = (await deps.when?.(said, now, deps.closing ?? new AbortController().signal)) ?? null;
+  if (at === null) {
+    await sayLine(deps, state, { say: whenNotCaught });
+    return;
+  }
+  if (await setMode(deps, state, "away", at, how === "spoken" ? "voice" : "typed")) await sayLine(deps, state, { say: awaySay(at, now) });
 }
 
 async function onTrains(deps: ChatDeps, state: ChatState, event: TrainEvent): Promise<void> {
@@ -923,6 +1176,12 @@ async function onTrains(deps: ChatDeps, state: ChatState, event: TrainEvent): Pr
   if (deps.trains === undefined || !quiet(state)) return;
   const lines = deps.trains.take();
   if (lines.length === 0) return;
+  if (!speaksUnprompted(policyMode(state), "trains")) {
+    deps.interrupt?.();
+    deps.write(`  (${state.guest ? guestTrainsNote : printable(unsaidNote(trainSay(lines), policyMode(state)))})\n`);
+    deps.prompt();
+    return;
+  }
   deps.interrupt?.();
   await settle(deps, state);
   await sayLine(deps, state, { say: trainSay(lines) });
@@ -1043,6 +1302,10 @@ async function startQuestions(deps: ChatDeps, state: ChatState, voice: boolean):
     deps.write(`  (${questionsOpenNote})\n`);
     return "go";
   }
+  if (state.guest || heldForGuest(state)) {
+    await sayLine(deps, state, { say: state.guest ? notInGuestSay : guestHeldSay });
+    return "go";
+  }
   if (deps.questions === undefined) {
     await sayLine(deps, state, { say: "Brain questions are off.", note: questionsOffNote });
     return "go";
@@ -1157,16 +1420,23 @@ async function finishQuestions(deps: ChatDeps, state: ChatState): Promise<void> 
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, awaitingBack: false, switching: null };
+  const base = deps;
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   const found = deps.web === undefined ? null : createEvents<LookedUpEvent>();
   state.looked = found?.push ?? null;
   try {
     current.prompt();
-    for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, found === null ? current.trains?.events : current.trains === undefined ? found.events : merged<TrainEvent | LookedUpEvent>(current.trains.events, found.events)), deps.ready)) {
+    const news = [current.trains?.events, found?.events, current.modes?.events].filter((source) => source !== undefined) as AsyncIterable<TrainEvent | LookedUpEvent | ModeEvent>[];
+    for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, news.length === 0 ? undefined : news.length === 1 ? news[0] : merged<TrainEvent | LookedUpEvent | ModeEvent>(...news)), deps.ready)) {
       if (input.kind === "looked up") {
         await onLookedUp(current, state, input);
+        continue;
+      }
+      if (input.kind === "mode" || input.kind === "mode note") {
+        onModeEvent(current, state, input);
+        current = await applySwitch(base, current, state);
         continue;
       }
       if (input.kind === "trains" || input.kind === "trains note") {
@@ -1174,7 +1444,9 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         continue;
       }
       if (input.kind !== "line") {
-        if ((await onWake(current, state, input)) === "stop") break;
+        const going = await onWake(current, state, input);
+        current = await applySwitch(base, current, state);
+        if (going === "stop") break;
         continue;
       }
       const message = input.text.trim();
@@ -1192,7 +1464,9 @@ export async function runChat(deps: ChatDeps): Promise<void> {
           state.listening = false;
           state.wakeId = null;
           state.talkId = null;
-          if ((await heardOrNot(current, state, await talking.talk.send(current.closing, wake, id))) === "stop") break;
+          const going = await heardOrNot(current, state, await talking.talk.send(current.closing, wake, id));
+          current = await applySwitch(base, current, state);
+          if (going === "stop") break;
           current.prompt();
           continue;
         }
@@ -1200,6 +1474,20 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       }
       if (state.questions !== null && takesAnswer(message)) {
         await onAnswer(current, state, message, "typed", false);
+        current.prompt();
+        continue;
+      }
+      if (state.awaitingBack && message !== "" && !looksLikeCommand(message) && !exitWords.includes(message.toLowerCase()) && !newWords.includes(message.toLowerCase())) {
+        state.awaitingBack = false;
+        await onBackTime(current, state, message, "typed");
+        current.prompt();
+        continue;
+      }
+      if (message !== "") state.awaitingBack = false;
+      const typedMode = typedModeWord(current, state, message);
+      if (typedMode !== null) {
+        await onModeWord(current, state, typedMode, false);
+        current = await applySwitch(base, current, state);
         current.prompt();
         continue;
       }
@@ -1211,7 +1499,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       } else if (newWords.includes(message.toLowerCase())) {
         if (state.questions !== null) await finishQuestions(current, state);
         await settle(current, state);
-        current = await startNewChat(current, state);
+        current = await startNewChat(current, state, state.guest ? base.guest : undefined);
         state.lastLookUp = null;
         state.followLookUp = null;
       } else if (message.toLowerCase() === talkWord) {
