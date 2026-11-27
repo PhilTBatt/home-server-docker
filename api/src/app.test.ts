@@ -21,6 +21,7 @@ const config: Config = {
   trainAlerts: { days: ["mon", "wed"], start: 420, end: 510, reminder: 405 },
   catchUp: { repos: [], token: "" },
   modes: { bedtimeFrom: null, bedtimeUntil: null },
+  phone: { ring: "once", seconds: 30 },
   features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true }
 };
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
 import type { Problem } from "../system/alerts.js";
-import { createNotifier, holdWith, notificationFor, postToNtfy, safeLink, sendToNtfy, type Notification } from "./notifier.js";
+import { clearOnNtfy, createNotifier, holdWith, notificationFor, postToNtfy, safeLink, sendToNtfy, type Notification } from "./notifier.js";
 
 const diskLow: Problem = { code: "disk-low", message: "Disk is low: 22 of 230 GB free." };
 const memoryLow: Problem = { code: "memory-low", message: "Memory is low: 700 of 8000 MB available." };
@@ -364,5 +364,40 @@ test("the notifier's own checks go through the holder too", async () => {
   holdWith(() => true);
   const check = createNotifier("my-topic", async () => [diskLow]);
   assert.equal(await check(), true);
+  assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test("a sequence ID goes to ntfy as X-Sequence-ID, and only one that's letters, digits, - and _", async () => {
+  const header = async (sequence: string | undefined) => {
+    const fetchMock = fakeNtfy();
+    await sendToNtfy("my-topic", { ...sample, sequence });
+    const headers = new Headers(fetchMock.mock.calls[0].arguments[1]?.headers);
+    mock.restoreAll();
+    return headers.get("X-Sequence-ID");
+  };
+  assert.equal(await header("find-0a1b2c3d"), "find-0a1b2c3d");
+  assert.equal(await header("watcher_1"), "watcher_1");
+  assert.equal(await header(undefined), null);
+  assert.equal(await header("a/b"), null);
+  assert.equal(await header("x\r\nEvil: 1"), null);
+  assert.equal(await header("x".repeat(65)), null);
+  assert.equal(await header(""), null);
+});
+
+test("clearOnNtfy sends a PUT to the topic's sequence ID with /clear, and throws when ntfy refuses", async () => {
+  const fetchMock = fakeNtfy();
+  await clearOnNtfy("a/b", "find-0a1b2c3d");
+  const [url, options] = fetchMock.mock.calls[0].arguments;
+  assert.equal(url, "https://ntfy.sh/a%2Fb/find-0a1b2c3d/clear");
+  assert.equal(options?.method, "PUT");
+  assert.ok(options?.signal instanceof AbortSignal);
+  mock.restoreAll();
+  fakeNtfy(500);
+  await assert.rejects(clearOnNtfy("t", "find-1"), { message: "ntfy replied 500" });
+});
+
+test("clearOnNtfy never sends a sequence ID that isn't one", async () => {
+  const fetchMock = fakeNtfy();
+  await assert.rejects(clearOnNtfy("t", "../x"), { message: "That isn't a sequence ID" });
   assert.equal(fetchMock.mock.callCount(), 0);
 });

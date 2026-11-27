@@ -31,6 +31,7 @@ const trainAsking = /^(?:(?:tell me|give me|check|get|show me) (?:the |my )?|(?:
 
 export const neverMindWords = ["never mind", "nevermind", "that's all", "that is all"];
 export const phoneWords = ["find my phone", "help me find my phone", "where's my phone", "where is my phone", "ring my phone", "ping my phone"];
+export const foundWords = ["found it", "i found it", "i've found it", "i have found it", "found my phone", "i found my phone", "i've found my phone", "i have found my phone", "found the phone", "i've found the phone", "got my phone", "i've got my phone", "stop ringing", "stop ringing my phone", "you can stop ringing", "you can stop ringing my phone"];
 export const serverWords = ["server check", "check the server", "how's the server", "how is the server", "how's the server doing", "how is the server doing", "is the server ok", "is the server okay"];
 const serverAfter = fillersAfter.split("|").filter((word) => word !== "ok" && word !== "okay").join("|");
 export const questionWords = ["brain questions", "any brain questions", "ask me some brain questions", "ask me your brain questions", "any questions for me", "have you got any questions for me", "do you have any questions for me", "got any questions for me"];
@@ -60,6 +61,10 @@ function codeWordAlone(said: string, clock: boolean, web: boolean): CodeWord | n
   if (questionWords.includes(words.replace(new RegExp(`^(?:(?:${askingWords}) )+`), ""))) return { kind: "questions" };
   if (/^(?:(?:you can|can you|could you|would you|will you|just|please|now) )*stop listening(?: |$)/.test(words)) return { kind: "stop listening" };
   return null;
+}
+
+export function phoneFoundIn(said: string): boolean {
+  return foundWords.includes(asked(trimmed(said.replace(/[\u2018\u2019]/g, "'").replace(address, ""))));
 }
 
 export function lastSentenceOf(said: string): string | null {
@@ -152,12 +157,27 @@ export async function findPhone(token: string | null, signal: AbortSignal, url =
   if (token === null) return { say: "I couldn't reach your phone.", note: hubOffNote };
   try {
     const { status, fields } = await hubPost("/phone/find", {}, token, signal, url);
+    if (status === 200 && typeof fields.seconds === "number" && Number.isSafeInteger(fields.seconds)) return { say: `Your phone's ringing for ${fields.seconds} seconds. Say found it when you have it.` };
     if (status === 200) return { say: "I've sent your phone a notification." };
+    if (status === 429 && typeof fields.error === "string" && fields.error.startsWith("It's already ringing")) return { say: "It's already ringing. Say found it when you have it." };
     if (status === 429) return { say: "I sent your phone one a moment ago, so I didn't send another." };
     if (status === 404 && fields.error === "Finding the phone is switched off") return { say: "I couldn't reach your phone.", note: "finding your phone is off in the hub, so set FIND_PHONE=on in api/.env and restart the hub" };
     return { say: "I couldn't reach your phone.", note: `the hub said: ${errorOf(fields, status)}` };
   } catch (error) {
     return { say: "I couldn't reach your phone.", note: `couldn't reach the hub: ${reasonOf(error)}` };
+  }
+}
+
+export async function phoneFound(token: string | null, signal: AbortSignal, url = hubApiUrl): Promise<CodeWordReply> {
+  if (token === null) return { say: "I couldn't reach the hub to stop it.", note: hubOffNote };
+  try {
+    const { status, fields } = await hubPost("/phone/found", {}, token, signal, url);
+    if (status === 200 && fields.stopped === true) return fields.cleared === true ? { say: "Good, I've stopped it ringing." } : { say: "Good. I've stopped sending, but I couldn't clear it from your phone.", note: "the hub couldn't clear the notification on ntfy, so dismiss it on the phone" };
+    if (status === 200) return { say: "Good. It wasn't ringing." };
+    if (status === 404 && fields.error === "Finding the phone is switched off") return { say: "I couldn't reach your phone.", note: "finding your phone is off in the hub, so set FIND_PHONE=on in api/.env and restart the hub" };
+    return { say: "I couldn't reach the hub to stop it.", note: `the hub said: ${errorOf(fields, status)}` };
+  } catch (error) {
+    return { say: "I couldn't reach the hub to stop it.", note: `couldn't reach the hub: ${reasonOf(error)}` };
   }
 }
 

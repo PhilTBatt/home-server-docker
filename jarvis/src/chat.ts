@@ -2,7 +2,7 @@ import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
 import { answerMost, findInstruction, isEnd, isSkip, isYes, questionsNoteText, questionsOffNote, questionsWord, readQuestions, type BrainQuestions, type QuestionsRun } from "./brain-questions.js";
-import { clockReply, codeWordIn, earsStoppedWhy, hubOffNote, londonStamp, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply } from "./code-words.js";
+import { clockReply, codeWordIn, phoneFoundIn, earsStoppedWhy, hubOffNote, londonStamp, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply } from "./code-words.js";
 import type { SpeechReport } from "./speech-queue.js";
 import { createEvents, merged } from "./events.js";
 import { capped, lookingUp, lookUp, noQuestion, questionCap, type Earlier, type Helper, type LookedUp } from "./look-up.js";
@@ -201,7 +201,7 @@ export type ChatDeps = {
   reminders?: { news: ReminderNews; hub: ReminderHub };
 };
 
-export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply>; server?(signal: AbortSignal): Promise<CodeWordReply> };
+export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply>; server?(signal: AbortSignal): Promise<CodeWordReply>; found?(signal: AbortSignal): Promise<CodeWordReply> };
 
 export const neverMindNote = "left there, so nothing was asked";
 
@@ -211,7 +211,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null; lastReminder: { id: string; at: number } | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null; lastReminder: { id: string; at: number } | null; rangAt: number | null };
 
 function sounds(state: ChatState, speech: AnswerSpeech | null): void {
   if (speech === null || state.sounding.has(speech)) return;
@@ -801,6 +801,15 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     await onReminderAnswer(deps, state, reminderAnswer);
     return "go";
   }
+  if (state.questions === null && foundWindow(deps, state) && phoneFoundIn(sent.heard.text)) {
+    counted(sent.heard, state);
+    state.turn++;
+    await hush(deps, state);
+    state.rangAt = null;
+    const found = deps.codeWords?.found;
+    if (found !== undefined) await sayLine(deps, state, await found(deps.closing ?? new AbortController().signal));
+    return "go";
+  }
   const modeWord = state.questions === null ? spokenModeWord(deps, state, sent.heard.text) : null;
   if (modeWord !== null) {
     counted(sent.heard, state);
@@ -964,6 +973,7 @@ async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWo
   }
   const signal = deps.closing ?? new AbortController().signal;
   const failed = { note: "I couldn't save that note.", phone: "I couldn't reach your phone.", trains: "I couldn't get the train times.", server: "I couldn't check the server." } as const;
+  if (word.kind === "phone") state.rangAt = (deps.clock?.() ?? new Date()).getTime();
   const reply = deps.codeWords === undefined ? { say: failed[word.kind], note: hubOffNote } : word.kind === "note" ? await deps.codeWords.note(word.text, signal) : word.kind === "phone" ? await deps.codeWords.phone(signal) : word.kind === "trains" ? await deps.codeWords.trains(signal) : ((await deps.codeWords.server?.(signal)) ?? { say: failed.server, note: hubOffNote });
   await sayLine(deps, state, reply);
 }
@@ -1075,6 +1085,15 @@ function typedModeWord(deps: ChatDeps, state: ChatState, message: string): Typed
   if (asked === "away") return { kind: "away", until: null };
   const mode = modeNames.find((known) => known === asked && known !== "guest" && known !== "away");
   return mode === undefined ? { kind: "mode usage" } : { kind: "set mode", mode: mode as Exclude<Mode, "away" | "guest"> };
+}
+
+export const foundWindowMs = 2 * 60_000;
+
+function foundWindow(deps: ChatDeps, state: ChatState): boolean {
+  if (state.rangAt === null || state.guest || deps.codeWords?.found === undefined) return false;
+  if ((deps.clock?.() ?? new Date()).getTime() - state.rangAt <= foundWindowMs) return true;
+  state.rangAt = null;
+  return false;
 }
 
 async function setMode(deps: ChatDeps, state: ChatState, mode: Mode, until: Date | null, by: "voice" | "typed"): Promise<boolean> {
@@ -1480,7 +1499,7 @@ async function finishQuestions(deps: ChatDeps, state: ChatState): Promise<void> 
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, awaitingBack: false, switching: null, lastReminder: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, awaitingBack: false, switching: null, lastReminder: null, rangAt: null };
   const base = deps;
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);

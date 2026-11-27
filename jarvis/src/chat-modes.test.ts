@@ -144,7 +144,7 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
       hub: { answer: async (id, answer) => void answers.push([id, answer]) },
     },
     ...(options.follow === false ? {} : { followUp: { seconds: 5, ask: () => void follows.push("follow"), gapMs: 0 } }),
-    codeWords: { note: async () => ({ say: "Noted." }), phone: async () => (phone.push("rang"), { say: "I've sent your phone a notification." }), trains: async () => ({ say: "unused" }) },
+    codeWords: { note: async () => ({ say: "Noted." }), phone: async () => (phone.push("rang"), { say: "Your phone's ringing for 30 seconds. Say found it when you have it." }), trains: async () => ({ say: "unused" }), found: async () => (phone.push("found"), { say: "Good, I've stopped it ringing." }) },
     trains: {
       events: trainEvents.items,
       take() {
@@ -455,5 +455,27 @@ test("more than five minutes after a reminder, snooze and done are ordinary word
   await chat.type("snooze");
   assert.deepEqual(chat.answers, []);
   assert.deepEqual(chat.asked, ["normal: snooze"]);
+  await chat.end();
+});
+
+test("found it stops the ringing only for two minutes after he rang the phone, and is an ordinary question otherwise", { timeout: 5_000 }, async () => {
+  let at = now.getTime();
+  const chat = modeChat({ clock: () => new Date(at) });
+  await chat.say("Found it.");
+  assert.deepEqual(chat.asked, ["normal: Found it."]);
+  await chat.say("Find my phone.");
+  at += 60_000;
+  await chat.say("Got it, you can stop ringing.");
+  assert.deepEqual(chat.asked, ["normal: Found it.", "normal: Got it, you can stop ringing."], "only the found words themselves count, or as the last sentence");
+  await chat.say("Found my phone.");
+  assert.deepEqual(chat.phone, ["rang", "found"]);
+  assert.equal(chat.spoken.at(-1), "Good, I've stopped it ringing.");
+  await chat.say("Found it.");
+  assert.deepEqual(chat.phone, ["rang", "found"], "once it's stopped, found it goes to Claude again");
+  await chat.say("Find my phone.");
+  at += 2 * 60_000 + 1;
+  await chat.say("I've found it.");
+  assert.deepEqual(chat.phone, ["rang", "found", "rang"]);
+  assert.equal(chat.asked.at(-1), "normal: I've found it.");
   await chat.end();
 });

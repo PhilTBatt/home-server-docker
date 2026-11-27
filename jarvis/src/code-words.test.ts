@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { clockReply, dateWords, timeLine, timeWords, withTimeLine, codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, hubOffNote, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
+import { clockReply, dateWords, timeLine, timeWords, withTimeLine, codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, foundWords, hubOffNote, phoneFound, phoneFoundIn, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
 
 const stillOpen = new Set<() => unknown>();
 
@@ -460,4 +460,42 @@ test("look up doesn't take anything away from the code words that were there bef
   assert.deepEqual(codeWordIn("What time is it?", true, true), { kind: "time" });
   assert.deepEqual(codeWordIn("Find my phone", false, true), { kind: "phone" });
   assert.deepEqual(codeWordIn("Never mind", false, true), { kind: "never mind" });
+});
+
+test("found it and the like count only on their own, with a greeting, please or thanks around them", () => {
+  for (const said of ["Found it.", "found it", "Hey Jarvis, I found it!", "I've found my phone, thanks.", "Jarvis, found the phone.", "Okay, I’ve found it.", "Can you stop ringing my phone please?", "You can stop ringing."]) {
+    assert.equal(phoneFoundIn(said), true, said);
+  }
+  for (const said of ["I found it on the table", "Have you found it?", "found it hard to sleep", "Find my phone", "I found my keys", "stop", "", "Did I find my phone?"]) {
+    assert.equal(phoneFoundIn(said), false, said);
+  }
+  assert.ok(foundWords.every((words) => words === words.toLowerCase()));
+});
+
+test("found it isn't one of codeWordIn's code words, so it still reaches Claude until the chat asks for it", () => {
+  for (const said of ["Found it.", "I've found my phone.", "stop ringing"]) assert.equal(codeWordIn(said), null, said);
+});
+
+test("found it asks the hub's POST /phone/found with the token, and says what came of it", async () => {
+  const hub = await standInHub(() => ({ status: 200, body: { stopped: true, cleared: true } }));
+  assert.deepEqual(await phoneFound(token, signal, hub.url), { say: "Good, I've stopped it ringing." });
+  assert.deepEqual(hub.asked.map((one) => [one.method, one.url, one.authorization]), [["POST", "/phone/found", `Bearer ${token}`]]);
+  const notCleared = await standInHub(() => ({ status: 200, body: { stopped: true, cleared: false } }));
+  assert.deepEqual(await phoneFound(token, signal, notCleared.url), { say: "Good. I've stopped sending, but I couldn't clear it from your phone.", note: "the hub couldn't clear the notification on ntfy, so dismiss it on the phone" });
+  const quiet = await standInHub(() => ({ status: 200, body: { stopped: false } }));
+  assert.deepEqual(await phoneFound(token, signal, quiet.url), { say: "Good. It wasn't ringing." });
+  const off = await standInHub(() => ({ status: 404, body: { error: "Finding the phone is switched off" } }));
+  assert.deepEqual(await phoneFound(token, signal, off.url), { say: "I couldn't reach your phone.", note: "finding your phone is off in the hub, so set FIND_PHONE=on in api/.env and restart the hub" });
+  const old = await standInHub(() => ({ status: 404, body: { error: "Not Found" } }));
+  assert.deepEqual(await phoneFound(token, signal, old.url), { say: "I couldn't reach the hub to stop it.", note: "the hub said: Not Found" });
+  assert.deepEqual(await phoneFound(null, signal, hub.url), { say: "I couldn't reach the hub to stop it.", note: hubOffNote });
+  const gone = await phoneFound(token, signal, "http://127.0.0.1:1");
+  assert.match(gone.note ?? "", /^couldn't reach the hub: /);
+});
+
+test("finding the phone says how long it rings, and that it's already ringing, when the hub rings it", async () => {
+  const ringing = await standInHub(() => ({ status: 200, body: { sent: true, ring: "repeat", seconds: 30 } }));
+  assert.deepEqual(await findPhone(token, signal, ringing.url), { say: "Your phone's ringing for 30 seconds. Say found it when you have it." });
+  const already = await standInHub(() => ({ status: 429, body: { error: "It's already ringing: say found it, or POST /phone/found, to stop it" } }));
+  assert.deepEqual(await findPhone(token, signal, already.url), { say: "It's already ringing. Say found it when you have it." });
 });

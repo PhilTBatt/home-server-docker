@@ -29,6 +29,11 @@ export type DealSettings = {
   ai: boolean;
 };
 
+export type PhoneSettings = {
+  ring: "once" | "clear" | "repeat";
+  seconds: number;
+};
+
 export type CatchUpSettings = {
   repos: string[];
   token: string;
@@ -45,6 +50,7 @@ export type Config = {
   trainAlerts: AlertSettings;
   catchUp: CatchUpSettings;
   modes: ModeSettings;
+  phone: PhoneSettings;
   features: Features;
 };
 
@@ -177,6 +183,11 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (untilText !== "" && (until24 === null || until24 > latestBedtimeUntil)) notAllowed.push("BEDTIME_UNTIL (a 24-hour time before midday, like 07:30)");
   else if (until24 !== null && bedtimeFrom !== null && until24 <= bedtimeFrom) notAllowed.push("BEDTIME_UNTIL (a time later than BEDTIME_FROM)");
   const modes: ModeSettings = { bedtimeFrom, bedtimeUntil: until24 !== null && until24 <= latestBedtimeUntil && (bedtimeFrom === null || until24 > bedtimeFrom) ? until24 : null };
+  const ring = readChoice("FIND_PHONE_RING", ["once", "clear", "repeat"], false);
+  const secondsText = read("FIND_PHONE_SECONDS", false);
+  const seconds = /^[1-9]\d{1,2}$/.test(secondsText) && Number(secondsText) >= 10 && Number(secondsText) <= 120 ? Number(secondsText) : null;
+  if (secondsText !== "" && seconds === null) notAllowed.push("FIND_PHONE_SECONDS (a whole number of seconds from 10 to 120, like 30)");
+  const phone: PhoneSettings = { ring, seconds: seconds ?? 30 };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -184,5 +195,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, features };
 }

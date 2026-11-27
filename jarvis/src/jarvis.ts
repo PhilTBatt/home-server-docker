@@ -18,7 +18,7 @@ import { startApiSession } from "./api-session.js";
 import { brainFileExists, fileBrainQuestions } from "./brain-questions.js";
 import { createBrainTools, noBrainTools } from "./brain-tools.js";
 import { chimeFor } from "./chime.js";
-import { findPhone, saveVoiceNote, serverCheck, trainTimes } from "./code-words.js";
+import { findPhone, phoneFound, saveVoiceNote, serverCheck, trainTimes } from "./code-words.js";
 import { fillerFor } from "./filler.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, guestChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, systemFor } from "./chat.js";
@@ -211,7 +211,7 @@ try {
     ready: (yes) => (chatReady = yes),
     chime: wake === undefined || speaking === null ? undefined : chimeFor(speaking),
     followUp: wake === undefined || follow === undefined || followSeconds === null ? undefined : { seconds: followSeconds, ask: () => follow.ask(followSeconds * 1000) },
-    codeWords: { note: (text, signal) => saveVoiceNote(text, config.hubToken, signal), phone: (signal) => findPhone(config.hubToken, signal), trains: (signal) => trainTimes(config.hubToken, signal), server: (signal) => serverCheck(config.hubToken, signal) },
+    codeWords: { note: (text, signal) => saveVoiceNote(text, config.hubToken, signal), phone: (signal) => findPhone(config.hubToken, signal), found: (signal) => phoneFound(config.hubToken, signal), trains: (signal) => trainTimes(config.hubToken, signal), server: (signal) => serverCheck(config.hubToken, signal) },
     questions: config.brainQuestions && config.hubToken !== null ? { exists: brainFileExists(), file: (text, signal) => fileBrainQuestions(text, config.hubToken, signal) } : undefined,
     trains: config.trainAlerts && config.hubToken !== null ? watchTrainChanges({ ask: askHubForChanges(config.hubToken), signal: closing.signal }) : undefined,
     interrupt: () => {

@@ -7,7 +7,10 @@ export type Notification = {
   click?: string;
   priority?: 1 | 2 | 3 | 4 | 5;
   urgent?: boolean;
+  sequence?: string;
 };
+
+export const sequencePattern = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type Holder = (topic: string, notification: Notification) => boolean;
 
@@ -54,12 +57,21 @@ export async function postToNtfy(topic: string, notification: Notification, time
   const link = safeLink(notification.click);
   if (link !== null) headers.Click = link;
   if (notification.priority !== undefined && [1, 2, 4, 5].includes(notification.priority)) headers.Priority = String(notification.priority);
+  if (notification.sequence !== undefined && sequencePattern.test(notification.sequence)) headers["X-Sequence-ID"] = notification.sequence;
   const response = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
     method: "POST",
     headers,
     body: notification.message,
     signal: AbortSignal.timeout(timeoutMs),
   });
+  if (!response.ok) {
+    throw new Error(`ntfy replied ${response.status}`);
+  }
+}
+
+export async function clearOnNtfy(topic: string, sequence: string, timeoutMs = 10_000): Promise<void> {
+  if (!sequencePattern.test(sequence)) throw new Error("That isn't a sequence ID");
+  const response = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}/${sequence}/clear`, { method: "PUT", signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) {
     throw new Error(`ntfy replied ${response.status}`);
   }

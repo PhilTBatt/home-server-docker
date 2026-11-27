@@ -109,7 +109,7 @@ export function createWatchers(options: { sources: WatchSources; send: (notifica
       if (entry.pending === null) {
         const seen = happened(entry.watch, entry.createdAt, readings);
         entry.lastCheck = { at, ok: seen !== null };
-        if (seen === true) entry.pending = firedNotification(entry.watch, readings);
+        if (seen === true) entry.pending = { ...firedNotification(entry.watch, readings), sequence: `watcher-${entry.id}` };
       }
       if (entry.pending !== null) {
         if (await sent(entry.pending)) {

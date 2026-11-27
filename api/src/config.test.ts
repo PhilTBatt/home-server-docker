@@ -51,6 +51,7 @@ test("reads every setting into its own field", () => {
     trainAlerts: { days: ["mon", "wed"], start: 420, end: 510, reminder: 405 },
     catchUp: { repos: [], token: "" },
     modes: { bedtimeFrom: null, bedtimeUntil: null },
+    phone: { ring: "once", seconds: 30 },
     features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true },
   });
 });
@@ -68,6 +69,7 @@ test("ignores anything else in the environment", () => {
     "trainAlerts",
     "catchUp",
     "modes",
+    "phone",
     "features",
   ]);
 });
@@ -705,4 +707,17 @@ test("REMINDERS must be written out, as exactly on or off, and needs the ntfy to
   assert.throws(() => readConfig({ ...allOff, REMINDERS: "on", NTFY_TOPIC: undefined }), { message: "Missing settings in api/.env: NTFY_TOPIC" });
   assert.equal(readConfig({ ...allOff, REMINDERS: "on" }).features.reminders, true);
   assert.equal(readConfig({ ...allOff, NTFY_TOPIC: undefined }).ntfyTopic, "");
+});
+
+test("FIND_PHONE_RING is once unless it says clear or repeat, and FIND_PHONE_SECONDS is 30 unless it's 10 to 120", () => {
+  assert.deepEqual(readConfig(complete).phone, { ring: "once", seconds: 30 });
+  assert.deepEqual(readConfig({ ...complete, FIND_PHONE_RING: "clear", FIND_PHONE_SECONDS: "10" }).phone, { ring: "clear", seconds: 10 });
+  assert.deepEqual(readConfig({ ...complete, FIND_PHONE_RING: "repeat", FIND_PHONE_SECONDS: "120" }).phone, { ring: "repeat", seconds: 120 });
+  for (const value of ["ring", "Once", "loud", " once"]) {
+    assert.throws(() => readConfig({ ...complete, FIND_PHONE_RING: value }), { message: "Settings in api/.env with a value that isn't allowed: FIND_PHONE_RING (once or clear or repeat)" }, value);
+  }
+  for (const value of ["9", "121", "30.5", "thirty", "030", "-30", "1000"]) {
+    assert.throws(() => readConfig({ ...complete, FIND_PHONE_SECONDS: value }), { message: "Settings in api/.env with a value that isn't allowed: FIND_PHONE_SECONDS (a whole number of seconds from 10 to 120, like 30)" }, value);
+  }
+  assert.throws(() => readConfig({ ...complete, FIND_PHONE: "off", FIND_PHONE_RING: "loud" }), /FIND_PHONE_RING/);
 });

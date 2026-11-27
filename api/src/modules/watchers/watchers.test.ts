@@ -129,7 +129,7 @@ test("a download finishing after you asked fires one notification and the watche
   assert.deepEqual(watchers.list()[0].lastCheck, { at: "2026-11-26T12:01:00.000Z", ok: true });
   state.finished = [...state.finished, { name: "The ALPHA one", completedAt: later(2).getTime() }];
   assert.deepEqual(await watchers.run(later(3)), { fired: 1, expired: 0, unsent: 0, dropped: 0 });
-  assert.deepEqual(sent, [{ title: "Home Hub: download finished", message: 'A download matching "alpha" has finished.', tags: "bell" }]);
+  assert.deepEqual(sent, [{ title: "Home Hub: download finished", message: 'A download matching "alpha" has finished.', tags: "bell", sequence: "watcher-00000000" }]);
   assert.deepEqual(watchers.list(), []);
   assert.equal(await watchers.run(later(4)), "nothing watched");
   assert.equal(sent.length, 1);
@@ -289,4 +289,28 @@ test("one cancelled while a check is reading isn't sent", async () => {
   held.release();
   assert.deepEqual(await running, { fired: 0, expired: 0, unsent: 0, dropped: 0 });
   assert.deepEqual(sent, []);
+});
+
+test("a notification sent again after a send that seemed to fail keeps the same sequence ID, so the phone replaces it rather than showing it twice", async () => {
+  const { watchers, state } = rig({ ids: ["0a1b2c3d"] });
+  added(watchers.add(disk(15), start));
+  state.disk = { freeGB: 10, totalGB: 100 };
+  const tries: Notification[] = [];
+  let first = true;
+  const slow = createWatchers({
+    sources: { finished: async () => [], disk: async () => state.disk as Disk, answering: { qbittorrent: async () => ({}), jellyfin: async () => ({}) } },
+    send: async (notification) => {
+      tries.push(notification);
+      if (first) {
+        first = false;
+        throw new Error("The operation was aborted due to timeout");
+      }
+    },
+    makeId: () => "0a1b2c3d",
+  });
+  added(slow.add(disk(15), start));
+  assert.deepEqual(await slow.run(later(1)), { fired: 0, expired: 0, unsent: 1, dropped: 0 });
+  assert.deepEqual(await slow.run(later(2)), { fired: 1, expired: 0, unsent: 0, dropped: 0 });
+  assert.deepEqual(tries.map((one) => one.sequence), ["watcher-0a1b2c3d", "watcher-0a1b2c3d"]);
+  assert.equal(watchers.list().length, 1);
 });

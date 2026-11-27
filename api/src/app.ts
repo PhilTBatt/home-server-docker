@@ -75,7 +75,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   });
   app.register(catchUp, { prefix: "/catch-up", features, catchUp: catchingUp });
   app.register(memory, { prefix: "/memory", features: options.config.features });
-  app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic });
+  app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic, ring: options.config.phone });
   app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains, changes: options.config.features.trainAlerts ? options.trainChanges : undefined });
   app.register(expiry, { prefix: "/expiry", features: options.config.features, checker: expiryChecker });
   app.register(watchers, { prefix: "/watchers", features: options.config.features, watchers: watching });
