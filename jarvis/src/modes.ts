@@ -72,7 +72,7 @@ export function readModeState(fields: Record<string, unknown>): ModeState | null
 
 export type ModeHub = {
   get(signal: AbortSignal): Promise<ModeState>;
-  set(mode: Mode, until: Date | null, by: "voice" | "typed", signal: AbortSignal): Promise<ModeState>;
+  set(mode: Mode, until: Date | null, by: "voice" | "typed" | "owner", signal: AbortSignal): Promise<ModeState>;
   schedule(mode: Mode, at: Date, signal: AbortSignal): Promise<void>;
 };
 

@@ -3,7 +3,7 @@ import type { Notification } from "../notify/notifier.js";
 import { clockText, londonNow } from "../trains/alerts.js";
 
 export const modeNames = ["normal", "guest", "bedtime", "gaming", "coding", "away"] as const;
-export const askedBy = ["voice", "typed", "phone"] as const;
+export const askedBy = ["voice", "typed", "phone", "owner"] as const;
 
 export type Mode = (typeof modeNames)[number];
 export type AskedBy = (typeof askedBy)[number];

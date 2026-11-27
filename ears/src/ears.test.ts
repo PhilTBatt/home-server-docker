@@ -1150,13 +1150,13 @@ test("with voice ID to observe, each recording's voice is scored before Whisper 
   assert.deepEqual([(await said("wake"))?.text, (await said("wake"))?.text, (await said("follow"))?.text, (await said("wake"))?.text], ["What's the time?", "What's the time?", "What's the time?", "What's the time?"]);
   assert.deepEqual([checked.length, turned.length], [4, 4]);
   assert.deepEqual(lines.filter((line) => line.startsWith("Voice: ")), [
-    "Voice: Score against the voiceprint: 0.84. At the threshold of 0.5, that counts as the voiceprint's voice.",
-    "Voice: Score against the voiceprint: 0.21. At the threshold of 0.5, that counts as a different voice.",
+    "Voice: Best score: 0.84, a voiceprint's. At the threshold of 0.5, that counts as a voiceprint.",
+    "Voice: Best score: 0.21. At the threshold of 0.5, that counts as nobody's voiceprint.",
     "Voice: Speech was heard for only 0.6 seconds, under the 1 second a voice needs to be compared fairly.",
     "Voice: couldn't be checked (the model broke).",
   ]);
   assert.equal(lines.some((line) => line.startsWith("Not turned into text")), false);
-  const at = lines.indexOf("Voice: Score against the voiceprint: 0.84. At the threshold of 0.5, that counts as the voiceprint's voice.");
+  const at = lines.indexOf("Voice: Best score: 0.84, a voiceprint's. At the threshold of 0.5, that counts as a voiceprint.");
   assert.match(lines[at + 1], /^Turned into text in /, "the voice is checked first, then Whisper is asked");
 });
 
@@ -1165,8 +1165,8 @@ test("with voice ID required, a wake-word or follow-up recording in a different 
   await ears.unmute();
   const blocked = await said("wake");
   assert.deepEqual([blocked?.text, blocked?.textProblem, ears.view().state, turned.length], [null, notYourVoice, "idle", 0]);
-  assert.equal(notYourVoice, "the voice in it didn't match the voiceprint");
-  assert.deepEqual(lines.slice(-2), ["Voice: Score against the voiceprint: 0.21. At the threshold of 0.5, that counts as a different voice.", `Not turned into text: ${notYourVoice}.`]);
+  assert.equal(notYourVoice, "the voice in it didn't match any voiceprint");
+  assert.deepEqual(lines.slice(-2), ["Voice: Best score: 0.21. At the threshold of 0.5, that counts as nobody's voiceprint.", `Not turned into text: ${notYourVoice}.`]);
   assert.deepEqual([(await said("follow"))?.textProblem, turned.length], [notYourVoice, 0]);
   assert.deepEqual([(await said("wake"))?.text, (await said("follow"))?.text, turned.length], ["What's the time?", "What's the time?", 2], "your voice, and speech too short to judge");
   assert.deepEqual([(await said("button"))?.text, (await said("push"))?.text, turned.length], ["What's the time?", "What's the time?", 4], "started by hand, so not blocked, though still scored");
@@ -1178,7 +1178,7 @@ test("a voice check that fails blocks a wake-word recording when voice ID is req
   await ears.unmute();
   const failed = await said("wake");
   assert.deepEqual([failed?.text, failed?.textProblem, turned.length], [null, voiceNotChecked, 0]);
-  assert.equal(voiceNotChecked, "the voice in it couldn't be checked against the voiceprint, and voice ID is required");
+  assert.equal(voiceNotChecked, "the voice in it couldn't be checked against the voiceprints, and voice ID is required");
   assert.deepEqual(lines.slice(-2), ["Voice: couldn't be checked (the model broke).", `Not turned into text: ${voiceNotChecked}.`]);
   let release: (result: VoiceResult) => void = () => {};
   const slowLines: string[] = [];
@@ -1214,7 +1214,7 @@ test("with voice ID required, speech too quiet for the voice check to find is bl
   await ears.unmute();
   const blocked = await said("wake");
   assert.deepEqual([blocked?.text, blocked?.textProblem, turned.length], [null, voiceTooQuiet, 0]);
-  assert.equal(voiceTooQuiet, "the speech in it was too quiet to check against the voiceprint, and voice ID is required");
+  assert.equal(voiceTooQuiet, "the speech in it was too quiet to check against the voiceprints, and voice ID is required");
   assert.deepEqual(lines.slice(-2), ["Voice: No speech was heard, so there was nothing to compare.", `Not turned into text: ${voiceTooQuiet}.`]);
   assert.deepEqual([(await said("button"))?.text, turned.length], ["What's the time?", 1], "the talk button is never blocked");
   assert.equal(voiceCheckMs, 10_000);
@@ -1237,4 +1237,44 @@ test("with voice ID required, speech too quiet for the voice check to find is bl
   await until(() => slow.view().state === "idle" && slow.view().last?.textProblem !== null);
   assert.deepEqual([slow.view().last?.text, slow.view().last?.textProblem], [null, voiceNotChecked]);
   assert.deepEqual(slowLines.slice(-2), ["Voice: couldn't be checked (it took longer than 0.1 seconds).", `Not turned into text: ${voiceNotChecked}.`]);
+});
+
+test("each scored recording tells Jarvis who it was in last.voice, the owner or another voiceprint or nobody, with the best score and never the numbers, and an unscored one has none", async () => {
+  const visitor: VoiceResult = { verdict: "match", score: 0.8123, speechMs: 2_000, who: "visitor", owner: false, against: 2 };
+  const owner: VoiceResult = { verdict: "match", score: 0.9, speechMs: 2_000, who: "voiceprint", owner: true, against: 2 };
+  const nobody: VoiceResult = { verdict: "different", score: 0.2, speechMs: 2_000, who: null, owner: false, against: 2 };
+  const short: VoiceResult = { verdict: "too short", score: null, speechMs: 400, who: null, owner: false };
+  const { ears, lines, said } = setUpVoice("observe", [visitor, owner, nobody, short]);
+  await ears.unmute();
+  assert.deepEqual((await said("wake"))?.voice, { who: "visitor", owner: false, score: 0.812 });
+  assert.deepEqual((await said("wake"))?.voice, { who: "voiceprint", owner: true, score: 0.9 });
+  assert.deepEqual((await said("wake"))?.voice, { who: null, owner: false, score: 0.2 });
+  const unscored = await said("wake");
+  assert.equal(unscored !== null && "voice" in unscored, false);
+  assert.ok(lines.includes("Voice: Best score of 2 voiceprints: 0.81, visitor's. At the threshold of 0.5, that counts as visitor."));
+  assert.ok(lines.includes("Voice: Best score of 2 voiceprints: 0.90, voiceprint's. At the threshold of 0.5, that counts as voiceprint, the owner."));
+});
+
+test("with voice ID required, a voice matching any voiceprint gets through, and with guests on every voice does, still scored and reported, until guests go off again", async () => {
+  const visitor: VoiceResult = { verdict: "match", score: 0.7, speechMs: 2_000, who: "visitor", owner: false, against: 2 };
+  const nobody: VoiceResult = { verdict: "different", score: 0.1, speechMs: 2_000, who: null, owner: false, against: 2 };
+  const quiet: VoiceResult = { verdict: "no speech", score: null, speechMs: 0, who: null, owner: false };
+  const { ears, lines, turned, said } = setUpVoice("require", [visitor, nobody, nobody, quiet, nobody]);
+  await ears.unmute();
+  assert.equal(ears.guestsOn(), false);
+  assert.equal((await said("wake"))?.text, "What's the time?");
+  assert.equal((await said("wake"))?.textProblem, notYourVoice);
+  ears.guests(true);
+  assert.equal(ears.guestsOn(), true);
+  assert.ok(lines.includes("Guests: on, so every voice gets through, still scored."));
+  const let_through = await said("follow");
+  assert.deepEqual([let_through?.text, let_through?.voice], ["What's the time?", { who: null, owner: false, score: 0.1 }]);
+  assert.ok(lines.includes("Let through: guests are on, so every voice gets through."));
+  assert.equal((await said("wake"))?.text, "What's the time?", "too quiet to check gets through too while guests are on");
+  ears.guests(true);
+  assert.equal(lines.filter((line) => line.startsWith("Guests: on")).length, 1, "setting it again changes nothing");
+  ears.guests(false);
+  assert.ok(lines.includes("Guests: off, so voice ID blocks voices that match no voiceprint again."));
+  assert.equal((await said("wake"))?.textProblem, notYourVoice);
+  assert.equal(turned.length, 3);
 });

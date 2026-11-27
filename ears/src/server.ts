@@ -4,9 +4,9 @@ import { claimMs, type Ears, type EarsView, type Refused } from "./ears.js";
 
 export const earsPort = 8090;
 
-const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST", "/wait": "GET", "/wake/claim": "POST", "/wake/hold": "POST", "/wake/release": "POST", "/wake/follow": "POST", "/wake/talk": "POST", "/wake/turn": "POST" };
+const routes: Record<string, string> = { "/state": "GET", "/recording/start": "POST", "/recording/stop": "POST", "/recording/cancel": "POST", "/wait": "GET", "/wake/claim": "POST", "/wake/hold": "POST", "/wake/release": "POST", "/wake/follow": "POST", "/wake/talk": "POST", "/wake/turn": "POST", "/wake/guests": "POST" };
 
-export type WakeApi = { full(): Record<string, unknown>; wait(after: number, run: string | null, signal: AbortSignal, judge?: boolean): Promise<Record<string, unknown>>; hold(by: string): boolean; release(by: string): boolean; follow(withinMs: number): { ok: true; view: EarsView; id: number } | Refused; press(): { ok: true; view: EarsView; id: number } | Refused; turn(id: number, n: number, verdict: "done" | "more"): boolean };
+export type WakeApi = { full(): Record<string, unknown>; wait(after: number, run: string | null, signal: AbortSignal, judge?: boolean): Promise<Record<string, unknown>>; hold(by: string): boolean; release(by: string): boolean; follow(withinMs: number): { ok: true; view: EarsView; id: number } | Refused; press(): { ok: true; view: EarsView; id: number } | Refused; turn(id: number, n: number, verdict: "done" | "more"): boolean; guests(on: boolean): boolean };
 
 export const followWithinMs = { least: 1_000, most: 20_000 };
 
@@ -103,6 +103,12 @@ export function earsHandler(ears: Ears, token: string, wake?: WakeApi, timing = 
       while (ears.current()?.id === started.id && ears.current()?.claimed !== true && performance.now() < giveUpAt) await pause(timing.everyMs);
       const now = ears.current();
       return now?.id === started.id && now.claimed ? send(response, 200, { sent: false, ...ears.view(), lastId: ears.lastId(), id: started.id }) : send(response, 409, { error: notTakenAtAll, ...wake.full() });
+    }
+    if (wake !== undefined && path === "/wake/guests") {
+      const on = query.get("on");
+      if (on !== "1" && on !== "0") return send(response, 400, { error: "on must be 1 to let every voice through, or 0 to stop" });
+      wake.guests(on === "1");
+      return send(response, 200, wake.full());
     }
     if (wake !== undefined && (path === "/wake/hold" || path === "/wake/release")) {
       const by = query.get("by") ?? "";

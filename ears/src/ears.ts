@@ -7,7 +7,9 @@ import type { ToText } from "./whisper.js";
 
 export type EarsState = "muted" | "idle" | "recording" | "working" | "failed";
 
-export type LastRecording = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender; pauseMs?: number };
+export type HeardVoice = { who: string | null; owner: boolean; score: number | null };
+
+export type LastRecording = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender; pauseMs?: number; voice?: HeardVoice };
 
 export type VoiceGate = { check: VoiceCheck; mode: "observe" | "require"; threshold: number; limitMs?: number };
 
@@ -32,6 +34,8 @@ export type Ears = {
   lastId(): number | null;
   speechHeard(): boolean;
   stopping(): boolean;
+  guests(on: boolean): void;
+  guestsOn(): boolean;
 };
 
 export const startsMuted = "ears starts muted after every start, and waits to be unmuted";
@@ -90,9 +94,9 @@ export const claimMs = 2_000;
 export const notTakenWhy = `no Jarvis chat took it within ${claimMs / 1000} seconds`;
 export const movedOn = "ears has moved on to a newer recording, so that one is gone";
 export const thatOneEnded = "that recording has already ended";
-export const notYourVoice = "the voice in it didn't match the voiceprint";
-export const voiceNotChecked = "the voice in it couldn't be checked against the voiceprint, and voice ID is required";
-export const voiceTooQuiet = "the speech in it was too quiet to check against the voiceprint, and voice ID is required";
+export const notYourVoice = "the voice in it didn't match any voiceprint";
+export const voiceNotChecked = "the voice in it couldn't be checked against the voiceprints, and voice ID is required";
+export const voiceTooQuiet = "the speech in it was too quiet to check against the voiceprints, and voice ID is required";
 export const voiceCheckMs = 10_000;
 export const stopListeningWhy = "it heard its spoken code word to stop";
 export const stoppedListening = "you said stop listening, so ears muted itself. Unmute it on the server with bash host/ears.sh unmute";
@@ -121,6 +125,7 @@ export function createEars(deps: EarsDeps): Ears {
   let lastBy: By | null = null;
   let claimTimer: ReturnType<typeof setTimeout> | null = null;
   let muteSelf: (why: string) => Promise<void> = async () => {};
+  let guests = false;
   const ids = new WeakMap<Recording, number>();
   const changed = () => deps.changed?.();
   const now = deps.now ?? (() => performance.now());
@@ -165,7 +170,9 @@ export function createEars(deps: EarsDeps): Ears {
           if (calledOff.signal.aborted) return;
           const result = typeof judged === "string" ? null : judged;
           deps.log(result === null ? `Voice: couldn't be checked (${judged}).` : `Voice: ${describeVoice(result, gate.threshold)}`);
-          if (blocksRecording(gate.mode, result, by)) {
+          if (result !== null && result.score !== null) heard.voice = { who: result.who ?? null, owner: result.owner === true, score: Math.round(result.score * 1000) / 1000 };
+          if (guests && blocksRecording(gate.mode, result, by)) deps.log("Let through: guests are on, so every voice gets through.");
+          if (blocksRecording(gate.mode, result, by, guests)) {
             heard.textProblem = result === null ? voiceNotChecked : result.verdict === "no speech" ? voiceTooQuiet : notYourVoice;
             deps.log(`Not turned into text: ${heard.textProblem}.`);
             return;
@@ -387,6 +394,13 @@ export function createEars(deps: EarsDeps): Ears {
     lastId: () => lastId,
     speechHeard: () => recording?.speechHeard?.() === true,
     stopping: () => state === "recording" && recording === null,
+    guests(on) {
+      if (guests === on) return;
+      guests = on;
+      deps.log(on ? "Guests: on, so every voice gets through, still scored." : "Guests: off, so voice ID blocks voices that match no voiceprint again.");
+      changed();
+    },
+    guestsOn: () => guests,
   };
   muteSelf = (why) => ears.mute(why);
   return ears;

@@ -1,9 +1,9 @@
 import type { Writable } from "node:stream";
-import { readMicSettings, readVoiceIdThreshold } from "./config.js";
+import { readMicSettings, readVoiceIdThreshold, readVoiceOwner } from "./config.js";
 import { busyLine, readWait, secondsOf } from "./mic-test.js";
 import { applyMicSettings, findMicCard, recorderArgs, recorderCommand, type MicCard, type MicSetters } from "./mic-card.js";
 import { startRecording, type Recorder } from "./recorder.js";
-import { cosine, describeVoice, embedSpeech, loadVoiceModel, loadVoiceprint, makeVoiceprint, scoreVoice, voiceprintText, type Embedder, type Heard, type Voiceprint } from "./voice-id.js";
+import { cosine, describeVoice, embedSpeech, loadVoiceModel, loadVoiceprints, makeVoiceprint, scoreVoice, voiceprintText, type Embedder, type Heard, type NamedVoiceprint } from "./voice-id.js";
 
 export const enrolSentences = [
   "Hey, what's the weather going to be like this afternoon?",
@@ -31,7 +31,7 @@ export type VoiceToolDeps = MicSetters & {
 
 export type EnrolDeps = VoiceToolDeps & { send: (text: string) => Promise<void>; now?: () => Date };
 
-export type CheckDeps = VoiceToolDeps & { loadPrint?: () => Promise<Voiceprint> };
+export type CheckDeps = VoiceToolDeps & { loadPrints?: (owner: string) => Promise<NamedVoiceprint[]> };
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -126,17 +126,19 @@ export async function runVoiceEnrol(deps: EnrolDeps): Promise<number> {
 
 export async function runVoiceCheck(deps: CheckDeps): Promise<number> {
   let ready: Awaited<ReturnType<typeof prepare>>;
-  let voiceprint: Voiceprint;
+  let voiceprints: NamedVoiceprint[];
+  let owner: string;
   let wait: number;
   try {
     wait = readWait(deps.env.EARS_VOICE_CHECK_WAIT);
-    voiceprint = await (deps.loadPrint ?? (() => loadVoiceprint()))();
+    owner = readVoiceOwner(deps.env.EARS_VOICE_OWNER);
+    voiceprints = await (deps.loadPrints ?? ((name) => loadVoiceprints(name)))(owner);
     ready = await prepare(deps);
   } catch (error) {
     deps.say(`The check didn't start: ${messageOf(error)}.`);
     return 1;
   }
-  deps.say(`The voiceprint was made from ${voiceprint.clips} clip${voiceprint.clips === 1 ? "" : "s"} on ${voiceprint.made.slice(0, 10)}.`);
+  for (const print of voiceprints) deps.say(`${print.name}${print.name === owner ? " (the owner)" : ""}: made from ${print.clips} clip${print.clips === 1 ? "" : "s"} on ${print.made.slice(0, 10)}.`);
   if (wait > 0) {
     deps.say(`Waiting ${secondsOf(wait * 1000)} first.`);
     await sleeper(deps)(wait * 1000);
@@ -149,7 +151,7 @@ export async function runVoiceCheck(deps: CheckDeps): Promise<number> {
     return 1;
   }
   try {
-    deps.say(describeVoice(await scoreVoice(sound, voiceprint, ready.embedder, ready.threshold), ready.threshold));
+    deps.say(describeVoice(await scoreVoice(sound, voiceprints, ready.embedder, ready.threshold, owner), ready.threshold));
   } catch (error) {
     deps.say(`The voice model couldn't run: ${messageOf(error)}.`);
     return 1;

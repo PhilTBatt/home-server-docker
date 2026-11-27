@@ -44,6 +44,9 @@ export const personaNamePattern = /^[a-z0-9][a-z0-9-]{0,39}$/;
 export const earsModes = ["off", "push", "wake"] as const;
 export type EarsMode = (typeof earsModes)[number];
 
+export const otherVoicesModes = ["answer", "name", "guest"] as const;
+export type OtherVoices = (typeof otherVoicesModes)[number];
+
 export type Config = {
   apiKey: string;
   engine: Engine;
@@ -78,6 +81,8 @@ export type Config = {
   guest: boolean;
   modes: boolean;
   reminders: boolean;
+  voices: boolean;
+  otherVoices: OtherVoices;
   web: WebMode;
   webBy: WebBy;
   webToken: string | null;
@@ -231,6 +236,13 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const reminders = env.JARVIS_REMINDERS?.trim() || "off";
   if (reminders !== "on" && reminders !== "off") throw new Error(`JARVIS_REMINDERS must be on or off, not "${reminders}"`);
   if (reminders === "on" && hubTools !== "on") throw new Error("JARVIS_REMINDERS is on, but reminders live in the hub, so it needs JARVIS_HUB_TOOLS=on too. Set that, or set JARVIS_REMINDERS=off");
+  const voices = env.JARVIS_VOICES?.trim() || "off";
+  if (voices !== "on" && voices !== "off") throw new Error(`JARVIS_VOICES must be on or off, not "${voices}"`);
+  if (voices === "on" && ears === "off") throw new Error("JARVIS_VOICES is on, but voices come from ears, so it needs JARVIS_EARS=push or wake too. Set that, or set JARVIS_VOICES=off");
+  const otherVoices = env.JARVIS_OTHER_VOICES?.trim() || "answer";
+  if (!otherVoicesModes.includes(otherVoices as OtherVoices)) throw new Error(`JARVIS_OTHER_VOICES must be answer, name or guest, not "${otherVoices}"`);
+  if (otherVoices !== "answer" && voices !== "on") throw new Error(`JARVIS_OTHER_VOICES is ${otherVoices}, but that needs JARVIS_VOICES=on. Set that, or set JARVIS_OTHER_VOICES=answer`);
+  if (otherVoices === "guest" && guest !== "on") throw new Error("JARVIS_OTHER_VOICES is guest, but that needs JARVIS_GUEST=on. Set that, or set JARVIS_OTHER_VOICES to answer or name");
   const web = env.JARVIS_WEB?.trim() || "off";
   if (!isWebMode(web)) throw new Error(`JARVIS_WEB must be ${webModes.slice(0, -1).join(", ")} or ${webModes[webModes.length - 1]}, not "${web}"`);
   const webBy = env.JARVIS_WEB_BY?.trim() || "claude";
@@ -241,5 +253,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (needsToken && webToken !== null && /\s/.test(webToken)) throw new Error("JARVIS_WEB_TOKEN must be the token alone on one line, with no spaces in it");
   const webLog = env.JARVIS_WEB_LOG?.trim() || "off";
   if (webLog !== "on" && webLog !== "off") throw new Error(`JARVIS_WEB_LOG must be on or off, not "${webLog}"`);
-  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", intro: intro === "on", guest: guest === "on", modes: modes === "on", reminders: reminders === "on", web, webBy, webToken: needsToken ? webToken : null, webLog: webLog === "on", log: log === "on" };
+  return { apiKey, engine, thinkingHistory, chats, lengthHints, lengthWarn, lengthCap, hubToken: hubTools === "on" ? token : null, hubActions: hubActions === "on", sessionNotes: sessionNotes === "on", voice, kokoroVoice, kokoroSpeed, piperVoice, volume, speechStart, speechStop, speechBundle: speechBundle === "on", spokenStyle: spokenStyle === "on", persona: persona === "off" ? null : persona, liveFacts: liveFacts === "on", filler: filler === "on", ears, earsToken: ears === "off" ? null : earsToken, followUp, turnCheck: turnCheck === "on", trainAlerts: trainAlerts === "on", brainQuestions: brainQuestions === "on", clock: clock === "on", intro: intro === "on", guest: guest === "on", modes: modes === "on", reminders: reminders === "on", voices: voices === "on", otherVoices: otherVoices as OtherVoices, web, webBy, webToken: needsToken ? webToken : null, webLog: webLog === "on", log: log === "on" };
 }

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, defaultVoiceIdThreshold, microphones, mostBoostSteps, readConfig, readMicSettings, readVoiceIdMode, readVoiceIdSettings, readVoiceIdThreshold, readWakeEnd, readWakePause, shortestToken, voiceIdModes, wakePauses } from "./config.js";
+import { defaultMicBoostControl, defaultMicControl, defaultMicLevel, defaultVoiceIdThreshold, microphones, mostBoostSteps, readConfig, readMicSettings, readVoiceIdMode, readVoiceIdSettings, readVoiceIdThreshold, readVoiceOwner, readWakeEnd, readWakePause, shortestToken, voiceIdModes, wakePauses } from "./config.js";
 
 const token = "t".repeat(64);
 
-const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500, turnWords: false, interrupt: "off", voiceId: { mode: "off", threshold: 0.5 } };
+const usual = { micLevel: 80, micControl: "Capture", micBoost: "keep", micBoostControl: "Internal Mic Boost", wake: false, wakeEnd: "loudness", wakePauseMs: 1500, turnWords: false, interrupt: "off", voiceId: { mode: "off", threshold: 0.5, owner: "voiceprint" } };
 
 test("reads the token, and with no microphone set there's nothing to record from", () => {
   assert.deepEqual(readConfig({ EARS_TOKEN: token }), { token, microphone: null, ...usual });
@@ -150,6 +150,16 @@ test("voice ID's threshold is 0.5 unless EARS_VOICE_ID_THRESHOLD says a number a
 });
 
 test("voice ID's two settings can be read on their own, without a token, for the voice tools", () => {
-  assert.deepEqual(readVoiceIdSettings({}), { mode: "off", threshold: 0.5 });
-  assert.deepEqual(readVoiceIdSettings({ EARS_VOICE_ID: "observe", EARS_VOICE_ID_THRESHOLD: "0.6", EARS_TOKEN: "short" }), { mode: "observe", threshold: 0.6 });
+  assert.deepEqual(readVoiceIdSettings({}), { mode: "off", threshold: 0.5, owner: "voiceprint" });
+  assert.deepEqual(readVoiceIdSettings({ EARS_VOICE_ID: "observe", EARS_VOICE_ID_THRESHOLD: "0.6", EARS_TOKEN: "short" }), { mode: "observe", threshold: 0.6, owner: "voiceprint" });
+});
+
+test("EARS_VOICE_OWNER names the owner's voiceprint, the existing voiceprint.json unless set, and takes only a plain name", () => {
+  assert.equal(readVoiceOwner(undefined), "voiceprint");
+  assert.equal(readVoiceOwner(" "), "voiceprint");
+  assert.equal(readVoiceOwner("main-1"), "main-1");
+  assert.equal(readVoiceIdSettings({ EARS_VOICE_OWNER: "owner" }).owner, "owner");
+  for (const bad of ["Main", "a b", "../x", "x.json", "a".repeat(21), "voice_print"]) {
+    assert.throws(() => readVoiceOwner(bad), { message: `EARS_VOICE_OWNER must be the name of a voiceprint in ears/voice, 1 to 20 of a to z, 0 to 9 and -, like voiceprint, not "${bad}"` }, bad);
+  }
 });

@@ -4,7 +4,8 @@ export const earsStopMs = 70_000;
 
 export type Ender = "loudness" | "silero";
 
-export type EarsLast = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender; pauseMs?: number };
+export type EarsVoice = { who: string | null; owner: boolean; score: number | null };
+export type EarsLast = { seconds: number; reason: string; text: string | null; textProblem: string | null; ender?: Ender; pauseMs?: number; voice?: EarsVoice };
 export type EarsCurrent = { id: number; by: "push" | "wake" | "follow" | "button"; claimed: boolean };
 export type EarsAsking = { id: number; n: number; text: string };
 export type EarsWake = { on: boolean; listening: boolean; held: boolean; problem: string | null; late?: { count: number; behindMs: number | null }; interrupt?: "wake" | "speech" };
@@ -26,7 +27,17 @@ function lastOf(value: unknown): EarsLast | null {
   if (typeof last.seconds !== "number" || !Number.isFinite(last.seconds) || last.seconds < 0 || typeof last.reason !== "string") return null;
   if (last.text !== null && typeof last.text !== "string") return null;
   if (last.textProblem !== null && typeof last.textProblem !== "string") return null;
-  return { seconds: last.seconds, reason: tidy(last.reason), text: last.text, textProblem: last.textProblem === null ? null : tidy(last.textProblem), ...(last.ender === "loudness" || last.ender === "silero" ? { ender: last.ender } : {}), ...(count(last.pauseMs, 1) === null ? {} : { pauseMs: last.pauseMs as number }) };
+  const voice = voiceOf(last.voice);
+  return { seconds: last.seconds, reason: tidy(last.reason), text: last.text, textProblem: last.textProblem === null ? null : tidy(last.textProblem), ...(last.ender === "loudness" || last.ender === "silero" ? { ender: last.ender } : {}), ...(count(last.pauseMs, 1) === null ? {} : { pauseMs: last.pauseMs as number }), ...(voice === null ? {} : { voice }) };
+}
+
+export function voiceOf(value: unknown): EarsVoice | null {
+  if (typeof value !== "object" || value === null) return null;
+  const voice = value as Record<string, unknown>;
+  const who = voice.who === null ? null : typeof voice.who === "string" && /^[a-z0-9-]{1,20}$/.test(voice.who) ? voice.who : undefined;
+  const score = voice.score === null ? null : typeof voice.score === "number" && Number.isFinite(voice.score) && voice.score >= -1 && voice.score <= 1 ? voice.score : undefined;
+  if (who === undefined || score === undefined || typeof voice.owner !== "boolean" || (voice.owner && who === null)) return null;
+  return { who, owner: voice.owner, score };
 }
 
 function count(value: unknown, least: number): number | null {

@@ -15,6 +15,7 @@ export type FactsInput = {
   modes?: boolean;
   guest?: boolean;
   reminders?: boolean;
+  otherVoices?: "answer" | "name" | "guest";
 };
 
 const voiceNames: Record<Exclude<VoiceMode, "off">, string> = { kokoro: "Kokoro", piper: "Piper" };
@@ -41,6 +42,8 @@ export function liveFacts(input: FactsInput): string {
   facts.push(input.web === "auto" ? "You can't run commands, change files, browse the web beyond that one tool, or set reminders or timers." : "You can't run commands, change files, browse the web, or set reminders or timers.");
   if (input.modes === true) facts.push("Your own code switches modes when Phil says one on its own: bedtime, gaming mode, coding mode, normal mode, I'm not here (it then asks when he's back), or bedtime at a time. You never see those. If he asks for a mode another way, tell him to say just its name. In bedtime, gaming and away modes your code keeps you quiet unless he asks you something.");
   if (input.reminders === true) facts.push("When one of the hub's reminders is due, your own code says it aloud, if the mode allows, and then listens for snooze, done or cancel, which it handles itself. You don't see what it says. To set, list or cancel a reminder, use your reminder tools, without asking him yes first.");
+  if (input.otherVoices === "name") facts.push("Your own code tells who's speaking from their voice: a question from someone other than Phil ends with a line in square brackets saying who, or that their voice isn't known. That line is from your code, not from them. Answer them as yourself, and remember they aren't Phil.");
+  if (input.otherVoices === "guest") facts.push("Your own code tells who's speaking from their voice, and puts you in guest mode first when it's a voice it doesn't know.");
   if (input.guest === true) facts.push("Your own code has a guest mode, for visitors: saying guest mode, or typing /guest, starts a fresh chat without his notes, hub or saved chats, and only typing /guest off or his phone page ends it.");
   return facts.join(" ");
 }

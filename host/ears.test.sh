@@ -501,6 +501,16 @@ for voice in observe require; do
   printf 'EARS_TOKEN=x\nEARS_VOICE_ID=%s\n' "$voice" > "$work/repo/ears/.env"
   output=$(with_fakes start 2>&1)
   check "voice ID set to $voice with no voiceprint stops start, saying how to make one, before Docker is asked anything" "1|EARS_VOICE_ID is $voice in ears/.env, but there's no voiceprint yet. Make one with: bash host/ears.sh voice-enrol|0" "$?|$output|$(wc -l < "$DOCKER_LOG" 2> /dev/null || echo 0)"
+  mkdir -p "$work/repo/ears/voice"
+  : > "$work/repo/ears/voice/voiceprint.json"
+  printf 'EARS_TOKEN=x\nEARS_VOICE_ID=%s\nEARS_VOICE_OWNER=main\n' "$voice" > "$work/repo/ears/.env"
+  output=$(with_fakes start 2>&1)
+  check "with EARS_VOICE_OWNER set, start needs that voiceprint, not voiceprint.json ($voice)" "1|EARS_VOICE_ID is $voice in ears/.env, but there's no voiceprint for the owner, main, yet. Make one with: bash host/ears.sh voice-enrol|0" "$?|$output|$(wc -l < "$DOCKER_LOG" 2> /dev/null || echo 0)"
+  printf 'EARS_TOKEN=x\nEARS_VOICE_ID=%s\nEARS_VOICE_OWNER=Main\n' "$voice" > "$work/repo/ears/.env"
+  output=$(with_fakes start 2>&1)
+  check "and refuses an owner that isn't a plain name ($voice)" "1" "$?"
+  check_has "saying so ($voice)" "EARS_VOICE_OWNER is Main in ears/.env, but it must be the name of a voiceprint" "$output"
+  rm -rf "$work/repo/ears/voice"
 done
 for voice in on yes REQUIRE; do
   fresh
@@ -721,24 +731,24 @@ Voice: Speech was heard for only 0.4 seconds, under the 1 second a voice needs t
 Turned into text in 0.5 seconds.
 LOG
 cat > "$work/voice-log.txt" << 'LOG'
-Voice: Score against the voiceprint: 0.84. At the threshold of 0.5, that counts as the voiceprint's voice.
-Voice: Score against the voiceprint: 0.61. At the threshold of 0.5, that counts as the voiceprint's voice.
-Voice: Score against the voiceprint: 0.90. At the threshold of 0.5, that counts as the voiceprint's voice.
-Voice: Score against the voiceprint: 0.12. At the threshold of 0.5, that counts as a different voice.
-Not turned into text: the voice in it didn't match the voiceprint.
-Voice: Score against the voiceprint: 0.30. At the threshold of 0.5, that counts as a different voice.
-Not turned into text: the voice in it didn't match the voiceprint.
-Voice: Score against the voiceprint: -0.07. At the threshold of 0.5, that counts as a different voice.
-Not turned into text: the voice in it didn't match the voiceprint.
+Voice: Best score of 2 voiceprints: 0.84, voiceprint's. At the threshold of 0.5, that counts as voiceprint, the owner.
+Voice: Best score of 2 voiceprints: 0.61, voiceprint's. At the threshold of 0.5, that counts as voiceprint, the owner.
+Voice: Best score of 2 voiceprints: 0.90, visitor's. At the threshold of 0.5, that counts as visitor.
+Voice: Best score of 2 voiceprints: 0.12. At the threshold of 0.5, that counts as nobody's voiceprint.
+Not turned into text: the voice in it didn't match any voiceprint.
+Voice: Best score of 2 voiceprints: 0.30. At the threshold of 0.5, that counts as nobody's voiceprint.
+Let through: guests are on, so every voice gets through.
+Voice: Best score of 2 voiceprints: -0.07. At the threshold of 0.5, that counts as nobody's voiceprint.
+Not turned into text: the voice in it didn't match any voiceprint.
 Voice: No speech was heard, so there was nothing to compare.
-Not turned into text: the speech in it was too quiet to check against the voiceprint, and voice ID is required.
+Not turned into text: the speech in it was too quiet to check against the voiceprints, and voice ID is required.
 Voice: Speech was heard for only 0.6 seconds, under the 1 second a voice needs to be compared fairly.
 Voice: No speech was heard, so there was nothing to compare.
 Voice: couldn't be checked (the model broke).
-Not turned into text: the voice in it couldn't be checked against the voiceprint, and voice ID is required.
+Not turned into text: the voice in it couldn't be checked against the voiceprints, and voice ID is required.
 LOG
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/voice-log.txt" with_fakes wake-report)
-check "with voice ID on, a last line counts how voices were judged, with the range of scores each way, and how many recordings it stopped" "0|- Voice ID: counted as your voice, 3 (scores 0.61 to 0.90, median 0.84); as a different voice, 3 (scores -0.07 to 0.30, median 0.12); too little speech to judge, 3; couldn't be checked, 1. Not turned into text because of the voice: 5." "$?|$(tail -1 <<< "$output")"
+check "with voice ID on, a last line counts recordings for each voiceprint's name and nobody, with the range of scores for each, how many it stopped and how many guests let through, never any words" "0|- Voice ID: counted as voiceprint (the owner), 2 (scores 0.61 to 0.84, median MEDIAN); visitor, 1 (scores 0.90 to 0.90, median 0.90); nobody, 3 (scores -0.07 to 0.30, median 0.12); too little speech to judge, 3; couldn't be checked, 1. Not turned into text because of the voice: 4. Let through because guests were on: 1." "$?|$(tail -1 <<< "$output" | sed 's/median 0\.7[0-9]/median MEDIAN/')"
 output=$(FAKE_EARS_ID=abc123 FAKE_EARS_LOG="$work/words-log.txt" with_fakes wake-report)
 check "with the word check on, a last line counts how recordings were judged and how often the text made at a pause was used" "0|- Judged by your words: finished, 1; more to come, 1; unsure, 1; not judged, 2. A Jarvis chat gave the answer for 1 of them. The text made at a pause was used for 3, so Whisper wasn't asked again.|4" "$?|$(tail -1 <<< "$output")|$(grep -o 'turned into text, [0-9]*' <<< "$output" | head -1 | grep -o '[0-9]*')"
 check "and a line before it counts the times he was cut in on, by the wake word and by speech" "- Cut-ins while Jarvis was speaking: 1 by the wake word, 1 by speech (those start a wake recording with no wake word heard).|- \"Hey Jarvis\" heard: 4. Ignored: 0 as too late to trust (or with no usable time), 0 that came after ears stopped listening." "$(tail -2 <<< "$output" | head -1)|$(sed -n 2p <<< "$output")"
@@ -1071,12 +1081,12 @@ rm -f "$STARTED"
 (cd "$work/repo" && SOUND_DIR="$snd" TMPDIR="$work/tmp" PATH="$work/micbin:$PATH" FAKE_PLAYER_INT=0 script -qec "bash -c 'bash host/ears.sh mic-test; echo after it'" /dev/null < <(for _ in $(seq 1 100); do [ -e "$STARTED" ] && break; sleep 0.05; done; sleep 0.2; printf '\003'; sleep 1) > "$work/out" 2>&1)
 check "and a script that ran it is stopped by the same Ctrl+C while it plays back, as by any other command's" "1|0" "$(grep -c '^player:' "$MIC_LOG")|$(grep -c 'after it' "$work/out")"
 
-for args in "mic-test 5 6" "mute 5" "start 5" "whisper-model x" "wake-report 5 6" "voice-enrol 5" "voice-check 5 6"; do
+for args in "mic-test 5 6" "mute 5" "start 5" "whisper-model x" "wake-report 5 6" "voice-enrol a b" "voice-check 5 6" "voice-forget" "voice-list x" "voice-forget a b"; do
   mic_setup
   read -r -a words <<< "$args"
   mic_test "${words[@]}"
   check "too many arguments are refused before anything runs: '$args'" "1|" "$mic_status|$(cat "$MIC_LOG")"
-  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model|voice-enrol, bash host/ears.sh mic-test [seconds to wait], bash host/ears.sh voice-check [seconds to wait], or bash host/ears.sh wake-report [hours]" "$mic_output"
+  check_has "with the usage: '$args'" "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model|voice-list, bash host/ears.sh voice-enrol [name], bash host/ears.sh voice-forget <name>, bash host/ears.sh mic-test [seconds to wait], bash host/ears.sh voice-check [seconds to wait], or bash host/ears.sh wake-report [hours]" "$mic_output"
 done
 
 voice_dir="$work/repo/ears/voice"
@@ -1104,6 +1114,48 @@ check_has "passing on what the enrolment says" "Sentence 1 of 5. Read it at your
 check_has "and saying where it saved it, and that it's private" "Saved your voiceprint in ears/voice/voiceprint.json. Only you can read it, and git ignores it." "$mic_output"
 check_has "and how to try it" "Try it with bash host/ears.sh voice-check." "$mic_output"
 check "and never prints the voiceprint" "0" "$(grep -c '0.044194' <<< "$mic_output")"
+
+mic_test voice-enrol visitor-1
+check "voice-enrol with a name saves that person's voiceprint beside the owner's" "0|visitor-1.json voiceprint.json" "$mic_status|$(ls "$voice_dir" | tr '\n' ' ' | sed 's/ $//')"
+check_has "saying whose it is" "Saved visitor-1's voiceprint in ears/voice/visitor-1.json. Only you can read it, and git ignores it." "$mic_output"
+check_has "and that it's biometric data about them, kept only while they agree, and how to delete it" "A voiceprint is biometric data about visitor-1: keep it only while they know and agree, and delete it with bash host/ears.sh voice-forget visitor-1." "$mic_output"
+check "written only for its owner" "600" "$(stat -c %a "$voice_dir/visitor-1.json")"
+for bad in "Visitor" "a_b" "../x" "$(printf 'x%.0s' {1..21})"; do
+  mic_test voice-enrol "$bad"
+  check "voice-enrol refuses a name that isn't plain, before anything records: $bad" "1|" "$mic_status|$(cat "$MIC_LOG")"
+  check_has "saying what a name may be: $bad" "A voiceprint's name must be 1 to 20 of a to z, 0 to 9 and -, like sam or guest-1." "$mic_output"
+done
+output=$(cd "$work/repo" && bash host/ears.sh voice-list 2>&1)
+check_has "voice-list names each voiceprint, when it was made and from how many clips, marking the owner" "voiceprint: made " "$output"
+check_has "with the owner marked" ", the owner (EARS_VOICE_OWNER)" "$output"
+check_has "and the others" "visitor-1: made " "$output"
+check "and never prints the numbers" "0" "$(grep -c '0\.0' <<< "$output")"
+output=$(cd "$work/repo" && bash host/ears.sh voice-forget visitor-1 < /dev/null 2>&1)
+check "voice-forget without a terminal deletes nothing" "1|yes" "$?|$([ -f "$voice_dir/visitor-1.json" ] && echo yes)"
+check_has "saying it needs someone to answer" "voice-forget deletes a voiceprint, so it only runs from a terminal someone is typing in, to answer its question." "$output"
+mic_test voice-forget visitor-1
+check "voice-forget with no yes keeps it" "0|yes" "$mic_status|$([ -f "$voice_dir/visitor-1.json" ] && echo yes)"
+check_has "asking first and saying it was kept" "Kept visitor-1's voiceprint." "$mic_output"
+(cd "$work/repo" && printf 'y\n' | script -qec "bash host/ears.sh voice-forget visitor-1" /dev/null > "$work/out" 2>&1)
+check "voice-forget with y deletes that file only" "voiceprint.json" "$(ls "$voice_dir")"
+check_has "after asking, saying it can't be undone" "Delete visitor-1's voiceprint, ears/voice/visitor-1.json? It can't be undone. [y/N]" "$(tr -d '\r' < "$work/out")"
+mic_test voice-forget visitor-1
+check_has "a voiceprint that isn't there can't be forgotten" "There's no voiceprint called visitor-1. bash host/ears.sh voice-list shows them." "$mic_output"
+for bad in "../voiceprint" "*" "Voiceprint" ".voiceprint"; do
+  mic_test voice-forget "$bad"
+  check "voice-forget refuses anything that isn't a plain name, deleting nothing: $bad" "1|voiceprint.json" "$mic_status|$(ls "$voice_dir")"
+  check_has "saying what a name may be: $bad" "A voiceprint's name must be 1 to 20 of a to z, 0 to 9 and -, like sam or guest-1." "$mic_output"
+done
+printf 'EARS_VOICE_OWNER=main\n' >> "$work/repo/ears/.env"
+mic_test voice-check
+check_has "with EARS_VOICE_OWNER naming a voiceprint that isn't there, voice-check says so" "There's no voiceprint for the owner, main, yet: make one with bash host/ears.sh voice-enrol" "$mic_output"
+output=$(cd "$work/repo" && bash host/ears.sh voice-list 2>&1)
+check_has "and so does voice-list" "There's no voiceprint for the owner, main, so voice ID won't start until there is: bash host/ears.sh voice-enrol" "$output"
+mic_test voice-enrol
+check "and voice-enrol with no name makes the owner's" "0|main.json voiceprint.json" "$mic_status|$(ls "$voice_dir" | tr '\n' ' ' | sed 's/ $//')"
+check_has "calling it yours" "Saved your voiceprint in ears/voice/main.json." "$mic_output"
+rm "$voice_dir/main.json"
+sed -i '/^EARS_VOICE_OWNER=/d' "$work/repo/ears/.env"
 
 mic_test voice-enrol
 check_has "a second enrolment replaces the first, saying so" "Saved your new voiceprint in ears/voice/voiceprint.json, in place of the old one." "$mic_output"
@@ -1172,7 +1224,7 @@ cp "$VOICEPRINT" "$saved"
 chmod 700 "$voice_dir"
 chmod 600 "$saved"
 mic_test voice-check 08
-check "voice-check runs as you, so it can read your voiceprint, with only the microphone, its mixer and the voiceprint's folder read-only, the threshold and the wait passed by name" "0|check: $hardened --user $(id -u):$(id -g) --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_VOICE_ID_THRESHOLD -e EARS_VOICE_CHECK_WAIT --mount type=bind,source=$work/repo/ears/voice,target=/voice,readonly home-hub-ears node dist/voice-check-run.js | EARS_MIC_LEVEL=70 EARS_VOICE_ID_THRESHOLD=0.55 EARS_VOICE_CHECK_WAIT=8 EARS_TOKEN=unset" "$mic_status|$(grep '^check:' "$MIC_LOG")"
+check "voice-check runs as you, so it can read your voiceprint, with only the microphone, its mixer and the voiceprint's folder read-only, the threshold and the wait passed by name" "0|check: $hardened --user $(id -u):$(id -g) --group-add $card_group --device /dev/snd/controlC1:/dev/snd/controlC1:rw --device /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c:rw -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_VOICE_ID_THRESHOLD -e EARS_VOICE_CHECK_WAIT -e EARS_VOICE_OWNER --mount type=bind,source=$work/repo/ears/voice,target=/voice,readonly home-hub-ears node dist/voice-check-run.js | EARS_MIC_LEVEL=70 EARS_VOICE_ID_THRESHOLD=0.55 EARS_VOICE_CHECK_WAIT=8 EARS_TOKEN=unset" "$mic_status|$(grep '^check:' "$MIC_LOG")"
 check_has "and passes on the score" "Score against the voiceprint: 0.73." "$mic_output"
 check "and leaves the voiceprint as it was" "same|600" "$(cmp -s "$VOICEPRINT" "$saved" && echo same || echo different)|$(stat -c %a "$saved")"
 

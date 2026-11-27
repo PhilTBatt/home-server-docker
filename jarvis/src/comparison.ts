@@ -44,6 +44,7 @@ function isHeard(value: unknown): boolean {
   if (heard.button !== undefined && heard.button !== true) return false;
   if (heard.ender !== undefined && heard.ender !== "loudness" && heard.ender !== "silero") return false;
   if (heard.pauseMs !== undefined && !(typeof heard.pauseMs === "number" && Number.isSafeInteger(heard.pauseMs) && heard.pauseMs > 0)) return false;
+  if (heard.voice !== undefined && heard.voice !== "owner" && heard.voice !== "known" && heard.voice !== "unknown") return false;
   return [heard.recordedMs, heard.textMs].every((time) => typeof time === "number" && Number.isFinite(time) && time >= 0);
 }
 

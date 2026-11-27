@@ -10,7 +10,8 @@ export const loggingNote = "Logging: each answer's numbers, never its words, go 
 export const logVersion = 1;
 
 export type HeardTimes = { recordedMs: number; textMs: number; wake?: true; follow?: true; button?: true; ender?: Ender; pauseMs?: number };
-export type Outcome = ({ answer: Answer } | { error: string }) & { heard?: HeardTimes };
+export type LoggedHeard = HeardTimes & { voice?: "owner" | "known" | "unknown" };
+export type Outcome = ({ answer: Answer } | { error: string }) & { heard?: HeardTimes & { voice?: { who: string | null; owner: boolean } } };
 
 export type Rating = "good" | "bad";
 export type RateResult = "saved" | "nothing to rate" | "last failed" | "log broken";
@@ -124,7 +125,7 @@ export type LogLine = {
   refusedTools?: number | null;
   spokeFirst?: boolean | null;
   retried?: boolean | null;
-  heard?: HeardTimes;
+  heard?: LoggedHeard;
 };
 
 export type AnswerLogDeps = {
@@ -200,7 +201,7 @@ export function logLine(context: LogContext, chat: string, question: number, at:
     refusedTools: stats === null ? null : stats.refusedTools.length,
     spokeFirst: stats?.spokeFirst ?? null,
     retried: stats?.retried ?? null,
-    ...(outcome.heard === undefined ? {} : { heard: { recordedMs: Math.round(outcome.heard.recordedMs), textMs: Math.round(outcome.heard.textMs), ...(outcome.heard.wake === true ? { wake: true as const } : {}), ...(outcome.heard.follow === true ? { follow: true as const } : {}), ...(outcome.heard.button === true ? { button: true as const } : {}), ...(outcome.heard.ender === undefined ? {} : { ender: outcome.heard.ender }), ...(outcome.heard.pauseMs === undefined ? {} : { pauseMs: outcome.heard.pauseMs }) } }),
+    ...(outcome.heard === undefined ? {} : { heard: { recordedMs: Math.round(outcome.heard.recordedMs), textMs: Math.round(outcome.heard.textMs), ...(outcome.heard.wake === true ? { wake: true as const } : {}), ...(outcome.heard.follow === true ? { follow: true as const } : {}), ...(outcome.heard.button === true ? { button: true as const } : {}), ...(outcome.heard.ender === undefined ? {} : { ender: outcome.heard.ender }), ...(outcome.heard.pauseMs === undefined ? {} : { pauseMs: outcome.heard.pauseMs }), ...(outcome.heard.voice === undefined ? {} : { voice: outcome.heard.voice.owner ? ("owner" as const) : outcome.heard.voice.who === null ? ("unknown" as const) : ("known" as const) }) } }),
   };
 }
 

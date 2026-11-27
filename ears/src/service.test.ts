@@ -347,7 +347,7 @@ test("with the wake word on, a waiting chat opens the microphone and sends it to
   const base = `http://127.0.0.1:${(service.server.address() as AddressInfo).port}`;
   const call = async (method: string, path: string) => (await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}` } })).json();
   const first = await call("GET", "/wait");
-  assert.deepEqual([first.state, first.wake, first.lastId, first.current, typeof first.run, typeof first.version], ["muted", { on: true, listening: false, held: false, problem: null, late: { count: 0, behindMs: null } }, null, null, "string", "number"]);
+  assert.deepEqual([first.state, first.wake, first.lastId, first.current, typeof first.run, typeof first.version], ["muted", { on: true, listening: false, held: false, problem: null, late: { count: 0, behindMs: null }, guests: false }, null, null, "string", "number"]);
   assert.match(first.run, /^[0-9a-f]{16}$/);
   const began = performance.now();
   const elsewhere = await call("GET", "/wait?after=1000000&run=0123456789abcdef");
@@ -549,7 +549,7 @@ test("with no chat waiting, the microphone closes a moment later, and with the w
   await writeFile(switchAt, "unmuted 2\n");
   await until(() => off.ears.view().state === "idle");
   const view = await (await fetch(`${offBase}/wait?after=100`, { headers: { authorization: `Bearer ${token}` } })).json();
-  assert.deepEqual(view.wake, { on: false, listening: false, held: false, problem: null, late: { count: 0, behindMs: null } });
+  assert.deepEqual(view.wake, { on: false, listening: false, held: false, problem: null, late: { count: 0, behindMs: null }, guests: false });
   assert.equal((await fetch(`${offBase}/wake/hold?by=aa`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).status, 409);
   const follow = await fetch(`${offBase}/wake/follow?within=5000`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
   assert.deepEqual([follow.status, (await follow.json()).error, off.ears.view().state], [409, wakeOffError, "idle"]);
@@ -740,7 +740,7 @@ test("while voice ID is required, the words so far are only read when the voice 
   const broken = gatedWords(async () => Promise.reject(new Error("the model broke")), async () => assert.fail("it read the words"));
   await assert.rejects(broken(new Uint8Array(4), new AbortController().signal), { message: "the model broke" });
   assert.deepEqual(read, [8]);
-  assert.equal(notYoursSoFar, "the voice so far hasn't counted as the voiceprint's");
+  assert.equal(notYoursSoFar, "the voice so far hasn't counted as any voiceprint's");
 });
 
 test("voice ID is loaded before ears starts only when it's switched on, and ears won't start if it can't load, saying why and how to go without it", { timeout: 15_000 }, async () => {
@@ -801,14 +801,26 @@ test("with EARS_VOICE_ID=require, a wake-word recording in a different voice is 
       assert.deepEqual([done.last.text, done.last.textProblem, done.last.reason], [null, notYourVoice, "it went quiet for 1 second after you spoke"]);
       assert.deepEqual(turned, [], "Whisper never heard it, neither at the pause nor at the end");
       assert.ok(checks >= 2, `the voice was checked at the pause and at the end (${checks})`);
-      assert.deepEqual(told, ["Your words weren't judged in time (1 look).", "Voice: Score against the voiceprint: 0.12. At the threshold of 0.5, that counts as a different voice.", `Not turned into text: ${notYourVoice}.`]);
+      assert.deepEqual(told, ["Your words weren't judged in time (1 look).", "Voice: Best score: 0.12. At the threshold of 0.5, that counts as nobody's voiceprint.", `Not turned into text: ${notYourVoice}.`]);
     } else {
       assert.deepEqual([done.last.text, done.last.textProblem, done.last.reason], ["What time is it?", null, "it went quiet for 0.7 seconds after you spoke"]);
       assert.deepEqual([turned.length, checks], [1, 1], "the words were read at the pause as usual, and the voice was scored once, at the end");
-      assert.deepEqual(told, ["Judged by your words: finished, by the rules (1 look).", "Voice: Score against the voiceprint: 0.12. At the threshold of 0.5, that counts as a different voice.", "Turned into text in 0 seconds: the text made while you paused was used."]);
+      assert.deepEqual(told, ["Judged by your words: finished, by the rules (1 look).", "Voice: Best score: 0.12. At the threshold of 0.5, that counts as nobody's voiceprint.", "Turned into text in 0 seconds: the text made while you paused was used."]);
     }
     waiting = false;
     await service.close();
     await keepWaiting;
   }
+});
+
+test("while guests are on, the words so far are read whoever is speaking, and the voice isn't even checked", async () => {
+  let checked = 0;
+  let guests = true;
+  const check = async () => (checked++, { verdict: "different" as const, score: 0.1, speechMs: 2_000, who: null, owner: false });
+  const words = gatedWords(check, async () => "some words", () => guests);
+  assert.equal(await words(new Uint8Array(10), new AbortController().signal), "some words");
+  assert.equal(checked, 0);
+  guests = false;
+  await assert.rejects(words(new Uint8Array(10), new AbortController().signal), { message: notYoursSoFar });
+  assert.equal(checked, 1);
 });

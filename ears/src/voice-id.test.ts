@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { test } from "node:test";
 import { createFbank, subtractMean } from "./fbank.js";
-import { blocksRecording, checkedStarts, cosine, describeVoice, embedSpeech, findSpeech, judgeVoice, loadVoiceId, loadVoiceModel, loadVoiceprint, longestSpeechMs, makeVoiceprint, marginFrames, mostClips, notVoiceprint, readVoiceprint, scoreVoice, shortestSpeechMs, strangeAnswer, unit, verdicts, voiceModelName, voiceModelPath, voiceprintPath, voiceprintText, voiceSize, type Embedder, type VoiceResult } from "./voice-id.js";
+import { blocksRecording, checkedStarts, cosine, describeVoice, embedSpeech, findSpeech, judgeVoice, loadVoiceId, loadVoiceModel, loadVoiceprint, loadVoiceprints, longestSpeechMs, mostVoiceprints, makeVoiceprint, marginFrames, mostClips, notVoiceprint, readVoiceprint, scoreVoice, shortestSpeechMs, strangeAnswer, unit, verdicts, voiceModelName, voiceModelPath, voiceprintPath, voiceprintText, voiceSize, type Embedder, type VoiceResult } from "./voice-id.js";
 
 function steady(level: number, ms: number): Uint8Array {
   const count = (ms / 1000) * 16000;
@@ -270,23 +270,32 @@ test("the voiceprint is read from its own folder, and a missing or unreadable on
   await assert.rejects(loadVoiceprint("/v.json", async () => "{}"), { message: notVoiceprint });
 });
 
-test("a score at or over the threshold is a match and under it a different voice, and no speech or too little has no score", () => {
+test("the best score at or over the threshold names its voiceprint, under it nobody, and no speech or too little has no score", () => {
   assert.deepEqual(verdicts, ["match", "different", "too short", "no speech"]);
-  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, 0.5, 0.5), { verdict: "match", score: 0.5, speechMs: 2_000 });
-  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, 0.4999, 0.5), { verdict: "different", score: 0.4999, speechMs: 2_000 });
-  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, -0.2, 0.5), { verdict: "different", score: -0.2, speechMs: 2_000 });
-  assert.deepEqual(judgeVoice({ problem: "too short", speechMs: 600 }, 0.9, 0.5), { verdict: "too short", score: null, speechMs: 600 });
-  assert.deepEqual(judgeVoice({ problem: "no speech", speechMs: 0 }, null, 0.5), { verdict: "no speech", score: null, speechMs: 0 });
-  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, null, 0.5), { verdict: "no speech", score: null, speechMs: 2_000 });
+  const one = (score: number) => [{ name: "voiceprint", score }];
+  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, one(0.5), 0.5), { verdict: "match", score: 0.5, speechMs: 2_000, who: "voiceprint", owner: true, against: 1 });
+  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, one(0.4999), 0.5), { verdict: "different", score: 0.4999, speechMs: 2_000, who: null, owner: false, against: 1 });
+  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, one(-0.2), 0.5), { verdict: "different", score: -0.2, speechMs: 2_000, who: null, owner: false, against: 1 });
+  assert.deepEqual(judgeVoice({ problem: "too short", speechMs: 600 }, one(0.9), 0.5), { verdict: "too short", score: null, speechMs: 600, who: null, owner: false });
+  assert.deepEqual(judgeVoice({ problem: "no speech", speechMs: 0 }, null, 0.5), { verdict: "no speech", score: null, speechMs: 0, who: null, owner: false });
+  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, null, 0.5), { verdict: "no speech", score: null, speechMs: 2_000, who: null, owner: false });
+  const three = [{ name: "voiceprint", score: 0.55 }, { name: "guest-a", score: 0.81 }, { name: "guest-b", score: 0.6 }];
+  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, three, 0.5), { verdict: "match", score: 0.81, speechMs: 2_000, who: "guest-a", owner: false, against: 3 });
+  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, three, 0.5, "guest-a"), { verdict: "match", score: 0.81, speechMs: 2_000, who: "guest-a", owner: true, against: 3 });
+  assert.deepEqual(judgeVoice({ problem: null, speechMs: 2_000 }, three, 0.9), { verdict: "different", score: 0.81, speechMs: 2_000, who: null, owner: false, against: 3 });
 });
 
-test("a recording is scored by comparing its voice with the voiceprint's", async () => {
-  const voiceprint = makeVoiceprint([pointing(0)], new Date(made));
+test("a recording is scored against every voiceprint, and the best one at the threshold is who it was", async () => {
+  const owner = { ...makeVoiceprint([pointing(0)], new Date(made)), name: "voiceprint" };
+  const other = { ...makeVoiceprint([pointing(1)], new Date(made)), name: "visitor" };
   const sound = joined(steady(40, 1_000), steady(2_000, 1_500), steady(40, 1_000));
   const close = Float32Array.from(pointing(0), (value, index) => (index === 1 ? 1 : value));
-  assert.deepEqual(await scoreVoice(sound, voiceprint, fixed(close).embedder, 0.7), { verdict: "match", score: cosine(unit(close), voiceprint.vector), speechMs: 1_500 });
-  assert.deepEqual(await scoreVoice(sound, voiceprint, fixed(close).embedder, 0.71), { verdict: "different", score: cosine(unit(close), voiceprint.vector), speechMs: 1_500 });
-  assert.deepEqual(await scoreVoice(steady(0, 3_000), voiceprint, fixed(close).embedder, 0.5), { verdict: "no speech", score: null, speechMs: 0 });
+  assert.deepEqual(await scoreVoice(sound, [owner], fixed(close).embedder, 0.7), { verdict: "match", score: cosine(unit(close), owner.vector), speechMs: 1_500, who: "voiceprint", owner: true, against: 1 });
+  assert.deepEqual(await scoreVoice(sound, [owner], fixed(close).embedder, 0.71), { verdict: "different", score: cosine(unit(close), owner.vector), speechMs: 1_500, who: null, owner: false, against: 1 });
+  assert.deepEqual(await scoreVoice(steady(0, 3_000), [owner], fixed(close).embedder, 0.5), { verdict: "no speech", score: null, speechMs: 0, who: null, owner: false });
+  const visitorLike = Float32Array.from(pointing(1), (value, index) => (index === 2 ? 0.5 : value));
+  const judged = await scoreVoice(sound, [owner, other], fixed(visitorLike).embedder, 0.5);
+  assert.deepEqual([judged.who, judged.owner, judged.against, judged.score], ["visitor", false, 2, cosine(unit(visitorLike), other.vector)]);
 });
 
 test("only require blocks a recording, only one started by the wake word or as a follow-up, and only when its voice counts as a different one, was too quiet to find or couldn't be checked", () => {
@@ -297,19 +306,21 @@ test("only require blocks a recording, only one started by the wake word or as a
     for (const mode of ["off", "observe"] as const) assert.deepEqual(results.map((result) => blocksRecording(mode, result, by)), [false, false, false, false, false], `${mode} ${by}`);
   }
   for (const by of ["button", "push", null] as const) for (const mode of ["off", "observe", "require"] as const) assert.deepEqual(results.map((result) => blocksRecording(mode, result, by)), [false, false, false, false, false], `${mode} ${by}`);
+  for (const by of ["wake", "follow"] as const) assert.deepEqual(results.map((result) => blocksRecording("require", result, by, true)), [false, false, false, false, false], `guests ${by}`);
+  assert.deepEqual(results.map((result) => blocksRecording("require", result, "wake", false)), [false, true, false, true, true]);
 });
 
 test("with voice ID off nothing is loaded, and otherwise the voiceprint is read before the model, and the check scores each recording at the threshold set", async () => {
   const order: string[] = [];
   const deps = {
-    loadPrint: async () => (order.push("print"), makeVoiceprint([pointing(0)], new Date(made))),
+    loadPrints: async () => (order.push("print"), [{ ...makeVoiceprint([pointing(0)], new Date(made)), name: "voiceprint" }]),
     loadModel: async () => (order.push("model"), fixed(pointing(0)).embedder),
   };
   assert.equal(await loadVoiceId({ mode: "off", threshold: 0.5 }, deps), null);
   assert.deepEqual(order, []);
   const check = await loadVoiceId({ mode: "observe", threshold: 0.99 }, deps);
   assert.deepEqual(order, ["print", "model"]);
-  assert.deepEqual(await check?.(joined(steady(40, 1_000), steady(2_000, 1_500), steady(40, 1_000))), { verdict: "match", score: 1, speechMs: 1_500 });
+  assert.deepEqual(await check?.(joined(steady(40, 1_000), steady(2_000, 1_500), steady(40, 1_000))), { verdict: "match", score: 1, speechMs: 1_500, who: "voiceprint", owner: true, against: 1 });
   const strict = await loadVoiceId({ mode: "require", threshold: 0.5 }, { ...deps, loadModel: async () => fixed(pointing(1)).embedder });
   assert.equal((await strict?.(joined(steady(40, 1_000), steady(2_000, 1_500), steady(40, 1_000))))?.verdict, "different");
 });
@@ -317,15 +328,16 @@ test("with voice ID off nothing is loaded, and otherwise the voiceprint is read 
 test("voice ID that can't read its voiceprint fails to load, before loading the model", async () => {
   let loaded = false;
   await assert.rejects(
-    loadVoiceId({ mode: "require", threshold: 0.5 }, { loadPrint: async () => Promise.reject(new Error("There's no voiceprint yet: make one with bash host/ears.sh voice-enrol")), loadModel: async () => ((loaded = true), fixed(pointing(0)).embedder) }),
+    loadVoiceId({ mode: "require", threshold: 0.5 }, { loadPrints: async () => Promise.reject(new Error("There's no voiceprint yet: make one with bash host/ears.sh voice-enrol")), loadModel: async () => ((loaded = true), fixed(pointing(0)).embedder) }),
     { message: /^There's no voiceprint yet/ },
   );
   assert.equal(loaded, false);
 });
 
-test("a result is described in one line, with the score to two places and what it counts as", () => {
-  assert.equal(describeVoice({ verdict: "match", score: 0.7349, speechMs: 2_000 }, 0.5), "Score against the voiceprint: 0.73. At the threshold of 0.5, that counts as the voiceprint's voice.");
-  assert.equal(describeVoice({ verdict: "different", score: 0.12, speechMs: 2_000 }, 0.45), "Score against the voiceprint: 0.12. At the threshold of 0.45, that counts as a different voice.");
+test("a result is described in one line, with the best score to two places, whose it was and what it counts as", () => {
+  assert.equal(describeVoice({ verdict: "match", score: 0.7349, speechMs: 2_000, who: "voiceprint", owner: true, against: 3 }, 0.5), "Best score of 3 voiceprints: 0.73, voiceprint's. At the threshold of 0.5, that counts as voiceprint, the owner.");
+  assert.equal(describeVoice({ verdict: "match", score: 0.66, speechMs: 2_000, who: "visitor", owner: false, against: 1 }, 0.5), "Best score of 1 voiceprint: 0.66, visitor's. At the threshold of 0.5, that counts as visitor.");
+  assert.equal(describeVoice({ verdict: "different", score: 0.12, speechMs: 2_000, who: null, owner: false, against: 2 }, 0.45), "Best score of 2 voiceprints: 0.12. At the threshold of 0.45, that counts as nobody's voiceprint.");
   assert.equal(describeVoice({ verdict: "too short", score: null, speechMs: 600 }, 0.5), "Speech was heard for only 0.6 seconds, under the 1 second a voice needs to be compared fairly.");
   assert.equal(describeVoice({ verdict: "no speech", score: null, speechMs: 0 }, 0.5), "No speech was heard, so there was nothing to compare.");
 });
@@ -343,4 +355,26 @@ test("the real model, when one is given to test with, gives the same voice for a
   const vector = unit(await (await loadVoiceModel(realModel))(subtractMean(frames), frames.length));
   const expected = [0.02045, -0.01316, 0.05715, -0.07316, 0.05421, -0.01144, 0.00596, 0.03649];
   expected.forEach((value, index) => assert.ok(Math.abs(vector[index] - value) < 2e-4, `${index}: ${vector[index]} against ${value}`));
+});
+
+test("every voiceprint in the folder is read, the owner's first, by its file's name, and only plain names count", async () => {
+  const files: Record<string, string> = {
+    "/v/voiceprint.json": voiceprintText(makeVoiceprint([pointing(0)], new Date(made))),
+    "/v/visitor.json": voiceprintText(makeVoiceprint([pointing(1)], new Date(made))),
+    "/v/a-2.json": voiceprintText(makeVoiceprint([pointing(2)], new Date(made))),
+  };
+  const list = async () => ["visitor.json", "voiceprint.json", "a-2.json", ".voiceprint.abc123", "Bad Name.json", "notes.txt", `${"x".repeat(21)}.json`];
+  const read = async (path: string) => {
+    const text = files[path];
+    if (text === undefined) throw Object.assign(new Error("gone"), { code: "ENOENT" });
+    return text;
+  };
+  const prints = await loadVoiceprints("voiceprint", "/v", list, read);
+  assert.deepEqual(prints.map((print) => print.name), ["voiceprint", "a-2", "visitor"]);
+  assert.deepEqual((await loadVoiceprints("visitor", "/v", list, read)).map((print) => print.name), ["visitor", "a-2", "voiceprint"]);
+  await assert.rejects(loadVoiceprints("voiceprint", "/v", async () => ["visitor.json"], read), { message: "There's no voiceprint yet: make one with bash host/ears.sh voice-enrol" });
+  await assert.rejects(loadVoiceprints("someone", "/v", list, read), { message: "There's no voiceprint called someone (EARS_VOICE_OWNER) yet: make one with bash host/ears.sh voice-enrol" });
+  await assert.rejects(loadVoiceprints("voiceprint", "/v", async () => ["voiceprint.json", "broken.json"], async (path) => (path.endsWith("broken.json") ? "{}" : read(path))), { message: "broken's voiceprint: The voiceprint file isn't one ears made, so make it again with bash host/ears.sh voice-enrol broken" });
+  const many = Array.from({ length: mostVoiceprints }, (_, n) => `p${n}.json`);
+  await assert.rejects(loadVoiceprints("voiceprint", "/v", async () => ["voiceprint.json", ...many], read), { message: `There are ${mostVoiceprints + 1} voiceprints in ears/voice, and ears scores at most ${mostVoiceprints}, so forget some with bash host/ears.sh voice-forget <name>` });
 });

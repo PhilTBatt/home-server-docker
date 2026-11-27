@@ -546,3 +546,15 @@ test("an answer's line records whether his sentences were bundled, only with the
   const keys = Object.keys(logLine({ ...apiKeep, voice: "kokoro", speechBundle: "on" }, "chat-1", 1, at, { answer: answered }));
   assert.equal(keys.indexOf("speechBundle"), keys.indexOf("speechStop") + 1);
 });
+
+test("a spoken question's voice goes in the log only as owner, known or unknown, never the name", async () => {
+  const { logLine } = await import("./answer-log.js");
+  const context = { engine: "api" as const, thinking: "keep" as const, model: "m", chats: "fresh" as const, lengthHints: "note" as const, hubTools: "off" as const, hubActions: "off" as const, sessionNotes: "off" as const, voice: "off" as const, kokoroSpeed: 1, speechStart: "sentence" as const, speechStop: "now" as const, speechBundle: "off" as const, spokenStyle: "off" as const, persona: "off", liveFacts: "off" as const };
+  const answer = { text: "Hi.", firstWordsMs: 1, totalMs: 2 };
+  const heard = (voice?: { who: string | null; owner: boolean }) => logLine(context, "c", 1, new Date(0), { answer, heard: { recordedMs: 1, textMs: 1, ...(voice === undefined ? {} : { voice }) } }).heard;
+  assert.equal(heard({ who: "me", owner: true })?.voice, "owner");
+  assert.equal(heard({ who: "alex", owner: false })?.voice, "known");
+  assert.equal(heard({ who: null, owner: false })?.voice, "unknown");
+  assert.equal(heard()?.voice, undefined);
+  assert.ok(!JSON.stringify(heard({ who: "alex", owner: false })).includes("alex"));
+});

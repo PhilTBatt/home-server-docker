@@ -146,6 +146,7 @@ function wakeApi(ears: Ears, on = true) {
   let release: () => void = () => {};
   const api: WakeApi = {
     full: () => ({ ...ears.view(), version, run: "abc123" }),
+    guests: (on) => (calls.push(`guests ${on}`), true),
     async wait(after, run, signal, judge) {
       waits.push(judge === true ? { after, run, judge } : { after, run });
       if (after < version) return api.full();
@@ -465,4 +466,21 @@ test("a wait that says judge=on tells ears a chat will answer its questions, and
   await call("GET", "/wait");
   assert.deepEqual(wake.waits, [{ after: -1, run: null, judge: true }, { after: -1, run: null }, { after: -1, run: null }, { after: -1, run: null }]);
   await closed(server);
+});
+
+test("POST /wake/guests?on=1 or 0 sets guests with ears's token and answers with the full view, and anything else is refused", async () => {
+  const { server, wake, call, base } = await serveWake();
+  assert.equal((await call("POST", "/wake/guests?on=1")).status, 200);
+  assert.equal((await call("POST", "/wake/guests?on=0")).status, 200);
+  for (const path of ["/wake/guests", "/wake/guests?on=yes", "/wake/guests?on=2", "/wake/guests?on="]) {
+    const answer = await call("POST", path);
+    assert.deepEqual([answer.status, answer.body.error], [400, "on must be 1 to let every voice through, or 0 to stop"], path);
+  }
+  assert.equal((await fetch(`${base}/wake/guests?on=1`, { method: "POST", headers: { authorization: "Bearer wrong" } })).status, 401);
+  assert.equal((await call("GET", "/wake/guests?on=1")).status, 405);
+  assert.deepEqual(wake.calls.filter((entry) => entry.startsWith("guests")), ["guests true", "guests false"]);
+  await closed(server);
+  const plain = await serve();
+  assert.equal((await plain.call("POST", "/wake/guests?on=1")).status, 404);
+  await closed(plain.server);
 });

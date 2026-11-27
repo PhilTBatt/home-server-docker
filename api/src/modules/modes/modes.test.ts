@@ -106,6 +106,8 @@ test("guest mode is switched on by voice, but off only by typing or from the pho
   assert.equal((await modes.set({ mode: "normal", until: null, by: "typed" }, at("2026-11-27T13:03:00.000Z")) as { view: { mode: string } }).view.mode, "normal");
   await modes.set({ mode: "guest", until: null, by: "typed" }, at("2026-11-27T13:04:00.000Z"));
   assert.equal((await modes.set({ mode: "normal", until: null, by: "phone" }, at("2026-11-27T13:05:00.000Z")) as { view: { mode: string } }).view.mode, "normal");
+  await modes.set({ mode: "guest", until: null, by: "voice" }, at("2026-11-27T13:06:00.000Z"));
+  assert.equal((await modes.set({ mode: "bedtime", until: null, by: "owner" }, at("2026-11-27T13:07:00.000Z")) as { view: { mode: string; by: string } }).view.by, "owner", "Jarvis says it was the owner's voice, from ears's voice ID");
 });
 
 test("bedtime with no end given ends at the next BEDTIME_UNTIL, in London time", async () => {

@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
-import type { VoiceIdMode, VoiceIdSettings } from "./config.js";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { defaultVoiceOwner, voiceNamePattern, type VoiceIdMode, type VoiceIdSettings } from "./config.js";
 import { createFbank, fbankBins, samplesOf, subtractMean, type Fbank } from "./fbank.js";
 import { frameBytes, frameLevel, frameMs, speakingAtLeast } from "./levels.js";
 import { bytesPerSecond } from "./recorder.js";
@@ -8,7 +9,9 @@ import type { By } from "./tap.js";
 export const voiceModelName = "wespeaker_en_voxceleb_CAM++";
 export const voiceModelPath = "/app/models/voice-id.onnx";
 export const voiceSize = 512;
-export const voiceprintPath = "/voice/voiceprint.json";
+export const voiceprintDir = "/voice";
+export const voiceprintPath = `${voiceprintDir}/${defaultVoiceOwner}.json`;
+export const mostVoiceprints = 20;
 export const shortestSpeechMs = 1_000;
 export const longestSpeechMs = 10_000;
 export const marginFrames = 1;
@@ -134,41 +137,83 @@ export async function loadVoiceprint(path = voiceprintPath, read: (path: string)
   return readVoiceprint(text);
 }
 
+export type NamedVoiceprint = Voiceprint & { name: string };
+
+export function enrolCommand(name: string, owner: string): string {
+  return name === owner ? "bash host/ears.sh voice-enrol" : `bash host/ears.sh voice-enrol ${name}`;
+}
+
+export async function loadVoiceprints(owner = defaultVoiceOwner, dir = voiceprintDir, list: (dir: string) => Promise<string[]> = (path) => readdir(path), read: (path: string) => Promise<string> = (path) => readFile(path, "utf8")): Promise<NamedVoiceprint[]> {
+  let names: string[];
+  try {
+    names = (await list(dir)).filter((file) => file.endsWith(".json") && voiceNamePattern.test(file.slice(0, -".json".length))).map((file) => file.slice(0, -".json".length));
+  } catch {
+    names = [];
+  }
+  if (!names.includes(owner)) {
+    const code = await read(join(dir, `${owner}.json`)).then(
+      () => null,
+      (error: unknown) => (error as { code?: unknown }).code,
+    );
+    if (code === "EACCES") throw new Error(`Ears isn't allowed to read the voiceprint file, so make it again with ${enrolCommand(owner, owner)}, as the user that runs it`);
+    throw new Error(owner === defaultVoiceOwner ? "There's no voiceprint yet: make one with bash host/ears.sh voice-enrol" : `There's no voiceprint called ${owner} (EARS_VOICE_OWNER) yet: make one with ${enrolCommand(owner, owner)}`);
+  }
+  const ordered = [owner, ...names.filter((name) => name !== owner).sort()];
+  if (ordered.length > mostVoiceprints) throw new Error(`There are ${ordered.length} voiceprints in ears/voice, and ears scores at most ${mostVoiceprints}, so forget some with bash host/ears.sh voice-forget <name>`);
+  const prints: NamedVoiceprint[] = [];
+  for (const name of ordered) {
+    try {
+      prints.push({ ...(await loadVoiceprint(join(dir, `${name}.json`), read)), name });
+    } catch (error) {
+      throw new Error(`${name}'s voiceprint: ${(error instanceof Error ? error.message : String(error)).replace("bash host/ears.sh voice-enrol", enrolCommand(name, owner))}`);
+    }
+  }
+  return prints;
+}
+
 export const verdicts = ["match", "different", "too short", "no speech"] as const;
 export type Verdict = (typeof verdicts)[number];
 
-export type VoiceResult = { verdict: Verdict; score: number | null; speechMs: number };
+export type VoiceResult = { verdict: Verdict; score: number | null; speechMs: number; who?: string | null; owner?: boolean; against?: number };
 
-export function judgeVoice(heard: { problem: "no speech" | "too short" | null; speechMs: number }, score: number | null, threshold: number): VoiceResult {
-  if (heard.problem !== null || score === null) return { verdict: heard.problem ?? "no speech", score: null, speechMs: heard.speechMs };
-  return { verdict: score >= threshold ? "match" : "different", score, speechMs: heard.speechMs };
+export type Scored = { name: string; score: number };
+
+export function judgeVoice(heard: { problem: "no speech" | "too short" | null; speechMs: number }, scores: readonly Scored[] | null, threshold: number, owner = defaultVoiceOwner): VoiceResult {
+  if (heard.problem !== null || scores === null || scores.length === 0) return { verdict: heard.problem ?? "no speech", score: null, speechMs: heard.speechMs, who: null, owner: false };
+  const best = scores.reduce((top, each) => (each.score > top.score ? each : top));
+  const who = best.score >= threshold ? best.name : null;
+  return { verdict: who === null ? "different" : "match", score: best.score, speechMs: heard.speechMs, who, owner: who !== null && who === owner, against: scores.length };
 }
 
-export async function scoreVoice(sound: Uint8Array, voiceprint: Voiceprint, embedder: Embedder, threshold: number, fbank?: Fbank): Promise<VoiceResult> {
+export async function scoreVoice(sound: Uint8Array, voiceprints: readonly NamedVoiceprint[], embedder: Embedder, threshold: number, owner = defaultVoiceOwner, fbank?: Fbank): Promise<VoiceResult> {
   const heard = await embedSpeech(sound, embedder, shortestSpeechMs, fbank);
-  return judgeVoice(heard, heard.problem === null ? cosine(heard.vector, voiceprint.vector) : null, threshold);
+  return judgeVoice(heard, heard.problem === null ? voiceprints.map((print) => ({ name: print.name, score: cosine(heard.vector, print.vector) })) : null, threshold, owner);
 }
 
 export const checkedStarts = ["wake", "follow"] as const;
 
-export function blocksRecording(mode: VoiceIdMode, result: VoiceResult | null, by: By | null): boolean {
-  return mode === "require" && (checkedStarts as readonly (By | null)[]).includes(by) && (result === null || result.verdict === "different" || result.verdict === "no speech");
+export function blocksRecording(mode: VoiceIdMode, result: VoiceResult | null, by: By | null, guests = false): boolean {
+  return mode === "require" && !guests && (checkedStarts as readonly (By | null)[]).includes(by) && (result === null || result.verdict === "different" || result.verdict === "no speech");
 }
 
 export type VoiceCheck = (sound: Uint8Array) => Promise<VoiceResult>;
 
-export type VoiceIdDeps = { loadModel?: () => Promise<Embedder>; loadPrint?: () => Promise<Voiceprint> };
+export type VoiceIdDeps = { loadModel?: () => Promise<Embedder>; loadPrints?: () => Promise<NamedVoiceprint[]> };
 
 export async function loadVoiceId(settings: VoiceIdSettings, deps: VoiceIdDeps = {}): Promise<VoiceCheck | null> {
   if (settings.mode === "off") return null;
-  const voiceprint = await (deps.loadPrint ?? (() => loadVoiceprint()))();
+  const owner = settings.owner ?? defaultVoiceOwner;
+  const voiceprints = await (deps.loadPrints ?? (() => loadVoiceprints(owner)))();
   const embedder = await (deps.loadModel ?? (() => loadVoiceModel()))();
   const fbank = createFbank();
-  return (sound) => scoreVoice(sound, voiceprint, embedder, settings.threshold, fbank);
+  return (sound) => scoreVoice(sound, voiceprints, embedder, settings.threshold, owner, fbank);
 }
 
 export function describeVoice(result: VoiceResult, threshold: number): string {
   if (result.verdict === "no speech") return "No speech was heard, so there was nothing to compare.";
   if (result.verdict === "too short") return `Speech was heard for only ${(result.speechMs / 1000).toFixed(1)} seconds, under the ${shortestSpeechMs / 1000} second a voice needs to be compared fairly.`;
-  return `Score against the voiceprint: ${(result.score ?? 0).toFixed(2)}. At the threshold of ${threshold}, that ${result.verdict === "match" ? "counts as the voiceprint's voice" : "counts as a different voice"}.`;
+  const of = result.against === undefined ? "" : ` of ${result.against} voiceprint${result.against === 1 ? "" : "s"}`;
+  if (result.verdict === "different") return `Best score${of}: ${(result.score ?? 0).toFixed(2)}. At the threshold of ${threshold}, that counts as nobody's voiceprint.`;
+  const who = result.who ?? "a voiceprint";
+  return `Best score${of}: ${(result.score ?? 0).toFixed(2)}, ${who}'s. At the threshold of ${threshold}, that counts as ${who}${result.owner === true ? ", the owner" : ""}.`;
 }

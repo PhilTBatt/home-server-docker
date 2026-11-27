@@ -1,10 +1,10 @@
-import { earsQuickMs, earsStopMs, type EarsAnswer, type EarsCall, type Ender } from "./ears-client.js";
+import { earsQuickMs, earsStopMs, type EarsAnswer, type EarsCall, type EarsVoice, type Ender } from "./ears-client.js";
 
 export const talkWord = "/talk";
 export const unmuteHint = "unmute it on the server with bash host/ears.sh unmute";
 export const talkPollMs = 250;
 
-export type Heard = { text: string; recordedMs: number; textMs: number; wake?: true; follow?: true; button?: true; ender?: Ender; pauseMs?: number };
+export type Heard = { text: string; recordedMs: number; textMs: number; wake?: true; follow?: true; button?: true; ender?: Ender; pauseMs?: number; voice?: EarsVoice };
 export type HeardBy = boolean | "follow" | "button";
 export type Started = { ok: true; id?: number | null } | { ok: false; why: string };
 export type Sent = { ok: true; heard: Heard } | { ok: false; why: string };
@@ -59,7 +59,7 @@ export function heardFrom(answer: EarsAnswer, textMs: number, wake: HeardBy = fa
   if (known && answer.lastId !== id) return { ok: false, why: movedOnWhy };
   const text = answer.last?.text ?? null;
   if (answer.state === "working" || (answer.state === "recording" && !known) || text === null || text.trim() === "") return { ok: false, why: whyNoText(answer) };
-  return { ok: true, heard: { text: text.trim(), recordedMs: Math.round((answer.last?.seconds ?? 0) * 1000), textMs, ...(wake === true ? { wake: true as const } : wake === "follow" ? { follow: true as const } : wake === "button" ? { button: true as const } : {}), ...(wake !== false && answer.last?.ender !== undefined ? { ender: answer.last.ender } : {}), ...(wake !== false && answer.last?.pauseMs !== undefined ? { pauseMs: answer.last.pauseMs } : {}) } };
+  return { ok: true, heard: { text: text.trim(), recordedMs: Math.round((answer.last?.seconds ?? 0) * 1000), textMs, ...(wake === true ? { wake: true as const } : wake === "follow" ? { follow: true as const } : wake === "button" ? { button: true as const } : {}), ...(wake !== false && answer.last?.ender !== undefined ? { ender: answer.last.ender } : {}), ...(wake !== false && answer.last?.pauseMs !== undefined ? { pauseMs: answer.last.pauseMs } : {}), ...(answer.last?.voice === undefined ? {} : { voice: answer.last.voice }) } };
 }
 
 export function startTalk(deps: TalkDeps): Talk {

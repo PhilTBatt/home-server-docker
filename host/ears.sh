@@ -2,8 +2,9 @@
 
 cd "$(dirname "$0")/.." || exit 1
 
-if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ] && [ "$1" != wake-report ] && [ "$1" != voice-check ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != talk ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ] && [ "$1" != wake-report ] && [ "$1" != voice-enrol ] && [ "$1" != voice-check ]; }; then
-  echo "Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model|voice-enrol, bash host/ears.sh mic-test [seconds to wait], bash host/ears.sh voice-check [seconds to wait], or bash host/ears.sh wake-report [hours]" >&2
+usage="Usage: bash host/ears.sh mute|unmute|start|stop|talk|whisper-model|voice-list, bash host/ears.sh voice-enrol [name], bash host/ears.sh voice-forget <name>, bash host/ears.sh mic-test [seconds to wait], bash host/ears.sh voice-check [seconds to wait], or bash host/ears.sh wake-report [hours]"
+if [ $# -eq 0 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$1" != mic-test ] && [ "$1" != wake-report ] && [ "$1" != voice-check ] && [ "$1" != voice-enrol ] && [ "$1" != voice-forget ]; } || { [ $# -eq 1 ] && [ "$1" = voice-forget ]; } || { [ "$1" != mute ] && [ "$1" != unmute ] && [ "$1" != start ] && [ "$1" != stop ] && [ "$1" != talk ] && [ "$1" != whisper-model ] && [ "$1" != mic-test ] && [ "$1" != wake-report ] && [ "$1" != voice-enrol ] && [ "$1" != voice-check ] && [ "$1" != voice-list ] && [ "$1" != voice-forget ]; }; then
+  echo "$usage" >&2
   exit 1
 fi
 
@@ -59,8 +60,26 @@ ears_muted() {
 
 voiceprint_line='^\{"model":"wespeaker_en_voxceleb_CAM\+\+","clips":[0-9]{1,2},"made":"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{3})?Z","vector":\[-?[0-9][-0-9.e,]*\]\}$'
 
+voice_owner() {
+  local owner
+  owner=$(setting EARS_VOICE_OWNER)
+  owner=${owner:-voiceprint}
+  if [[ ! "$owner" =~ ^[a-z0-9-]{1,20}$ ]]; then
+    echo "EARS_VOICE_OWNER is $owner in ears/.env, but it must be the name of a voiceprint, 1 to 20 of a to z, 0 to 9 and -." >&2
+    return 1
+  fi
+  printf '%s' "$owner"
+}
+
+plain_name() {
+  if [[ ! "$1" =~ ^[a-z0-9-]{1,20}$ ]]; then
+    echo "A voiceprint's name must be 1 to 20 of a to z, 0 to 9 and -, like sam or guest-1." >&2
+    return 1
+  fi
+}
+
 save_voiceprint() {
-  local ready line extra part
+  local name=$1 ready line extra part
   IFS= read -r ready || return 3
   if [ "$ready" != "voiceprint follows" ]; then
     echo "The enrolment sent something other than a voiceprint, so nothing was saved." >&2
@@ -70,9 +89,9 @@ save_voiceprint() {
     echo "The voiceprint didn't come through whole, so nothing was saved." >&2
     return 1
   fi
-  if ! { mkdir -p ears/voice && chmod 700 ears/voice && part=$(umask 077 && mktemp ears/voice/.voiceprint.XXXXXX) && printf '%s\n' "$line" > "$part" && chmod 600 "$part" && mv -f "$part" ears/voice/voiceprint.json; }; then
+  if ! { mkdir -p ears/voice && chmod 700 ears/voice && part=$(umask 077 && mktemp ears/voice/.voiceprint.XXXXXX) && printf '%s\n' "$line" > "$part" && chmod 600 "$part" && mv -f "$part" "ears/voice/$name.json"; }; then
     [ -n "$part" ] && rm -f "$part"
-    echo "Couldn't write ears/voice/voiceprint.json, so nothing was saved." >&2
+    echo "Couldn't write ears/voice/$name.json, so nothing was saved." >&2
     return 1
   fi
 }
@@ -169,11 +188,20 @@ if [ "$1" = wake-report ]; then
     }
     /^Turned into text in / && kind != "" { text[kind]++ }
     /^(Not turned into text|Couldn.t turn it into text): / && kind != "" { untext[kind]++ }
-    /^Voice: Score against the voiceprint: -?[0-9.]+\. .* counts as the voiceprint.s voice\.$/ { yours++; score["yours", yours] = $6 + 0 }
-    /^Voice: Score against the voiceprint: -?[0-9.]+\. .* counts as a different voice\.$/ { others++; score["others", others] = $6 + 0 }
+    /^Voice: Best score( of [0-9]+ voiceprints?)?: -?[0-9.]+, .* counts as [a-z0-9-]+(, the owner)?\.$/ {
+      line = $0
+      value = line; sub(/^Voice: Best score( of [0-9]+ voiceprints?)?: /, "", value); sub(/,.*$/, "", value)
+      who = line; sub(/^.* counts as /, "", who); sub(/(, the owner)?\.$/, "", who)
+      if (!(who in named)) { named[who] = 0; names[++namecount] = who }
+      named[who]++
+      score["name " who, named[who]] = value + 0
+      if (line ~ /, the owner\.$/) owned[who] = 1
+    }
+    /^Voice: Best score( of [0-9]+ voiceprints?)?: -?[0-9.]+\. .* counts as nobody.s voiceprint\.$/ { value = $0; sub(/^Voice: Best score( of [0-9]+ voiceprints?)?: /, "", value); sub(/\. .*$/, "", value); others++; score["others", others] = value + 0 }
     /^Voice: (Speech was heard for only|No speech was heard)/ { unjudgedVoice++ }
     /^Voice: couldn.t be checked/ { uncheckedVoice++ }
     /^Not turned into text: the (voice|speech) in it / { blockedVoice++ }
+    /^Let through: guests are on/ { guestPassed++ }
     /^It came while Jarvis was speaking, so it cuts in\.$/ { cutWake++ }
     /^Heard speech while Jarvis was speaking\. / { cutSpeech++ }
     /^Judged by your words: finished, / { finished++ }
@@ -224,7 +252,10 @@ if [ "$1" = wake-report ]; then
       print speech("wake", "wake recordings")
       print speech("follow", "follow-up windows")
       print speech("button", "talk-button recordings")
-      if (yours + others + unjudgedVoice + uncheckedVoice > 0) printf "- Voice ID: counted as your voice, %d%s; as a different voice, %d%s; too little speech to judge, %d; couldn\047t be checked, %d. Not turned into text because of the voice: %d.\n", yours, scores("yours", yours), others, scores("others", others), unjudgedVoice, uncheckedVoice, blockedVoice
+      matchedAll = 0
+      matched = ""
+      for (n = 1; n <= namecount; n++) { who = names[n]; matchedAll += named[who]; matched = matched sprintf("%s%s, %d%s; ", who, (who in owned) ? " (the owner)" : "", named[who], scores("name " who, named[who])) }
+      if (matchedAll + others + unjudgedVoice + uncheckedVoice > 0) printf "- Voice ID: counted as %snobody, %d%s; too little speech to judge, %d; couldn\047t be checked, %d. Not turned into text because of the voice: %d. Let through because guests were on: %d.\n", matched, others, scores("others", others), unjudgedVoice, uncheckedVoice, blockedVoice, guestPassed
       if (cutWake + cutSpeech > 0) printf "- Cut-ins while Jarvis was speaking: %d by the wake word, %d by speech (those start a wake recording with no wake word heard).\n", cutWake, cutSpeech
       if (finished + more + unsure + unjudged > 0) printf "- Judged by your words: finished, %d; more to come, %d; unsure, %d; not judged, %d. A Jarvis chat gave the answer for %d of them. The text made at a pause was used for %d, so Whisper wasn\047t asked again.\n", finished, more, unsure, unjudged, chat, reused
     }' <<< "$log"
@@ -289,18 +320,73 @@ if [ "$1" = mic-test ]; then
   exit 0
 fi
 
+if [ "$1" = voice-list ]; then
+  owner=$(voice_owner) || exit 1
+  found=0
+  for file in ears/voice/*.json; do
+    [ -f "$file" ] || continue
+    name=$(basename "$file" .json)
+    [[ "$name" =~ ^[a-z0-9-]{1,20}$ ]] || continue
+    found=$((found + 1))
+    made=$(grep -o '"made":"[0-9T:.Z-]*"' "$file" 2> /dev/null | head -n 1 | cut -d'"' -f4)
+    clips=$(grep -o '"clips":[0-9]*' "$file" 2> /dev/null | head -n 1 | cut -d: -f2)
+    if [ -z "$made" ] || [ -z "$clips" ]; then
+      echo "$name: not one ears made (make it again with bash host/ears.sh voice-enrol $name)"
+    else
+      echo "$name: made ${made:0:10} from $clips clips$([ "$name" = "$owner" ] && echo ", the owner (EARS_VOICE_OWNER)")"
+    fi
+  done
+  if [ "$found" -eq 0 ]; then
+    echo "No voiceprints yet. Make the owner's with bash host/ears.sh voice-enrol, and someone else's with bash host/ears.sh voice-enrol <name>."
+  elif [ ! -f "ears/voice/$owner.json" ]; then
+    echo "There's no voiceprint for the owner, $owner, so voice ID won't start until there is: bash host/ears.sh voice-enrol"
+  fi
+  exit 0
+fi
+
+if [ "$1" = voice-forget ]; then
+  plain_name "$2" || exit 1
+  if [ ! -t 0 ]; then
+    echo "voice-forget deletes a voiceprint, so it only runs from a terminal someone is typing in, to answer its question." >&2
+    exit 1
+  fi
+  if [ ! -f "ears/voice/$2.json" ]; then
+    echo "There's no voiceprint called $2. bash host/ears.sh voice-list shows them." >&2
+    exit 1
+  fi
+  owner=$(voice_owner) || exit 1
+  note=""
+  [ "$2" = "$owner" ] && note=" It's the owner's, so voice ID won't start without it until you make a new one."
+  read -r -p "Delete $2's voiceprint, ears/voice/$2.json?$note It can't be undone. [y/N] " answer || answer=""
+  if [ "$answer" != y ] && [ "$answer" != Y ]; then
+    echo "Kept $2's voiceprint."
+    exit 0
+  fi
+  rm -f "ears/voice/$2.json" || exit 1
+  echo "Deleted $2's voiceprint. If ears is running with voice ID, restart it with bash host/ears.sh start so it stops using it."
+  exit 0
+fi
+
 if [ "$1" = voice-enrol ] || [ "$1" = voice-check ]; then
   if [ ! -t 0 ]; then
     echo "$1 records the room, so it only runs from a terminal someone is typing in, not from a script or an AI tool." >&2
     exit 1
   fi
-  wait_for=${2:-0}
+  owner=$(voice_owner) || exit 1
+  target=$owner
+  wait_for=0
+  if [ "$1" = voice-enrol ] && [ $# -eq 2 ]; then
+    plain_name "$2" || exit 1
+    target=$2
+  elif [ "$1" = voice-check ]; then
+    wait_for=${2:-0}
+  fi
   if [[ ! "$wait_for" =~ ^[0-9]{1,2}$ ]] || [ "$((10#$wait_for))" -gt 60 ]; then
     echo "The wait is $wait_for, but it must be a whole number of seconds from 0 to 60, like 10 to give you time to get where you'll talk from." >&2
     exit 1
   fi
-  if [ "$1" = voice-check ] && [ ! -f ears/voice/voiceprint.json ]; then
-    echo "There's no voiceprint yet: make one with bash host/ears.sh voice-enrol" >&2
+  if [ "$1" = voice-check ] && [ ! -f "ears/voice/$owner.json" ]; then
+    if [ "$owner" = voiceprint ]; then echo "There's no voiceprint yet: make one with bash host/ears.sh voice-enrol" >&2; else echo "There's no voiceprint for the owner, $owner, yet: make one with bash host/ears.sh voice-enrol" >&2; fi
     exit 1
   fi
   card=$(mic_card) || exit 1
@@ -308,7 +394,8 @@ if [ "$1" = voice-enrol ] || [ "$1" = voice-check ]; then
   echo "Getting ears's image ready..."
   docker build -q -t home-hub-ears ears > /dev/null || exit 1
   ears_muted || exit 1
-  export EARS_MIC_LEVEL EARS_MIC_CONTROL EARS_MIC_BOOST EARS_MIC_BOOST_CONTROL EARS_VOICE_ID_THRESHOLD EARS_VOICE_CHECK_WAIT
+  export EARS_MIC_LEVEL EARS_MIC_CONTROL EARS_MIC_BOOST EARS_MIC_BOOST_CONTROL EARS_VOICE_ID_THRESHOLD EARS_VOICE_CHECK_WAIT EARS_VOICE_OWNER
+  EARS_VOICE_OWNER=$owner
   EARS_MIC_LEVEL=$(setting EARS_MIC_LEVEL)
   EARS_MIC_CONTROL=$(setting EARS_MIC_CONTROL)
   EARS_MIC_BOOST=$(setting EARS_MIC_BOOST)
@@ -317,13 +404,13 @@ if [ "$1" = voice-enrol ] || [ "$1" = voice-check ]; then
   EARS_VOICE_CHECK_WAIT=$((10#$wait_for))
   microphone=(--group-add "$group" --device "/dev/snd/controlC$number:/dev/snd/controlC$number:rw" --device "/dev/snd/pcmC${number}D0c:/dev/snd/pcmC${number}D0c:rw" -e EARS_MIC_LEVEL -e EARS_MIC_CONTROL -e EARS_MIC_BOOST -e EARS_MIC_BOOST_CONTROL -e EARS_VOICE_ID_THRESHOLD)
   if [ "$1" = voice-check ]; then
-    exec docker run "${hardened[@]}" --user "$(id -u):$(id -g)" "${microphone[@]}" -e EARS_VOICE_CHECK_WAIT --mount "type=bind,source=$PWD/ears/voice,target=/voice,readonly" home-hub-ears node dist/voice-check-run.js
+    exec docker run "${hardened[@]}" --user "$(id -u):$(id -g)" "${microphone[@]}" -e EARS_VOICE_CHECK_WAIT -e EARS_VOICE_OWNER --mount "type=bind,source=$PWD/ears/voice,target=/voice,readonly" home-hub-ears node dist/voice-check-run.js
   fi
   had=
-  [ -f ears/voice/voiceprint.json ] && had=1
+  [ -f "ears/voice/$target.json" ] && had=1
   interrupted=
   trap 'interrupted=1' INT
-  docker run "${hardened[@]}" "${microphone[@]}" home-hub-ears node dist/voice-enrol-run.js | save_voiceprint
+  docker run "${hardened[@]}" "${microphone[@]}" home-hub-ears node dist/voice-enrol-run.js | save_voiceprint "$target"
   codes=("${PIPESTATUS[@]}")
   if [ -n "$interrupted" ]; then
     trap - INT
@@ -339,11 +426,14 @@ if [ "$1" = voice-enrol ] || [ "$1" = voice-check ]; then
   if [ "${codes[1]}" -ne 0 ]; then
     exit "${codes[1]}"
   fi
+  whose="your"
+  [ "$target" = "$owner" ] || whose="$target's"
   if [ -n "$had" ]; then
-    echo "Saved your new voiceprint in ears/voice/voiceprint.json, in place of the old one. Only you can read it, and git ignores it."
+    echo "Saved $whose new voiceprint in ears/voice/$target.json, in place of the old one. Only you can read it, and git ignores it."
   else
-    echo "Saved your voiceprint in ears/voice/voiceprint.json. Only you can read it, and git ignores it."
+    echo "Saved $whose voiceprint in ears/voice/$target.json. Only you can read it, and git ignores it."
   fi
+  [ "$target" = "$owner" ] || echo "A voiceprint is biometric data about $target: keep it only while they know and agree, and delete it with bash host/ears.sh voice-forget $target."
   echo "Try it with bash host/ears.sh voice-check."
   exit 0
 fi
@@ -439,8 +529,9 @@ if [ "$1" = start ]; then
   voice=$(setting EARS_VOICE_ID)
   voice_file=()
   if [ "$voice" = observe ] || [ "$voice" = require ]; then
-    if [ ! -f ears/voice/voiceprint.json ]; then
-      echo "EARS_VOICE_ID is $voice in ears/.env, but there's no voiceprint yet. Make one with: bash host/ears.sh voice-enrol" >&2
+    owner=$(voice_owner) || exit 1
+    if [ ! -f "ears/voice/$owner.json" ]; then
+      if [ "$owner" = voiceprint ]; then echo "EARS_VOICE_ID is $voice in ears/.env, but there's no voiceprint yet. Make one with: bash host/ears.sh voice-enrol" >&2; else echo "EARS_VOICE_ID is $voice in ears/.env, but there's no voiceprint for the owner, $owner, yet. Make one with: bash host/ears.sh voice-enrol" >&2; fi
       exit 1
     fi
     voice_file=(-f docker-compose.voice.yaml)

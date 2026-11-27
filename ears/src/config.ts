@@ -10,7 +10,10 @@ export type MicSettings = { micLevel: MicLevel; micControl: string; micBoost: Mi
 export const voiceIdModes = ["off", "observe", "require"] as const;
 export type VoiceIdMode = (typeof voiceIdModes)[number];
 
-export type VoiceIdSettings = { mode: VoiceIdMode; threshold: number };
+export type VoiceIdSettings = { mode: VoiceIdMode; threshold: number; owner?: string };
+
+export const defaultVoiceOwner = "voiceprint";
+export const voiceNamePattern = /^[a-z0-9-]{1,20}$/;
 
 export const defaultVoiceIdThreshold = 0.5;
 
@@ -100,8 +103,15 @@ export function readVoiceIdThreshold(value: string | undefined): number {
   return Number(threshold);
 }
 
+export function readVoiceOwner(value: string | undefined): string {
+  const owner = value?.trim() ?? "";
+  if (owner === "") return defaultVoiceOwner;
+  if (!voiceNamePattern.test(owner)) throw new Error(`EARS_VOICE_OWNER must be the name of a voiceprint in ears/voice, 1 to 20 of a to z, 0 to 9 and -, like ${defaultVoiceOwner}, not "${owner}"`);
+  return owner;
+}
+
 export function readVoiceIdSettings(env: Record<string, string | undefined>): VoiceIdSettings {
-  return { mode: readVoiceIdMode(env.EARS_VOICE_ID), threshold: readVoiceIdThreshold(env.EARS_VOICE_ID_THRESHOLD) };
+  return { mode: readVoiceIdMode(env.EARS_VOICE_ID), threshold: readVoiceIdThreshold(env.EARS_VOICE_ID_THRESHOLD), owner: readVoiceOwner(env.EARS_VOICE_OWNER) };
 }
 
 function readWake(value: string | undefined, microphone: Microphone | null): boolean {

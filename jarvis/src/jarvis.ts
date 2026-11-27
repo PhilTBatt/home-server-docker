@@ -92,7 +92,7 @@ try {
   const open = (setup: ChatSetup, guest = false) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = guest ? false : config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders }) : null;
+    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined }) : null;
     const instructions = (base: string) => systemFor(guest ? guestChatSystem : base, { persona, intro, facts, spoken, notes: guest ? [] : (notes ?? []), clock: config.clock });
     const logged: { log?: AnswerLog } = {};
     const recordLookUp = async (mode: LookUpMode, looked: LookedUp) => {
@@ -222,6 +222,10 @@ try {
     modes: modes === undefined ? undefined : { hub: modes, events: watchModes({ hub: modes, signal: closing.signal }) },
     guest: config.guest ? { open: async () => ({ ...open(guestSetup, true), notes: [] }) } : undefined,
     when: config.modes ? whenCheck({ apiKey: config.apiKey, model: chatModel }) : undefined,
+    voices: config.voices ? { other: config.otherVoices, guests: earsCall === null ? undefined : async (on) => {
+      const answer = await earsCall("POST", `/wake/guests?on=${on ? 1 : 0}`, 3_000);
+      if (answer.status !== 200) throw new Error(answer.error ?? `ears replied ${answer.status}`);
+    } } : undefined,
     reminders: config.reminders && config.hubToken !== null ? { news: watchReminders({ ask: askHubForDue(config.hubToken), signal: closing.signal }), hub: hubReminders(config.hubToken) } : undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);

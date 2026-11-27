@@ -47,11 +47,11 @@ async function chooseRecorder(options: ServiceOptions): Promise<{ recorder: Reco
   return { recorder: options.recorder ?? { command: recorderCommand, args: recorderArgs(card) }, microphone: `sound card ${card.number}'s microphone (${level})` };
 }
 
-export const notYoursSoFar = "the voice so far hasn't counted as the voiceprint's";
+export const notYoursSoFar = "the voice so far hasn't counted as any voiceprint's";
 
-export function gatedWords(check: VoiceCheck, toText: ToText): ToText {
+export function gatedWords(check: VoiceCheck, toText: ToText, guests: () => boolean = () => false): ToText {
   return async (sound, signal) => {
-    if ((await check(sound)).verdict !== "match") throw new Error(notYoursSoFar);
+    if (!guests() && (await check(sound)).verdict !== "match") throw new Error(notYoursSoFar);
     return toText(sound, signal);
   };
 }
@@ -78,7 +78,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
   }
   const voice: VoiceGate | undefined = check === null || voiceId.mode === "off" ? undefined : { check, mode: voiceId.mode, threshold: voiceId.threshold };
   const heard = options.toText;
-  const words = !options.config.turnWords || heard === undefined ? undefined : voice === undefined || voice.mode !== "require" ? heard : gatedWords(voice.check, heard);
+  const words = !options.config.turnWords || heard === undefined ? undefined : voice === undefined || voice.mode !== "require" ? heard : gatedWords(voice.check, heard, () => ears.guestsOn());
   const tuning = options.wake ?? {};
   let changes: Changes | null = null;
   let listener: Listener | null = null;
@@ -101,7 +101,7 @@ export async function startService(options: ServiceOptions): Promise<Service> {
     const current = ears.current();
     return asking === null || current === null ? {} : { asking: { id: current.id, ...asking } };
   };
-  const full = () => ({ ...ears.view(), lastId: ears.lastId(), current: ears.current(), wake: listener?.view() ?? wakeOff, ...asked() });
+  const full = () => ({ ...ears.view(), lastId: ears.lastId(), current: ears.current(), wake: { ...(listener?.view() ?? wakeOff), guests: ears.guestsOn() }, ...asked() });
   changes = createChanges(full);
   const seen = changes;
   if (options.config.wake) {
@@ -142,6 +142,10 @@ export async function startService(options: ServiceOptions): Promise<Service> {
     follow: (withinMs) => (hearing === null ? { ok: false, error: wakeOffError } : hearing.follow(withinMs, () => ears.start("follow"))),
     press: () => (hearing === null ? { ok: false, error: wakeOffError } : hearing.press(() => ears.start("button"))),
     turn: (id, n, verdict) => hearing !== null && ears.current()?.id === id && hearing.judge(n, verdict),
+    guests(on) {
+      ears.guests(on);
+      return hearing !== null;
+    },
   };
   const watch = await watchSwitch({ read: () => readFile(options.switchAt ?? switchFile, "utf8"), everyMs: options.everyMs ?? switchEveryMs, onMute: () => void ears.mute(null), onUnmute: () => void ears.unmute() });
   let server: Server;

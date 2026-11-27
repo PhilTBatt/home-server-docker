@@ -76,6 +76,7 @@
       "Read(./media-stack/**)",
       "Read(~/hub-memory/**)",
       "Edit(./ears/switch/**)",
+      "Read(./ears/voice/**)",
       "Bash(bash host/ears.sh unmute *)",
       "Bash(bash host/ears.sh talk *)",
       "WebFetch(domain:ebay.co.uk)",

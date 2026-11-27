@@ -190,3 +190,10 @@ test("whether ears lets him be interrupted, and how, is read from the wake word'
   assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plain, interrupt: "speech" } }).wake, { ...plain, interrupt: "speech" });
   for (const interrupt of ["off", "on", true, null, 1, "WAKE"]) assert.deepEqual(readEarsAnswer(200, { version: 1, wake: { ...plain, interrupt } }).wake, plain, String(interrupt));
 });
+
+test("a recording's voice from ears is read strictly: a plain name or nobody, whether it's the owner, and a score from -1 to 1", async () => {
+  const { voiceOf } = await import("./ears-client.js");
+  assert.deepEqual(voiceOf({ who: "alex", owner: false, score: 0.71 }), { who: "alex", owner: false, score: 0.71 });
+  assert.deepEqual(voiceOf({ who: null, owner: false, score: null }), { who: null, owner: false, score: null });
+  for (const value of [null, "alex", { who: "Alex", owner: false, score: 0.5 }, { who: "a".repeat(21), owner: false, score: 0.5 }, { who: "alex", owner: "yes", score: 0.5 }, { who: "alex", owner: false, score: 2 }, { who: null, owner: true, score: 0.9 }, { who: "alex; rm", owner: false, score: 0.5 }]) assert.equal(voiceOf(value), null, JSON.stringify(value));
+});

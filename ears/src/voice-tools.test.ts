@@ -186,7 +186,7 @@ function checkHarness(changes: Partial<CheckDeps> = {}) {
   const deps: CheckDeps = {
     env: {},
     say: (line) => void said.push(line),
-    loadPrint: async () => (order.push("print"), makeVoiceprint([pointing(0)], new Date("2026-11-20T10:00:00.000Z"))),
+    loadPrints: async () => (order.push("print"), [{ ...makeVoiceprint([pointing(0)], new Date("2026-11-20T10:00:00.000Z")), name: "voiceprint" }]),
     loadModel: async () => (order.push("model"), voices(pointing(0, 1)).embedder),
     findCard: async () => (order.push("card"), card),
     setLevel: async () => void order.push("level"),
@@ -203,9 +203,9 @@ test("a check reads the voiceprint, then the model, sets the microphone, records
   assert.equal(await runVoiceCheck(run.deps), 0);
   assert.deepEqual(run.order, ["print", "model", "card", "level", "record"]);
   assert.deepEqual(run.slept, []);
-  assert.equal(run.said[0], "The voiceprint was made from 1 clip on 2026-11-20.");
+  assert.equal(run.said[0], "voiceprint (the owner): made from 1 clip on 2026-11-20.");
   assert.match(run.said[1], /^Recording 1\.7 seconds from sound card 3's microphone \(.*\)\. Talk as you would to Jarvis, or let whoever you're testing talk\.$/);
-  assert.equal(run.said[2], "Score against the voiceprint: 0.71. At the threshold of 0.5, that counts as the voiceprint's voice.");
+  assert.equal(run.said[2], "Best score of 1 voiceprint: 0.71, voiceprint's. At the threshold of 0.5, that counts as voiceprint, the owner.");
   assert.equal(run.said.length, 3);
 });
 
@@ -214,7 +214,7 @@ test("a check uses EARS_VOICE_ID_THRESHOLD, and waits first when asked", { timeo
   assert.equal(await runVoiceCheck(run.deps), 0);
   assert.deepEqual(run.slept, [7_000]);
   assert.ok(run.said.includes("Waiting 7 seconds first."));
-  assert.equal(run.said.at(-1), "Score against the voiceprint: 0.71. At the threshold of 0.75, that counts as a different voice.");
+  assert.equal(run.said.at(-1), "Best score of 1 voiceprint: 0.71. At the threshold of 0.75, that counts as nobody's voiceprint.");
 });
 
 test("a check that hears no speech says so, and still succeeds", { timeout: 15_000 }, async () => {
@@ -225,7 +225,7 @@ test("a check that hears no speech says so, and still succeeds", { timeout: 15_0
 
 test("a check with no voiceprint, a bad setting, or no model stops before anything records, saying why", { timeout: 15_000 }, async () => {
   const cases: [Partial<CheckDeps>, string][] = [
-    [{ loadPrint: async () => Promise.reject(new Error("There's no voiceprint yet: make one with bash host/ears.sh voice-enrol")) }, "The check didn't start: There's no voiceprint yet: make one with bash host/ears.sh voice-enrol."],
+    [{ loadPrints: async () => Promise.reject(new Error("There's no voiceprint yet: make one with bash host/ears.sh voice-enrol")) }, "The check didn't start: There's no voiceprint yet: make one with bash host/ears.sh voice-enrol."],
     [{ env: { EARS_VOICE_CHECK_WAIT: "61" } }, `The check didn't start: the wait must be a whole number of seconds from 0 to 60, not "61".`],
     [{ env: { EARS_VOICE_ID_THRESHOLD: "high" } }, `The check didn't start: EARS_VOICE_ID_THRESHOLD must be a number above 0 and below 1, with up to 2 decimal places, like 0.5 or 0.45, not "high".`],
     [{ env: { EARS_MIC_BOOST: "max" } }, `The check didn't start: EARS_MIC_BOOST must be a whole number of steps from 0 to 10, or keep to leave the card's own boost, not "max".`],
@@ -264,4 +264,20 @@ test("run as a program, enrolment reads its settings from the environment, says 
 test("run as a program, the check reads its settings from the environment, prints on stdout, and exits 1 when it can't start", { timeout: 15_000 }, async () => {
   const result = await runProgram("voice-check-run.js", { EARS_VOICE_CHECK_WAIT: "x" });
   assert.deepEqual(result, { code: 1, out: `The check didn't start: the wait must be a whole number of seconds from 0 to 60, not "x".\n`, err: "" });
+});
+
+test("a check lists every voiceprint with the owner marked, never their numbers, and names the best match", { timeout: 15_000 }, async () => {
+  const asked: string[] = [];
+  const run = checkHarness({
+    env: { EARS_VOICE_OWNER: "main" },
+    loadModel: async () => voices(pointing(0)).embedder,
+    loadPrints: async (owner) => (asked.push(owner), [{ ...makeVoiceprint([pointing(1)], new Date("2026-11-21T10:00:00.000Z")), name: "main" }, { ...makeVoiceprint([pointing(0), pointing(0)], new Date("2026-11-22T10:00:00.000Z")), name: "visitor" }]),
+  });
+  assert.equal(await runVoiceCheck(run.deps), 0);
+  assert.deepEqual(asked, ["main"]);
+  assert.deepEqual(run.said.slice(0, 2), ["main (the owner): made from 1 clip on 2026-11-21.", "visitor: made from 2 clips on 2026-11-22."]);
+  assert.match(run.said.at(-1) ?? "", /^Best score of 2 voiceprints: 1\.00, visitor's\. At the threshold of 0\.5, that counts as visitor\.$/);
+  const bad = checkHarness({ env: { EARS_VOICE_OWNER: "Not OK" } });
+  assert.equal(await runVoiceCheck(bad.deps), 1);
+  assert.match(bad.said[0], /^The check didn't start: EARS_VOICE_OWNER must be/);
 });
