@@ -6,6 +6,7 @@ import type { WallPicture } from "./picture.js";
 import type { EventSink } from "../events/feed.js";
 import { hiddenNow, isPageBy, isPageId, pageBys, pageIds, pageShownMs, wallPages } from "./pages.js";
 import { createJarvisSwitches, type JarvisSwitches } from "./switchboard.js";
+import type { Tally } from "./security.js";
 
 export const nextWaitMs = 20_000;
 export const privacyCheckMs = 1_000;
@@ -27,7 +28,7 @@ export const privateInGuest = { error: "That page is private, so it isn't shown 
 export const noPageDetails = { error: "That page has nothing more than its card on the wall yet, or what it shows is switched off" };
 export const pageDetailsFailed = { error: "The hub couldn't read that page's details just now" };
 
-export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; guard?: boolean; desk?: JarvisDesk; pairings?: Pairings; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number; events?: EventSink; mode?: () => string | null; pageDetails?: Partial<Record<string, () => Promise<unknown>>>; jarvisSwitches?: JarvisSwitches }> = async (app, options) => {
+export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; guard?: boolean; desk?: JarvisDesk; pairings?: Pairings; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number; events?: EventSink; mode?: () => string | null; pageDetails?: Partial<Record<string, () => Promise<unknown>>>; jarvisSwitches?: JarvisSwitches; tally?: Tally }> = async (app, options) => {
   const desk = options.desk ?? createJarvisDesk();
   const jarvisSwitches = options.jarvisSwitches ?? createJarvisSwitches();
   const pairings = options.pairings ?? createPairings();
@@ -106,9 +107,11 @@ export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettin
       return { paired: true };
     }
     if (result === "dropped") {
+      options.tally?.add("pairing", new Date(now()));
       app.log.warn({ pairing: { refused: "too many wrong codes", dropped: true } }, "every pairing was dropped after too many wrong codes");
       return reply.code(429).send(tooManyWrongCodes);
     }
+    options.tally?.add("pairing", new Date(now()));
     app.log.warn({ pairing: { refused: "wrong code" } }, "a pairing code was wrong");
     return reply.code(404).send(noSuchCode);
   });

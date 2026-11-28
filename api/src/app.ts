@@ -41,10 +41,13 @@ import type { JarvisDesk } from "./modules/wall/jarvis.js";
 import { trainPage } from "./modules/wall/page-data.js";
 import { serverMapPage } from "./modules/wall/server-map.js";
 import { createJarvisSwitches, switchboardPage } from "./modules/wall/switchboard.js";
+import { createTally, readBootTime, securityPage, type Tally } from "./modules/wall/security.js";
 import { buildPicture, keptPicture, wallDoctorMs, wallTrainsMs, type WallSources } from "./modules/wall/picture.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector; events?: EventFeed; morning?: Morning }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector; events?: EventFeed; morning?: Morning; tally?: Tally; bootTime?: (now: Date) => Promise<Date | null>; startedAt?: Date }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
+  const startedAt = options.startedAt ?? new Date();
+  const tally = options.tally ?? createTally(startedAt);
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
   const watching = options.watchers;
@@ -58,6 +61,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     if (isAuthorized(token, options.config.apiToken)) return;
     const shown = tokenFromHeader(request.headers.authorization) ?? request.cookies[wallCookie] ?? "";
     if (options.config.features.wall && wallReads.has(`${request.method} ${request.routeOptions.url}`) && isAuthorized(shown, options.config.wall.token)) return;
+    if (request.headers.authorization !== undefined || request.cookies.hub_token !== undefined || request.cookies[wallCookie] !== undefined) tally.add("token", new Date());
     return reply.code(401).send({ error: "Unauthorized" });
   });
 
@@ -67,7 +71,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
       qbitApiKey: options.config.qbitApiKey,
       jellyfinApiKey: options.config.jellyfinApiKey,
     });
-  app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken, guard: options.config.login.guard });
+  app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken, guard: options.config.login.guard, tally });
   const asked: DoctorSources = {
     heartbeat: options.tries?.heartbeat,
     alerts: options.tries?.alerts,
@@ -132,8 +136,13 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     train: trainsShown === undefined ? undefined : async () => trainPage(await trainsShown()),
     server: doctorShown === undefined ? undefined : async () => serverMapPage(await doctorShown().catch(() => null)),
     switches: async () => switchboardPage(features, byHand, jarvisSwitches.view(Date.now())),
+    security: async () => {
+      const now = new Date();
+      const [backup, bootAt] = await Promise.all([shown.backup().catch(() => null), (options.bootTime ?? readBootTime)(now).catch(() => null)]);
+      return securityPage({ guard: options.config.login.guard, wallOn: features.wall, tally: tally.view(now), backup, bootAt, apiAt: startedAt, now });
+    },
   };
-  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, guard: options.config.login.guard, desk: options.jarvisDesk, picture, events: feed, pageDetails, jarvisSwitches, mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view().mode : undefined });
+  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, guard: options.config.login.guard, desk: options.jarvisDesk, picture, events: feed, pageDetails, jarvisSwitches, tally, mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view().mode : undefined });
   app.register(events, { prefix: "/events", features: options.config.features, feed, apiToken: options.config.apiToken, mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view().mode : undefined });
   app.register(deals, {
     prefix: "/deals",

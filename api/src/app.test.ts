@@ -959,6 +959,27 @@ test("the wall's token reads the switches page, with what Jarvis last told the h
   assert.deepEqual(offDetails.groups[2].rows, [], "a new start knows nothing Jarvis said before");
 });
 
+test("the wall's token reads the security page, which counts wrong tokens, logins and pairing codes, but never a missing token or the right one", async () => {
+  const app = await buildRealApp({ logger: false, config, startedAt: new Date(Date.now() - 60_000), bootTime: async () => new Date("2026-11-24T09:12:00.000Z"), wallSources: { doctor: async () => ({ state: "ok", summary: "", checkedAt: "", checks: [] }), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
+  const read = async () => (await app.inject({ method: "GET", url: "/wall/pages/security", cookies: { wall_token: wallToken } })).json().details;
+  const first = await read();
+  assert.equal(first.kind, "security");
+  assert.deepEqual([first.quiet, first.wrong], [true, 0]);
+  assert.equal(first.cards.find((card: { id: string }) => card.id === "running").rows[1].v, "Tue 24 Nov, 09:12");
+  await app.inject({ method: "GET", url: "/health" });
+  await app.inject({ method: "GET", url: "/health", headers: goodHeader });
+  await app.inject({ method: "GET", url: "/health", headers: { authorization: "Bearer wrong-token" } });
+  await app.inject({ method: "GET", url: "/system/features", cookies: { hub_token: "old-token" } });
+  await app.inject({ method: "GET", url: "/wall", cookies: { wall_token: "old-wall-token" } });
+  await app.inject({ method: "POST", url: "/auth/login", payload: { token: "wrong-token" } });
+  await app.inject({ method: "POST", url: "/wall/pair/confirm", headers: goodHeader, payload: { code: "000000" } });
+  const after = await read();
+  assert.equal(after.wrong, 5, "three wrong tokens on routes, one at login and one pairing code");
+  assert.deepEqual(after.cards.find((card: { id: string }) => card.id === "today").rows.slice(0, 2).map((row: { v: string }) => row.v), ["4", "1"]);
+  assert.equal(after.knocks, 5);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/pages/security" })).statusCode, 401);
+});
+
 test("the wall's token reads the wall's picture, made from the hub's own reads", async () => {
   const app = await buildRealApp({ logger: false, config, wallSources: { doctor: async () => ({ state: "ok", summary: "", checkedAt: "", checks: [] }), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
   for (const url of ["/wall", "/wall/"]) {

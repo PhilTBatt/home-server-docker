@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import type { Config } from "../../config.js";
 import { isAuthorized } from "../../token.js";
+import type { Tally } from "../wall/security.js";
 
 type LoginBody = {
   token: string;
@@ -9,6 +10,7 @@ type LoginBody = {
 type AuthOptions = Pick<Config, "apiToken"> & {
   guard?: boolean;
   now?: () => number;
+  tally?: Tally;
 };
 
 const loginSchema = {
@@ -45,6 +47,7 @@ export const auth: FastifyPluginAsync<AuthOptions> = async (app, options) => {
       }
     }
     if (!isAuthorized(request.body.token, options.apiToken)) {
+      options.tally?.add("login", new Date(now()));
       if (guard) {
         wrong.push(now());
         app.log.warn({ login: { refused: "wrong token", wrongInLastMinute: wrong.length } }, "a login was refused: wrong token");

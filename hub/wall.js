@@ -4,6 +4,7 @@ import { bubbleAround, bubbleFor, byLine, cardFor, cornerStep, detailEveryMs, de
 import { morningTrainCard, morningView } from "./wall-morning.js";
 import { isServerMap, mapHalos, mapView, stateWord } from "./wall-map.js";
 import { isSwitchboard, switchboardView } from "./wall-switches.js";
+import { isSecurityPage, securityNote, securityView } from "./wall-security.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -507,7 +508,8 @@ function showCard(now) {
   stage.classList.toggle("opened", open !== null);
   const mapShown = showMap(open, now);
   const boardShown = showSwitches(open, now);
-  if (mapShown || boardShown) {
+  const securityShown = showSecurity(open, now);
+  if (mapShown || boardShown || securityShown) {
     card.hidden = true;
     card.classList.add("shut");
     return;
@@ -728,13 +730,83 @@ function showSwitches(open, now) {
 }
 
 /**
+ * @param {import("./wall-cards.js").Opened | null} open
+ * @param {number} now
+ * @returns {boolean}
+ */
+function showSecurity(open, now) {
+  const box = byId("security");
+  const details = open?.page.id === "security" ? detailsShown(detail, "security", Date.now()) : null;
+  const shown = open !== null && isSecurityPage(details);
+  stage.classList.toggle("secured", shown);
+  box.hidden = !shown;
+  if (!shown || open === null || !isSecurityPage(details)) return false;
+  setText(byId("sec-by"), byLine(open.page.by) || "On the wall");
+  byId("sec-left").style.transform = `scaleX(${pageLeftMs(open, now) / pageShownMs})`;
+  const key = JSON.stringify(details);
+  if (box.dataset.shown === key) return true;
+  box.dataset.shown = key;
+  const view = securityView(details);
+  setText(byId("sec-quiet"), view.quiet);
+  setText(byId("sec-look"), view.look);
+  byId("sec-look").classList.toggle("warm", view.lookTone === "warm");
+  byId("sec-dot").classList.toggle("warm", !details.quiet);
+  setText(byId("sec-note"), securityNote);
+  byId("sec-rings").replaceChildren(
+    ...view.rings.flatMap((ring) => {
+      const circle = made("span", `sec-ring r-${ring.id}${ring.warn ? " warn" : ""}`);
+      circle.setAttribute("aria-hidden", "true");
+      Object.assign(circle.style, { left: `${ring.left}px`, top: `${ring.top}px`, width: `${ring.size}px`, height: `${ring.size}px` });
+      const label = made("span", `sec-ring-label r-${ring.id}${ring.warn ? " warn" : ""}`);
+      Object.assign(label.style, { left: `${ring.labelLeft}px`, top: `${ring.labelTop}px` });
+      const words = document.createElement("span");
+      words.textContent = ring.label;
+      label.append(words);
+      return [circle, label];
+    }),
+  );
+  byId("sec-knocks").replaceChildren(
+    ...view.knocks.map((knock) => {
+      const arm = made("div", "sec-arm");
+      arm.style.transform = `rotate(${knock.angle}deg)`;
+      const dot = made("span", "sec-knock");
+      dot.style.animationDelay = `${knock.delay}s`;
+      arm.append(dot);
+      return arm;
+    }),
+  );
+  byId("sec-cards").replaceChildren(
+    ...view.cards.map((card) => {
+      const one = made("section", `sec-card c-${card.id}${card.look ? " look" : ""}`);
+      one.setAttribute("aria-label", card.title);
+      const title = made("h2", "sec-card-title");
+      title.textContent = card.title;
+      one.append(
+        title,
+        ...card.rows.map((row) => {
+          const line = made("div", "sec-row");
+          const k = made("span", "sec-k");
+          k.textContent = row.k;
+          const v = made("span", `sec-v t-${row.tone}`);
+          v.textContent = row.v;
+          line.append(k, v);
+          return line;
+        }),
+      );
+      return one;
+    }),
+  );
+  return true;
+}
+
+/**
  * @returns {Target[]}
  */
 function targets() {
   /** @type {Target[]} */
   const list = [];
   if (pages.opened !== null && !card.hidden) list.push({ kind: "card", key: pages.opened.page.id, box: { left: card.offsetLeft, top: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight } });
-  else if (!stage.classList.contains("mapped") && !stage.classList.contains("switched")) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
+  else if (!["mapped", "switched", "secured"].some((name) => stage.classList.contains(name))) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
   if (!fitChipBox.hidden) list.push({ kind: "fit", key: "fit", box: fitChip });
   return list;
 }

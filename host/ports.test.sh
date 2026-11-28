@@ -67,5 +67,29 @@ for name in beszel-agent kokoro piper whisper openwakeword; do
 done
 check "the Beszel agent is the version and digest checked on 28 Nov" "henrygd/beszel-agent:0.21.2@sha256:343254226ae57a5cc6f8c23c755b1464730aba2abc7043116a2e222711ec6e1a" "$(image beszel-agent)"
 
+security="$repo/api/src/modules/wall/security.ts"
+fact() {
+  sed -n -E "s/^export const $1(: string\[\])? = \[(.*)\];$/\2/p" "$security" | tr -d '"' | sed 's/, / /g'
+}
+lan=$(awk '/^    ports:$/ { on = 1; next } on && /^      - / { line = $0; sub(/^      - /, "", line); gsub(/"/, "", line); print line; next } on { on = 0 }' "$compose" | grep -v '^127\.0\.0\.1:' | sed -E 's/^([0-9]+):.*/\1/' | sort -nu | paste -sd ' ')
+check "the security page's ports on the home network are the compose file's" "$lan" "$(fact lanPorts)"
+serveronly=$(awk '/^    ports:$/ { on = 1; next } on && /^      - / { line = $0; sub(/^      - /, "", line); gsub(/"/, "", line); print line; next } on { on = 0 }' "$compose" | sed -n -E 's/^127\.0\.0\.1:([0-9]+):.*/\1/p' | sort -nu | paste -sd ' ')
+check "and its ports only on the server itself" "$serveronly" "$(fact serverOnlyPorts)"
+sockets=$(for file in "$repo"/docker-compose*.yaml; do awk '/^  [a-z][a-z0-9-]*:$/ { name = substr($1, 1, length($1) - 1) } /docker\.sock/ { print name }' "$file"; done | sort -u | paste -sd ' ')
+check "its services with the Docker socket are the compose files'" "$sockets" "$(fact dockerSocket)"
+check "its services on the server's own network are the compose files'" "$hosts" "$(fact hostNetwork)"
+privileged=$(for file in "$repo"/docker-compose*.yaml; do awk '/^  [a-z][a-z0-9-]*:$/ { name = substr($1, 1, length($1) - 1) } /^    privileged: *true/ { print name }' "$file"; done | sort -u | paste -sd ' ')
+check "its privileged services are the compose files'" "$privileged" "$(fact privileged)"
+check "and no compose file says privileged in any other way" "$(wc -w <<< "$privileged" | tr -d ' ')" "$(cat "$repo"/docker-compose*.yaml | grep -cE "^[[:space:]]*privileged:[[:space:]]*['\"]?(true|yes)")"
+internal=$(awk '/^networks:$/ { on = 1; next } on && /^  [a-z][a-z0-9-]*:$/ { name = substr($1, 1, length($1) - 1) } on && /^    internal: true$/ { print name }' "$compose" | paste -sd ' ')
+check "no compose file mounts the folder the Docker socket lives in, which would hand over the socket without the page knowing" "0" "$(cat "$repo"/docker-compose*.yaml | grep -cE '^[[:space:]]*-[[:space:]]*"?(/var)?/run(/docker)?/?(:|"|$)')"
+check "no compose file adds Linux capabilities, which the page's risky settings don't show" "0" "$(cat "$repo"/docker-compose*.yaml | grep -cE '^[[:space:]]*cap_add:')"
+check "no compose file shares the server's processes or other namespaces, which the page doesn't show either" "0" "$(cat "$repo"/docker-compose*.yaml | grep -cE "^[[:space:]]*(pid|ipc|uts|userns_mode|cgroup):[[:space:]]*['\"]?host")"
+check "the devices passed in are the GPU for Jellyfin and the sound card's, as the security review left them" "1 1 1" "$(for file in docker-compose.yaml docker-compose.mic.yaml docker-compose.sound.yaml; do grep -cE '^[[:space:]]*devices:' "$repo/$file"; done | paste -sd ' ')"
+check "its isolated networks are the compose file's internal ones" "$internal" "$(fact isolatedNetworks)"
+check "the .env files it says git ignores are ignored" "1" "$(grep -cx '\.env' "$repo/.gitignore")"
+check "and every push it says is scanned for secrets is" "1" "$(grep -c 'gitleaks' "$repo/.github/workflows/safety.yaml")"
+check "safety.yaml runs on every push" "1" "$(grep -cx '  push:' "$repo/.github/workflows/safety.yaml")"
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

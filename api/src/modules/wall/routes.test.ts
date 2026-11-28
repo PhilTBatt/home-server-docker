@@ -517,3 +517,17 @@ test("Jarvis tells the wall his switches, they come back on the switches page, a
   assert.deepEqual([(await off.inject({ method: "POST", url: "/wall/jarvis/switches", payload: { switches: {} } })).statusCode], [404]);
   assert.ok(!wallReads.has("POST /wall/jarvis/switches"), "the wall's own token can't tell the hub Jarvis's switches");
 });
+
+test("each wrong pairing code is counted for the security page, the one that drops every pairing too, and a right one isn't", async () => {
+  const counted: string[] = [];
+  const codes = ["123456", "654321"];
+  const app = Fastify({ trustProxy: true });
+  await app.register(cookie);
+  app.register(wall, { prefix: "/wall", features: allOn, settings, pairings: createPairings({ makeCode: () => codes.shift() ?? "999999" }), tally: { add: (kind) => void counted.push(kind), view: () => ({ token: 0, login: 0, pairing: 0, since: null }) } });
+  await startPairing(app);
+  for (let i = 0; i < mostWrongCodes; i++) await app.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code: "000000" } });
+  assert.deepEqual(counted, Array.from({ length: mostWrongCodes }, () => "pairing"), "the fifth, which drops them all, counts too");
+  await startPairing(app);
+  await app.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code: "654321" } });
+  assert.equal(counted.length, mostWrongCodes, "a right code isn't counted");
+});

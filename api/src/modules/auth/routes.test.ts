@@ -248,3 +248,17 @@ test("with the guard off, there's no limit on wrong tokens", async () => {
   const response = await app.inject({ method: "POST", url: "/auth/login", headers: { "x-forwarded-proto": "https" }, payload: { token: "test-token" } });
   assert.equal(response.statusCode, 200);
 });
+
+test("each wrong token at login is counted for the security page, with the guard on or off, and the right one isn't", async () => {
+  for (const guard of [false, true]) {
+    const counted: string[] = [];
+    const app = Fastify({ trustProxy: true });
+    await app.register(cookie);
+    app.register(auth, { prefix: "/auth", apiToken: "test-token", guard, tally: { add: (kind) => void counted.push(kind), view: () => ({ token: 0, login: 0, pairing: 0, since: null }) } });
+    const headers = { "x-forwarded-proto": "https" };
+    await app.inject({ method: "POST", url: "/auth/login", headers, payload: { token: "wrong-one" } });
+    await app.inject({ method: "POST", url: "/auth/login", headers, payload: { token: "wrong-two" } });
+    await app.inject({ method: "POST", url: "/auth/login", headers, payload: { token: "test-token" } });
+    assert.deepEqual(counted, ["login", "login"], `guard ${guard}`);
+  }
+});
