@@ -48,6 +48,24 @@ check "the https site uses Caddy's own certificate authority" "1" "$(grep -cx '	
 check "and passes /api/ to the API" "1" "$(grep -cx '		reverse_proxy api:3000' <<< "$secure")"
 check "and serves the hub folder" "1" "$(grep -cx '		root \* /srv/hub' <<< "$secure")"
 
+policy="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; media-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+check "the https site sends the content security policy" "1" "$(grep -cxF "		Content-Security-Policy \"$policy\"" <<< "$secure")"
+check "and nosniff" "1" "$(grep -cx '		X-Content-Type-Options "nosniff"' <<< "$secure")"
+check "and refuses being shown in a frame" "1" "$(grep -cx '		X-Frame-Options "DENY"' <<< "$secure")"
+check "and sends no referrer" "1" "$(grep -cx '		Referrer-Policy "no-referrer"' <<< "$secure")"
+check "the headers are in one header block, applying to the whole site" "1" "$(grep -cx '	header {' <<< "$secure")"
+check "no policy allows inline code or eval" "0" "$(grep -cE "unsafe-inline|unsafe-eval|unsafe-hashes|'strict-dynamic'" "$caddyfile")"
+check "no policy lets the page load from anywhere but itself" "0" "$(grep -E '^		Content-Security-Policy' "$caddyfile" | grep -cE 'https?:|\*|data:|blob:')"
+
+hub="$repo/hub"
+check "the hub's pages have no script written inside them, which the policy would block" "0" "$(grep -hiE '<script' "$hub"/*.html | grep -civ ' src=')"
+check "no style written inside them" "0" "$(cat "$hub"/*.html | grep -ciE '<style|style=')"
+check "no on... handlers written in them" "0" "$(cat "$hub"/*.html | grep -ciE '\son[a-z]+=')"
+check "nothing loaded from another site" "0" "$(cat "$hub"/*.html | grep -ciE '(src|href)="(https?:)?//')"
+check "no javascript: addresses" "0" "$(cat "$hub"/*.html "$hub"/*.js | grep -ci 'javascript:')"
+check "the hub's code never builds code from text" "0" "$(cat "$hub"/*.js | grep -cE '\beval\(|new Function\(|setTimeout\("|setInterval\("')"
+check "and never sets a style or handler attribute, which the policy would block" "0" "$(cat "$hub"/*.js | grep -ciE 'setAttribute\("(style|on[a-z]+)"')"
+
 check "api.home still answers on plain http for the server's own scripts" "1" "$(grep -cx 'http://api.home, https://api.home {' "$caddyfile")"
 
 echo "$passed passed, $failed failed"
