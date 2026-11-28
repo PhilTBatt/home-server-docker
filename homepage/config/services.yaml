@@ -1,7 +1,7 @@
 - Infrastructure:
   - AdGuard Home:
       icon: adguard-home.png
-      href: http://192.168.0.200:3000
+      href: http://dns.home
       description: DNS filtering
       widget:
         type: adguard
@@ -11,7 +11,7 @@
 
   - Uptime Kuma:
       icon: uptime-kuma.png
-      href: http://192.168.0.200:3001
+      href: http://uptime.home
       description: Service monitoring
       widget:
         type: uptimekuma
@@ -20,7 +20,7 @@
 
   - Beszel:
       icon: beszel.png
-      href: http://192.168.0.200:8090
+      href: http://metrics.home
       description: System Metrics
       widget:
         type: beszel
@@ -33,7 +33,7 @@
 - Media:
   - Jellyfin:
       icon: jellyfin.png
-      href: http://192.168.0.200:8096
+      href: http://jellyfin.home
       description: Media server
       widget:
         type: jellyfin
@@ -44,7 +44,7 @@
 
   - Seerr:
       icon: seerr.png
-      href: http://192.168.0.200:5055
+      href: http://requests.home
       description: Media Requests
       widget:
         type: seerr
@@ -55,7 +55,7 @@
 
   - Sonarr:
       icon: sonarr.png
-      href: http://192.168.0.200:8989
+      href: http://sonarr.home
       description: TV
       widget:
         type: sonarr
@@ -66,7 +66,7 @@
 
   - Radarr:
       icon: radarr.png
-      href: http://192.168.0.200:7878
+      href: http://radarr.home
       description: Movies
       widget:
         type: radarr
@@ -77,7 +77,7 @@
 
   - Prowlarr:
       icon: prowlarr.png
-      href: http://192.168.0.200:9696
+      href: http://prowlarr.home
       description: Indexers
       widget:
         type: prowlarr
@@ -88,7 +88,7 @@
 
   - qBittorrent:
       icon: qbittorrent.png
-      href: http://192.168.0.200:8081
+      href: http://qbit.home
       description: BitTorrent client
       widget:
         type: qbittorrent

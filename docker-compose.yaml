@@ -6,7 +6,6 @@ services:
     ports:
       - "53:53/tcp"
       - "53:53/udp"
-      - "3000:3000/tcp"
     environment:
       TZ: Europe/London
     volumes:
@@ -17,8 +16,6 @@ services:
     image: ghcr.io/gethomepage/homepage:latest
     container_name: homepage
     restart: unless-stopped
-    ports:
-      - "8080:3000"
     env_file:
       - ./homepage/.env
     environment:
@@ -31,8 +28,6 @@ services:
     image: louislam/uptime-kuma:2
     container_name: kuma
     restart: unless-stopped
-    ports:
-      - "3001:3001"
     environment:
       TZ: Europe/London
     volumes:
@@ -85,7 +80,6 @@ services:
       - ./media-stack/config/qbittorrent:/config
       - /home/phil/media/downloads/torrents:/data/downloads/torrents
     ports:
-      - "8081:8081"
       - "6881:6881"
       - "6881:6881/udp"
 
@@ -99,8 +93,6 @@ services:
       TZ: Europe/London
     volumes:
       - ./media-stack/config/prowlarr:/config
-    ports:
-      - "9696:9696"
 
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
@@ -113,8 +105,6 @@ services:
     volumes:
       - ./media-stack/config/sonarr:/config
       - /home/phil/media:/data
-    ports:
-      - "8989:8989"
 
   radarr:
     image: lscr.io/linuxserver/radarr:latest
@@ -127,8 +117,6 @@ services:
     volumes:
       - ./media-stack/config/radarr:/config
       - /home/phil/media:/data
-    ports:
-      - "7878:7878"
 
   byparr:
     image: ghcr.io/thephaseless/byparr:latest
@@ -147,18 +135,16 @@ services:
       LOG_LEVEL: info
     volumes:
       - ./media-stack/config/seerr:/app/config
-    ports:
-      - "5055:5055"
 
   beszel:
     image: henrygd/beszel:latest
     container_name: beszel
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     environment:
       TZ: Europe/London
-      APP_URL: http://192.168.0.200:8090
+      APP_URL: http://metrics.home
     volumes:
       - ./beszel/data:/beszel_data
       - ./beszel/socket:/beszel_socket
