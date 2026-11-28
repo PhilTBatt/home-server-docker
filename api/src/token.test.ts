@@ -15,6 +15,12 @@ test("isAuthorized rejects tokens of a different length", () => {
   assert.equal(isAuthorized("", "test-token"), false);
 });
 
+test("isAuthorized rejects the right token with anything before or after it, or cut short", () => {
+  for (const given of ["test-tokenX", "test-token ", "test-token\u0000", "Xtest-token", " test-token", "test-toke", "test-token".repeat(2)]) {
+    assert.equal(isAuthorized(given, "test-token"), false, JSON.stringify(given));
+  }
+});
+
 test("isAuthorized refuses everything when the expected token is empty", () => {
   assert.equal(isAuthorized("", ""), false);
   assert.equal(isAuthorized("anything", ""), false);

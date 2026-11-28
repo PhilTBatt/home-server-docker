@@ -214,7 +214,7 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     return reply.code(code).send(body);
   });
 
-  app.get("/ai/matches", async (request, reply) => {
+  app.get("/ai/matches", { logLevel: "warn" }, async (request, reply) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
     if (options.ai !== true) return reply.code(403).send(aiOff);
     const asked = readFilters(isObject(request.query) ? request.query : {});
@@ -272,7 +272,7 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     return reply.code(code).send(body);
   });
 
-  app.get("/details", async (request, reply) => {
+  app.get("/details", { logLevel: "warn" }, async (request, reply) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
     const asked = isObject(request.query) ? request.query : {};
     const query = typeof asked.q === "string" ? asked.q.trim() : "";
@@ -291,7 +291,7 @@ export const deals: FastifyPluginAsync<DealOptions> = async (app, options) => {
     return reply.code(502).send({ error: `Couldn't list the item details: ${result.message}` });
   });
 
-  app.get("/categories", async (request, reply) => {
+  app.get("/categories", { logLevel: "warn" }, async (request, reply) => {
     if (watcher === undefined) return reply.code(404).send(switchedOff);
     const asked = isObject(request.query) ? request.query : {};
     const query = typeof asked.q === "string" ? asked.q.trim() : "";

@@ -147,6 +147,22 @@ test("recordings must be raw 16-bit sound, from a quarter second to 30 seconds",
   assert.equal(json.statusCode, 415);
 });
 
+test("Jarvis's small messages about a recording can be at most 16 KB each", async () => {
+  const { app } = buildApp();
+  const id = await taken(app);
+  const sized = (bytes: number) => {
+    const body = JSON.stringify({ text: "", question: "", reason: "" });
+    return body.replace('"text":""', `"text":"${"x".repeat(bytes - body.length)}"`);
+  };
+  assert.equal(Buffer.byteLength(sized(16 * 1024)), 16 * 1024);
+  for (const route of ["heard", "reply", "failed", "ask", "answer", "no-voice"]) {
+    const over = await app.inject({ method: "POST", url: `/talk/${id}/${route}`, headers: { "content-type": "application/json" }, payload: sized(16 * 1024 + 1) });
+    assert.equal(over.statusCode, 413, route);
+    const fits = await app.inject({ method: "POST", url: `/talk/${id}/${route}`, headers: { "content-type": "application/json" }, payload: sized(16 * 1024) });
+    assert.notEqual(fits.statusCode, 413, route);
+  }
+});
+
 test(`at most ${mostWaiting} recordings wait at once`, async () => {
   const { app } = buildApp();
   await seen(app);

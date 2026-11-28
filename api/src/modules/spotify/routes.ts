@@ -117,7 +117,7 @@ export const spotify: FastifyPluginAsync<{ features: Features; spotify?: Spotify
   app.get("/devices", async (_request, reply) => answer(reply, () => use().client.devices()));
   app.get("/queue", async (_request, reply) => answer(reply, () => use().client.queue()));
 
-  app.get("/search", async (request, reply) => {
+  app.get("/search", { logLevel: "warn" }, async (request, reply) => {
     const asked = readSearch(request.query);
     if (typeof asked === "string") return reply.code(400).send({ error: asked });
     return answer(reply, () => use().client.search(asked.query, asked.types, asked.limit));

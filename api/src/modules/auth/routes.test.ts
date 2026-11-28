@@ -29,6 +29,20 @@ test("login with the right token sets the cookie", async () => {
   assert.doesNotMatch(setCookie, /; Secure(;|$)/);
 });
 
+test("the login cookie lasts 60 days", async () => {
+  const app = await buildApp();
+  const response = await app.inject({ method: "POST", url: "/auth/login", payload: { token: "test-token" } });
+  assert.match(String(response.headers["set-cookie"]), /; Max-Age=5184000(;|$)/);
+});
+
+test("a login token can be at most 200 characters, checked before the token is", async () => {
+  const app = await buildApp();
+  const long = await app.inject({ method: "POST", url: "/auth/login", payload: { token: "x".repeat(201) } });
+  assert.equal(long.statusCode, 400);
+  const fits = await app.inject({ method: "POST", url: "/auth/login", payload: { token: "x".repeat(200) } });
+  assert.equal(fits.statusCode, 401);
+});
+
 test("login with a wrong token is refused and sets no cookie", async () => {
   const app = await buildApp();
   const response = await app.inject({

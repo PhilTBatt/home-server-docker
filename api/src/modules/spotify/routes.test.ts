@@ -216,6 +216,17 @@ test("search takes its words, kinds and limit from the query, and says what's wr
   assert.deepEqual([reply.statusCode, reply.json()], [400, { error: "limit must be a whole number from 1 to 10" }]);
 });
 
+test("what's searched for stays out of the request log", async () => {
+  const lines: string[] = [];
+  const { parts } = fakeParts();
+  const app = Fastify({ logger: { level: "info", stream: { write: (line: string) => lines.push(line) } } });
+  app.register(spotify, { prefix: "/spotify", features: allOn, spotify: parts });
+  assert.equal((await app.inject({ method: "GET", url: "/spotify/search?q=purplewords" })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/spotify/status" })).statusCode, 200);
+  assert.ok(lines.some((line) => line.includes("/spotify/status")));
+  assert.ok(!lines.join("").includes("purplewords"), lines.join("").slice(0, 300));
+});
+
 test("the playlists page takes a limit up to 50 and an offset up to 1000", async () => {
   assert.deepEqual([readPage({}), readPage({ limit: "50", offset: "1000" })], [{ limit: 20, offset: 0 }, { limit: 50, offset: 1000 }]);
   assert.equal(readPage({ limit: "51" }), "limit must be a whole number from 1 to 50");

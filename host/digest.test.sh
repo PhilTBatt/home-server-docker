@@ -320,6 +320,12 @@ run --force > /dev/null
 check_has "with no inbox folder it says so and writes nothing there" '"inbox":{"result":"no-inbox"}' "$(tail -n 1 "$own/digest.jsonl")"
 
 fresh
+said "$(ago "1 hour")" 'letters only abcdefghijklmnopqrstu and twenty abcdefghijklmnopqrst stay' > "$docker_project/one.jsonl"
+run --force > /dev/null
+stdin=$(cat "$home/claude.stdin.1")
+check_has "a run of more than 20 letters is redacted even with no digits, and one of 20 stays" "letters only [redacted] and twenty abcdefghijklmnopqrst stay" "$stdin"
+
+fresh
 {
   said "$(ago "1 hour")" 'my ntfy topic is phils-alerts-2931 and my PIN is 4821'
   said "$(ago "59 minutes")" 'the eBay app is Name-App-PRD-a1b2c3d4e-5f6a7b8c'

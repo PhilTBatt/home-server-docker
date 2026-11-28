@@ -649,6 +649,19 @@ test("reading a listing in full leaves no item number in the request log", async
   assert.ok(lines.some((line) => line.includes("/deals/status")));
   assert.ok(!lines.join("").includes("110000000001"), lines.join("").slice(0, 300));
 });
+test("search words asked of the details, categories and AI matches routes stay out of the request log", async () => {
+  const lines: string[] = [];
+  const { watcher } = fakeWatcher();
+  const app = Fastify({ logger: { level: "info", stream: { write: (line: string) => lines.push(line) } } });
+  app.register(deals, { prefix: "/deals", features: allOn, watcher, ai: true, now: () => new Date(start), wait: async () => {} });
+  assert.equal((await app.inject({ method: "GET", url: "/deals/details?q=purplewords" })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/deals/categories?q=purplewords" })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/deals/ai/matches?words=purplewords" })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/deals/status" })).statusCode, 200);
+  assert.ok(lines.some((line) => line.includes("/deals/status")));
+  assert.ok(!lines.join("").includes("purplewords"), lines.join("").slice(0, 300));
+});
+
 test("categories are suggested for some words, and a category's item details are listed, sharing the ten-second wait", async () => {
   const { watcher, seen } = fakeWatcher();
   const { app, clock, waits } = buildApp(watcher);

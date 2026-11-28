@@ -18,8 +18,8 @@ if [ -z "$token" ]; then
 fi
 
 if [ -z "$body" ]; then
-  curl -sS -X POST -H "Host: api.home" -H "Authorization: Bearer $token" "http://localhost$path"
+  printf 'Authorization: Bearer %s\n' "$token" | curl -sS -X POST -H @- -H "Host: api.home" "http://localhost$path"
 else
-  curl -sS -X POST -H "Host: api.home" -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "$body" "http://localhost$path"
+  printf 'Authorization: Bearer %s\n' "$token" | curl -sS -X POST -H @- -H "Host: api.home" -H "Content-Type: application/json" -d "$body" "http://localhost$path"
 fi
 echo

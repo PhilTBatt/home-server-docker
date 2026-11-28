@@ -16,5 +16,5 @@ if [ -z "$token" ]; then
   exit 1
 fi
 
-curl -sS -H "Host: api.home" -H "Authorization: Bearer $token" "http://localhost$path"
+printf 'Authorization: Bearer %s\n' "$token" | curl -sS -H @- -H "Host: api.home" "http://localhost$path"
 echo
