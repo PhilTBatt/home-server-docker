@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import type { Features } from "../../config.js";
-import { createTalkDesk, idPattern, isWav, mostTalkBytes, mostVoiceBytes, type Changed, type TalkDesk } from "./desk.js";
+import { createTalkDesk, idPattern, isWav, mostTalkBytes, mostVoiceBytes, mostVoicePieces, type Changed, type TalkDesk } from "./desk.js";
 
 export const nextWaitMs = 20_000;
 export const sweepMs = 60_000;
@@ -21,8 +21,18 @@ function readText(body: unknown, key: string): string | null {
 function answered(reply: FastifyReply, changed: Changed, wrong: string) {
   if (changed === "unknown") return reply.code(404).send(unknownId);
   if (changed === "wrong state") return reply.code(409).send({ error: wrong });
+  if (changed === "too big") return reply.code(413).send({ error: `An answer's voice can be at most ${mostVoicePieces} pieces and ${mostVoiceBytes / 1024 / 1024} MiB in all` });
   return { done: true };
 }
+
+export function partOf(query: unknown): number | undefined | null {
+  const part = typeof query === "object" && query !== null ? (query as Record<string, unknown>).part : undefined;
+  if (part === undefined) return undefined;
+  if (typeof part !== "string" || !/^(0|[1-9]\d{0,2})$/.test(part) || Number(part) >= mostVoicePieces) return null;
+  return Number(part);
+}
+
+const badPart = { error: `part must be a whole number from 0 to ${mostVoicePieces - 1}, the piece's place in the answer` };
 
 export const talk: FastifyPluginAsync<{ features: Features; desk?: TalkDesk; now?: () => number; waitMs?: number }> = async (app, options) => {
   const desk = options.desk ?? createTalkDesk();
@@ -118,15 +128,23 @@ export const talk: FastifyPluginAsync<{ features: Features; desk?: TalkDesk; now
     return answered(reply, desk.answer(request.params.id, yes, now()), "Jarvis isn't asking anything about that now");
   });
 
-  app.post<IdParams>("/:id/voice", { bodyLimit: mostVoiceBytes }, async (request, reply) => {
+  app.post<IdParams>("/:id/voice", { ...quiet, bodyLimit: mostVoiceBytes }, async (request, reply) => {
+    const part = partOf(request.query);
+    if (part === null) return reply.code(400).send(badPart);
     if (!Buffer.isBuffer(request.body) || !isWav(request.body)) return reply.code(415).send({ error: "Send the voice as a WAV file, audio/wav" });
-    return answered(reply, desk.addVoice(request.params.id, request.body, now()), "The voice only follows Jarvis's answer, once");
+    const changed = desk.addVoice(request.params.id, request.body, now(), part);
+    if (changed === "done") app.log.info({ talk: { id: request.params.id, part: part ?? "whole", bytes: request.body.length } }, "Jarvis's voice for the phone came");
+    return answered(reply, changed, part === undefined ? "The voice only follows Jarvis's answer, once" : "Each piece of his voice comes once, in order, until he says it's done");
   });
+
+  app.post<IdParams>("/:id/voice-done", { bodyLimit: smallBody }, async (request, reply) => answered(reply, desk.voiceDone(request.params.id, now()), "Only an answer with some of its voice, not yet done, can be told it's done"));
 
   app.post<IdParams>("/:id/no-voice", { bodyLimit: smallBody }, async (request, reply) => answered(reply, desk.noVoice(request.params.id, now()), "Only an answer still waiting for its voice can be told none is coming"));
 
   app.get<IdParams>("/:id/voice", quiet, async (request, reply) => {
-    const voice = desk.voiceOf(request.params.id, now());
+    const part = partOf(request.query);
+    if (part === null) return reply.code(400).send(badPart);
+    const voice = desk.voiceOf(request.params.id, now(), part);
     if (voice === null) return reply.code(404).send({ error: "There's no voice for that answer" });
     return reply.header("cache-control", "no-store").type("audio/wav").send(voice);
   });

@@ -62,6 +62,10 @@ export function phoneVoiceNote(why: string): string {
   return `the phone gets the answer as text only: ${why}`;
 }
 
+export function phoneVoiceCutNote(sent: number, why: string): string {
+  return `the phone got the first ${sent} piece${sent === 1 ? "" : "s"} of his voice, then the rest couldn't be sent: ${why}`;
+}
+
 export function phoneAskingNote(question: string): string {
   return `${phoneQuestion(question)} Answer yes or no on your phone`;
 }
@@ -78,7 +82,8 @@ export type PhoneDesk = {
   failed(id: string, text: string, signal: AbortSignal): Promise<void>;
   ask(id: string, question: string, signal: AbortSignal): Promise<void>;
   answer(id: string, signal: AbortSignal): Promise<"yes" | "no" | null>;
-  voice(id: string, wav: Uint8Array<ArrayBuffer>, signal: AbortSignal): Promise<void>;
+  voice(id: string, wav: Uint8Array<ArrayBuffer>, signal: AbortSignal, part?: number): Promise<void>;
+  voiceDone(id: string, signal: AbortSignal): Promise<void>;
   noVoice(id: string, signal: AbortSignal): Promise<void>;
 };
 
@@ -86,7 +91,7 @@ export type PhoneParts = {
   news: PhoneNews;
   desk: PhoneDesk;
   hear: (audio: Uint8Array, signal: AbortSignal) => Promise<string>;
-  voice: ((text: string, signal: AbortSignal) => Promise<Uint8Array<ArrayBuffer> | null>) | null;
+  voice: ((text: string, signal: AbortSignal, piece: (wav: Uint8Array<ArrayBuffer>) => Promise<void>) => Promise<number>) | null;
   mode: (signal: AbortSignal) => Promise<Mode | "off">;
   askPollMs?: number;
   askMs?: number;
@@ -136,8 +141,11 @@ export function hubDesk(token: string, url = hubApiUrl): PhoneDesk {
     async noVoice(id, signal) {
       await sent(`/talk/${id}/no-voice`, {}, signal);
     },
-    async voice(id, wav, signal) {
-      const response = await fetch(`${url}/talk/${id}/voice`, { method: "POST", headers: { ...auth, "content-type": "audio/wav" }, body: wav, redirect: "error", signal: limited(signal, voiceSendMs) });
+    async voiceDone(id, signal) {
+      await sent(`/talk/${id}/voice-done`, {}, signal);
+    },
+    async voice(id, wav, signal, part) {
+      const response = await fetch(`${url}/talk/${id}/voice${part === undefined ? "" : `?part=${part}`}`, { method: "POST", headers: { ...auth, "content-type": "audio/wav" }, body: wav, redirect: "error", signal: limited(signal, voiceSendMs) });
       if (response.status === 200) return;
       const parsed: unknown = await response.json().catch(() => null);
       throw new Error(`the hub said: ${errorOf(typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}, response.status)}`);
@@ -245,27 +253,23 @@ async function* listed(pieces: string[]): AsyncGenerator<string> {
   yield* pieces;
 }
 
-export async function phoneVoice(engine: SpeechEngine, text: string, signal: AbortSignal, skipCode: boolean, mostSeconds = mostVoiceSeconds): Promise<Uint8Array<ArrayBuffer> | null> {
+export async function phoneVoice(engine: SpeechEngine, text: string, signal: AbortSignal, skipCode: boolean, piece: (wav: Uint8Array<ArrayBuffer>) => Promise<void>, mostSeconds = mostVoiceSeconds): Promise<number> {
   const sentences = createSentences({ start: "sentence", skipCode });
   const pieces = [...sentences.push(text), ...sentences.end()];
-  if (pieces.length === 0) return null;
+  if (pieces.length === 0) return 0;
   const most = engine.sampleRate * 2 * mostSeconds;
-  const sounds: Uint8Array[] = [];
   let length = 0;
+  let count = 0;
   for await (const sound of engine.speak(listed(pieces), signal)) {
     const kept = sound.subarray(0, Math.max(0, most - length));
-    sounds.push(kept);
+    if (kept.length > 0) {
+      await piece(wavOf(kept, engine.sampleRate));
+      count++;
+    }
     length += kept.length;
     if (length >= most) break;
   }
-  if (length === 0) return null;
-  const whole = new Uint8Array(length);
-  let at = 0;
-  for (const sound of sounds) {
-    whole.set(sound, at);
-    at += sound.length;
-  }
-  return wavOf(whole, engine.sampleRate);
+  return count;
 }
 
 export async function askOnPhone(parts: Pick<PhoneParts, "desk" | "askPollMs" | "askMs" | "wait">, id: string, question: string, signal: AbortSignal): Promise<string | null> {

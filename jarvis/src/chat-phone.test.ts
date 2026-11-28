@@ -5,7 +5,7 @@ import type { AnswerSpeech } from "./answer-speech.js";
 import { runChat, type ChatDeps, type NewChat } from "./chat.js";
 import type { Mode, ModeEvent, ModeHub } from "./modes.js";
 import type { Outcome } from "./answer-log.js";
-import { phoneModeUnknownNote, phoneModeUnknownSay, phoneNothingToSayNote, phoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneDesk, type PhoneEvent, type PhoneRequest } from "./phone.js";
+import { phoneModeUnknownNote, phoneModeUnknownSay, phoneNothingToSayNote, phoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceCutNote, phoneVoiceNote, type PhoneDesk, type PhoneEvent, type PhoneRequest } from "./phone.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Sent, Talk } from "./talk.js";
 
@@ -65,7 +65,7 @@ function fakeSpeech(spoken: string[]): AnswerSpeech {
   return { text: (text: string) => void spoken.push(text), gap: () => {}, tool: () => {}, restart: () => {}, end: () => {}, stop: () => void (report.stopped = true), finish: () => false, done: () => Promise.resolve(), report: () => report };
 }
 
-function fakeDesk(options: { answers?: Array<"yes" | "no" | null>; failTelling?: boolean } = {}) {
+function fakeDesk(options: { answers?: Array<"yes" | "no" | null>; failTelling?: boolean; refusePart?: number } = {}) {
   const calls: unknown[][] = [];
   const answers = [...(options.answers ?? [])];
   const told = async (call: unknown[]) => {
@@ -82,7 +82,11 @@ function fakeDesk(options: { answers?: Array<"yes" | "no" | null>; failTelling?:
       calls.push(["answer", id]);
       return answers.length === 0 ? null : (answers.shift() ?? null);
     },
-    voice: async (id, wav) => void calls.push(["voice", id, wav.length]),
+    voice: async (id, wav, _signal, part) => {
+      calls.push(["voice", id, wav.length, part]);
+      if (options.refusePart === part) throw new Error("the hub said: An answer's voice can be at most 60 pieces");
+    },
+    voiceDone: (id) => told(["voiceDone", id]),
     noVoice: (id) => told(["noVoice", id]),
   };
   return { desk, calls };
@@ -92,7 +96,7 @@ const recording: PhoneRequest = { id: "00000000000000a1", audio: new Uint8Array(
 
 const fromPhone = (text: string) => `normal: ${text}\n\n${phoneTag}`;
 
-function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFails?: boolean; voiceNull?: boolean; answers?: Array<"yes" | "no" | null>; answering?: Answering; failTelling?: boolean; guestChat?: boolean; modesOff?: boolean; hubMode?: () => Promise<Mode | "off"> } = {}) {
+function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFails?: boolean; voiceNull?: boolean; voicePieces?: number; voiceFailsAfter?: boolean; refusePart?: number; answers?: Array<"yes" | "no" | null>; answering?: Answering; failTelling?: boolean; guestChat?: boolean; modesOff?: boolean; hubMode?: () => Promise<Mode | "off"> } = {}) {
   const records: Outcome[] = [];
   const lines = channel<string>();
   const phoneEvents = channel<PhoneEvent>();
@@ -103,7 +107,7 @@ function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFail
   const voiced: string[] = [];
   const hears: number[] = [];
   let output = "";
-  const { desk, calls } = fakeDesk({ answers: options.answers, failTelling: options.failTelling });
+  const { desk, calls } = fakeDesk({ answers: options.answers, failTelling: options.failTelling, refusePart: options.refusePart });
   const modeHub: ModeHub = { get: async () => Promise.reject(new Error("unused")), set: async () => Promise.reject(new Error("unused")), schedule: async () => {} };
   const guestChat = (): NewChat => ({ session: fakeSession("guest", asked), record: undefined, rate: undefined, failureHint: undefined, lengthNote: undefined, recordNewChat: undefined, knownSize: undefined, rememberSize: undefined, recordSpeech: undefined, notes: [], web: undefined });
   const deps: ChatDeps = {
@@ -136,11 +140,14 @@ function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFail
       voice:
         options.voice === false
           ? null
-          : async (text) => {
+          : async (text, _signal, piece) => {
               voiced.push(text);
               if (options.voiceFails === true) throw new Error("Kokoro replied 500");
-              if (options.voiceNull === true) return null;
-              return new Uint8Array(new ArrayBuffer(144));
+              if (options.voiceNull === true) return 0;
+              const pieces = options.voicePieces ?? 2;
+              for (let i = 0; i < pieces; i++) await piece(new Uint8Array(new ArrayBuffer(144 + i)));
+              if (options.voiceFailsAfter === true) throw new Error("Kokoro replied 500");
+              return pieces;
             },
       mode: options.hubMode ?? (async () => "normal"),
       askPollMs: 1,
@@ -191,7 +198,9 @@ test("a recording from the phone is heard, asked in the same chat, answered on t
   assert.deepEqual(chat.calls, [
     ["heard", recording.id, "what's on today"],
     ["reply", recording.id, "normal answer.", true],
-    ["voice", recording.id, 144],
+    ["voice", recording.id, 144, 0],
+    ["voice", recording.id, 145, 1],
+    ["voiceDone", recording.id],
   ]);
   assert.deepEqual(chat.voiced, ["normal answer."]);
   assert.deepEqual(chat.spoken, [], "the room speaker stays quiet");
@@ -221,6 +230,19 @@ test("a voice that can't be made leaves the text answer, with a note why", { tim
   assert.deepEqual(silent.calls.map((call) => call[0]), ["heard", "reply", "noVoice"], "and when none of it could be spoken");
   assert.ok(silent.output().includes(`(${phoneVoiceNote(phoneNothingToSayNote)})`));
   await silent.end();
+});
+
+test("a voice that stops part-way leaves the phone the pieces it got, tells it that's all, and says how many got there", { timeout: 5_000 }, async () => {
+  const chat = phoneChat({ voicePieces: 3, voiceFailsAfter: true });
+  await chat.record();
+  assert.deepEqual(chat.calls.map((call) => call[0]), ["heard", "reply", "voice", "voice", "voice", "voiceDone"]);
+  assert.ok(chat.output().includes(`(${phoneVoiceCutNote(3, "Kokoro replied 500")})`), chat.output());
+  await chat.end();
+  const refused = phoneChat({ voicePieces: 3, refusePart: 1 });
+  await refused.record();
+  assert.deepEqual(refused.calls.slice(2), [["voice", recording.id, 144, 0], ["voice", recording.id, 145, 1], ["voiceDone", recording.id]], "a piece the hub refuses ends it there");
+  assert.ok(refused.output().includes(`(${phoneVoiceCutNote(1, "the hub said: An answer's voice can be at most 60 pieces")})`), refused.output());
+  await refused.end();
 });
 
 test("an answer with no words still tells the phone something", { timeout: 5_000 }, async () => {

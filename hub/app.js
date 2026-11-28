@@ -1,4 +1,5 @@
 // @ts-check
+import { onArrival, slotFor, voicePieces, voiceUrl } from "./talk-voice.js";
 /**
  * @typedef {object} Download
  * @property {string} name
@@ -98,6 +99,7 @@
  * @property {number} asks
  * @property {boolean} voiceComing
  * @property {boolean} voice
+ * @property {number} [voices]
  */
 
 /**
@@ -452,8 +454,8 @@ const talkLeastMs = 400;
 const talkPollMs = 700;
 const talkGiveUpMs = 7 * 60_000;
 const talkMostMisses = 3;
-/** @type {{ attempt: number, asks: number, misses: number, context: AudioContext | null, worklet: boolean, stream: MediaStream | null, source: MediaStreamAudioSourceNode | null, node: AudioWorkletNode | null, mute: GainNode | null, chunks: Float32Array[], holding: boolean, startedAt: number, stopTimer: number | undefined, id: string | null, since: number, pollTimer: number | undefined, played: boolean, voice: AudioBuffer | null, playing: AudioBufferSourceNode | null }} */
-const talking = { attempt: 0, asks: 0, misses: 0, context: null, worklet: false, stream: null, source: null, node: null, mute: null, chunks: [], holding: false, startedAt: 0, stopTimer: undefined, id: null, since: 0, pollTimer: undefined, played: false, voice: null, playing: null };
+/** @type {{ attempt: number, asks: number, misses: number, context: AudioContext | null, worklet: boolean, stream: MediaStream | null, source: MediaStreamAudioSourceNode | null, node: AudioWorkletNode | null, mute: GainNode | null, chunks: Float32Array[], holding: boolean, startedAt: number, stopTimer: number | undefined, id: string | null, since: number, pollTimer: number | undefined, played: boolean, voices: AudioBuffer[], wanted: number, fetching: string | null, live: boolean, playAt: number, playing: AudioBufferSourceNode[] }} */
+const talking = { attempt: 0, asks: 0, misses: 0, context: null, worklet: false, stream: null, source: null, node: null, mute: null, chunks: [], holding: false, startedAt: 0, stopTimer: undefined, id: null, since: 0, pollTimer: undefined, played: false, voices: [], wanted: 0, fetching: null, live: false, playAt: 0, playing: [] };
 /** @type {[string, string][]} */
 const modeChoices = [["normal", "Normal"], ["guest", "Guest"], ["bedtime", "Bedtime"], ["gaming", "Gaming"], ["coding", "Coding"], ["away", "Away"]];
 /** @type {Record<string, { colour: string, paths: string }>} */
@@ -1838,7 +1840,7 @@ async function loadTalkStatus() {
  */
 function isTalkView(reply) {
   const text = (/** @type {unknown} */ value) => value === null || typeof value === "string";
-  return isObject(reply) && typeof reply.id === "string" && ["waiting", "taken", "heard", "asking", "answered", "failed"].includes(String(reply.state)) && text(reply.heard) && text(reply.text) && text(reply.question) && typeof reply.asks === "number" && typeof reply.voiceComing === "boolean" && typeof reply.voice === "boolean";
+  return isObject(reply) && typeof reply.id === "string" && ["waiting", "taken", "heard", "asking", "answered", "failed"].includes(String(reply.state)) && text(reply.heard) && text(reply.text) && text(reply.question) && typeof reply.asks === "number" && typeof reply.voiceComing === "boolean" && typeof reply.voice === "boolean" && (reply.voices === undefined || (typeof reply.voices === "number" && Number.isInteger(reply.voices) && reply.voices >= 0));
 }
 
 /**
@@ -1873,10 +1875,13 @@ function stopTalkPolling() {
 }
 
 function stopVoice() {
-  try {
-    talking.playing?.stop();
-  } catch {}
-  talking.playing = null;
+  for (const source of talking.playing) {
+    try {
+      source.stop();
+    } catch {}
+  }
+  talking.playing = [];
+  talking.live = false;
 }
 
 function releaseMicrophone() {
@@ -1903,7 +1908,9 @@ function openTalk(status) {
 function clearTalk() {
   stopTalkPolling();
   stopVoice();
-  talking.voice = null;
+  talking.voices = [];
+  talking.wanted = 0;
+  talking.fetching = null;
   talking.played = false;
   talking.asks = 0;
   talking.misses = 0;
@@ -2045,7 +2052,7 @@ function showTalkView(view) {
     taken: "Jarvis is listening to it...",
     heard: "Jarvis is thinking...",
     asking: "Jarvis needs a yes or no first:",
-    answered: view.voiceComing ? "His voice is on its way..." : "",
+    answered: view.voiceComing && voicePieces(view) === 0 ? "His voice is on its way..." : "",
     failed: "Jarvis couldn't answer.",
   };
   talkStatus.textContent = words[view.state];
@@ -2069,10 +2076,7 @@ async function pollTalk() {
   talking.misses = 0;
   const view = got.reply;
   showTalkView(view);
-  if (view.voice && !talking.played) {
-    talking.played = true;
-    playVoice(id);
-  }
+  if (voicePieces(view) > talking.voices.length) fetchVoices(id, voicePieces(view));
   const over = view.state === "failed" || (view.state === "answered" && !view.voiceComing);
   if (over) {
     talking.pollTimer = undefined;
@@ -2086,37 +2090,74 @@ async function pollTalk() {
   talking.pollTimer = setTimeout(pollTalk, talkPollMs);
 }
 
-function playBuffer() {
+/**
+ * @param {AudioBuffer} buffer
+ */
+function playPiece(buffer) {
   const context = talking.context;
-  if (context === null || talking.voice === null) return;
-  stopVoice();
+  if (context === null) return;
   const source = context.createBufferSource();
-  source.buffer = talking.voice;
+  source.buffer = buffer;
   source.connect(context.destination);
-  source.start();
-  talking.playing = source;
+  const { at, next } = slotFor(context.currentTime, talking.playAt, buffer.duration);
+  source.addEventListener("ended", () => {
+    talking.playing = talking.playing.filter((one) => one !== source);
+  });
+  source.start(at);
+  talking.playAt = next;
+  talking.playing.push(source);
+}
+
+function playAll() {
+  const context = talking.context;
+  if (context === null) return;
+  stopVoice();
+  talking.live = true;
+  talking.playAt = context.currentTime;
+  for (const buffer of talking.voices) playPiece(buffer);
+}
+
+/**
+ * @param {AudioContext} context
+ */
+async function startVoice(context) {
+  talking.played = true;
+  talkPlay.hidden = false;
+  await context.resume();
+  if (context.state !== "running") {
+    talkPlay.textContent = "Play";
+    return;
+  }
+  talkPlay.textContent = "Play again";
+  playAll();
 }
 
 /**
  * @param {string} id
+ * @param {number} pieces
  */
-async function playVoice(id) {
+async function fetchVoices(id, pieces) {
   const context = talking.context;
   if (context === null) return;
+  talking.wanted = Math.max(talking.wanted, pieces);
+  if (talking.fetching === id) return;
+  talking.fetching = id;
   try {
-    const response = await fetch(`/api/talk/${id}/voice`);
-    if (!response.ok) throw new Error(`the API replied ${response.status}`);
-    talking.voice = await context.decodeAudioData(await response.arrayBuffer());
-    talkPlay.hidden = false;
-    await context.resume();
-    if (context.state !== "running") {
-      talkPlay.textContent = "Play";
-      return;
+    while (talking.id === id && talking.voices.length < talking.wanted) {
+      const part = talking.voices.length;
+      const response = await fetch(voiceUrl(id, part));
+      if (!response.ok) throw new Error(`the API replied ${response.status}`);
+      const buffer = await context.decodeAudioData(await response.arrayBuffer());
+      if (talking.id !== id) return;
+      talking.voices.push(buffer);
+      const next = onArrival(talking.played, talking.live);
+      if (next === "start") await startVoice(context);
+      else if (next === "play") playPiece(buffer);
     }
-    talkPlay.textContent = "Play again";
-    playBuffer();
   } catch (error) {
-    talkStatus.textContent = `Couldn't play his voice: ${error instanceof Error ? error.message : String(error)}.`;
+    if (talking.id === id) talkStatus.textContent = `Couldn't play his voice: ${error instanceof Error ? error.message : String(error)}.`;
+  } finally {
+    if (talking.fetching === id) talking.fetching = null;
   }
 }
 
@@ -2167,7 +2208,7 @@ talkNo.addEventListener("click", () => answerTalk(false));
 talkPlay.addEventListener("click", async () => {
   await talking.context?.resume();
   talkPlay.textContent = "Play again";
-  playBuffer();
+  playAll();
 });
 talkClose.addEventListener("click", () => {
   clearTalk();

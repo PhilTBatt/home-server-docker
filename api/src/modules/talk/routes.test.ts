@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import Fastify from "fastify";
 import type { Features } from "../../config.js";
-import { askMs, workMs, createTalkDesk, isWav, keptMs, leastTalkBytes, mostKept, mostTalkBytes, mostTextChars, mostWaiting, pickUpMs, seenMs, tidyText } from "./desk.js";
+import { askMs, workMs, createTalkDesk, isWav, keptMs, leastTalkBytes, mostKept, mostTalkBytes, mostTextChars, mostVoicePieces, mostWaiting, pickUpMs, seenMs, tidyText } from "./desk.js";
 import { sweepMs, switchedOff, talk, unknownId } from "./routes.js";
 import { mock } from "node:test";
 
@@ -17,11 +17,11 @@ function wav(bytes = 100): Buffer {
   return sound;
 }
 
-function buildApp(features: Features = allOn, waitMs = 50) {
+function buildApp(features: Features = allOn, waitMs = 50, lines?: string[]) {
   const clock = { at: 1_000_000 };
   let made = 0;
   const desk = createTalkDesk(() => `${(++made).toString(16).padStart(16, "0")}`);
-  const app = Fastify();
+  const app = Fastify(lines === undefined ? {} : { logger: { level: "info", stream: { write: (line: string) => void lines.push(line) } } });
   app.register(talk, { prefix: "/talk", features, desk, now: () => clock.at, waitMs });
   return { app, clock, desk };
 }
@@ -76,7 +76,7 @@ test("a recording goes to Jarvis once, as the raw sound with its id in a header,
   const sent = await send(app, second);
   assert.deepEqual([sent.statusCode, sent.json()], [202, { id: "0000000000000001" }]);
   const view = await app.inject({ method: "GET", url: "/talk/0000000000000001" });
-  assert.deepEqual(view.json(), { id: "0000000000000001", state: "waiting", heard: null, text: null, question: null, asks: 0, voiceComing: false, voice: false });
+  assert.deepEqual(view.json(), { id: "0000000000000001", state: "waiting", heard: null, text: null, question: null, asks: 0, voiceComing: false, voice: false, voices: 0 });
   assert.equal(view.headers["cache-control"], "no-store");
   const next = await app.inject({ method: "GET", url: "/talk/next" });
   assert.equal(next.statusCode, 200);
@@ -187,10 +187,10 @@ test("what he heard, his answer and his voice reach the phone in turn, and the v
   assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/voice`, headers: { "content-type": "audio/wav" }, payload: wav() })).statusCode, 409);
   assert.deepEqual((await app.inject({ method: "POST", url: `/talk/${id}/heard`, payload: { text: "what's the time" } })).json(), { done: true });
   assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/heard`, payload: { text: "again" } })).statusCode, 409);
-  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "heard", heard: "what's the time", text: null, question: null, asks: 0, voiceComing: false, voice: false });
+  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "heard", heard: "what's the time", text: null, question: null, asks: 0, voiceComing: false, voice: false, voices: 0 });
   assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/reply`, payload: { text: "It's ten past six.", voice: "yes" } })).statusCode, 400);
   assert.deepEqual((await app.inject({ method: "POST", url: `/talk/${id}/reply`, payload: { text: "It's ten past six.", voice: true } })).json(), { done: true });
-  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "answered", heard: "what's the time", text: "It's ten past six.", question: null, asks: 0, voiceComing: true, voice: false });
+  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "answered", heard: "what's the time", text: "It's ten past six.", question: null, asks: 0, voiceComing: true, voice: false, voices: 0 });
   assert.equal((await app.inject({ method: "GET", url: `/talk/${id}/voice` })).statusCode, 404);
   const notWav = await app.inject({ method: "POST", url: `/talk/${id}/voice`, headers: { "content-type": "audio/wav" }, payload: Buffer.alloc(100) });
   assert.equal(notWav.statusCode, 415);
@@ -207,7 +207,7 @@ test("when Jarvis can't answer, the phone is told why", async () => {
   const { app } = buildApp();
   const id = await taken(app);
   assert.deepEqual((await app.inject({ method: "POST", url: `/talk/${id}/failed`, payload: { text: "Whisper isn't running." } })).json(), { done: true });
-  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "failed", heard: null, text: "Whisper isn't running.", question: null, asks: 0, voiceComing: false, voice: false });
+  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "failed", heard: null, text: "Whisper isn't running.", question: null, asks: 0, voiceComing: false, voice: false, voices: 0 });
   assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/failed`, payload: { text: "again" } })).statusCode, 409);
 });
 
@@ -216,7 +216,7 @@ test("a yes or no Jarvis needs goes to the phone and back once, and the question
   const id = await taken(app);
   assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/answer`, payload: { yes: true } })).statusCode, 409);
   assert.deepEqual((await app.inject({ method: "POST", url: `/talk/${id}/ask`, payload: { question: "Switch to bedtime?" } })).json(), { done: true });
-  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "asking", heard: null, text: null, question: "Switch to bedtime?", asks: 1, voiceComing: false, voice: false });
+  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "asking", heard: null, text: null, question: "Switch to bedtime?", asks: 1, voiceComing: false, voice: false, voices: 0 });
   assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}/answer` })).json(), { answer: null });
   assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/answer`, payload: { yes: "yes" } })).statusCode, 400);
   assert.deepEqual((await app.inject({ method: "POST", url: `/talk/${id}/answer`, payload: { yes: true } })).json(), { done: true });
@@ -229,7 +229,7 @@ test("a yes or no Jarvis needs goes to the phone and back once, and the question
   await app.inject({ method: "POST", url: `/talk/${id}/ask`, payload: { question: "One more?" } });
   assert.equal((await app.inject({ method: "GET", url: `/talk/${id}` })).json().asks, 3, "each question is counted, so the phone can tell the same question asked again");
   clock.at += askMs + 1;
-  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "heard", heard: null, text: null, question: null, asks: 3, voiceComing: false, voice: false });
+  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}` })).json(), { id, state: "heard", heard: null, text: null, question: null, asks: 3, voiceComing: false, voice: false, voices: 0 });
   assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/answer`, payload: { yes: true } })).statusCode, 409);
 });
 
@@ -283,6 +283,8 @@ test("when the voice can't be made, Jarvis says so and the phone stops waiting f
   assert.equal((await app.inject({ method: "GET", url: `/talk/${id}` })).json().voiceComing, true);
   assert.deepEqual((await app.inject({ method: "POST", url: `/talk/${id}/no-voice` })).json(), { done: true });
   assert.deepEqual([(await app.inject({ method: "GET", url: `/talk/${id}` })).json().voiceComing, (await app.inject({ method: "GET", url: `/talk/${id}` })).json().voice], [false, false]);
+  assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/voice?part=0`, headers: { "content-type": "audio/wav" }, payload: wav() })).statusCode, 409);
+  assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/no-voice` })).statusCode, 409);
   const other = await taken(app);
   await app.inject({ method: "POST", url: `/talk/${other}/reply`, payload: { text: "Here.", voice: true } });
   await app.inject({ method: "POST", url: `/talk/${other}/voice`, headers: { "content-type": "audio/wav" }, payload: wav() });
@@ -339,4 +341,83 @@ test("asking whether Jarvis is running also sweeps", async () => {
   desk.sweep = (at) => (swept++, sweep(at));
   await app.inject({ method: "GET", url: "/talk/status" });
   assert.equal(swept, 1);
+});
+
+async function answeredWithVoice(app: ReturnType<typeof Fastify>) {
+  const id = await taken(app);
+  await app.inject({ method: "POST", url: `/talk/${id}/heard`, payload: { text: "what's on" } });
+  await app.inject({ method: "POST", url: `/talk/${id}/reply`, payload: { text: "Two things. First this. Then that.", voice: true } });
+  return id;
+}
+
+test("his voice can come a piece at a time, in order, each read back by its place, until he says it's done", async () => {
+  const { app } = buildApp();
+  const id = await answeredWithVoice(app);
+  const post = (part: number | string, bytes = 100) => app.inject({ method: "POST", url: `/talk/${id}/voice?part=${part}`, headers: { "content-type": "audio/wav" }, payload: wav(bytes) });
+  assert.equal((await post(1)).statusCode, 409, "out of order");
+  assert.deepEqual((await post(0, 120)).json(), { done: true });
+  let view = (await app.inject({ method: "GET", url: `/talk/${id}` })).json();
+  assert.deepEqual([view.voice, view.voices, view.voiceComing], [true, 1, true], "still coming after the first piece");
+  assert.equal((await post(0)).statusCode, 409, "a piece comes once");
+  assert.deepEqual((await post(1, 140)).json(), { done: true });
+  const second = await app.inject({ method: "GET", url: `/talk/${id}/voice?part=1` });
+  assert.deepEqual([second.statusCode, second.rawPayload.length], [200, wav(140).length]);
+  assert.deepEqual((await app.inject({ method: "GET", url: `/talk/${id}/voice` })).rawPayload, wav(120), "no part is the first");
+  assert.equal((await app.inject({ method: "GET", url: `/talk/${id}/voice?part=2` })).statusCode, 404);
+  assert.deepEqual((await app.inject({ method: "POST", url: `/talk/${id}/voice-done` })).json(), { done: true });
+  view = (await app.inject({ method: "GET", url: `/talk/${id}` })).json();
+  assert.deepEqual([view.voices, view.voiceComing], [2, false]);
+  assert.equal((await post(2)).statusCode, 409, "nothing after done");
+  assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/voice-done` })).statusCode, 409);
+});
+
+test("a voice piece's place must be a small whole number, and done needs at least one piece", async () => {
+  const { app } = buildApp();
+  const id = await answeredWithVoice(app);
+  for (const part of ["-1", "x", "1.5", String(mostVoicePieces), "07", "007", "1000"]) {
+    assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/voice?part=${part}`, headers: { "content-type": "audio/wav" }, payload: wav() })).statusCode, 400, part);
+    assert.equal((await app.inject({ method: "GET", url: `/talk/${id}/voice?part=${part}` })).statusCode, 400, part);
+  }
+  assert.equal((await app.inject({ method: "POST", url: `/talk/${id}/voice-done` })).statusCode, 409);
+  assert.deepEqual((await app.inject({ method: "POST", url: `/talk/${id}/no-voice` })).json(), { done: true });
+});
+
+test(`an answer's voice is at most ${mostVoicePieces} pieces and 6 MiB in all, so pieces can't grow the hub's memory`, async () => {
+  const { app } = buildApp();
+  const id = await answeredWithVoice(app);
+  const post = (part: number, bytes: number) => app.inject({ method: "POST", url: `/talk/${id}/voice?part=${part}`, headers: { "content-type": "audio/wav" }, payload: wav(bytes) });
+  assert.equal((await post(0, 4 * 1024 * 1024)).statusCode, 200);
+  const over = await post(1, 3 * 1024 * 1024);
+  assert.equal(over.statusCode, 413);
+  const many = buildApp();
+  const other = await answeredWithVoice(many.app);
+  for (let part = 0; part < mostVoicePieces; part++) assert.equal((await many.app.inject({ method: "POST", url: `/talk/${other}/voice?part=${part}`, headers: { "content-type": "audio/wav" }, payload: wav(100) })).statusCode, 200);
+  assert.equal((await many.app.inject({ method: "POST", url: `/talk/${other}/voice?part=${mostVoicePieces}`, headers: { "content-type": "audio/wav" }, payload: wav(100) })).statusCode, 400, "no place past the last");
+  const desk = createTalkDesk(() => "00000000000000b1");
+  const audio = Buffer.alloc(leastTalkBytes);
+  desk.take(0);
+  assert.deepEqual(desk.add(audio, 0), { id: "00000000000000b1" });
+  desk.take(0);
+  desk.heard("00000000000000b1", "hi", 0);
+  desk.reply("00000000000000b1", "Hi.", true, 0);
+  for (let part = 0; part < mostVoicePieces; part++) assert.equal(desk.addVoice("00000000000000b1", wav(100), 0, part), "done");
+  assert.equal(desk.addVoice("00000000000000b1", wav(100), 0, mostVoicePieces), "too big", "and the desk itself holds no more");
+});
+
+test("a voice piece that comes in is logged by its id, place and size, never anything else", async () => {
+  const lines: string[] = [];
+  const { app } = buildApp(allOn, 50, lines);
+  const id = await answeredWithVoice(app);
+  await app.inject({ method: "POST", url: `/talk/${id}/voice?part=0`, headers: { "content-type": "audio/wav" }, payload: wav() });
+  const line = lines.map((one) => JSON.parse(one)).find((one) => one.msg === "Jarvis's voice for the phone came");
+  assert.deepEqual(line?.talk, { id, part: 0, bytes: wav().length });
+});
+
+test("each voice piece adds only its own line to the log, not Fastify's two lines for the request, so a long answer can't push the rest out", async () => {
+  const lines: string[] = [];
+  const { app } = buildApp(allOn, 50, lines);
+  const id = await answeredWithVoice(app);
+  const before = lines.length;
+  for (const part of [0, 1, 2]) await app.inject({ method: "POST", url: `/talk/${id}/voice?part=${part}`, headers: { "content-type": "audio/wav" }, payload: wav() });
+  assert.deepEqual(lines.slice(before).map((one) => JSON.parse(one).msg), ["Jarvis's voice for the phone came", "Jarvis's voice for the phone came", "Jarvis's voice for the phone came"]);
 });

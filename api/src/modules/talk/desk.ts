@@ -5,6 +5,7 @@ export const mostTalkSeconds = 30;
 export const mostTalkBytes = talkRate * 2 * mostTalkSeconds;
 export const leastTalkBytes = talkRate / 2;
 export const mostVoiceBytes = 6 * 1024 * 1024;
+export const mostVoicePieces = 120;
 export const mostTextChars = 4000;
 export const mostQuestionChars = 500;
 export const mostWaiting = 3;
@@ -18,11 +19,11 @@ export const idPattern = /^[0-9a-f]{16}$/;
 
 export type TalkState = "waiting" | "taken" | "heard" | "asking" | "answered" | "failed";
 
-export type TalkView = { id: string; state: TalkState; heard: string | null; text: string | null; question: string | null; asks: number; voiceComing: boolean; voice: boolean };
+export type TalkView = { id: string; state: TalkState; heard: string | null; text: string | null; question: string | null; asks: number; voiceComing: boolean; voice: boolean; voices: number };
 
 export type Added = { id: string } | { refused: string; status: 400 | 409 | 503 };
 
-export type Changed = "done" | "unknown" | "wrong state";
+export type Changed = "done" | "unknown" | "wrong state" | "too big";
 
 type Entry = {
   id: string;
@@ -35,7 +36,9 @@ type Entry = {
   asks: number;
   answer: "yes" | "no" | null;
   voiceComing: boolean;
-  voice: Buffer | null;
+  voices: Buffer[];
+  voiceBytes: number;
+  voiceDone: boolean;
   addedAt: number;
 };
 
@@ -52,9 +55,10 @@ export type TalkDesk = {
   ask(id: string, question: string, at: number): Changed;
   answer(id: string, yes: boolean, at: number): Changed;
   answerFor(id: string, at: number): { answer: "yes" | "no" | null } | null;
-  addVoice(id: string, wav: Buffer, at: number): Changed;
+  addVoice(id: string, wav: Buffer, at: number, part?: number): Changed;
+  voiceDone(id: string, at: number): Changed;
   noVoice(id: string, at: number): Changed;
-  voiceOf(id: string, at: number): Buffer | null;
+  voiceOf(id: string, at: number, part?: number): Buffer | null;
 };
 
 export function tidyText(text: string, most: number): string {
@@ -126,7 +130,7 @@ export function createTalkDesk(makeId: () => string = () => randomBytes(8).toStr
         entries.delete(oldest);
       }
       const id = makeId();
-      entries.set(id, { id, state: "waiting", audio, heard: null, text: null, question: null, askedAt: null, asks: 0, answer: null, voiceComing: false, voice: null, addedAt: at });
+      entries.set(id, { id, state: "waiting", audio, heard: null, text: null, question: null, askedAt: null, asks: 0, answer: null, voiceComing: false, voices: [], voiceBytes: 0, voiceDone: false, addedAt: at });
       for (const wake of [...waiters]) wake();
       return { id };
     },
@@ -160,7 +164,7 @@ export function createTalkDesk(makeId: () => string = () => randomBytes(8).toStr
     view(id, at) {
       const entry = found(id, at);
       if (entry === null) return null;
-      return { id: entry.id, state: entry.state, heard: entry.heard, text: entry.text, question: entry.state === "asking" ? entry.question : null, asks: entry.asks, voiceComing: entry.voiceComing && entry.voice === null, voice: entry.voice !== null };
+      return { id: entry.id, state: entry.state, heard: entry.heard, text: entry.text, question: entry.state === "asking" ? entry.question : null, asks: entry.asks, voiceComing: entry.voiceComing && !entry.voiceDone, voice: entry.voices.length > 0, voices: entry.voices.length };
     },
     heard(id, text, at) {
       return change(id, at, ["taken"], (entry) => {
@@ -209,22 +213,34 @@ export function createTalkDesk(makeId: () => string = () => randomBytes(8).toStr
       entry.answer = null;
       return { answer };
     },
-    addVoice(id, wav, at) {
+    addVoice(id, wav, at, part) {
       const entry = found(id, at);
       if (entry === null) return "unknown";
-      if (entry.state !== "answered" || entry.voice !== null) return "wrong state";
-      entry.voice = wav;
+      if (entry.state !== "answered" || entry.voiceDone) return "wrong state";
+      if (part === undefined ? entry.voices.length > 0 : part !== entry.voices.length) return "wrong state";
+      if (entry.voices.length >= mostVoicePieces || entry.voiceBytes + wav.length > mostVoiceBytes) return "too big";
+      entry.voices.push(wav);
+      entry.voiceBytes += wav.length;
+      if (part === undefined) entry.voiceDone = true;
+      return "done";
+    },
+    voiceDone(id, at) {
+      const entry = found(id, at);
+      if (entry === null) return "unknown";
+      if (entry.state !== "answered" || entry.voiceDone || entry.voices.length === 0) return "wrong state";
+      entry.voiceDone = true;
       return "done";
     },
     noVoice(id, at) {
       const entry = found(id, at);
       if (entry === null) return "unknown";
-      if (entry.state !== "answered" || entry.voice !== null) return "wrong state";
+      if (entry.state !== "answered" || entry.voiceDone) return "wrong state";
       entry.voiceComing = false;
+      entry.voiceDone = true;
       return "done";
     },
-    voiceOf(id, at) {
-      return found(id, at)?.voice ?? null;
+    voiceOf(id, at, part = 0) {
+      return found(id, at)?.voices[part] ?? null;
     },
   };
 }

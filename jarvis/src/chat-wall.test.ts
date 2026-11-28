@@ -253,6 +253,7 @@ test("a question from the phone shows him working and needing you, but never its
     ask: async () => {},
     answer: async () => "yes",
     voice: async () => {},
+    voiceDone: async () => {},
     noVoice: async () => {},
   };
   const deps: ChatDeps = {

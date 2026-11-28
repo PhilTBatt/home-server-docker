@@ -21,7 +21,7 @@ import { withNotes, type SessionNotes } from "./session-notes.js";
 import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { trainSay, type TrainEvent, type TrainNews } from "./train-news.js";
 import { sessionSay, type SessionEvent, type SessionNews } from "./session-news.js";
-import { askOnPhone, phoneModeUnknownNote, phoneModeUnknownSay, phoneNothingToSayNote, withPhoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneEvent, type PhoneParts } from "./phone.js";
+import { askOnPhone, phoneVoiceCutNote, phoneModeUnknownNote, phoneModeUnknownSay, phoneNothingToSayNote, withPhoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneEvent, type PhoneParts } from "./phone.js";
 import { answeredSay, guestRemindersNote, reminderAnswerFailedSay, reminderAnswerIn, reminderAnswerMs, reminderSay, type ReminderAnswer, type ReminderEvent, type ReminderHub, type ReminderNews } from "./reminders.js";
 import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, modeSays, modesBackNote, modesOffSay, modeWordIn, speaksUnprompted, whenBackAsk, whenNotCaught, whenSaid, ModesOff, type Mode, type ModeEvent, type ModeHub, type ModeWord, type WhenCheck } from "./modes.js";
 import { seconds, type Answer } from "./timing.js";
@@ -1476,15 +1476,17 @@ async function onPhone(deps: ChatDeps, state: ChatState, event: PhoneEvent): Pro
     const voice = phone.voice;
     await tellPhone(deps, () => phone.desk.reply(request.id, answer, voice !== null, signal));
     if (voice !== null) {
-      let wav: Uint8Array<ArrayBuffer> | null = null;
+      let sent = 0;
       try {
-        wav = await voice(answer, signal);
-        if (wav === null) deps.write(`  (${phoneVoiceNote(phoneNothingToSayNote)})\n`);
+        const made = await voice(answer, signal, async (wav) => {
+          await phone.desk.voice(request.id, wav, signal, sent);
+          sent++;
+        });
+        if (made === 0) deps.write(`  (${phoneVoiceNote(phoneNothingToSayNote)})\n`);
       } catch (error) {
-        if (!signal.aborted) deps.write(`  (${printable(phoneVoiceNote(reasonOf(error)))})\n`);
+        if (!signal.aborted) deps.write(`  (${printable(sent === 0 ? phoneVoiceNote(reasonOf(error)) : phoneVoiceCutNote(sent, reasonOf(error)))})\n`);
       }
-      const made = wav;
-      if (made !== null) await tellPhone(deps, () => phone.desk.voice(request.id, made, signal));
+      if (sent > 0) await tellPhone(deps, () => phone.desk.voiceDone(request.id, signal));
       else if (!signal.aborted) await tellPhone(deps, () => phone.desk.noVoice(request.id, signal));
     }
   }

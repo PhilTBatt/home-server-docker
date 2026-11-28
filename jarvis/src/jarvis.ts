@@ -262,7 +262,7 @@ try {
     reminders: config.reminders && config.hubToken !== null ? { news: watchReminders({ ask: askHubForDue(config.hubToken), signal: closing.signal }), hub: hubReminders(config.hubToken) } : undefined,
     wall: shown?.chat,
     features: hubSwitches?.events,
-    phone: config.phone && config.hubToken !== null ? { news: watchPhone({ desk: hubDesk(config.hubToken), signal: closing.signal }), desk: hubDesk(config.hubToken), hear: whisperHears(), mode: hubModeCheck(config.hubToken), voice: speaking === null ? null : (text, signal) => phoneVoice(speaking.engine, text, signal, config.spokenStyle) } : undefined,
+    phone: config.phone && config.hubToken !== null ? { news: watchPhone({ desk: hubDesk(config.hubToken), signal: closing.signal }), desk: hubDesk(config.hubToken), hear: whisperHears(), mode: hubModeCheck(config.hubToken), voice: speaking === null ? null : (text, signal, piece) => phoneVoice(speaking.engine, text, signal, config.spokenStyle, piece) } : undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));

@@ -48,6 +48,8 @@ test("the hub's desk takes a recording with its id, sends Jarvis's words as JSON
   await desk.ask("00000000000000a1", "Sure?", signal);
   assert.equal(await desk.answer("00000000000000a1", signal), "yes");
   await desk.voice("00000000000000a1", wavOf(new Uint8Array(4), 24_000), signal);
+  await desk.voice("00000000000000a1", wavOf(new Uint8Array(6), 24_000), signal, 3);
+  await desk.voiceDone("00000000000000a1", signal);
   await desk.noVoice("00000000000000a1", signal);
   assert.deepEqual(
     hub.seen.map((one) => [one.method, one.url, one.auth, one.type ?? null, one.type === "application/json" ? JSON.parse(one.body.toString()) : one.body.length]),
@@ -59,6 +61,8 @@ test("the hub's desk takes a recording with its id, sends Jarvis's words as JSON
       ["POST", "/talk/00000000000000a1/ask", "Bearer a-token", "application/json", { question: "Sure?" }],
       ["GET", "/talk/00000000000000a1/answer", "Bearer a-token", null, 0],
       ["POST", "/talk/00000000000000a1/voice", "Bearer a-token", "audio/wav", 48],
+      ["POST", "/talk/00000000000000a1/voice?part=3", "Bearer a-token", "audio/wav", 50],
+      ["POST", "/talk/00000000000000a1/voice-done", "Bearer a-token", "application/json", {}],
       ["POST", "/talk/00000000000000a1/no-voice", "Bearer a-token", "application/json", {}],
     ],
   );
@@ -208,22 +212,59 @@ function fakeEngine(bytesEach: number, heard: string[][]): SpeechEngine {
   };
 }
 
-test("the phone's voice is the whole answer, a sentence at a time as it would be spoken, joined into one WAV at the engine's rate", async () => {
+test("the phone's voice is the whole answer, each sentence as it would be spoken sent as its own WAV at the engine's rate, as soon as it's made", async () => {
   const heard: string[][] = [];
-  const wav = await phoneVoice(fakeEngine(4, heard), "It's **sunny**. Take [a coat](https://example.com) anyway.", new AbortController().signal, true);
+  const sent: Uint8Array<ArrayBuffer>[] = [];
+  const count = await phoneVoice(fakeEngine(4, heard), "It's **sunny**. Take [a coat](https://example.com) anyway.", new AbortController().signal, true, async (wav) => {
+    assert.equal(heard[0].length, sent.length + 1, "each piece goes before the next sentence is asked for");
+    sent.push(wav);
+  });
+  assert.equal(count, 2);
   assert.deepEqual(heard, [["It's sunny.", "Take a coat anyway."]]);
-  assert.ok(wav !== null);
-  assert.equal(new DataView(wav.buffer).getUint32(24, true), 10);
-  assert.deepEqual([...wav.subarray(44)], [1, 1, 1, 1, 2, 2, 2, 2]);
-  assert.equal(await phoneVoice(fakeEngine(4, heard), "```\ncode\n```", new AbortController().signal, true), null);
+  assert.deepEqual(sent.map((wav) => new DataView(wav.buffer).getUint32(24, true)), [10, 10]);
+  assert.deepEqual(sent.map((wav) => [...wav.subarray(44)]), [[1, 1, 1, 1], [2, 2, 2, 2]]);
+  const none: Uint8Array[] = [];
+  assert.equal(await phoneVoice(fakeEngine(4, heard), "```\ncode\n```", new AbortController().signal, true, async (wav) => void none.push(wav)), 0);
+  assert.deepEqual(none, []);
 });
 
-test(`the phone's voice stops at ${mostVoiceSeconds} seconds`, async () => {
+test(`the phone's voice stops at ${mostVoiceSeconds} seconds in all`, async () => {
   const heard: string[][] = [];
   const most = 10 * 2 * mostVoiceSeconds;
-  const wav = await phoneVoice(fakeEngine(most - 2, heard), "One. Two. Three.", new AbortController().signal, false);
-  assert.ok(wav !== null);
-  assert.equal(wav.length - 44, most);
+  const sent: Uint8Array[] = [];
+  const count = await phoneVoice(fakeEngine(most - 2, heard), "One. Two. Three.", new AbortController().signal, false, async (wav) => void sent.push(wav));
+  assert.equal(count, 2);
+  assert.deepEqual(sent.map((wav) => wav.length - 44), [most - 2, 2]);
+  assert.deepEqual(heard, [["One.", "Two."]]);
+});
+
+test("a sentence the engine makes no sound for sends no piece, so the phone never gets a WAV with nothing in it", async () => {
+  const sizes = [4, 0, 4];
+  const engine: SpeechEngine = {
+    name: "Fake",
+    sampleRate: 10,
+    splitsSentences: false,
+    async *speak(text) {
+      for await (const _piece of text) yield new Uint8Array(sizes.shift() ?? 0).fill(7);
+    },
+    async check() {},
+  };
+  const sent: Uint8Array[] = [];
+  assert.equal(await phoneVoice(engine, "One. Two. Three.", new AbortController().signal, false, async (wav) => void sent.push(wav)), 2);
+  assert.deepEqual(sent.map((wav) => wav.length - 44), [4, 4]);
+});
+
+test("a piece the hub won't take stops the voice there, and no more sentences are made", async () => {
+  const heard: string[][] = [];
+  let sent = 0;
+  await assert.rejects(
+    phoneVoice(fakeEngine(4, heard), "One. Two. Three.", new AbortController().signal, false, async () => {
+      sent++;
+      if (sent === 2) throw new Error("the hub said: no");
+    }),
+    /the hub said: no/,
+  );
+  assert.equal(sent, 2);
   assert.deepEqual(heard, [["One.", "Two."]]);
 });
 
