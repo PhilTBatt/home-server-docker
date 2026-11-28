@@ -1,4 +1,5 @@
-import type { EarsMode, VoiceMode } from "./config.js";
+import type { Config, EarsMode, VoiceMode } from "./config.js";
+import { relevantFeatures, type HubFeature, type HubFeatures } from "./hub-features.js";
 import type { WebMode } from "./look-up.js";
 import { phoneTag } from "./phone.js";
 
@@ -18,6 +19,8 @@ export type FactsInput = {
   reminders?: boolean;
   otherVoices?: "answer" | "name" | "guest";
   musicYes?: "changes" | "all";
+  remindersAtHub?: boolean;
+  spotifyAtHub?: boolean;
   phone?: boolean;
   wall?: boolean;
 };
@@ -32,7 +35,8 @@ export function liveFacts(input: FactsInput): string {
   if (input.ears === "off") facts.push("He can only type to you: you're not connected to ears, the service that listens for you.");
   else if (input.ears === "push") facts.push("He can type, or speak to you after typing /talk.");
   else facts.push(`He can type, or speak to you after typing /talk, saying Hey Jarvis or pressing his talk button.${input.followUp === null ? "" : ` After you answer something he said with Hey Jarvis or the button, you listen for ${input.followUp} seconds for a follow-up without the wake word.`}`);
-  facts.push(input.hubTools ? `You have the hub's read-only tools${input.hubActions ? `, and actions that each need his yes before they run, apart from setting and snoozing reminders${input.musicYes === "changes" ? " and Spotify's playback controls" : ""}, which don't` : ""}.` : "You don't have the hub's tools in this chat.");
+  const free = [input.remindersAtHub === false ? null : "setting and snoozing reminders", input.musicYes === "changes" && input.spotifyAtHub !== false ? "Spotify's playback controls" : null].filter((one) => one !== null);
+  facts.push(input.hubTools ? `You have the hub's read-only tools${input.hubActions ? `, and actions that each need his yes before they run${free.length === 0 ? "" : `, apart from ${free.join(" and ")}, which don't`}` : ""}.` : "You don't have the hub's tools in this chat.");
   if (input.ears !== "off") {
     facts.push(`Some things he says out loud never reach you, because your own code acts on them first when they're all he says or the last sentence of it: note this, followed by anything, saves it as a voice note in his brain's inbox; find my phone sends his phone a notification; train times reads out his next three trains; server check, or how's the server, reads out the hub's check of the home server; never mind or that's all asks nothing; and stop listening, said on its own, makes ears mute itself until he unmutes it on the server.`);
     if (!input.codeWordsReachHub) facts.push("Notes, finding his phone, train times and the server check go through the hub, so they won't work until he turns your hub tools on.");
@@ -56,4 +60,33 @@ export function liveFacts(input: FactsInput): string {
 
 export function withLiveFacts(system: string, facts: string | null): string {
   return facts === null ? system : `${system}\n\n${facts}`;
+}
+
+export type FactsConfig = Pick<Config, "ears" | "followUp" | "hubActions" | "hubToken" | "trainAlerts" | "web" | "brainQuestions" | "clock" | "modes" | "guest" | "reminders" | "voices" | "otherVoices" | "musicYes" | "phone" | "wall">;
+
+export function factsWiring(config: FactsConfig, chat: { voice: VoiceMode; guest: boolean; hubOn: boolean; atHub: HubFeatures | null }): { input: FactsInput; relevant: HubFeature[] } {
+  const { guest, hubOn, atHub } = chat;
+  const input: FactsInput = {
+    voice: chat.voice,
+    ears: config.ears,
+    followUp: config.followUp,
+    hubTools: hubOn,
+    hubActions: hubOn && config.hubActions,
+    codeWordsReachHub: !guest && config.hubToken !== null,
+    trainAlerts: !guest && config.trainAlerts && atHub?.trainAlerts !== false,
+    web: config.web,
+    brainQuestions: !guest && config.brainQuestions,
+    clock: config.clock,
+    modes: !guest && config.modes && atHub?.modes !== false,
+    guest: config.guest,
+    reminders: !guest && config.reminders && atHub?.reminders !== false,
+    otherVoices: config.voices ? config.otherVoices : undefined,
+    musicYes: config.musicYes,
+    remindersAtHub: atHub?.reminders !== false,
+    spotifyAtHub: atHub?.spotify !== false,
+    phone: !guest && config.phone && atHub?.talk !== false,
+    wall: config.wall && atHub?.wall !== false,
+  };
+  const relevant = relevantFeatures({ guest, reminders: config.reminders, hubActions: hubOn && config.hubActions, musicChanges: config.musicYes === "changes", phone: config.phone, wall: config.wall, modes: config.modes, trainAlerts: config.trainAlerts });
+  return { input, relevant };
 }

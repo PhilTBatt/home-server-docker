@@ -26,7 +26,7 @@ import { brainDir, readConfig, type VoiceMode } from "./config.js";
 import { earsCaller, guestDoor } from "./ears-client.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
-import { liveFacts } from "./live-facts.js";
+import { factsWiring, liveFacts } from "./live-facts.js";
 import { introLine, readIntro } from "./intro.js";
 import { hubModes as modeHub, watchModes, whenCheck } from "./modes.js";
 import { askHubForDue, hubReminders, watchReminders } from "./reminders.js";
@@ -43,6 +43,7 @@ import { followOnCheck } from "./look-up-follow.js";
 import { voiceFor } from "./voice.js";
 import { createFollowAsk, eager, mutedFrom, spokenOf, startWakeHold, stopOnCutIn, watchWake } from "./wake.js";
 import { createWall, hubWall, lookingOnWall, playOnWall, type Wall } from "./wall.js";
+import { factsTold, featuresLine, hubFeaturesReader, watchHubFeatures } from "./hub-features.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
 const heard = heardLines(lines, promptWhileOpen(lines));
@@ -105,10 +106,17 @@ try {
   const guestDir = config.guest ? await mkdtemp(join(tmpdir(), "jarvis-guest-")) : null;
   const guestSetup: ChatSetup = { chats: "fresh", history: [], earlierQuestions: null, problem: null, failureHint: null };
   const modes = config.modes && config.hubToken !== null ? modeHub(config.hubToken) : undefined;
+  const hubSwitches = config.hubToken === null || !config.liveFacts ? undefined : watchHubFeatures({ read: hubFeaturesReader(config.hubToken), signal: closing.signal });
+  await hubSwitches?.first(starting.signal);
   const open = (setup: ChatSetup, guest = false) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = guest ? false : config.engine === "api" ? hubTools !== undefined : hub !== undefined;
-    const facts = config.liveFacts ? liveFacts({ voice, ears: config.ears, followUp: config.followUp, hubTools: hubOn, hubActions: hubOn && config.hubActions, codeWordsReachHub: !guest && config.hubToken !== null, trainAlerts: !guest && config.trainAlerts, web: config.web, brainQuestions: !guest && config.brainQuestions, clock: config.clock, modes: !guest && config.modes, guest: config.guest, reminders: !guest && config.reminders, otherVoices: config.voices ? config.otherVoices : undefined, musicYes: config.musicYes, phone: !guest && config.phone, wall: config.wall }) : null;
+    const atHub = hubSwitches?.latest() ?? null;
+    const wired = factsWiring(config, { voice, guest, hubOn, atHub });
+    const facts = config.liveFacts ? liveFacts(wired.input) : null;
+    const relevant = wired.relevant;
+    const told = factsTold(atHub);
+    const factsChange = !config.liveFacts || hubSwitches === undefined ? undefined : () => told.line(hubSwitches.latest(), relevant);
     const digest = config.digest ? digestFor({ guest }) : null;
     const instructions = (base: string) => withDigest(systemFor(guest ? guestChatSystem : base, { persona, intro, facts, spoken, notes: guest ? [] : (notes ?? []), clock: config.clock }), digest);
     const logged: { log?: AnswerLog } = {};
@@ -169,6 +177,7 @@ try {
       lengthNote: hints.newLengthNote(),
       knownSize: setup.knownSize,
       rememberSize: setup.rememberSize,
+      factsChange,
     };
   };
   const chats = await setUpChats(config.chats, config.engine);
@@ -199,6 +208,7 @@ try {
     if (event.kind === "status") shown?.muted(mutedFrom(event.line));
   });
   const followSeconds = config.followUp;
+  if (hubSwitches !== undefined) process.stdout.write(`${featuresLine(hubSwitches.latest())}\n`);
   const first = open(chats);
   process.stdout.write(`${chatsLine(chats.chats, chats.earlierQuestions)}\n`);
   if (config.log) process.stdout.write(`${loggingNote}\n`);
@@ -250,6 +260,7 @@ try {
     sessions: config.sessions && config.hubToken !== null ? watchSessions({ ask: askHubForSessions(config.hubToken), signal: closing.signal }) : undefined,
     reminders: config.reminders && config.hubToken !== null ? { news: watchReminders({ ask: askHubForDue(config.hubToken), signal: closing.signal }), hub: hubReminders(config.hubToken) } : undefined,
     wall: shown?.chat,
+    features: hubSwitches?.events,
     phone: config.phone && config.hubToken !== null ? { news: watchPhone({ desk: hubDesk(config.hubToken), signal: closing.signal }), desk: hubDesk(config.hubToken), hear: whisperHears(), mode: hubModeCheck(config.hubToken), voice: speaking === null ? null : (text, signal) => phoneVoice(speaking.engine, text, signal, config.spokenStyle) } : undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { codeWordIn } from "./code-words.js";
-import { factsLead, liveFacts, withLiveFacts, type FactsInput } from "./live-facts.js";
+import { factsWiring, factsLead, liveFacts, withLiveFacts, type FactsInput } from "./live-facts.js";
 
 const typed: FactsInput = { voice: "off", ears: "off", followUp: null, hubTools: false, hubActions: false, codeWordsReachHub: false, trainAlerts: false, brainQuestions: false, clock: false, web: "off" };
 const all: FactsInput = { voice: "kokoro", ears: "wake", followUp: 6, hubTools: true, hubActions: true, codeWordsReachHub: true, trainAlerts: true, brainQuestions: true, clock: false, web: "off" };
@@ -180,4 +180,36 @@ test("with the wall on, the facts say a screen in the room shows his answers to 
   const wallOn = liveFacts({ ...all, wall: true });
   assert.ok(wallOn.includes("A screen in the room shows what you're doing, what he says out loud and your answers to it as words, for anyone in the room to read, guests included. Answers to what he types or asks from his phone aren't shown."), wallOn);
   for (const input of [all, { ...all, wall: false }]) assert.ok(!liveFacts(input).includes("A screen in the room"));
+});
+
+test("the hub actions' exceptions follow the hub's own switches: no reminders exception with reminders off there, no Spotify one with Spotify off there", () => {
+  assert.ok(liveFacts({ ...all, musicYes: "changes", remindersAtHub: false }).includes("apart from Spotify's playback controls, which don't."));
+  assert.ok(liveFacts({ ...all, musicYes: "changes", spotifyAtHub: false }).includes("apart from setting and snoozing reminders, which don't."));
+  assert.ok(liveFacts({ ...all, musicYes: "changes", remindersAtHub: false, spotifyAtHub: false }).includes("and actions that each need his yes before they run."));
+  assert.ok(!liveFacts({ ...all, remindersAtHub: false }).includes("apart from"));
+  assert.equal(liveFacts({ ...all, musicYes: "changes", remindersAtHub: true, spotifyAtHub: true }), liveFacts({ ...all, musicYes: "changes" }), "unknown counts as on, as before");
+});
+
+const wiringConfig = { ears: "wake", followUp: 6, hubActions: true, hubToken: "a-token", trainAlerts: true, web: "off", brainQuestions: true, clock: true, modes: true, guest: true, reminders: true, voices: true, otherVoices: "answer", musicYes: "changes", phone: true, wall: true } as const;
+const allAtHub = { reminders: true, spotify: true, talk: true, wall: true, modes: true, trainAlerts: true };
+
+test("in a guest chat the facts give him nothing of Phil's hub, and only the wall's switch counts as a change", () => {
+  const { input, relevant } = factsWiring(wiringConfig, { voice: "kokoro", guest: true, hubOn: false, atHub: allAtHub });
+  assert.deepEqual([input.codeWordsReachHub, input.trainAlerts, input.brainQuestions, input.modes, input.reminders, input.phone, input.hubTools, input.hubActions], [false, false, false, false, false, false, false, false]);
+  assert.equal(input.wall, true);
+  assert.deepEqual(relevant, ["wall"]);
+});
+
+test("the hub's own switches turn off what they cover, and unknown counts as on", () => {
+  const off = factsWiring(wiringConfig, { voice: "kokoro", guest: false, hubOn: true, atHub: { reminders: false, spotify: false, talk: false, wall: false, modes: false, trainAlerts: false } }).input;
+  assert.deepEqual([off.reminders, off.remindersAtHub, off.spotifyAtHub, off.phone, off.wall, off.modes, off.trainAlerts], [false, false, false, false, false, false, false]);
+  const unknown = factsWiring(wiringConfig, { voice: "kokoro", guest: false, hubOn: true, atHub: null }).input;
+  assert.deepEqual([unknown.reminders, unknown.remindersAtHub, unknown.spotifyAtHub, unknown.phone, unknown.wall, unknown.modes, unknown.trainAlerts, unknown.codeWordsReachHub], [true, true, true, true, true, true, true, true]);
+});
+
+test("only the switches a chat uses count as a change worth telling him", () => {
+  const { relevant } = factsWiring({ ...wiringConfig, hubActions: false, phone: false, trainAlerts: false }, { voice: "kokoro", guest: false, hubOn: true, atHub: allAtHub });
+  assert.deepEqual(relevant, ["reminders", "wall", "modes"]);
+  assert.deepEqual(factsWiring({ ...wiringConfig, musicYes: "changes" }, { voice: "kokoro", guest: false, hubOn: true, atHub: allAtHub }).relevant, ["reminders", "spotify", "talk", "wall", "modes", "trainAlerts"]);
+  assert.deepEqual(factsWiring(wiringConfig, { voice: "kokoro", guest: false, hubOn: false, atHub: allAtHub }).relevant, ["reminders", "talk", "wall", "modes", "trainAlerts"], "no hub actions, so Spotify's switch doesn't matter");
 });

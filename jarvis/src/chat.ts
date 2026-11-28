@@ -14,6 +14,7 @@ import { actionQuestion, hubToolPrefix, isHubAction } from "./hub-tools.js";
 import type { Prices } from "./prices.js";
 import { withPausableTimeout } from "./run.js";
 import { withLiveFacts } from "./live-facts.js";
+import { withFactsChange, type FeaturesEvent } from "./hub-features.js";
 import { withIntro } from "./intro.js";
 import { withPersona } from "./persona.js";
 import { withNotes, type SessionNotes } from "./session-notes.js";
@@ -186,6 +187,8 @@ export type ChatDeps = {
   askYes?: (question: string, signal: AbortSignal) => Promise<string | null>;
   answered?: (result: { text: string } | { error: string }) => void;
   fromPhone?: boolean;
+  factsChange?: () => string | null;
+  features?: AsyncIterable<FeaturesEvent>;
   describe?: (tool: string, input: unknown, signal: AbortSignal) => Promise<string>;
   speak?: (after?: Promise<void>) => AnswerSpeech;
   speechStop?: SpeechStop;
@@ -216,7 +219,7 @@ export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise
 
 export const neverMindNote = "left there, so nothing was asked";
 
-export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[]; web?: WebDeps };
+export type NewChat = { [Key in "session" | "record" | "rate" | "failureHint" | "lengthNote" | "recordNewChat" | "knownSize" | "rememberSize" | "recordSpeech"]-?: ChatDeps[Key] } & { notes: string[]; web?: WebDeps; factsChange?: () => string | null };
 
 export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
@@ -521,7 +524,7 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
     return asked;
   };
   const timer = withPausableTimeout(
-    deps.session.ask(withSizeLine(withTimeLine(message, deps.clock === undefined ? null : timeLine(deps.clock())), deps.sizeLine?.(state.lastRequestTokens) ?? null), {
+    deps.session.ask(withSizeLine(withTimeLine(withFactsChange(message, deps.factsChange?.() ?? null), deps.clock === undefined ? null : timeLine(deps.clock())), deps.sizeLine?.(state.lastRequestTokens) ?? null), {
       text: (delta) => {
         streamed = true;
         said += delta;
@@ -708,7 +711,7 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
 }
 
 type ModeRetry = { kind: "mode retry" };
-type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ModeRetry | ReminderEvent | SessionEvent | PhoneEvent;
+type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ModeRetry | ReminderEvent | SessionEvent | PhoneEvent | FeaturesEvent;
 export type ChatInput = { kind: "line"; text: string } | WakeEvent | NewsEvent;
 
 export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<NewsEvent>): AsyncGenerator<ChatInput> {
@@ -1785,7 +1788,7 @@ export async function runChat(deps: ChatDeps): Promise<void> {
   await tellEars(base, current, false);
   try {
     current.prompt();
-    const news = [current.trains?.events, found?.events, current.modes?.events, retry?.events, current.reminders?.news.events, current.sessions?.events, current.phone?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
+    const news = [current.features, current.trains?.events, found?.events, current.modes?.events, retry?.events, current.reminders?.news.events, current.sessions?.events, current.phone?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
     for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, news.length === 0 ? undefined : news.length === 1 ? news[0] : merged<NewsEvent>(...news)), deps.ready)) {
       if (input.kind === "reminders" || input.kind === "reminders note") {
         await onReminders(current, state, input);
@@ -1807,6 +1810,12 @@ export async function runChat(deps: ChatDeps): Promise<void> {
         onModeEvent(current, state, input);
         current = await applySwitch(base, current, state);
         if (state.tellHub) await tellHubGuest(current, state);
+        continue;
+      }
+      if (input.kind === "features note") {
+        current.interrupt?.();
+        current.write(`  (${printable(input.line)})\n`);
+        current.prompt();
         continue;
       }
       if (input.kind === "mode retry") {

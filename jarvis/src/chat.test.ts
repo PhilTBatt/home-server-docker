@@ -8,6 +8,7 @@ import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { apiChatSystem, clockNote, spokenStyle, systemFor, withSpokenStyle, askOnce, questionPrompt, chatModel, chatsLine, chatSystem, confirmMs, commandNote, costLine, heardLines, lengthLineFor, noNewChatNote, refusedNote, retryNote, settingsLine, startLengthNotes, engineLine, exitWords, greeting, notLoggingNote, printable, promptWhileOpen, questionTimeoutMs, restartNote, runChat, stoppedMessage, timingLine, toolNote, looksLikeCommand, lengthHintsFor, startSizeLines, withSizeLine, capNote, capReachedNote, type ChatDeps, type NewChat, type PromptLine } from "./chat.js";
 import type { Answer, AnswerStats } from "./timing.js";
 import { personaFraming } from "./persona.js";
+import { timeLine } from "./code-words.js";
 
 type Script = (listener: AnswerListener) => Promise<Answer>;
 
@@ -1536,4 +1537,22 @@ test("the note for a look-up shows the question, or nothing after the colon when
   assert.equal(toolNote("look_up", { question: "  the   weather in Paris " }), "looking up: the weather in Paris");
   assert.equal(toolNote("mcp__web__look_up", {}), "looking up: ");
   assert.equal(toolNote("WebSearch", { query: "x" }), "using WebSearch");
+});
+
+test("a change to the hub's switches goes after the question once, before the time line, and a new chat's own facts take over", async () => {
+  const line = "[From your own code: since this chat started, the hub's switches changed: the hub's reminders now off. Go by this over what your live facts say about them.]";
+  let pending: string | null = line;
+  const at = new Date("2026-11-28T09:15:00Z");
+  const time = timeLine(at);
+  const session = fakeSession({ [`Hello\n\n${line}\n\n${time}`]: hello, [`Again\n\n${time}`]: hello });
+  const { run } = chat(session, ["Hello", "Again"], {
+    clock: () => at,
+    factsChange: () => {
+      const told = pending;
+      pending = null;
+      return told;
+    },
+  });
+  await run();
+  assert.deepEqual(session.asked, [`Hello\n\n${line}\n\n${time}`, `Again\n\n${time}`]);
 });
