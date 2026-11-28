@@ -2,7 +2,7 @@ import { errorOf, hubAsk, reasonOf } from "./code-words.js";
 import { hubApiUrl } from "./hub-tools.js";
 import { pause } from "./wake.js";
 
-export const hubFeatureNames = ["reminders", "spotify", "talk", "wall", "modes", "trainAlerts"] as const;
+export const hubFeatureNames = ["reminders", "spotify", "talk", "wall", "modes", "trainAlerts", "projector"] as const;
 export type HubFeature = (typeof hubFeatureNames)[number];
 export type HubFeatures = Record<HubFeature, boolean>;
 export type FeaturesEvent = { kind: "features note"; line: string };
@@ -17,12 +17,13 @@ const spoken: Record<HubFeature, string> = {
   wall: "the wall's screen",
   modes: "the hub's modes",
   trainAlerts: "the hub's train alerts",
+  projector: "the projector",
 };
 
 export function readHubFeatures(fields: Record<string, unknown>): HubFeatures | null {
   const read: Partial<HubFeatures> = {};
   for (const name of hubFeatureNames) {
-    const value = fields[name];
+    const value = name === "projector" && fields[name] === undefined ? false : fields[name];
     if (typeof value !== "boolean") return null;
     read[name] = value;
   }
@@ -40,7 +41,7 @@ export function hubFeaturesReader(token: string, url = hubApiUrl): (signal: Abor
 }
 
 export function featuresLine(features: HubFeatures | null): string {
-  if (features === null) return "hub switches: couldn't be read, so the live facts take the hub's reminders, Spotify, phone, wall, modes and train alerts as on";
+  if (features === null) return "hub switches: couldn't be read, so the live facts take the hub's reminders, Spotify, phone, wall, modes, train alerts and projector as on";
   return `hub switches: ${hubFeatureNames.map((name) => `${name} ${features[name] ? "on" : "off"}`).join(", ")}`;
 }
 
@@ -106,7 +107,7 @@ export function watchHubFeatures(deps: FeatureWatchDeps): FeatureWatch {
   };
 }
 
-export function relevantFeatures(settings: { guest: boolean; reminders: boolean; hubActions: boolean; musicChanges: boolean; phone: boolean; wall: boolean; modes: boolean; trainAlerts: boolean }): HubFeature[] {
+export function relevantFeatures(settings: { guest: boolean; reminders: boolean; hubActions: boolean; musicChanges: boolean; phone: boolean; wall: boolean; modes: boolean; trainAlerts: boolean; projector?: boolean }): HubFeature[] {
   if (settings.guest) return settings.wall ? ["wall"] : [];
   const wanted: Record<HubFeature, boolean> = {
     reminders: settings.reminders || settings.hubActions,
@@ -115,6 +116,7 @@ export function relevantFeatures(settings: { guest: boolean; reminders: boolean;
     wall: settings.wall,
     modes: settings.modes,
     trainAlerts: settings.trainAlerts,
+    projector: settings.projector === true,
   };
   return hubFeatureNames.filter((name) => wanted[name]);
 }

@@ -31,10 +31,12 @@ import type { Sessions } from "./modules/sessions/sessions.js";
 import { spotify, type SpotifyParts } from "./modules/spotify/routes.js";
 import { spotifyFor } from "./modules/spotify/setup.js";
 import { wall, wallCookie, wallReads } from "./modules/wall/routes.js";
+import { projector } from "./modules/projector/routes.js";
+import type { Projector } from "./modules/projector/projector.js";
 import type { JarvisDesk } from "./modules/wall/jarvis.js";
 import { buildPicture, keptPicture, wallDoctorMs, wallTrainsMs, type WallSources } from "./modules/wall/picture.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources> }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
@@ -94,6 +96,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   app.register(watchers, { prefix: "/watchers", features: options.config.features, watchers: watching });
   app.register(modes, { prefix: "/mode", features: options.config.features, modes: options.config.features.modes ? options.modes : undefined });
   app.register(reminders, { prefix: "/reminders", features: options.config.features, reminders: options.config.features.reminders ? options.reminders : undefined });
+  app.register(projector, { prefix: "/projector", features: options.config.features, projector: options.config.features.projector ? options.projector : undefined });
   app.register(chores, { prefix: "/chores", features: options.config.features, chores: options.config.features.chores ? options.chores : undefined });
   app.register(sessions, { prefix: "/sessions", features: options.config.features, sessions: options.config.features.sessions ? options.sessions : undefined });
   const spotifyParts = options.config.features.spotify ? (options.spotify ?? spotifyFor(options.config.spotify, (line) => app.log.info(line))) : undefined;

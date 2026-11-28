@@ -1,5 +1,6 @@
 // @ts-check
 import { onArrival, slotFor, voicePieces, voiceUrl } from "./talk-voice.js";
+import { busyCheckMs, forgetConfirmMs, isProjectorView, powerLine, projectorLine, projectorShows } from "./projector-card.js";
 /**
  * @typedef {object} Download
  * @property {string} name
@@ -87,6 +88,7 @@ import { onArrival, slotFor, voicePieces, voiceUrl } from "./talk-voice.js";
  * @property {boolean} [spotify]
  * @property {boolean} [talk]
  * @property {boolean} [wall]
+ * @property {boolean} [projector]
  */
 
 /**
@@ -346,7 +348,7 @@ import { onArrival, slotFor, voicePieces, voiceUrl } from "./talk-voice.js";
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify", talk: "talk to Jarvis", wall: "the wall" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify", talk: "talk to Jarvis", wall: "the wall", projector: "the projector" };
 
 /**
  * @param {string} id
@@ -375,6 +377,18 @@ const doctorSummary = byId("doctor-summary");
 const doctorChecks = byId("doctor-checks");
 const switchesText = byId("switches");
 const pairSection = byId("pair-screen");
+const projectorCard = byId("projector-card");
+const projectorState = byId("projector-state");
+const projectorPower = byId("projector-power");
+const projectorOn = /** @type {HTMLButtonElement} */ (byId("projector-on"));
+const projectorOff = /** @type {HTMLButtonElement} */ (byId("projector-off"));
+const projectorPair = /** @type {HTMLButtonElement} */ (byId("projector-pair"));
+const projectorCodeForm = /** @type {HTMLFormElement} */ (byId("projector-code-form"));
+const projectorCode = /** @type {HTMLInputElement} */ (byId("projector-code"));
+const projectorForget = /** @type {HTMLButtonElement} */ (byId("projector-forget"));
+/** @type {number | undefined} */
+let projectorCheck;
+let forgetArmedAt = 0;
 const pairForm = /** @type {HTMLFormElement} */ (byId("pair-form"));
 const pairInput = /** @type {HTMLInputElement} */ (byId("pair-code"));
 const pairButton = /** @type {HTMLButtonElement} */ (byId("pair-button"));
@@ -1613,6 +1627,7 @@ function showHome(features) {
   trainCard.hidden = !features.trains;
   remindersCard.hidden = features.reminders !== true;
   spotifyCard.hidden = features.spotify !== true;
+  projectorCard.hidden = features.projector !== true;
   talkButton.hidden = features.talk !== true;
   if (features.spotify !== true) nowPlaying.hidden = true;
   lastTrainAt = 0;
@@ -1625,6 +1640,7 @@ function refreshHome() {
   if (knownFeatures.talk === true) loadTalkStatus();
   if (byId("tab-home").hidden) return;
   if (knownFeatures.reminders === true) loadReminders();
+  if (knownFeatures.projector === true) loadProjector();
   if (knownFeatures.trains && Date.now() - lastTrainAt >= trainEveryMs) {
     lastTrainAt = Date.now();
     loadTrain();
@@ -1706,6 +1722,72 @@ function isReminderItem(reminder) {
 function reminderTime(when) {
   const today = when.toDateString() === new Date().toDateString();
   return today ? when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : when.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * @param {import("./projector-card.js").ProjectorView} view
+ */
+function showProjector(view) {
+  const shows = projectorShows(view);
+  projectorState.textContent = projectorLine(view, (at) => new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }));
+  projectorPower.hidden = !shows.power;
+  projectorOn.disabled = view.busy !== null;
+  projectorOff.disabled = view.busy !== null;
+  projectorPair.hidden = !shows.pair;
+  projectorPair.textContent = shows.pairWords;
+  projectorCodeForm.hidden = !shows.code;
+  projectorForget.hidden = !shows.forget;
+  clearTimeout(projectorCheck);
+  if (shows.checkAgain) projectorCheck = setTimeout(loadProjector, busyCheckMs);
+}
+
+async function loadProjector() {
+  const got = await fetchReply("/api/projector", "Couldn't check on the projector");
+  if ("text" in got) {
+    projectorState.textContent = got.text;
+    return;
+  }
+  if (!isProjectorView(got.reply)) {
+    projectorState.textContent = "Couldn't read the API's reply.";
+    return;
+  }
+  showProjector(got.reply);
+}
+
+/**
+ * @param {string} path
+ * @param {unknown} body
+ * @param {string} failed
+ * @returns {Promise<Record<string, unknown> | null>}
+ */
+async function projectorPost(path, body, failed) {
+  try {
+    const response = await fetch(`/api/projector${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    /** @type {unknown} */
+    const reply = await response.json().catch(() => null);
+    if (!response.ok) {
+      projectorState.textContent = `${failed}: ${isObject(reply) && typeof reply.error === "string" ? reply.error : `the API replied ${response.status}`}.`;
+      return null;
+    }
+    return isObject(reply) ? reply : {};
+  } catch (error) {
+    projectorState.textContent = `${failed}: ${error instanceof Error ? error.message : String(error)}.`;
+    return null;
+  }
+}
+
+/**
+ * @param {boolean} on
+ */
+async function projectorTo(on) {
+  projectorOn.disabled = true;
+  projectorOff.disabled = true;
+  const reply = await projectorPost("/power", { on }, on ? "Couldn't switch it on" : "Couldn't switch it off");
+  projectorOn.disabled = false;
+  projectorOff.disabled = false;
+  if (reply === null) return;
+  await loadProjector();
+  projectorState.textContent = powerLine(on, reply);
 }
 
 async function loadReminders() {
@@ -2202,6 +2284,35 @@ talkButton.addEventListener("keyup", (event) => {
   if (event.key !== " " && event.key !== "Enter") return;
   event.preventDefault();
   finishTalking();
+});
+projectorOn.addEventListener("click", () => projectorTo(true));
+projectorOff.addEventListener("click", () => projectorTo(false));
+projectorPair.addEventListener("click", async () => {
+  projectorPair.disabled = true;
+  if ((await projectorPost("/pair", {}, "Couldn't start pairing")) !== null) await loadProjector();
+  projectorPair.disabled = false;
+});
+projectorCodeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const code = projectorCode.value.trim();
+  projectorState.textContent = "Pairing...";
+  const paired = (await projectorPost("/pair/code", { code }, "Couldn't pair")) !== null;
+  projectorCode.value = "";
+  if (paired) {
+    await loadProjector();
+    projectorState.textContent = "Paired.";
+  }
+});
+projectorForget.addEventListener("click", async () => {
+  if (Date.now() - forgetArmedAt > forgetConfirmMs) {
+    forgetArmedAt = Date.now();
+    projectorForget.textContent = "Tap again to forget";
+    setTimeout(() => (projectorForget.textContent = "Forget the pairing"), forgetConfirmMs);
+    return;
+  }
+  forgetArmedAt = 0;
+  projectorForget.textContent = "Forget the pairing";
+  if ((await projectorPost("/forget", {}, "Couldn't forget the pairing")) !== null) loadProjector();
 });
 talkYes.addEventListener("click", () => answerTalk(true));
 talkNo.addEventListener("click", () => answerTalk(false));

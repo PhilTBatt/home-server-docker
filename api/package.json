@@ -12,10 +12,15 @@
   "type": "module",
   "dependencies": {
     "@fastify/cookie": "^11.1.5",
+    "@kud/androidtv-remote": "0.1.2",
     "fastify": "^5.12.8"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "node-forge": "1.4.4",
+    "protobufjs": "7.6.6"
   }
 }

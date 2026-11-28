@@ -70,6 +70,22 @@
             <ul id="reminders-list" class="reminders"></ul>
           </section>
         </div>
+
+        <section id="projector-card" class="card" aria-labelledby="projector-heading" hidden>
+          <h2 id="projector-heading" class="card-label">Projector</h2>
+          <p id="projector-state" class="small" aria-live="polite">Loading...</p>
+          <div id="projector-power" class="projector-buttons" hidden>
+            <button id="projector-on" type="button">On</button>
+            <button id="projector-off" type="button">Off</button>
+          </div>
+          <button id="projector-pair" type="button" hidden>Pair</button>
+          <form id="projector-code-form" hidden>
+            <label for="projector-code">Code on the projector</label>
+            <input id="projector-code" maxlength="6" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+            <button type="submit">Send</button>
+          </form>
+          <button id="projector-forget" class="plain" type="button" hidden>Forget the pairing</button>
+        </section>
       </div>
 
       <div id="tab-media" class="tab" hidden>

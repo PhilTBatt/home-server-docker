@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { clockReply, dateWords, timeLine, timeWords, withTimeLine, codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, foundWords, hubOffNote, phoneFound, phoneFoundIn, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
+import { projectorCodeWords, projectorPower, clockReply, dateWords, timeLine, timeWords, withTimeLine, codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, foundWords, hubOffNote, phoneFound, phoneFoundIn, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
 
 const stillOpen = new Set<() => unknown>();
 
@@ -498,4 +498,47 @@ test("finding the phone says how long it rings, and that it's already ringing, w
   assert.deepEqual(await findPhone(token, signal, ringing.url), { say: "Your phone's ringing for 30 seconds. Say found it when you have it." });
   const already = await standInHub(() => ({ status: 429, body: { error: "It's already ringing: say found it, or POST /phone/found, to stop it" } }));
   assert.deepEqual(await findPhone(token, signal, already.url), { say: "It's already ringing. Say found it when you have it." });
+});
+
+test("projector on and projector off are code words only when the projector's switch is on, said on their own or politely", () => {
+  for (const said of ["Projector on.", "Turn the projector on, please.", "Hey Jarvis, switch on the projector", "Can you turn on the projector?", "wake the projector"]) {
+    assert.deepEqual(codeWordIn(said, false, false, true), { kind: "projector", on: true }, said);
+    assert.equal(codeWordIn(said), null, `${said} isn't a code word with JARVIS_PROJECTOR off`);
+  }
+  for (const said of ["Projector off.", "turn the projector off", "Could you switch off the projector please", "put the projector to sleep"]) {
+    assert.deepEqual(codeWordIn(said, false, false, true), { kind: "projector", on: false }, said);
+    assert.equal(codeWordIn(said), null, `${said} isn't a code word with JARVIS_PROJECTOR off`);
+  }
+  assert.deepEqual(codeWordIn("That film was great. Projector off.", false, false, true), { kind: "projector", on: false }, "as the last sentence");
+  for (const said of ["Is the projector on?", "What projector should I buy?", "projector on the wall looks dim", "Projector on?", "projector off ?"]) assert.equal(codeWordIn(said, false, false, true), null, said);
+});
+
+test("switching the projector asks the hub, and says what came of it", async () => {
+  const hub = await standInHub(() => ({ status: 200, body: { sent: true, was: null, on: null } }));
+  assert.deepEqual(await projectorPower(token, true, signal, hub.url), { say: "I sent the projector the key, but it hasn't said it's on, so it may not have got it." });
+  assert.deepEqual(await projectorPower(token, false, signal, hub.url), { say: "I sent the projector the key, but it hasn't said it's off, so it may not have got it." });
+  assert.deepEqual(hub.asked.map((one) => [one.method, one.url, one.authorization, one.body]), [["POST", "/projector/power", `Bearer ${token}`, JSON.stringify({ on: true })], ["POST", "/projector/power", `Bearer ${token}`, JSON.stringify({ on: false })]]);
+  const already = await standInHub(() => ({ status: 200, body: { sent: false, on: true } }));
+  assert.deepEqual(await projectorPower(token, true, signal, already.url), { say: "The projector's already on." });
+  const off = await standInHub(() => ({ status: 404, body: { error: "The projector is switched off" } }));
+  assert.deepEqual(await projectorPower(token, true, signal, off.url), { say: "I couldn't switch the projector on.", note: "the projector is off in the hub, so set PROJECTOR=on in api/.env and rebuild the hub" });
+  const refused = await standInHub(() => ({ status: 409, body: { error: "The hub couldn't reach the projector, so nothing was sent" } }));
+  assert.deepEqual(await projectorPower(token, false, signal, refused.url), { say: "I couldn't switch the projector off.", note: "the hub said: The hub couldn't reach the projector, so nothing was sent" });
+  assert.deepEqual(await projectorPower(null, true, signal, hub.url), { say: "I couldn't switch the projector on.", note: hubOffNote });
+  const came = await standInHub((_request, body) => ({ status: 200, body: { sent: true, was: !JSON.parse(body).on, on: JSON.parse(body).on } }));
+  assert.deepEqual(await projectorPower(token, true, signal, came.url), { say: "The projector's on." });
+  assert.deepEqual(await projectorPower(token, false, signal, came.url), { say: "The projector's off." });
+  const stuck = await standInHub((_request, body) => ({ status: 200, body: { sent: true, was: null, on: !JSON.parse(body).on } }));
+  assert.deepEqual(await projectorPower(token, true, signal, stuck.url), { say: "I've told the projector to switch on, but it says it's still off." });
+  assert.deepEqual(await projectorPower(token, false, signal, stuck.url), { say: "I've told the projector to switch off, but it says it's still on." });
+});
+
+test("the projector's words and their action are wired together from JARVIS_PROJECTOR alone", async () => {
+  assert.deepEqual(projectorCodeWords(false, token), { projectorWords: false });
+  const hub = await standInHub(() => ({ status: 200, body: { sent: true, was: false, on: true } }));
+  const wired = projectorCodeWords(true, token, hub.url);
+  assert.equal(wired.projectorWords, true);
+  assert.deepEqual(await wired.action?.(true, signal), { say: "The projector's on." });
+  assert.deepEqual(hub.asked.map((one) => one.body), [JSON.stringify({ on: true })]);
+  assert.deepEqual(await projectorCodeWords(true, null, hub.url).action?.(true, signal), { say: "I couldn't switch the projector on.", note: hubOffNote });
 });

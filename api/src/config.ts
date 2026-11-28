@@ -4,6 +4,7 @@ import { detailedBoardUrl } from "./modules/trains/journeys.js";
 import { mostRepos, readRepos, validToken } from "./modules/catchup/github.js";
 import { latestBedtimeFrom, latestBedtimeUntil, type ModeSettings } from "./modules/modes/modes.js";
 import { readRedirectUri, validClientId, type SpotifySettings } from "./modules/spotify/auth.js";
+import { projectorPowers, type ProjectorSettings } from "./modules/projector/projector.js";
 
 export type Features = {
   alerts: boolean;
@@ -25,6 +26,7 @@ export type Features = {
   spotify: boolean;
   talk: boolean;
   wall: boolean;
+  projector: boolean;
 };
 
 export type DealSettings = {
@@ -71,6 +73,7 @@ export type Config = {
   spotify: SpotifySettings;
   wall: WallSettings;
   login: LoginSettings;
+  projector: ProjectorSettings;
   features: Features;
 };
 
@@ -94,7 +97,17 @@ const featureLabels: Record<keyof Features, string> = {
   spotify: "Spotify",
   talk: "talk to Jarvis",
   wall: "the wall",
+  projector: "the projector",
 };
+
+export function privateIPv4(text: string): boolean {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (match === null) return false;
+  const parts = match.slice(1).map(Number);
+  if (parts.some((part, i) => part > 255 || String(part) !== match[i + 1])) return false;
+  const [a, b] = parts;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
 
 export function switchedOff(features: Features): string[] {
   return Object.entries(featureLabels)
@@ -147,6 +160,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     spotify: readSwitch("SPOTIFY"),
     talk: readSwitch("TALK"),
     wall: readSwitch("WALL"),
+    projector: readSwitch("PROJECTOR"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers || features.reminders);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
@@ -229,6 +243,9 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   else if (wallToken !== "" && wallToken === apiToken) notAllowed.push("WALL_TOKEN (a different token from API_TOKEN, since it only lets a screen show the wall)");
   const wall: WallSettings = { token: wallToken, speaking: readChoice("WALL_SPEAKING", wallSpeakings, features.wall) };
   const login: LoginSettings = { guard: readSwitch("LOGIN_GUARD") };
+  const projectorHost = read("PROJECTOR_HOST", features.projector);
+  if (projectorHost !== "" && !privateIPv4(projectorHost)) notAllowed.push("PROJECTOR_HOST (the projector's own address on your home network, like 192.168.1.23: an IPv4 address in 10.x, 172.16.x to 172.31.x or 192.168.x)");
+  const projector: ProjectorSettings = { host: projectorHost, power: readChoice("PROJECTOR_POWER", projectorPowers, false) };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -236,5 +253,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, wall, login, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, wall, login, projector, features };
 }

@@ -4,16 +4,18 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { changedFeatures, factsTold, featuresChangeLine, featuresLine, featuresUnreachableNote, hubFeatureNames, hubFeaturesReader, readHubFeatures, relevantFeatures, watchHubFeatures, withFactsChange, type FeaturesEvent, type HubFeatures } from "./hub-features.js";
 
-const allOn: HubFeatures = { reminders: true, spotify: true, talk: true, wall: true, modes: true, trainAlerts: true };
-const hubReply = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: false, findPhone: true, trains: true, trainAlerts: false, expiryAlerts: false, watchers: true, catchUp: false, modes: true, reminders: false, chores: false, sessions: false, spotify: true, talk: true, wall: true };
+const allOn: HubFeatures = { reminders: true, spotify: true, talk: true, wall: true, modes: true, trainAlerts: true, projector: true };
+const hubReply = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: false, findPhone: true, trains: true, trainAlerts: false, expiryAlerts: false, watchers: true, catchUp: false, modes: true, reminders: false, chores: false, sessions: false, spotify: true, talk: true, wall: true, projector: true };
 
 test("the hub's switches are read strictly: every one Jarvis words facts from must be true or false", () => {
-  assert.deepEqual(readHubFeatures(hubReply), { reminders: false, spotify: true, talk: true, wall: true, modes: true, trainAlerts: false });
+  assert.deepEqual(readHubFeatures(hubReply), { reminders: false, spotify: true, talk: true, wall: true, modes: true, trainAlerts: false, projector: true });
   for (const name of hubFeatureNames) {
     assert.equal(readHubFeatures({ ...hubReply, [name]: "on" }), null, name);
     const { [name]: _gone, ...without } = hubReply;
-    assert.equal(readHubFeatures(without), null, name);
+    if (name !== "projector") assert.equal(readHubFeatures(without), null, name);
   }
+  const { projector: _old, ...olderHub } = hubReply;
+  assert.equal(readHubFeatures(olderHub)?.projector, false, "a hub from before the projector has none, so it's off");
 });
 
 test("the reader asks GET /system/features with the token and refuses a reply it can't read", { timeout: 5_000 }, async () => {
@@ -39,7 +41,7 @@ test("the reader asks GET /system/features with the token and refuses a reply it
 });
 
 test("the start-up line names each switch, or says they're taken as on when they couldn't be read", () => {
-  assert.equal(featuresLine({ ...allOn, reminders: false }), "hub switches: reminders off, spotify on, talk on, wall on, modes on, trainAlerts on");
+  assert.equal(featuresLine({ ...allOn, reminders: false }), "hub switches: reminders off, spotify on, talk on, wall on, modes on, trainAlerts on, projector on");
   assert.match(featuresLine(null), /couldn't be read, so the live facts take .* as on/);
 });
 
@@ -119,4 +121,9 @@ test("a start-up read that fails or takes too long leaves them unknown rather th
   await slow.first(new AbortController().signal);
   assert.equal(slow.latest(), null);
   assert.ok(Date.now() - started < 1_000);
+});
+
+test("when the hub's switches can't be read, the line names every switch the live facts then take as on, the projector included", () => {
+  const line = featuresLine(null);
+  for (const name of ["reminders", "Spotify", "phone", "wall", "modes", "train alerts", "projector"]) assert.ok(line.includes(name), name);
 });

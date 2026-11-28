@@ -1,6 +1,6 @@
 import { hubApiUrl } from "./hub-tools.js";
 
-export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" } | { kind: "questions" } | { kind: "time" } | { kind: "date" } | { kind: "look up"; text: string };
+export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "projector"; on: boolean } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" } | { kind: "questions" } | { kind: "time" } | { kind: "date" } | { kind: "look up"; text: string };
 
 const address = /^\s*(?:(?:hey|hi|ok|okay)\b[\s,.!?]*)?(?:\S*vis\b[\s,.!?]*)?/i;
 const askingWords = "can you|could you|would you|will you|can u|please|just|jarvis";
@@ -32,6 +32,8 @@ const trainAsking = /^(?:(?:tell me|give me|check|get|show me) (?:the |my )?|(?:
 export const neverMindWords = ["never mind", "nevermind", "that's all", "that is all"];
 export const phoneWords = ["find my phone", "help me find my phone", "where's my phone", "where is my phone", "ring my phone", "ping my phone"];
 export const foundWords = ["found it", "i found it", "i've found it", "i have found it", "found my phone", "i found my phone", "i've found my phone", "i have found my phone", "found the phone", "i've found the phone", "got my phone", "i've got my phone", "stop ringing", "stop ringing my phone", "you can stop ringing", "you can stop ringing my phone"];
+export const projectorOnWords = ["projector on", "turn the projector on", "turn on the projector", "switch the projector on", "switch on the projector", "put the projector on", "wake the projector", "wake up the projector"];
+export const projectorOffWords = ["projector off", "turn the projector off", "turn off the projector", "switch the projector off", "switch off the projector", "put the projector to sleep", "projector to sleep"];
 export const serverWords = ["server check", "check the server", "how's the server", "how is the server", "how's the server doing", "how is the server doing", "is the server ok", "is the server okay"];
 const serverAfter = fillersAfter.split("|").filter((word) => word !== "ok" && word !== "okay").join("|");
 export const questionWords = ["brain questions", "any brain questions", "ask me some brain questions", "ask me your brain questions", "any questions for me", "have you got any questions for me", "do you have any questions for me", "got any questions for me"];
@@ -40,7 +42,7 @@ export const trainWords = ["train times", "train time", "trains", "next train", 
 export const timeWords = ["what time is it", "what time's it", "what's the time", "what is the time", "tell me the time", "tell me what time it is", "do you know the time", "do you know what time it is"];
 export const dateWords = ["what's the date", "what is the date", "what's the date today", "what is the date today", "what's today's date", "what is today's date", "tell me the date", "tell me today's date", "what day is it", "what day is it today", "what day's it", "tell me what day it is", "do you know what day it is"];
 
-function codeWordAlone(said: string, clock: boolean, web: boolean): CodeWord | null {
+function codeWordAlone(said: string, clock: boolean, web: boolean, projector: boolean): CodeWord | null {
   const text = said.replace(/[\u2018\u2019]/g, "'").replace(address, "");
   const note = noteStart.exec(text);
   if (note !== null) return { kind: "note", text: text.slice(note[0].length).trim() };
@@ -52,6 +54,9 @@ function codeWordAlone(said: string, clock: boolean, web: boolean): CodeWord | n
   const words = trimmed(text);
   const request = asked(words);
   if (phoneWords.includes(request)) return { kind: "phone" };
+  const bareQuestion = /\?\s*$/.test(text) && (request === "projector on" || request === "projector off");
+  if (projector && !bareQuestion && projectorOnWords.includes(request)) return { kind: "projector", on: true };
+  if (projector && !bareQuestion && projectorOffWords.includes(request)) return { kind: "projector", on: false };
   if (neverMindWords.includes(words) && !/\?\s*$/.test(text)) return { kind: "never mind" };
   if (trainWords.includes(request) || trainWords.includes(request.replace(trainAsking, ""))) return { kind: "trains" };
   const server = asked(plainWords(text).replace(new RegExp(`^(?:(?:${fillersBefore}) )+`), "").replace(new RegExp(`(?: (?:${serverAfter}))+$`), ""));
@@ -72,11 +77,11 @@ export function lastSentenceOf(said: string): string | null {
   return sentences.length > 1 ? sentences[sentences.length - 1] : null;
 }
 
-export function codeWordIn(said: string, clock = false, web = false): CodeWord | null {
-  const whole = codeWordAlone(said, clock, web);
+export function codeWordIn(said: string, clock = false, web = false, projector = false): CodeWord | null {
+  const whole = codeWordAlone(said, clock, web, projector);
   if (whole !== null) return whole;
   const last = lastSentenceOf(said);
-  return last === null ? null : codeWordAlone(last, false, false);
+  return last === null ? null : codeWordAlone(last, false, false, projector);
 }
 
 export type CodeWordReply = { say: string; note?: string };
@@ -166,6 +171,27 @@ export async function findPhone(token: string | null, signal: AbortSignal, url =
   } catch (error) {
     return { say: "I couldn't reach your phone.", note: `couldn't reach the hub: ${reasonOf(error)}` };
   }
+}
+
+export async function projectorPower(token: string | null, on: boolean, signal: AbortSignal, url = hubApiUrl): Promise<CodeWordReply> {
+  const failed = on ? "I couldn't switch the projector on." : "I couldn't switch the projector off.";
+  if (token === null) return { say: failed, note: hubOffNote };
+  try {
+    const { status, fields } = await hubPost("/projector/power", { on }, token, signal, url);
+    if (status === 200 && fields.sent === false) return { say: on ? "The projector's already on." : "The projector's already off." };
+    if (status === 200 && fields.on === on) return { say: on ? "The projector's on." : "The projector's off." };
+    if (status === 200 && fields.on === !on) return { say: on ? "I've told the projector to switch on, but it says it's still off." : "I've told the projector to switch off, but it says it's still on." };
+    if (status === 200) return { say: on ? "I sent the projector the key, but it hasn't said it's on, so it may not have got it." : "I sent the projector the key, but it hasn't said it's off, so it may not have got it." };
+    if (status === 404 && fields.error === "The projector is switched off") return { say: failed, note: "the projector is off in the hub, so set PROJECTOR=on in api/.env and rebuild the hub" };
+    return { say: failed, note: `the hub said: ${errorOf(fields, status)}` };
+  } catch (error) {
+    return { say: failed, note: `couldn't reach the hub: ${reasonOf(error)}` };
+  }
+}
+
+export function projectorCodeWords(on: boolean, token: string | null, url = hubApiUrl): { projectorWords: boolean; action?: (want: boolean, signal: AbortSignal) => Promise<CodeWordReply> } {
+  if (!on) return { projectorWords: false };
+  return { projectorWords: true, action: (want, signal) => projectorPower(token, want, signal, url) };
 }
 
 export async function phoneFound(token: string | null, signal: AbortSignal, url = hubApiUrl): Promise<CodeWordReply> {

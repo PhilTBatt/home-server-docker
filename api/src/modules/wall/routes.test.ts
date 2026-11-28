@@ -8,7 +8,7 @@ import type { WallPicture } from "./picture.js";
 import { noSuchCode, pairNeedsJson, plainHttpPairing, switchedOff, tooManyWrongCodes, wall, wallCookie, wallCookieDays } from "./routes.js";
 import { createPairings, mostPairings, mostWrongCodes, pairCookie, pairingMs } from "./pairing.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true };
 const settings: WallSettings = { token: "w".repeat(40), speaking: "wobble" };
 
 async function buildApp(features: Features = allOn, waitMs = 40, picture?: () => Promise<WallPicture>, logs?: string[], guard = false) {

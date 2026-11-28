@@ -103,6 +103,7 @@
       "WebFetch(domain:ebay.com)",
       "WebFetch(domain:www.ebay.com)",
       "WebFetch(domain:m.ebay.com)",
+      "Read(./projector/**)",
       "Read(./spotify/**)"
     ]
   },

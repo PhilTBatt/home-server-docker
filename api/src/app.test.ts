@@ -28,7 +28,8 @@ const config: Config = {
   spotify: { clientId: "", redirectUri: "" },
   wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble" },
   login: { guard: false },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true }
+  projector: { host: "192.168.1.23", power: "wake-sleep" },
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -300,7 +301,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: false };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);

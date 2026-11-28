@@ -102,7 +102,7 @@ function fakeHub(fail: Partial<Record<Mode, string>> = {}, off = { on: false }) 
 
 const now = new Date("2026-11-27T10:00:00Z");
 
-function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Record<Mode, string>>; off?: boolean; retryMs?: number; ears?: boolean; when?: Date | null; clock?: () => Date; follow?: boolean; voices?: OtherVoices } = {}) {
+function modeChat(options: { projector?: boolean; modes?: boolean; guest?: boolean; fail?: Partial<Record<Mode, string>>; off?: boolean; retryMs?: number; ears?: boolean; when?: Date | null; clock?: () => Date; follow?: boolean; voices?: OtherVoices } = {}) {
   const lines = channel<string>();
   const wake = channel<WakeEvent>();
   const modeEvents = channel<ModeEvent>();
@@ -153,7 +153,7 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
       hub: { answer: async (id, answer) => void answers.push([id, answer]) },
     },
     ...(options.follow === false ? {} : { followUp: { seconds: 5, ask: () => void follows.push("follow"), gapMs: 0 } }),
-    codeWords: { note: async () => ({ say: "Noted." }), phone: async () => (phone.push("rang"), { say: "Your phone's ringing for 30 seconds. Say found it when you have it." }), trains: async () => ({ say: "unused" }), found: async () => (phone.push("found"), { say: "Good, I've stopped it ringing." }) },
+    codeWords: { note: async () => ({ say: "Noted." }), phone: async () => (phone.push("rang"), { say: "Your phone's ringing for 30 seconds. Say found it when you have it." }), trains: async () => ({ say: "unused" }), found: async () => (phone.push("found"), { say: "Good, I've stopped it ringing." }), ...(options.projector === true ? { projector: async (on: boolean) => (phone.push(on ? "projector on" : "projector off"), { say: on ? "Turning the projector on." : "Turning the projector off." }) } : {}) },
     trains: {
       events: trainEvents.items,
       take() {
@@ -172,6 +172,7 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
       },
     },
     ...(options.voices === undefined ? {} : { voices: { other: options.voices } }),
+    projectorWords: options.projector === true,
     ...(options.ears === false ? {} : { earsGuests: async (on: boolean) => void guestsThrough.push(on) }),
     ...(options.guest === false ? {} : { guest: { open: async () => chatFor("guest") } }),
     ...(options.modes === true ? { modes: { hub: hub.hub, events: modeEvents.items, ...(options.retryMs === undefined ? {} : { retryMs: options.retryMs }) }, when: async (said: string) => (whens.push(said), options.when === undefined ? new Date("2026-11-29T18:00:00Z") : options.when) } : {}),
@@ -835,4 +836,25 @@ test("with voices on, a short guest mode with no verdict still starts it, since 
   assert.deepEqual(chat.hub.sets, [{ mode: "guest", until: null, by: "voice" }]);
   assert.deepEqual(chat.opened, ["guest"]);
   await chat.end();
+});
+
+test("with JARVIS_PROJECTOR on, saying projector on or off switches it through the hub, typed it goes to Claude, and a guest can't", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, projector: true });
+  await chat.say("Projector on.");
+  await chat.say("Turn the projector off please.");
+  assert.deepEqual(chat.phone, ["projector on", "projector off"]);
+  assert.equal(chat.spoken.at(-1), "Turning the projector off.");
+  await chat.type("projector on");
+  assert.deepEqual(chat.phone, ["projector on", "projector off"], "typed words are never code words");
+  assert.equal(chat.asked.at(-1), "normal: projector on");
+  await chat.type("/guest");
+  await chat.say("Projector on.");
+  assert.deepEqual(chat.phone, ["projector on", "projector off"]);
+  assert.equal(chat.spoken.at(-1), notInGuestSay);
+  await chat.end();
+  const off = modeChat({ modes: true });
+  await off.say("Projector on.");
+  assert.deepEqual(off.phone, []);
+  assert.ok(off.asked.at(-1)?.endsWith("Projector on."), "with it off, the words go to Claude as before");
+  await off.end();
 });

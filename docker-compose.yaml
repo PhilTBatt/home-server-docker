@@ -211,6 +211,11 @@ services:
         target: /spotify
         bind:
           create_host_path: false
+      - type: bind
+        source: ./projector
+        target: /projector
+        bind:
+          create_host_path: false
     networks:
       - default
       - jarvis

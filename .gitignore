@@ -45,6 +45,8 @@ chores/results/*
 host/hub-sessions.conf
 spotify/*
 !spotify/README.md
+projector/*
+!projector/README.md
 host/digest.env
 hub/caddy-root.crt
 caddy/root.crt

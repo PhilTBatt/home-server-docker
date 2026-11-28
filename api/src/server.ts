@@ -18,6 +18,7 @@ import { checkEveryMs } from "./modules/watchers/watchers.js";
 import { modesFor } from "./modules/modes/setup.js";
 import { tickMs as modeTickMs } from "./modules/modes/modes.js";
 import { remindersFor } from "./modules/reminders/setup.js";
+import { projectorFor } from "./modules/projector/setup.js";
 import { tickMs as reminderTickMs } from "./modules/reminders/reminders.js";
 import { choresFor } from "./modules/chores/setup.js";
 import { createSessions } from "./modules/sessions/sessions.js";
@@ -68,7 +69,14 @@ const sessions = config.features.sessions
     })
   : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders, chores, sessions });
+const projector = config.features.projector
+  ? projectorFor(config.projector, {
+      info: (fields, message) => app.log.info(fields, message),
+      warn: (fields, message) => app.log.warn(fields, message),
+    })
+  : undefined;
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders, chores, sessions, projector });
 app.log.info({ features: config.features }, "feature switches");
 
 if (modes !== undefined) {
@@ -90,6 +98,8 @@ if (reminders !== undefined) {
     });
   }, reminderTickMs);
 }
+
+if (projector !== undefined) await projector.start();
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
 
