@@ -17,6 +17,7 @@ export type FactsInput = {
   modes?: boolean;
   guest?: boolean;
   reminders?: boolean;
+  morning?: boolean;
   otherVoices?: "answer" | "name" | "guest";
   musicYes?: "changes" | "all";
   remindersAtHub?: boolean;
@@ -55,6 +56,7 @@ export function liveFacts(input: FactsInput): string {
   if (input.web !== "off") facts.push(`When he types /lookup and a question${input.ears === "off" ? "" : ", or starts what he says out loud with look up and a question"}, your own code hands the question to a separate helper that searches the web and ${input.voice === "off" ? "shows" : "reads"} him the answer. You never see ${input.web === "auto" ? "that question or its" : "the question or the"} answer${input.web === "auto" ? "." : ", and you can't look anything up yourself: if he asks you for something that needs the web, tell him to ask that way."}`);
   facts.push(input.web === "auto" ? "You can't run commands, change files, browse the web beyond that one tool, or set reminders or timers." : "You can't run commands, change files, browse the web, or set reminders or timers.");
   if (input.modes === true) facts.push("Your own code switches modes when Phil says one on its own: bedtime, gaming mode, coding mode, normal mode, I'm not here (it then asks when he's back), or bedtime at a time. You never see those. If he asks for a mode another way, tell him to say just its name. In bedtime, gaming and away modes your code keeps you quiet unless he asks you something.");
+  if (input.morning === true && input.ears !== "off") facts.push("On his wake-up mornings your own code wakes him: it says good morning, the time and his first train, then the time again every two minutes, a bit louder each time, until he says I'm up or five more minutes, which it handles itself. You don't see any of that.");
   if (input.reminders === true) facts.push("When one of the hub's reminders is due, your own code says it aloud, if the mode allows, and then listens for snooze, done or cancel, which it handles itself. You don't see what it says. To set, list or cancel a reminder, use your reminder tools, without asking him yes first.");
   if (input.phone === true) facts.push(`He can also ask you from his phone, by holding a button on his hub page. Those questions come into this chat ending with ${phoneTag} on a line of its own, added by your code. Your answer goes back to his phone as text${input.voice === "off" ? "" : " and in your voice"}, nothing is said in the room, and a yes you need for one is asked on his phone. Your code's spoken words, like a mode's name, note this or find my phone, aren't caught from the phone, so don't tell him to say them: for a mode, tell him to use the mode buttons on his hub page.`);
   if (input.wall === true) facts.push("A screen in the room shows what you're doing, what he says out loud and your answers to it as words, for anyone in the room to read, guests included. Answers to what he types or asks from his phone aren't shown.");
@@ -68,7 +70,7 @@ export function withLiveFacts(system: string, facts: string | null): string {
   return facts === null ? system : `${system}\n\n${facts}`;
 }
 
-export type FactsConfig = Pick<Config, "ears" | "followUp" | "hubActions" | "hubToken" | "trainAlerts" | "web" | "brainQuestions" | "clock" | "modes" | "guest" | "reminders" | "voices" | "otherVoices" | "musicYes" | "phone" | "wall" | "projector" | "wallPages">;
+export type FactsConfig = Pick<Config, "ears" | "followUp" | "hubActions" | "hubToken" | "trainAlerts" | "web" | "brainQuestions" | "clock" | "modes" | "guest" | "reminders" | "morning" | "voices" | "otherVoices" | "musicYes" | "phone" | "wall" | "projector" | "wallPages">;
 
 export function factsWiring(config: FactsConfig, chat: { voice: VoiceMode; guest: boolean; hubOn: boolean; atHub: HubFeatures | null; wallPageIds?: readonly string[] | null }): { input: FactsInput; relevant: HubFeature[] } {
   const { guest, hubOn, atHub } = chat;
@@ -86,6 +88,7 @@ export function factsWiring(config: FactsConfig, chat: { voice: VoiceMode; guest
     modes: !guest && config.modes && atHub?.modes !== false,
     guest: config.guest,
     reminders: !guest && config.reminders && atHub?.reminders !== false,
+    morning: !guest && config.morning,
     otherVoices: config.voices ? config.otherVoices : undefined,
     musicYes: config.musicYes,
     remindersAtHub: atHub?.reminders !== false,

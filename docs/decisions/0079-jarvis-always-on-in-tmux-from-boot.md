@@ -1,7 +1,7 @@
 # 0079. Jarvis always on, in tmux from boot
 
 - Date: 2026-11-27
-- Status: accepted
+- Status: accepted; the morning opens the room's microphone at wake-up time and puts it back after (0096)
 
 ## Context
 Jarvis only runs while I've started him in a terminal, so he's gone when I close it, after a restart, and whenever I'm away. Talking to him from the phone (record 0078) needs him running all the time.

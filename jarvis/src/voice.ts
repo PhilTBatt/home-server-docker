@@ -23,9 +23,9 @@ export type VoiceParts = {
   sayMs?: number;
 };
 
-export type Voice = { on: true; line: string; speaker: Speaker } | { on: false; line: string };
+export type Voice = { on: true; line: string; speaker: Speaker; card?: number } | { on: false; line: string };
 
-export type ChatVoice = { mode: VoiceMode; speaker: Speaker | null };
+export type ChatVoice = { mode: VoiceMode; speaker: Speaker | null; card?: number };
 
 export function voiceOnLine(engine: string, voice: string, card: SoundCard, volume: number): string {
   return `Voice: ${engine}, voice ${voice}, on sound card ${card.number} (${volumeLine(volume)})`;
@@ -57,7 +57,7 @@ export async function startVoice(parts: VoiceParts): Promise<Voice> {
     await parts.engine.check(parts.signal);
     tooLong = AbortSignal.timeout(sayMs);
     await say(parts.engine, readySentence, card.device, parts.startPlayer, AbortSignal.any([parts.signal, tooLong]));
-    return { on: true, line: voiceOnLine(parts.engine.name, parts.voice, card, parts.volume), speaker: { engine: parts.engine, device: card.device, startPlayer: parts.startPlayer, lastPlayer: { ended: Promise.resolve() } } };
+    return { on: true, line: voiceOnLine(parts.engine.name, parts.voice, card, parts.volume), speaker: { engine: parts.engine, device: card.device, startPlayer: parts.startPlayer, lastPlayer: { ended: Promise.resolve() } }, card: card.number };
   } catch (error) {
     if (error instanceof MicrophonePassedIn || parts.signal.aborted) throw error;
     if (tooLong?.aborted === true) return { on: false, line: voiceOffLine(`His first sentence wasn't said within ${sayMs / 1000} seconds, so it was stopped`) };
@@ -69,5 +69,5 @@ export async function voiceFor(config: Pick<Config, "voice" | "kokoroVoice" | "k
   if (config.voice === "off") return { mode: "off", speaker: null };
   const voice = await start(voiceParts(config, signal, dir));
   write(printable(voice.line));
-  return voice.on ? { mode: config.voice, speaker: voice.speaker } : { mode: "off", speaker: null };
+  return voice.on ? { mode: config.voice, speaker: voice.speaker, ...(voice.card === undefined ? {} : { card: voice.card }) } : { mode: "off", speaker: null };
 }

@@ -123,7 +123,7 @@ test("starting the voice finds the card, sets the level, checks the engine, then
   const { seen, parts } = setUp();
   const started = await startVoice(parts);
   assert.ok(started.on);
-  assert.deepEqual(started, { on: true, line: "Voice: Kokoro, voice bm_george, on sound card 1 (Master set to 80%)", speaker: { engine: parts.engine, device: "plughw:1,0", startPlayer: parts.startPlayer, lastPlayer: started.speaker.lastPlayer } });
+  assert.deepEqual(started, { on: true, line: "Voice: Kokoro, voice bm_george, on sound card 1 (Master set to 80%)", speaker: { engine: parts.engine, device: "plughw:1,0", startPlayer: parts.startPlayer, lastPlayer: started.speaker.lastPlayer }, card: 1 });
   assert.deepEqual(Object.keys(started.speaker.lastPlayer), ["ended"]);
   assert.equal(await Promise.race([started.speaker.lastPlayer.ended.then(() => "nothing to wait for"), new Promise((resolve) => setImmediate(() => resolve("waiting")))]), "nothing to wait for");
   assert.deepEqual(seen.steps, ["find", "volume 1 80", "check", "speak", "start", "write", "finish"]);
@@ -202,7 +202,7 @@ test("the level set and the card played on are the ones found and asked for, not
   const { seen, parts } = setUp({ findCard: async () => other, volume: 35, voice: "bm_fable" });
   const started = await startVoice(parts);
   assert.ok(started.on);
-  assert.deepEqual(started, { on: true, line: "Voice: Kokoro, voice bm_fable, on sound card 0 (Master set to 35%)", speaker: { engine: parts.engine, device: "plughw:0,0", startPlayer: parts.startPlayer, lastPlayer: started.speaker.lastPlayer } });
+  assert.deepEqual(started, { on: true, line: "Voice: Kokoro, voice bm_fable, on sound card 0 (Master set to 35%)", speaker: { engine: parts.engine, device: "plughw:0,0", startPlayer: parts.startPlayer, lastPlayer: started.speaker.lastPlayer }, card: 0 });
   assert.equal(seen.steps[1], "volume 0 35");
   assert.deepEqual(seen.players, [{ device: "plughw:0,0", rate: 24_000 }]);
 });
@@ -348,11 +348,12 @@ test("with JARVIS_VOICE on, the voice is started with the settings' voice, level
   const lastPlayer = { ended: Promise.resolve() };
   const start = async (parts: VoiceParts) => {
     given.push(parts);
-    return { on: true as const, line: "Voice: Kokoro, voice bm_fable, on sound card 4 (Master set to 35%)", speaker: { engine: parts.engine, device: "plughw:4,0", startPlayer: parts.startPlayer, lastPlayer } };
+    return { on: true as const, line: "Voice: Kokoro, voice bm_fable, on sound card 4 (Master set to 35%)", speaker: { engine: parts.engine, device: "plughw:4,0", startPlayer: parts.startPlayer, lastPlayer }, card: 4 };
   };
   const chatVoice = await voiceFor({ voice: "kokoro", kokoroVoice: "bm_fable", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 35 }, signal, (line) => written.push(line), start, folder);
   assert.equal(chatVoice.mode, "kokoro");
   assert.deepEqual(chatVoice.speaker, { engine: given[0].engine, device: "plughw:4,0", startPlayer: given[0].startPlayer, lastPlayer });
+  assert.equal(chatVoice.card, 4, "the card's number comes through, so the morning can set its level");
   assert.deepEqual(written, ["Voice: Kokoro, voice bm_fable, on sound card 4 (Master set to 35%)"]);
   assert.equal(given.length, 1);
   assert.deepEqual([given[0].engine.name, given[0].voice, given[0].volume], ["Kokoro", "bm_fable", 35]);
@@ -369,6 +370,7 @@ test("with JARVIS_VOICE=piper, the voice is started with Piper and the Piper voi
   };
   const chatVoice = await voiceFor({ voice: "piper", kokoroVoice: "bm_fable", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 35 }, new AbortController().signal, (line) => written.push(line), start);
   assert.equal(chatVoice.mode, "piper");
+  assert.equal(chatVoice.card, undefined, "a voice that doesn't say its card gives none");
   assert.deepEqual([given.length, given[0].engine.name, given[0].voice, given[0].volume], [1, "Piper", "en_GB-alan-medium", 35]);
   assert.deepEqual(written, ["Voice: Piper, voice en_GB-alan-medium, on sound card 4 (Master set to 35%)"]);
 });

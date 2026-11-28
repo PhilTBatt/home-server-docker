@@ -6,7 +6,7 @@ import { askMs, workMs, createTalkDesk, isWav, keptMs, leastTalkBytes, mostKept,
 import { sweepMs, switchedOff, talk, unknownId } from "./routes.js";
 import { mock } from "node:test";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true };
 
 const second = Buffer.alloc(32_000, 1);
 

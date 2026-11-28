@@ -24,7 +24,8 @@ const config: Config = {
   wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble", privatePages: [], remote: false },
   login: { guard: false },
   projector: { host: "192.168.1.23", power: "wake-sleep" },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: true, projector: false, events: true },
+  morning: { at: 405, days: ["mon", "tue", "wed", "thu", "fri"] },
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: true, projector: false, events: true, morning: true },
 };
 
 const hub = { authorization: "Bearer test-token" };

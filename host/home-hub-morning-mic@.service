@@ -1,0 +1,13 @@
+[Unit]
+Description=Open the room's microphone for the morning, and put it back after, for %i
+After=docker.service
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=~
+Environment=HOME_HUB_DIR=/home/%i/docker
+ExecStart=/usr/local/bin/home-hub-morning-mic
+NoNewPrivileges=yes
+PrivateTmp=yes
+TimeoutStartSec=45s

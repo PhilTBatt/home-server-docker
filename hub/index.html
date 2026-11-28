@@ -52,6 +52,15 @@
           <span class="readout bottom-right"><span class="label"><span class="dot alerts"></span>Alerts</span><b id="ring-alerts-text">-</b></span>
         </button>
 
+        <section id="morning-card" class="card morning-card" aria-labelledby="morning-heading" hidden>
+          <h2 id="morning-heading" class="card-label">Good morning</h2>
+          <p id="morning-line" class="small" aria-live="polite"></p>
+          <div class="projector-buttons">
+            <button id="morning-up" type="button">I'm up</button>
+            <button id="morning-snooze" type="button" hidden>Five more minutes</button>
+          </div>
+        </section>
+
         <div id="mode" class="mode" hidden>
           <h2 class="quiet-label">Mode</h2>
           <div id="mode-buttons" class="mode-chips"></div>

@@ -139,6 +139,7 @@ test("the picture puts every part on in a fixed order, with the phase, the mode 
     train: { leaves: "07:14", expected: "On time", platform: "2", to: "B", cancelled: false, late: false, inMinutes: 12 },
     timers: [{ text: "Stretch", due: "2026-11-30T07:22:00Z", from: "2026-11-30T06:52:00Z" }],
     playing: { title: "A Song", by: "One, Two" },
+    morning: null,
   } satisfies WallPicture);
 });
 
@@ -184,4 +185,13 @@ test("the picture tells the wall's page whether the TV remote's pointer is on, o
   const sources = { problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }) };
   assert.equal((await buildPicture(sources, { speaking: "wobble", trainAlerts: null }, morning)).remote, false);
   assert.equal((await buildPicture(sources, { speaking: "wobble", remote: true, trainAlerts: null }, morning)).remote, true);
+});
+
+test("the picture carries the morning's phase, its time and any snooze, and nothing else of it, or null with the morning off", async () => {
+  const sources = { problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }) };
+  assert.equal((await buildPicture(sources, { speaking: "wobble", trainAlerts: null }, morning)).morning, null);
+  const seen: Date[] = [];
+  const waking = await buildPicture({ ...sources, morning: (now) => (seen.push(now), { phase: "snoozed", day: "2026-11-30", at: "06:45", speakSlot: null, upAt: null, by: "voice", snoozedUntil: "2026-11-30T07:05:00.000Z" }) }, { speaking: "wobble", trainAlerts: null }, morning);
+  assert.deepEqual(waking.morning, { phase: "snoozed", at: "06:45", snoozedUntil: "2026-11-30T07:05:00.000Z" });
+  assert.deepEqual(seen, [morning]);
 });

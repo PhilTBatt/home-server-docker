@@ -5,6 +5,7 @@ import { mostRepos, readRepos, validToken } from "./modules/catchup/github.js";
 import { latestBedtimeFrom, latestBedtimeUntil, type ModeSettings } from "./modules/modes/modes.js";
 import { readRedirectUri, validClientId, type SpotifySettings } from "./modules/spotify/auth.js";
 import { projectorPowers, type ProjectorSettings } from "./modules/projector/projector.js";
+import { readMorningAt, type MorningSettings } from "./modules/morning/morning.js";
 import { pageIds, readPrivatePages } from "./modules/wall/pages.js";
 
 export type Features = {
@@ -29,6 +30,7 @@ export type Features = {
   wall: boolean;
   projector: boolean;
   events: boolean;
+  morning: boolean;
 };
 
 export type DealSettings = {
@@ -78,6 +80,7 @@ export type Config = {
   wall: WallSettings;
   login: LoginSettings;
   projector: ProjectorSettings;
+  morning: MorningSettings;
   features: Features;
 };
 
@@ -103,6 +106,7 @@ const featureLabels: Record<keyof Features, string> = {
   wall: "the wall",
   projector: "the projector",
   events: "the events feed",
+  morning: "the morning",
 };
 
 export function privateIPv4(text: string): boolean {
@@ -167,6 +171,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     wall: readSwitch("WALL"),
     projector: readSwitch("PROJECTOR"),
     events: readSwitch("EVENTS"),
+    morning: readSwitch("MORNING"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers || features.reminders);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
@@ -254,6 +259,13 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const projectorHost = read("PROJECTOR_HOST", features.projector);
   if (projectorHost !== "" && !privateIPv4(projectorHost)) notAllowed.push("PROJECTOR_HOST (the projector's own address on your home network, like 192.168.1.23: an IPv4 address in 10.x, 172.16.x to 172.31.x or 192.168.x)");
   const projector: ProjectorSettings = { host: projectorHost, power: readChoice("PROJECTOR_POWER", projectorPowers, false) };
+  const morningAtText = read("MORNING_AT", features.morning);
+  const morningAt = morningAtText === "" ? null : readMorningAt(morningAtText);
+  if (morningAtText !== "" && morningAt === null) notAllowed.push("MORNING_AT (when Jarvis first says morning, from 04:00 to 11:00, like 06:45; the wall starts brightening 15 minutes before)");
+  const morningDaysText = read("MORNING_DAYS", false);
+  const morningDays = morningDaysText === "" ? ["mon", "tue", "wed", "thu", "fri"] : readDays(morningDaysText);
+  if (morningDays === null) notAllowed.push("MORNING_DAYS (days from mon, tue, wed, thu, fri, sat and sun, with commas between, like mon,tue,wed,thu,fri)");
+  const morning: MorningSettings = { at: morningAt ?? 6 * 60 + 45, days: morningDays ?? [] };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -261,5 +273,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, wall, login, projector, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, wall, login, projector, morning, features };
 }

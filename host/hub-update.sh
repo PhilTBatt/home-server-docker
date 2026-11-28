@@ -53,6 +53,7 @@ destination() {
     host/runner.sh) echo /usr/local/bin/home-hub-runner ;;
     host/digest.sh) echo /usr/local/bin/home-hub-digest ;;
     host/jarvis-always.sh) echo /usr/local/bin/home-hub-jarvis ;;
+    host/morning-mic.sh) echo /usr/local/bin/home-hub-morning-mic ;;
     host/*.service | host/*.timer | host/*.path) echo "/etc/systemd/system/${1#host/}" ;;
   esac
 }

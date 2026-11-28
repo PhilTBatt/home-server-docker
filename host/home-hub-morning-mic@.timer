@@ -1,0 +1,9 @@
+[Unit]
+Description=Check the morning's microphone every minute through the morning, for %i
+
+[Timer]
+OnCalendar=*-*-* 03..12:*:00 Europe/London
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

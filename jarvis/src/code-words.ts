@@ -390,8 +390,8 @@ function journeyLine(journey: TrainJourney, seen: TrainJourneys): string {
   return `${start}${change}${fallback}`;
 }
 
-export function spokenJourneys(seen: TrainJourneys): CodeWordReply {
-  const shown = seen.journeys.slice(0, spokenTrainsMost);
+export function spokenJourneys(seen: TrainJourneys, most = spokenTrainsMost): CodeWordReply {
+  const shown = seen.journeys.slice(0, most);
   const reasons = shown.flatMap((journey) => (journey.reason === null || (!journey.cancelled && isOnTime(journey.expected)) ? [] : [`${journey.leaves}: ${journey.reason}`]));
   const notes = [...reasons, ...seen.messages];
   const say = shown.length > 0 ? `From ${seen.from}: ${shown.map((journey) => journeyLine(journey, seen)).join("; ")}.` : `There are no trains from ${seen.from} to ${seen.via} on the board right now.`;
@@ -407,8 +407,8 @@ function trainLine(train: TrainBoard["departures"][number]): string {
   return `the ${train.due} shows ${train.expected}${platform}`;
 }
 
-export function spokenTrains(board: TrainBoard): CodeWordReply {
-  const shown = board.departures.slice(0, spokenTrainsMost);
+export function spokenTrains(board: TrainBoard, most = spokenTrainsMost): CodeWordReply {
+  const shown = board.departures.slice(0, most);
   const reasons = shown.flatMap((train) => (train.reason === null || (!train.cancelled && isOnTime(train.expected)) ? [] : [`${train.due}: ${train.reason}`]));
   const buses = board.buses === 1 ? "a bus" : `${board.buses} buses`;
   const notes = [...reasons, ...(board.buses === 0 || shown.length === 0 ? [] : [`the board also lists ${buses}`]), ...board.messages];
@@ -416,16 +416,16 @@ export function spokenTrains(board: TrainBoard): CodeWordReply {
   return notes.length === 0 ? { say } : { say, note: notes.join("; ") };
 }
 
-export async function trainTimes(token: string | null, signal: AbortSignal, url = hubApiUrl): Promise<CodeWordReply> {
+export async function trainTimes(token: string | null, signal: AbortSignal, url = hubApiUrl, most = spokenTrainsMost): Promise<CodeWordReply> {
   if (token === null) return { say: "I couldn't get the train times.", note: hubOffNote };
   try {
     const { status, fields } = await hubAsk("/trains", { headers: { Authorization: `Bearer ${token}` } }, signal, url);
     if (status === 404 && fields.error === "Train times are switched off") return { say: "I couldn't get the train times.", note: "train times are off in the hub, so set TRAINS=on and its settings in api/.env and restart the hub" };
     if (status !== 200) return { say: "I couldn't get the train times.", note: `the hub said: ${errorOf(fields, status)}` };
     const journeys = journeysOf(fields);
-    if (journeys !== null) return spokenJourneys(journeys);
+    if (journeys !== null) return spokenJourneys(journeys, most);
     const board = boardOf(fields);
-    return board === null ? { say: "I couldn't get the train times.", note: "the hub's reply wasn't a train board" } : spokenTrains(board);
+    return board === null ? { say: "I couldn't get the train times.", note: "the hub's reply wasn't a train board" } : spokenTrains(board, most);
   } catch (error) {
     return { say: "I couldn't get the train times.", note: `couldn't reach the hub: ${reasonOf(error)}` };
   }

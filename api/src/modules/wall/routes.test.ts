@@ -10,7 +10,7 @@ import { noPageDetails, noSuchCode, noSuchPage, pageByWrong, pageDetailsFailed, 
 import { pageIds } from "./pages.js";
 import { createPairings, mostPairings, mostWrongCodes, pairCookie, pairingMs } from "./pairing.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true };
 const settings: WallSettings = { token: "w".repeat(40), speaking: "wobble", privatePages: [], remote: false };
 
 async function buildApp(features: Features = allOn, waitMs = 40, picture?: () => Promise<WallPicture>, logs?: string[], guard = false, events?: EventSink) {
@@ -228,7 +228,7 @@ test("logging out clears the wall's cookie", async () => {
   assert.equal(cleared?.value, "");
 });
 
-const sample = { at: "2026-11-30T07:02:00.000Z", clock: "07:02", day: "Monday morning", phase: "morning", mode: "normal", modeUntil: null, speaking: "wobble", remote: false, items: [], train: null, timers: [], playing: null } satisfies WallPicture;
+const sample = { at: "2026-11-30T07:02:00.000Z", clock: "07:02", day: "Monday morning", phase: "morning", mode: "normal", modeUntil: null, speaking: "wobble", remote: false, items: [], train: null, timers: [], playing: null, morning: null } satisfies WallPicture;
 
 test("the wall's picture is given as it was made, never kept by the browser", async () => {
   const { app } = await buildApp(allOn, 40, async () => sample);

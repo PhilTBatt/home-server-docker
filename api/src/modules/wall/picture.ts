@@ -1,5 +1,6 @@
 import type { WallSettings } from "../../config.js";
 import type { Mode, ModeView } from "../modes/modes.js";
+import type { MorningPhase, MorningView } from "../morning/morning.js";
 import type { Reminder } from "../reminders/reminders.js";
 import type { Playing } from "../spotify/client.js";
 import type { DoctorReport } from "../system/doctor.js";
@@ -21,7 +22,7 @@ export type Colour = "mint" | "blue" | "yellow" | "warm" | "grey" | "accent";
 export type WallItem = { key: "server" | "train" | "backup" | "deals" | "reminder" | "alerts" | "music"; label: string; value: string; note: string; colour: Colour; needs: boolean };
 export type WallTrain = { leaves: string; expected: string; platform: string | null; to: string; cancelled: boolean; late: boolean; inMinutes: number | null };
 export type WallTimer = { text: string; due: string; from: string };
-export type WallPicture = { at: string; clock: string; day: string; phase: Phase; mode: Mode | null; modeUntil: string | null; speaking: WallSettings["speaking"]; remote: boolean; items: WallItem[]; train: WallTrain | null; timers: WallTimer[]; playing: { title: string; by: string } | null };
+export type WallPicture = { at: string; clock: string; day: string; phase: Phase; mode: Mode | null; modeUntil: string | null; speaking: WallSettings["speaking"]; remote: boolean; items: WallItem[]; train: WallTrain | null; timers: WallTimer[]; playing: { title: string; by: string } | null; morning: { phase: MorningPhase; at: string; snoozedUntil: string | null } | null };
 
 export type WallSources = {
   mode?: () => ModeView;
@@ -32,6 +33,7 @@ export type WallSources = {
   reminders?: () => Reminder[];
   deals?: (now: Date) => { alertsToday: number };
   playing?: () => Promise<Playing>;
+  morning?: (now: Date) => MorningView;
 };
 
 export type PictureSettings = { speaking: WallSettings["speaking"]; remote?: boolean; trainAlerts: AlertSettings | null; waitMs?: number };
@@ -200,6 +202,7 @@ export async function buildPicture(sources: WallSources, settings: PictureSettin
     train,
     timers,
     playing: song,
+    morning: sources.morning === undefined ? null : (({ phase, at, snoozedUntil }) => ({ phase, at, snoozedUntil }))(sources.morning(now)),
   };
 }
 

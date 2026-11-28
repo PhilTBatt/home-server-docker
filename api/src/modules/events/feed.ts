@@ -14,6 +14,7 @@ export const eventKinds = {
   "session.waiting": "owner",
   "screen.paired": "owner",
   "projector.switched": "room",
+  "morning.up": "home",
 } as const satisfies Record<string, Audience>;
 export type EventKind = keyof typeof eventKinds;
 
@@ -53,6 +54,7 @@ const factShapes: Record<EventKind, Record<string, FactKind>> = {
   "session.waiting": { name: "word" },
   "screen.paired": {},
   "projector.switched": { on: "yes" },
+  "morning.up": { by: "word" },
 };
 
 const rank: Record<Audience, number> = { room: 0, home: 1, owner: 2 };
@@ -116,6 +118,8 @@ export function titleFor(kind: EventKind, facts: Facts): string {
       return "A screen was paired with the wall";
     case "projector.switched":
       return facts.on === true ? "The projector came on" : "The projector went off";
+    case "morning.up":
+      return `Up for the morning, ${byWords[String(facts.by)] ?? String(facts.by)}`;
   }
 }
 

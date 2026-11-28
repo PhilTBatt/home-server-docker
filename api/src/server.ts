@@ -23,6 +23,7 @@ import { tickMs as reminderTickMs } from "./modules/reminders/reminders.js";
 import { choresFor } from "./modules/chores/setup.js";
 import { createSessions } from "./modules/sessions/sessions.js";
 import { createEventFeed, createEventStore } from "./modules/events/feed.js";
+import { morningFor } from "./modules/morning/setup.js";
 
 const config = readConfig(process.env);
 const events = config.features.events
@@ -87,7 +88,14 @@ const projector = config.features.projector
     }, events)
   : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders, chores, sessions, projector, events });
+const morning = config.features.morning
+  ? morningFor(config, modes === undefined ? undefined : () => modes.view().mode, {
+      info: (fields, message) => app.log.info(fields, message),
+      warn: (fields, message) => app.log.warn(fields, message),
+    }, events)
+  : undefined;
+
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders, chores, sessions, projector, events, morning });
 app.log.info({ features: config.features }, "feature switches");
 
 if (events !== undefined) await events.load();
@@ -113,6 +121,8 @@ if (reminders !== undefined) {
 }
 
 if (projector !== undefined) await projector.start();
+
+if (morning !== undefined) await morning.load(new Date());
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
 events?.post("hub.started");

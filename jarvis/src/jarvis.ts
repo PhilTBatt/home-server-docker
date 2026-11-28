@@ -30,6 +30,8 @@ import { factsWiring, liveFacts } from "./live-facts.js";
 import { introLine, readIntro } from "./intro.js";
 import { hubModes as modeHub, watchModes, whenCheck } from "./modes.js";
 import { askHubForDue, hubReminders, watchReminders } from "./reminders.js";
+import { morningWiring } from "./morning.js";
+import { setVolume } from "./sound-card.js";
 import { hubDesk, hubModeCheck, phoneVoice, watchPhone, whisperHears } from "./phone.js";
 import { askHubForSessions, watchSessions } from "./session-news.js";
 import { digestFor, digestLine, withDigest } from "./digest.js";
@@ -201,8 +203,10 @@ try {
   wakeHold = hold;
   const starts = voiceFor(config, starting.signal, (line) => process.stdout.write(`${line}\n`));
   hold?.during(() => starts.then(() => {}));
-  ({ mode: voice, speaker } = await starts);
+  const started = await starts;
+  ({ mode: voice, speaker } = started);
   const speaking = speaker;
+  const soundCard = started.card ?? null;
   shown?.voiced(speaking !== null);
   const talk = earsCall === null ? undefined : startTalk({ call: earsCall, wake: config.ears === "wake" });
   if (talk !== undefined) process.stdout.write(`${printable(await talk.check(starting.signal))}\n`);
@@ -269,6 +273,7 @@ try {
     earsGuests: guestDoor(config.ears, earsCall),
     sessions: config.sessions && config.hubToken !== null ? watchSessions({ ask: askHubForSessions(config.hubToken), signal: closing.signal }) : undefined,
     reminders: config.reminders && config.hubToken !== null ? { news: watchReminders({ ask: askHubForDue(config.hubToken), signal: closing.signal }), hub: hubReminders(config.hubToken) } : undefined,
+    morning: config.morning && config.hubToken !== null ? morningWiring({ token: config.hubToken, signal: closing.signal, speaker: speaking, volume: config.volume, setVolume: soundCard === null ? null : (level) => setVolume(soundCard, level) }) : undefined,
     wall: shown?.chat,
     features: hubSwitches?.events,
     phone: config.phone && config.hubToken !== null ? { news: watchPhone({ desk: hubDesk(config.hubToken), signal: closing.signal }), desk: hubDesk(config.hubToken), hear: whisperHears(), mode: hubModeCheck(config.hubToken), voice: speaking === null ? null : (text, signal, piece) => phoneVoice(speaking.engine, text, signal, config.spokenStyle, piece) } : undefined,

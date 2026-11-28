@@ -1,6 +1,7 @@
 // @ts-check
 import { fitKey, letterbox, matrixFor, moveCorner, readFit, writeFit } from "./wall-fit.js";
-import { bubbleAround, bubbleFor, cardFor, cornerStep, detailEveryMs, detailPages, detailsShown, fitChip, framesASecond, fromHub, isPageView, isTrainDetails, itemBox, movePointer, nextCorner, nextDetails, openHere, pageLeftMs, pageShownMs, pointerShown, privateOf, stillOpen, trailMs, trailOf, trainView } from "./wall-cards.js";
+import { bubbleAround, bubbleFor, cardFor, cornerStep, detailEveryMs, detailPages, detailsShown, fitChip, framesASecond, fromHub, isPageView, isTrainDetails, itemBox, movePointer, nextCorner, nextDetails, openHere, pageLeftMs, pageShownMs, pointerShown, privateOf, stillOpen, trailMs, trailOf, trainRowView, trainView } from "./wall-cards.js";
+import { morningTrainCard, morningView } from "./wall-morning.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -98,10 +99,69 @@ async function readDetails(id) {
  * @param {number} now
  */
 function followDetails(now) {
-  const id = pages.opened?.page.id ?? null;
+  const id = pages.opened?.page.id ?? (document.body.classList.contains("morning-on") ? "train" : null);
   if (id === null || !detailPages.includes(id) || detail.asking) return;
   if (detail.id === id && now - detail.fetchedAt < detailEveryMs) return;
   void readDetails(id);
+}
+
+/**
+ * @param {WallPicture | null} picture
+ * @param {string} clockNow
+ */
+function showMorning(picture, clockNow) {
+  const box = byId("morning");
+  const [hours, minutes] = clockNow.split(":");
+  const snoozed = picture?.morning?.snoozedUntil ?? null;
+  const view = picture === null ? null : morningView(picture.morning ?? null, Number(hours) * 60 + Number(minutes) + new Date().getSeconds() / 60, snoozed === null ? "" : londonClock(new Date(snoozed)), picture.train);
+  document.body.classList.toggle("morning-on", view !== null);
+  box.hidden = view === null;
+  if (view === null || picture === null) return;
+  setText(byId("morning-wake"), view.wake);
+  setText(byId("morning-hours"), hours ?? "");
+  setText(byId("morning-minutes"), minutes ?? "");
+  const glow = byId("morning-glow");
+  glow.style.opacity = String(view.glow);
+  glow.style.transform = `translateY(${Math.round((1 - view.glow) * 130)}px)`;
+  const key = JSON.stringify([view.chips, view.steps]);
+  if (box.dataset.shown !== key) {
+    box.dataset.shown = key;
+    byId("morning-chips").replaceChildren(
+      ...view.chips.map((chip) => {
+        const one = document.createElement("span");
+        one.className = `morning-chip ${chip.tone}`;
+        one.textContent = chip.text;
+        return one;
+      }),
+    );
+    byId("morning-steps").replaceChildren(
+      ...view.steps.map((step) => {
+        const one = document.createElement("li");
+        one.className = `morning-step ${step.state}`;
+        const dot = document.createElement("span");
+        dot.className = "morning-dot";
+        dot.setAttribute("aria-hidden", "true");
+        const time = document.createElement("span");
+        time.className = "morning-time";
+        time.textContent = step.time;
+        const what = document.createElement("span");
+        what.className = "morning-what";
+        what.textContent = step.what;
+        one.append(dot, time, what);
+        return one;
+      }),
+    );
+  }
+  const shownDetails = detailsShown(detail, "train", Date.now());
+  const details = isTrainDetails(shownDetails) ? shownDetails : null;
+  const row = details === null || picture.train === null ? undefined : details.rows.find((one) => one.leaves === picture.train?.leaves);
+  const trainCard = morningTrainCard(picture.train, row === undefined || details === null ? "" : trainRowView(row, details.via).second);
+  const trainBox = byId("morning-train");
+  trainBox.hidden = trainCard === null;
+  if (trainCard === null) return;
+  trainBox.classList.toggle("warm", trainCard.tone === "warm");
+  setText(byId("morning-train-main"), trainCard.main);
+  setText(byId("morning-train-sub"), trainCard.sub);
 }
 
 /**
@@ -583,8 +643,10 @@ export function render() {
   const accent = modeColour(picture?.mode ?? null);
   document.documentElement.style.setProperty("--accent", accent);
   for (const phase of ["morning", "daytime", "bedtime"]) document.body.classList.toggle(`phase-${phase}`, (picture?.phase ?? "daytime") === phase);
-  setText(byId("clock"), londonClock(new Date()));
+  const clockNow = londonClock(new Date());
+  setText(byId("clock"), clockNow);
   setText(byId("day"), picture?.day ?? "");
+  showMorning(picture, clockNow);
   const connected = state.pictureFailures < failuresBeforeLost && state.jarvisFailures < failuresBeforeLost;
   const pose = poseFor({ jarvis: state.jarvis, connected, mode: picture?.mode ?? null, phase: picture?.phase ?? "daytime" });
   showPose(pose === "speaking" && picture?.speaking === "string" ? "string" : pose);

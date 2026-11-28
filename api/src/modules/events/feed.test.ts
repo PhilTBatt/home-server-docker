@@ -37,6 +37,7 @@ const examples: Record<EventKind, Facts> = {
   "session.waiting": { name: "docker" },
   "screen.paired": {},
   "projector.switched": { on: true },
+  "morning.up": { by: "phone" },
 };
 
 test("each kind of event has one audience, set here and nowhere else: what anyone in the room may see, the household, or only Phil", () => {
@@ -49,6 +50,7 @@ test("each kind of event has one audience, set here and nowhere else: what anyon
     "session.waiting": "owner",
     "screen.paired": "owner",
     "projector.switched": "room",
+    "morning.up": "home",
   });
   assert.deepEqual(Object.keys(examples).sort(), Object.keys(eventKinds).sort());
 });
@@ -92,7 +94,7 @@ test("an event's details must be exactly its kind's, as short lowercase words, s
 test("titles are the hub's own words, made from the details", () => {
   assert.deepEqual(
     Object.entries(examples).map(([kind, facts]) => titleFor(kind as EventKind, facts)),
-    ["The hub started", "Mode: Gaming, by voice", "A reminder went off", "2 trains you watch changed", "Your phone was rung", "Claude Code session docker is waiting for you", "A screen was paired with the wall", "The projector came on"],
+    ["The hub started", "Mode: Gaming, by voice", "A reminder went off", "2 trains you watch changed", "Your phone was rung", "Claude Code session docker is waiting for you", "A screen was paired with the wall", "The projector came on", "Up for the morning, from the phone"],
   );
   assert.equal(titleFor("mode.switched", { to: "bedtime", from: "normal", by: "schedule" }), "Mode: Bedtime, on a timer");
   assert.equal(titleFor("mode.switched", { to: "normal", from: "away", by: "phone" }), "Mode: Normal, from the phone");
@@ -101,6 +103,7 @@ test("titles are the hub's own words, made from the details", () => {
   assert.equal(titleFor("reminder.due", { id: "0000000a", urgent: true, late: true }), "An urgent reminder went off, late");
   assert.equal(titleFor("trains.changed", { count: 1 }), "A train you watch changed");
   assert.equal(titleFor("projector.switched", { on: false }), "The projector went off");
+  assert.equal(titleFor("morning.up", { by: "voice" }), "Up for the morning, by voice");
 });
 
 test("each event is numbered on from its London day's own start, so a number from another day or before a restart can always be told apart", async () => {
@@ -134,16 +137,16 @@ test("a reader sees only what its reach allows, everything after the number it h
   for (const [kind, facts] of Object.entries(examples)) feed.post(kind as EventKind, facts);
   const kinds = (answer: { events: { kind: string }[] }) => answer.events.map((event) => event.kind);
   assert.deepEqual(kinds(feed.answer(-1, "room")), ["mode.switched", "phone.rang", "projector.switched"]);
-  assert.deepEqual(kinds(feed.answer(-1, "home")), ["hub.started", "mode.switched", "reminder.due", "trains.changed", "phone.rang", "projector.switched"]);
+  assert.deepEqual(kinds(feed.answer(-1, "home")), ["hub.started", "mode.switched", "reminder.due", "trains.changed", "phone.rang", "projector.switched", "morning.up"]);
   assert.deepEqual(kinds(feed.answer(-1, "owner")), Object.keys(examples));
   const base = firstSeq("2026-11-28");
   const after = feed.answer(base + 5, "owner");
-  assert.deepEqual([after.all, kinds(after), after.seq, after.day], [false, ["session.waiting", "screen.paired", "projector.switched"], base + 8, "2026-11-28"]);
-  assert.deepEqual([feed.answer(base + 8, "owner").all, feed.answer(base + 8, "owner").events], [false, []]);
-  for (const stale of [-1, 0, base, base - 7, firstSeq("2026-11-27") + 40, base + 9, firstSeq("2026-11-29") + 1]) {
+  assert.deepEqual([after.all, kinds(after), after.seq, after.day], [false, ["session.waiting", "screen.paired", "projector.switched", "morning.up"], base + 9, "2026-11-28"]);
+  assert.deepEqual([feed.answer(base + 9, "owner").all, feed.answer(base + 9, "owner").events], [false, []]);
+  for (const stale of [-1, 0, base, base - 7, firstSeq("2026-11-27") + 40, base + 10, firstSeq("2026-11-29") + 1]) {
     const answer = feed.answer(stale, "owner");
     assert.equal(answer.all, stale !== base, String(stale));
-    if (stale !== base) assert.equal(answer.events.length, 8, String(stale));
+    if (stale !== base) assert.equal(answer.events.length, 9, String(stale));
   }
 });
 

@@ -1,6 +1,7 @@
 // @ts-check
 import { onArrival, slotFor, voicePieces, voiceUrl } from "./talk-voice.js";
 import { busyCheckMs, forgetConfirmMs, isProjectorView, powerLine, projectorLine, projectorShows } from "./projector-card.js";
+import { isMorningView, morningShows } from "./morning-card.js";
 import { todayLines } from "./today.js";
 /**
  * @typedef {object} Download
@@ -91,6 +92,7 @@ import { todayLines } from "./today.js";
  * @property {boolean} [wall]
  * @property {boolean} [projector]
  * @property {boolean} [events]
+ * @property {boolean} [morning]
  */
 
 /**
@@ -350,7 +352,7 @@ import { todayLines } from "./today.js";
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify", talk: "talk to Jarvis", wall: "the wall", projector: "the projector", events: "the events feed" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify", talk: "talk to Jarvis", wall: "the wall", projector: "the projector", events: "the events feed", morning: "the morning" };
 
 /**
  * @param {string} id
@@ -380,6 +382,10 @@ const doctorChecks = byId("doctor-checks");
 const switchesText = byId("switches");
 const pairSection = byId("pair-screen");
 const projectorCard = byId("projector-card");
+const morningCard = byId("morning-card");
+const morningLine = byId("morning-line");
+const morningUp = /** @type {HTMLButtonElement} */ (byId("morning-up"));
+const morningSnooze = /** @type {HTMLButtonElement} */ (byId("morning-snooze"));
 const projectorState = byId("projector-state");
 const projectorPower = byId("projector-power");
 const projectorOn = /** @type {HTMLButtonElement} */ (byId("projector-on"));
@@ -1633,6 +1639,7 @@ function showHome(features) {
   spotifyCard.hidden = features.spotify !== true;
   projectorCard.hidden = features.projector !== true;
   todayCard.hidden = features.events !== true;
+  if (features.morning !== true) morningCard.hidden = true;
   talkButton.hidden = features.talk !== true;
   if (features.spotify !== true) nowPlaying.hidden = true;
   lastTrainAt = 0;
@@ -1647,6 +1654,7 @@ function refreshHome() {
   if (knownFeatures.reminders === true) loadReminders();
   if (knownFeatures.projector === true) loadProjector();
   if (knownFeatures.events === true) loadToday();
+  if (knownFeatures.morning === true) loadMorning();
   if (knownFeatures.trains && Date.now() - lastTrainAt >= trainEveryMs) {
     lastTrainAt = Date.now();
     loadTrain();
@@ -1804,6 +1812,46 @@ async function projectorTo(on) {
   if (reply === null) return;
   await loadProjector();
   projectorState.textContent = powerLine(on, reply);
+}
+
+/**
+ * @param {import("./morning-card.js").MorningView} view
+ */
+function showMorning(view) {
+  const shows = morningShows(view, (at) => at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }));
+  morningCard.hidden = !shows.shown;
+  morningLine.textContent = shows.line;
+  morningUp.hidden = !shows.up;
+  morningSnooze.hidden = !shows.snooze;
+}
+
+async function loadMorning() {
+  const got = await fetchReply("/api/morning", "Couldn't check the morning");
+  if ("text" in got || !isMorningView(got.reply)) {
+    morningCard.hidden = true;
+    return;
+  }
+  showMorning(got.reply);
+}
+
+/**
+ * @param {"up" | "snooze"} action
+ */
+async function morningSay(action) {
+  morningUp.disabled = true;
+  morningSnooze.disabled = true;
+  try {
+    const response = await fetch(`/api/morning/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ by: "phone" }) });
+    /** @type {unknown} */
+    const reply = await response.json().catch(() => null);
+    if (response.ok && isMorningView(reply)) showMorning(reply);
+    else morningLine.textContent = `Couldn't tell the hub: ${isObject(reply) && typeof reply.error === "string" ? reply.error : `the API replied ${response.status}`}.`;
+  } catch {
+    morningLine.textContent = "Couldn't reach the API.";
+  } finally {
+    morningUp.disabled = false;
+    morningSnooze.disabled = false;
+  }
 }
 
 async function loadReminders() {
@@ -2301,6 +2349,8 @@ talkButton.addEventListener("keyup", (event) => {
   event.preventDefault();
   finishTalking();
 });
+morningUp.addEventListener("click", () => morningSay("up"));
+morningSnooze.addEventListener("click", () => morningSay("snooze"));
 projectorOn.addEventListener("click", () => projectorTo(true));
 projectorOff.addEventListener("click", () => projectorTo(false));
 projectorPair.addEventListener("click", async () => {

@@ -23,6 +23,7 @@ import { trainSay, type TrainEvent, type TrainNews } from "./train-news.js";
 import { sessionSay, type SessionEvent, type SessionNews } from "./session-news.js";
 import { askOnPhone, phoneVoiceCutNote, phoneModeUnknownNote, phoneModeUnknownSay, phoneNothingToSayNote, withPhoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneEvent, type PhoneParts } from "./phone.js";
 import { answeredSay, guestRemindersNote, reminderAnswerFailedSay, reminderAnswerIn, reminderAnswerMs, reminderSay, type ReminderAnswer, type ReminderEvent, type ReminderHub, type ReminderNews } from "./reminders.js";
+import { morningAnswerIn, morningFailedSay, morningLevel, morningSay, morningSnoozeSay, morningTrainMs, morningUpSay, soundLevel, wakingPhases, type MorningAnswer, type MorningDeps, type MorningEvent, type MorningPhase } from "./morning.js";
 import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, modeSays, modesBackNote, modesOffSay, modeWordIn, speaksUnprompted, whenBackAsk, whenNotCaught, whenSaid, ModesOff, type Mode, type ModeEvent, type ModeHub, type ModeWord, type WhenCheck } from "./modes.js";
 import { seconds, type Answer } from "./timing.js";
 import type { EarsAnswer, EarsVoice } from "./ears-client.js";
@@ -211,6 +212,7 @@ export type ChatDeps = {
   guest?: { open(): Promise<NewChat> };
   when?: WhenCheck;
   reminders?: { news: ReminderNews; hub: ReminderHub };
+  morning?: MorningDeps;
   voices?: { other: OtherVoices };
   earsGuests?(on: boolean): Promise<void>;
   sessions?: SessionNews;
@@ -230,7 +232,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; guestUntold: "voice" | "typed" | "owner" | null; guestLocal: { mode: Mode; until: string | null } | null; guestSay: string | null; tellHub: boolean; retryPending: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null; lastReminder: { id: string; at: number } | null; replay: Sent | null; rangAt: number | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; guestUntold: "voice" | "typed" | "owner" | null; guestLocal: { mode: Mode; until: string | null } | null; guestSay: string | null; tellHub: boolean; retryPending: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null; lastReminder: { id: string; at: number } | null; replay: Sent | null; rangAt: number | null; morning: { day: string; phase: MorningPhase; spoken: number | null; sounded: boolean; said: boolean } | null };
 
 function sounds(state: ChatState, speech: AnswerSpeech | null): void {
   if (speech === null || state.sounding.has(speech)) return;
@@ -457,8 +459,8 @@ export function engineLine(engine: Engine, thinkingHistory?: ThinkingHistory): s
   return engine === "api" && thinkingHistory !== undefined ? `Engine: ${engineNames[engine]}, ${thinkingNotes[thinkingHistory]}` : `Engine: ${engineNames[engine]}`;
 }
 
-export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "reminders" | "voices" | "sessions" | "otherVoices" | "musicYes" | "digest" | "phone" | "wall" | "web" | "webBy" | "webLog" | "log">): string {
-  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_REMINDERS=${config.reminders ? "on" : "off"}, JARVIS_VOICES=${config.voices ? "on" : "off"}, JARVIS_SESSIONS=${config.sessions ? "on" : "off"}, JARVIS_OTHER_VOICES=${config.otherVoices}, JARVIS_MUSIC_YES=${config.musicYes}, JARVIS_DIGEST=${config.digest ? "on" : "off"}, JARVIS_PHONE=${config.phone ? "on" : "off"}, JARVIS_WALL=${config.wall ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
+export function settingsLine(config: Pick<Config, "engine" | "thinkingHistory" | "chats" | "lengthHints" | "lengthWarn" | "lengthCap" | "hubToken" | "hubActions" | "sessionNotes" | "voice" | "kokoroVoice" | "kokoroSpeed" | "piperVoice" | "volume" | "speechStart" | "speechStop" | "speechBundle" | "spokenStyle" | "persona" | "liveFacts" | "filler" | "ears" | "followUp" | "turnCheck" | "trainAlerts" | "brainQuestions" | "clock" | "intro" | "guest" | "modes" | "reminders" | "morning" | "voices" | "sessions" | "otherVoices" | "musicYes" | "digest" | "phone" | "wall" | "web" | "webBy" | "webLog" | "log">): string {
+  return `Settings: JARVIS_ENGINE=${config.engine}, JARVIS_THINKING_HISTORY=${config.thinkingHistory}, JARVIS_CHATS=${config.chats}, JARVIS_LENGTH_HINTS=${config.lengthHints}, JARVIS_LENGTH_WARN=${config.lengthWarn}, JARVIS_LENGTH_CAP=${config.lengthCap ?? "off"}, JARVIS_HUB_TOOLS=${config.hubToken === null ? "off" : "on"}, JARVIS_HUB_ACTIONS=${config.hubActions ? "on" : "off"}, JARVIS_SESSION_NOTES=${config.sessionNotes ? "on" : "off"}, JARVIS_VOICE=${config.voice}, JARVIS_KOKORO_VOICE=${config.kokoroVoice}, JARVIS_KOKORO_SPEED=${config.kokoroSpeed}, JARVIS_PIPER_VOICE=${config.piperVoice}, JARVIS_VOLUME=${config.volume}, JARVIS_SPEECH_START=${config.speechStart}, JARVIS_SPEECH_STOP=${config.speechStop}, JARVIS_SPEECH_BUNDLE=${config.speechBundle ? "on" : "off"}, JARVIS_SPOKEN_STYLE=${config.spokenStyle ? "on" : "off"}, JARVIS_PERSONA=${config.persona ?? "off"}, JARVIS_LIVE_FACTS=${config.liveFacts ? "on" : "off"}, JARVIS_FILLER=${config.filler ? "on" : "off"}, JARVIS_EARS=${config.ears}, JARVIS_FOLLOW_UP=${config.followUp ?? "off"}, JARVIS_TURN_CHECK=${config.turnCheck ? "on" : "off"}, JARVIS_TRAIN_ALERTS=${config.trainAlerts ? "on" : "off"}, JARVIS_BRAIN_QUESTIONS=${config.brainQuestions ? "on" : "off"}, JARVIS_CLOCK=${config.clock ? "on" : "off"}, JARVIS_INTRO=${config.intro ? "on" : "off"}, JARVIS_GUEST=${config.guest ? "on" : "off"}, JARVIS_MODES=${config.modes ? "on" : "off"}, JARVIS_REMINDERS=${config.reminders ? "on" : "off"}, JARVIS_MORNING=${config.morning ? "on" : "off"}, JARVIS_VOICES=${config.voices ? "on" : "off"}, JARVIS_SESSIONS=${config.sessions ? "on" : "off"}, JARVIS_OTHER_VOICES=${config.otherVoices}, JARVIS_MUSIC_YES=${config.musicYes}, JARVIS_DIGEST=${config.digest ? "on" : "off"}, JARVIS_PHONE=${config.phone ? "on" : "off"}, JARVIS_WALL=${config.wall ? "on" : "off"}, JARVIS_WEB=${config.web}, JARVIS_WEB_BY=${config.webBy}, JARVIS_LOG=${config.log ? "on" : "off"}, JARVIS_WEB_LOG=${config.webLog ? "on" : "off"}`;
 }
 
 export function chatsLine(chats: ChatMode, earlierQuestions: number | null): string {
@@ -716,7 +718,7 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
 }
 
 type ModeRetry = { kind: "mode retry" };
-type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ModeRetry | ReminderEvent | SessionEvent | PhoneEvent | FeaturesEvent;
+type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ModeRetry | ReminderEvent | MorningEvent | SessionEvent | PhoneEvent | FeaturesEvent;
 export type ChatInput = { kind: "line"; text: string } | WakeEvent | NewsEvent;
 
 export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<NewsEvent>): AsyncGenerator<ChatInput> {
@@ -846,6 +848,16 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     return "go";
   }
   state.awaitingBack = false;
+  const morningWord = state.questions === null ? answerToMorning(deps, state, sent.heard.text) : null;
+  if (morningWord !== null) {
+    const told = await tellMorning(deps, state, morningWord);
+    const alsoMode = told && morningWord === "up" ? spokenModeWord(deps, state, sent.heard.text) : null;
+    if (alsoMode === null || alsoMode.kind !== "set mode" || (deps.voices !== undefined && voice === undefined && voiced(sent.heard))) {
+      counted(sent.heard, state);
+      if (told) await sayLine(deps, state, { say: morningWord === "up" ? morningUpSay : morningSnoozeSay });
+      return "go";
+    }
+  }
   const reminderAnswer = state.questions === null ? answerToReminder(deps, state, sent.heard.text) : null;
   if (reminderAnswer !== null) {
     counted(sent.heard, state);
@@ -1390,6 +1402,68 @@ async function onReminderAnswer(deps: ChatDeps, state: ChatState, answer: Remind
   }
 }
 
+function answerToMorning(deps: ChatDeps, state: ChatState, said: string): MorningAnswer | null {
+  if (deps.morning === undefined || state.guest || state.morning === null || !wakingPhases.includes(state.morning.phase)) return null;
+  const answer = morningAnswerIn(said);
+  if (answer === "snooze" && state.morning.phase !== "speaking" && state.morning.phase !== "snoozed") return null;
+  return answer;
+}
+
+async function tellMorning(deps: ChatDeps, state: ChatState, answer: MorningAnswer): Promise<boolean> {
+  state.turn++;
+  await hush(deps, state);
+  const morning = deps.morning;
+  if (morning === undefined) return false;
+  await morning.loud(null).catch(() => {});
+  try {
+    const view = await morning.hub.answer(answer, deps.closing ?? new AbortController().signal);
+    if (state.morning !== null) state.morning = { ...state.morning, phase: view.phase };
+    return true;
+  } catch (error) {
+    deps.write(`  (${printable(`the morning: ${error instanceof Error ? error.message : String(error)}`)})\n`);
+    await sayLine(deps, state, { say: morningFailedSay });
+    return false;
+  }
+}
+
+async function onMorning(deps: ChatDeps, state: ChatState, event: MorningEvent): Promise<void> {
+  if (event.kind === "morning note") {
+    deps.interrupt?.();
+    deps.write(`  (${printable(event.line)})\n`);
+    deps.prompt();
+    return;
+  }
+  const morning = deps.morning;
+  if (morning === undefined) return;
+  const view = event.view;
+  const before = state.morning !== null && state.morning.day === view.day ? state.morning : { day: view.day, phase: view.phase, spoken: null, sounded: false, said: false };
+  state.morning = { ...before, phase: view.phase };
+  if (state.guest || !quiet(state)) return;
+  if (view.phase === "sound" && !before.sounded) {
+    state.morning = { ...state.morning, sounded: true };
+    await morning.loud(soundLevel(morning.volume)).catch(() => {});
+    await morning.sound().catch(() => {});
+    await morning.loud(null).catch(() => {});
+    return;
+  }
+  if (view.phase !== "speaking" || view.speakSlot === null || view.speakSlot === before.spoken) return;
+  const first = !before.said;
+  state.morning = { ...state.morning, spoken: view.speakSlot, said: true };
+  const train = first ? await morning.train(AbortSignal.any([deps.closing ?? new AbortController().signal, AbortSignal.timeout(morningTrainMs)])).catch(() => null) : null;
+  deps.interrupt?.();
+  await settle(deps, state);
+  state.turn++;
+  await morning.loud(morningLevel(morning.volume, view.speakSlot)).catch(() => {});
+  await sayLine(deps, state, { say: morningSay(deps.clock?.() ?? new Date(), first, train) });
+  const spoken = state.speech;
+  void (spoken === null ? Promise.resolve() : spoken.done())
+    .catch(() => {})
+    .then(() => morning.loud(null))
+    .catch(() => {});
+  openFollow(deps, state);
+  deps.prompt();
+}
+
 async function onReminders(deps: ChatDeps, state: ChatState, event: ReminderEvent): Promise<void> {
   if (event.kind === "reminders note") {
     deps.interrupt?.();
@@ -1790,7 +1864,7 @@ async function finishQuestions(deps: ChatDeps, state: ChatState): Promise<void> 
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, guestUntold: null, guestLocal: null, guestSay: null, tellHub: false, retryPending: false, awaitingBack: false, switching: null, lastReminder: null, replay: null, rangAt: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, guestUntold: null, guestLocal: null, guestSay: null, tellHub: false, retryPending: false, awaitingBack: false, switching: null, lastReminder: null, replay: null, rangAt: null, morning: null };
   const base = deps;
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
@@ -1806,10 +1880,14 @@ export async function runChat(deps: ChatDeps): Promise<void> {
   await tellEars(base, current, false);
   try {
     current.prompt();
-    const news = [current.features, current.trains?.events, found?.events, current.modes?.events, retry?.events, current.reminders?.news.events, current.sessions?.events, current.phone?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
+    const news = [current.features, current.trains?.events, found?.events, current.modes?.events, retry?.events, current.reminders?.news.events, current.morning?.news.events, current.sessions?.events, current.phone?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
     for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, news.length === 0 ? undefined : news.length === 1 ? news[0] : merged<NewsEvent>(...news)), deps.ready)) {
       if (input.kind === "reminders" || input.kind === "reminders note") {
         await onReminders(current, state, input);
+        continue;
+      }
+      if (input.kind === "morning" || input.kind === "morning note") {
+        await onMorning(current, state, input);
         continue;
       }
       if (input.kind === "sessions" || input.kind === "sessions note") {

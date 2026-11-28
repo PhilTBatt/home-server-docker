@@ -190,7 +190,7 @@ test("the hub actions' exceptions follow the hub's own switches: no reminders ex
   assert.equal(liveFacts({ ...all, musicYes: "changes", remindersAtHub: true, spotifyAtHub: true }), liveFacts({ ...all, musicYes: "changes" }), "unknown counts as on, as before");
 });
 
-const wiringConfig = { ears: "wake", followUp: 6, hubActions: true, hubToken: "a-token", trainAlerts: true, web: "off", brainQuestions: true, clock: true, modes: true, guest: true, reminders: true, voices: true, otherVoices: "answer", musicYes: "changes", phone: true, wall: true, projector: false, wallPages: "off" } as const;
+const wiringConfig = { ears: "wake", followUp: 6, hubActions: true, hubToken: "a-token", trainAlerts: true, web: "off", brainQuestions: true, clock: true, modes: true, guest: true, reminders: true, morning: false, voices: true, otherVoices: "answer", musicYes: "changes", phone: true, wall: true, projector: false, wallPages: "off" } as const;
 const allAtHub = { reminders: true, spotify: true, talk: true, wall: true, modes: true, trainAlerts: true, projector: true };
 
 test("in a guest chat the facts give him nothing of Phil's hub, and only the wall's switch counts as a change", () => {
@@ -223,6 +223,16 @@ test("with JARVIS_PROJECTOR on, he's told his own code switches the projector, a
   assert.ok(!facts(true, allAtHub, true).includes(line));
   assert.ok(!facts(true, allAtHub, false, "off").includes(line));
   assert.ok(factsWiring({ ...wiringConfig, projector: true }, { voice: "kokoro", guest: false, hubOn: true, atHub: allAtHub }).relevant.includes("projector"));
+});
+
+test("with JARVIS_MORNING on and ears on, he's told his own code wakes him and handles I'm up and five more minutes, and never in a guest chat", () => {
+  const facts = (morning: boolean, guest = false, ears: "wake" | "off" = "wake") => liveFacts(factsWiring({ ...wiringConfig, morning, ears }, { voice: "kokoro", guest, hubOn: !guest, atHub: allAtHub }).input);
+  const line = "On his wake-up mornings your own code wakes him";
+  assert.ok(facts(true).includes(line));
+  assert.ok(!facts(false).includes(line));
+  assert.ok(!facts(true, true).includes(line));
+  assert.ok(!facts(true, false, "off").includes(line));
+  for (const said of ["I'm up", "five more minutes"]) assert.ok(facts(true).includes(said), said);
 });
 
 test("with JARVIS_WALL_PAGES, he's told his code opens pages when he says show me and closes them on back, and with on, about his own tool and the pages it opens", () => {

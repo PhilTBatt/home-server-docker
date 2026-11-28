@@ -258,5 +258,15 @@ output=$(update)
 check_has "the always-on script is offered for /usr/local/bin as home-hub-jarvis" "Skipped. To install it later: sudo install host/jarvis-always.sh /usr/local/bin/home-hub-jarvis" "$output"
 check_has "and its template service for systemd's folder" "Skipped. To install it later: sudo install -m 644 host/home-hub-jarvis@.service /etc/systemd/system/home-hub-jarvis@.service" "$output"
 
+fresh_repos
+printf '#!/bin/bash\n' > "$work/laptop/host/morning-mic.sh"
+printf '[Timer]\n' > "$work/laptop/host/home-hub-morning-mic@.timer"
+git -C "$work/laptop" add -A
+git -C "$work/laptop" commit -q -m morning
+git -C "$work/laptop" push -q 2>/dev/null
+output=$(update)
+check_has "the morning's mic script is offered for /usr/local/bin as home-hub-morning-mic" "Skipped. To install it later: sudo install host/morning-mic.sh /usr/local/bin/home-hub-morning-mic" "$output"
+check_has "and its timer for systemd's folder" "Skipped. To install it later: sudo install -m 644 host/home-hub-morning-mic@.timer /etc/systemd/system/home-hub-morning-mic@.timer" "$output"
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

@@ -11,6 +11,7 @@ import { createModes } from "./modules/modes/modes.js";
 import { createReminders } from "./modules/reminders/reminders.js";
 import { createChores } from "./modules/chores/chores.js";
 import { createSessions } from "./modules/sessions/sessions.js";
+import { createMorning } from "./modules/morning/morning.js";
 import type { SpotifyParts } from "./modules/spotify/routes.js";
 
 const config: Config = {
@@ -29,7 +30,8 @@ const config: Config = {
   wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble", privatePages: [], remote: false },
   login: { guard: false },
   projector: { host: "192.168.1.23", power: "wake-sleep" },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true }
+  morning: { at: 405, days: ["mon", "tue", "wed", "thu", "fri"] },
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -301,7 +303,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: false, events: false };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: false, events: false, morning: false };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -694,6 +696,24 @@ test("modes are a route of the hub's, behind the token, given only the modes it 
   assert.deepEqual((await off.inject({ method: "GET", url: "/mode", headers: goodHeader })).json(), { error: "Modes are switched off" });
   const none = await buildRealApp({ logger: false, config });
   assert.equal((await none.inject({ method: "GET", url: "/mode", headers: goodHeader })).statusCode, 404);
+});
+
+test("the morning is a route of the hub's, behind the token, given only the morning it was handed and only with the switch on, and the wall's picture says its phase", async () => {
+  const handed = createMorning({ settings: config.morning, store: { load: async () => "missing", save: async () => {} } });
+  const app = await buildRealApp({ logger: false, config, morning: handed });
+  assert.equal((await app.inject({ method: "GET", url: "/morning" })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/morning", headers: { authorization: `Bearer ${config.wall.token}` } })).statusCode, 401, "the wall's token can't read it");
+  assert.equal((await app.inject({ method: "POST", url: "/morning/up", headers: { authorization: `Bearer ${config.wall.token}` }, payload: { by: "phone" } })).statusCode, 401, "or say I'm up");
+  const reply = await app.inject({ method: "GET", url: "/morning", headers: goodHeader });
+  assert.deepEqual([reply.statusCode, reply.json().at], [200, "06:45"]);
+  const picture = (await app.inject({ method: "GET", url: "/wall", headers: { authorization: `Bearer ${config.wall.token}` } })).json();
+  assert.deepEqual(Object.keys(picture.morning ?? {}), ["phase", "at", "snoozedUntil"]);
+  assert.equal(picture.morning.at, "06:45");
+  const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, morning: false } }, morning: handed });
+  assert.deepEqual((await off.inject({ method: "GET", url: "/morning", headers: goodHeader })).json(), { error: "The morning is switched off" });
+  assert.equal((await off.inject({ method: "GET", url: "/wall", headers: { authorization: `Bearer ${config.wall.token}` } })).json().morning, null);
+  const none = await buildRealApp({ logger: false, config });
+  assert.equal((await none.inject({ method: "GET", url: "/morning", headers: goodHeader })).statusCode, 404);
 });
 
 test("reminders are a route of the hub's, behind the token, given only the reminders it was handed and only with the switch on", async () => {
