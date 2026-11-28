@@ -57,5 +57,15 @@ for port in 3000 3001 8080 8081 8090 9696 8989 7878 5055 8096; do
   check "Homepage never links to port $port on the server's address" "0" "$(grep -c "href: http://192\.168\.0\.200:$port\$" "$services")"
 done
 
+image() {
+  awk -v want="$1" '/^  [a-z][a-z0-9-]*:$/ { name = substr($1, 1, length($1) - 1) } name == want && /^    image: / { print $2; exit }' "$compose"
+}
+
+pinned='^[a-z0-9./_-]+:v?[0-9][0-9A-Za-z.]*@sha256:[0-9a-f]{64}$'
+for name in beszel-agent kokoro piper whisper openwakeword; do
+  check "$name is pinned by version and digest" "1" "$(image "$name" | grep -cE "$pinned")"
+done
+check "the Beszel agent is the version and digest checked on 28 Nov" "henrygd/beszel-agent:0.21.2@sha256:343254226ae57a5cc6f8c23c755b1464730aba2abc7043116a2e222711ec6e1a" "$(image beszel-agent)"
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
