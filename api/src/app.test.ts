@@ -27,6 +27,7 @@ const config: Config = {
   phone: { ring: "once", seconds: 30 },
   spotify: { clientId: "", redirectUri: "" },
   wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble" },
+  login: { guard: false },
   features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true }
 };
 
@@ -194,6 +195,27 @@ test("login still checks its body, which shows the request got past the lock", a
   const app = await buildApp({ logger: false });
   const response = await app.inject({ method: "POST", url: "/auth/login", payload: {} });
   assert.equal(response.statusCode, 400);
+});
+
+test("with LOGIN_GUARD off, a login over plain http still works and its cookie isn't HTTPS-only", async () => {
+  const app = await buildApp({ logger: false });
+  const response = await app.inject({ method: "POST", url: "/auth/login", headers: { "x-forwarded-proto": "http" }, payload: { token: "test-token" } });
+  assert.equal(response.statusCode, 200);
+  assert.doesNotMatch(String(response.headers["set-cookie"]), /; Secure(;|$)/);
+});
+
+test("with LOGIN_GUARD on, the real app refuses a login over plain http and gives an HTTPS-only cookie over https", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, login: { guard: true } } });
+  const plain = await app.inject({ method: "POST", url: "/auth/login", headers: { "x-forwarded-proto": "http" }, payload: { token: "test-token" } });
+  assert.equal(plain.statusCode, 403);
+  assert.equal(plain.headers["set-cookie"], undefined);
+  const secure = await app.inject({ method: "POST", url: "/auth/login", headers: { "x-forwarded-proto": "https" }, payload: { token: "test-token" } });
+  assert.equal(secure.statusCode, 200);
+  assert.match(String(secure.headers["set-cookie"]), /; Secure(;|$)/);
+  const cookie = await app.inject({ method: "GET", url: "/health", headers: { "x-forwarded-proto": "https" }, cookies: goodCookie });
+  assert.equal(cookie.statusCode, 200);
+  const header = await app.inject({ method: "GET", url: "/health", headers: goodHeader });
+  assert.equal(header.statusCode, 200);
 });
 
 test("only POST /auth/login is exempt: a GET to it is refused", async () => {

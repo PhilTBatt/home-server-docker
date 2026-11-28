@@ -58,7 +58,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
       qbitApiKey: options.config.qbitApiKey,
       jellyfinApiKey: options.config.jellyfinApiKey,
     });
-  app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken });
+  app.register(auth, { prefix: "/auth", apiToken: options.config.apiToken, guard: options.config.login.guard });
   const asked: DoctorSources = {
     heartbeat: options.tries?.heartbeat,
     alerts: options.tries?.alerts,

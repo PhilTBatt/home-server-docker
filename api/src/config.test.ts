@@ -43,6 +43,7 @@ const complete = {
   WALL: "on",
   WALL_TOKEN: "test-wall-token-0123456789abcdef0123",
   WALL_SPEAKING: "wobble",
+  LOGIN_GUARD: "off",
 };
 
 const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off", FIND_PHONE: "off", TRAINS: "off", TRAIN_ALERTS: "off", EXPIRY_ALERTS: "off", WATCHERS: "off", CATCH_UP: "off", MODES: "off", REMINDERS: "off", CHORES: "off", SESSIONS: "off", SPOTIFY: "off", TALK: "off", WALL: "off" };
@@ -63,6 +64,7 @@ test("reads every setting into its own field", () => {
     phone: { ring: "once", seconds: 30 },
     spotify: { clientId: "0123456789abcdef0123456789abcdef", redirectUri: "https://hub.home/spotify.html" },
     wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble" },
+    login: { guard: false },
     features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true },
   });
 });
@@ -83,6 +85,7 @@ test("ignores anything else in the environment", () => {
     "phone",
     "spotify",
     "wall",
+    "login",
     "features",
   ]);
 });
@@ -106,12 +109,12 @@ test("an empty setting counts as missing", () => {
 
 test("with nothing set, the always-needed settings and every switch are named, in a fixed order", () => {
   assert.throws(() => readConfig({}), {
-    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE, TRAINS, TRAIN_ALERTS, EXPIRY_ALERTS, WATCHERS, CATCH_UP, MODES, REMINDERS, CHORES, SESSIONS, SPOTIFY, TALK, WALL",
+    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE, TRAINS, TRAIN_ALERTS, EXPIRY_ALERTS, WATCHERS, CATCH_UP, MODES, REMINDERS, CHORES, SESSIONS, SPOTIFY, TALK, WALL, LOGIN_GUARD",
   });
 });
 
 test("with every switch on and nothing else set, every other setting is named, in a fixed order", () => {
-  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on", TRAINS: "on", TRAIN_ALERTS: "on", EXPIRY_ALERTS: "on", WATCHERS: "on", CATCH_UP: "on", MODES: "on", REMINDERS: "on", CHORES: "on", SESSIONS: "on", SPOTIFY: "on", TALK: "on", WALL: "on" }), {
+  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on", TRAINS: "on", TRAIN_ALERTS: "on", EXPIRY_ALERTS: "on", WATCHERS: "on", CATCH_UP: "on", MODES: "on", REMINDERS: "on", CHORES: "on", SESSIONS: "on", SPOTIFY: "on", TALK: "on", WALL: "on", LOGIN_GUARD: "on" }), {
     message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL, DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, DEALS_AI, RAIL_DATA_KEY, TRAINS_FROM, TRAINS_TO, TRAINS_BOARD_URL, TRAIN_ALERT_DAYS, TRAIN_ALERT_WINDOW, TRAIN_ALERT_REMINDER, SPOTIFY_CLIENT_ID, SPOTIFY_REDIRECT_URI, WALL_TOKEN, WALL_SPEAKING",
   });
 });
@@ -432,6 +435,17 @@ test("TALK must be written out, as exactly on or off, and needs no other setting
   assert.equal(on.features.talk, true);
   assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "watchers", "catch-up", "modes", "reminders", "dev chores", "sessions", "Spotify", "the wall"]);
   assert.equal(readConfig({ ...complete, TALK: "off" }).features.talk, false);
+});
+
+test("LOGIN_GUARD must be written out, as exactly on or off, needs no other setting and isn't a feature", () => {
+  assert.throws(() => readConfig({ ...complete, LOGIN_GUARD: undefined }), { message: "Missing settings in api/.env: LOGIN_GUARD" });
+  assert.throws(() => readConfig({ ...complete, LOGIN_GUARD: "" }), { message: "Missing settings in api/.env: LOGIN_GUARD" });
+  for (const value of ["yes", "On", "true", " on", "on "]) assert.throws(() => readConfig({ ...complete, LOGIN_GUARD: value }), { message: "Settings in api/.env that must be on or off: LOGIN_GUARD" }, value);
+  const on = readConfig({ ...allOff, LOGIN_GUARD: "on", NTFY_TOPIC: undefined, HEALTHCHECK_URL: undefined });
+  assert.deepEqual(on.login, { guard: true });
+  assert.equal(switchedOff(on.features).length, 19);
+  assert.deepEqual(readConfig({ ...complete, LOGIN_GUARD: "off" }).login, { guard: false });
+  assert.deepEqual(readConfig({ ...complete, LOGIN_GUARD: "on" }).features, readConfig(complete).features);
 });
 
 test("FIND_PHONE must be written out, as exactly on or off", () => {

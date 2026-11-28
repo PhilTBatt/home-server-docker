@@ -2172,6 +2172,11 @@ loginForm.addEventListener("submit", async (event) => {
     message.textContent = "Logged in.";
   } else if (response.status === 401) {
     message.textContent = "Wrong token.";
+  } else if (response.status === 403 || response.status === 429) {
+    /** @type {unknown} */
+    const body = await response.json().catch(() => null);
+    const said = body !== null && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : "";
+    message.textContent = said === "" ? `The API replied ${response.status}.` : said;
   } else {
     message.textContent = `The API replied ${response.status}.`;
   }

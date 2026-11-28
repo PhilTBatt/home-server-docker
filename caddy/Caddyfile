@@ -43,7 +43,18 @@ http://api.home, https://api.home {
 	reverse_proxy api:3000
 }
 
-http://hub.home, https://hub.home {
+http://hub.home {
+	handle /caddy-root.crt {
+		root * /srv/hub
+		file_server
+	}
+
+	handle {
+		redir https://hub.home{uri}
+	}
+}
+
+https://hub.home {
 	tls internal
 	handle_path /api/* {
 		reverse_proxy api:3000

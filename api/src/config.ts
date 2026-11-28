@@ -52,6 +52,10 @@ export type CatchUpSettings = {
   token: string;
 };
 
+export type LoginSettings = {
+  guard: boolean;
+};
+
 export type Config = {
   apiToken: string;
   qbitApiKey: string;
@@ -66,6 +70,7 @@ export type Config = {
   phone: PhoneSettings;
   spotify: SpotifySettings;
   wall: WallSettings;
+  login: LoginSettings;
   features: Features;
 };
 
@@ -223,6 +228,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (wallToken !== "" && !/^[\x21-\x7E]{32,200}$/.test(wallToken)) notAllowed.push("WALL_TOKEN (32 to 200 printable characters with no spaces, like what openssl rand -hex 24 prints)");
   else if (wallToken !== "" && wallToken === apiToken) notAllowed.push("WALL_TOKEN (a different token from API_TOKEN, since it only lets a screen show the wall)");
   const wall: WallSettings = { token: wallToken, speaking: readChoice("WALL_SPEAKING", wallSpeakings, features.wall) };
+  const login: LoginSettings = { guard: readSwitch("LOGIN_GUARD") };
   const problems: string[] = [];
 
   if (missing.length > 0) problems.push(`Missing settings in api/.env: ${missing.join(", ")}`);
@@ -230,5 +236,5 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (notAllowed.length > 0) problems.push(`Settings in api/.env with a value that isn't allowed: ${notAllowed.join(", ")}`);
   if (problems.length > 0) throw new Error(problems.join(". "));
 
-  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, wall, features };
+  return { apiToken, qbitApiKey, jellyfinApiKey, ntfyTopic, healthcheckUrl, deals, trains, trainAlerts, catchUp, modes, phone, spotify, wall, login, features };
 }
