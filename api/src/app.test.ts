@@ -920,6 +920,22 @@ test("the wall's token reads the train page's details, made from the same kept b
   assert.equal((await noTrains.inject({ method: "GET", url: "/wall/pages/train", cookies: { wall_token: wallToken } })).statusCode, 404, "with train times off, the page has nothing more than its card");
 });
 
+test("the wall's token reads the server map, its states from the same kept server check as the picture", async () => {
+  let asked = 0;
+  const report = { state: "warn" as const, summary: "1 thing to look at: qBittorrent.", checkedAt: "", checks: [{ name: "qBittorrent", state: "warn" as const, detail: "Slow.", next: null }, { name: "Memory", state: "ok" as const, detail: "2.1 of 6.6 GB available.", next: null }] };
+  const app = await buildRealApp({ logger: false, config, wallSources: { doctor: async () => (asked++, report), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
+  const read = await app.inject({ method: "GET", url: "/wall/pages/server", cookies: { wall_token: wallToken } });
+  assert.equal(read.statusCode, 200);
+  const details = read.json().details;
+  assert.equal(details.kind, "server");
+  assert.equal(details.nodes.find((node: { id: string }) => node.id === "qbittorrent").state, "warn");
+  assert.deepEqual(details.chips.map((chip: { text: string }) => chip.text), ["1 thing to look at: qBittorrent.", "Memory: 2.1 of 6.6 GB available."]);
+  assert.equal(asked, 1);
+  const failing = await buildRealApp({ logger: false, config, wallSources: { doctor: async () => Promise.reject(new Error("down")), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
+  const failed = (await failing.inject({ method: "GET", url: "/wall/pages/server", cookies: { wall_token: wallToken } })).json();
+  assert.deepEqual([failed.details.chips[0].text, failed.details.nodes.find((node: { id: string }) => node.id === "qbittorrent").state], ["Couldn't run the server check just now", "unchecked"], "a check that fails still gives the map, saying so");
+});
+
 test("the wall's token reads the wall's picture, made from the hub's own reads", async () => {
   const app = await buildRealApp({ logger: false, config, wallSources: { doctor: async () => ({ state: "ok", summary: "", checkedAt: "", checks: [] }), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
   for (const url of ["/wall", "/wall/"]) {

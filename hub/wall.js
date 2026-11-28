@@ -1,7 +1,8 @@
 // @ts-check
 import { fitKey, letterbox, matrixFor, moveCorner, readFit, writeFit } from "./wall-fit.js";
-import { bubbleAround, bubbleFor, cardFor, cornerStep, detailEveryMs, detailPages, detailsShown, fitChip, framesASecond, fromHub, isPageView, isTrainDetails, itemBox, movePointer, nextCorner, nextDetails, openHere, pageLeftMs, pageShownMs, pointerShown, privateOf, stillOpen, trailMs, trailOf, trainRowView, trainView } from "./wall-cards.js";
+import { bubbleAround, bubbleFor, byLine, cardFor, cornerStep, detailEveryMs, detailPages, detailsShown, fitChip, framesASecond, fromHub, isPageView, isTrainDetails, itemBox, movePointer, nextCorner, nextDetails, openHere, pageLeftMs, pageShownMs, pointerShown, privateOf, stillOpen, trailMs, trailOf, trainRowView, trainView } from "./wall-cards.js";
 import { morningTrainCard, morningView } from "./wall-morning.js";
+import { isServerMap, mapHalos, mapView, stateWord } from "./wall-map.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -503,6 +504,11 @@ function showArcs(picture) {
 function showCard(now) {
   const open = pages.opened;
   stage.classList.toggle("opened", open !== null);
+  if (showMap(open, now)) {
+    card.hidden = true;
+    card.classList.add("shut");
+    return;
+  }
   if (open === null) {
     if (card.hidden || card.classList.contains("shut")) return;
     card.classList.add("shut");
@@ -541,13 +547,125 @@ function showCard(now) {
 }
 
 /**
+ * @param {string} tag
+ * @param {string} className
+ * @returns {HTMLElement}
+ */
+function made(tag, className) {
+  const one = document.createElement(tag);
+  one.className = className;
+  return one;
+}
+
+/**
+ * @param {string} fx
+ * @returns {Element[]}
+ */
+function effectOf(fx) {
+  const dots = (/** @type {number} */ count, /** @type {string} */ name) => {
+    const box = made("span", `map-fx fx-${name}`);
+    box.append(...Array.from({ length: count }, () => document.createElement("span")));
+    return box;
+  };
+  if (fx === "sound") return [made("span", "map-fx fx-sound"), made("span", "map-fx fx-sound-late")];
+  if (fx === "type") return [dots(3, "type")];
+  if (fx === "grid") return [dots(4, "grid")];
+  if (fx === "bars") return [dots(3, "bars")];
+  if (fx === "orbit") return [dots(1, "orbit")];
+  if (fx === "heart") {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "map-fx fx-heart");
+    svg.setAttribute("width", "24");
+    svg.setAttribute("height", "13");
+    svg.setAttribute("viewBox", "0 0 30 16");
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    line.setAttribute("points", "0,8 8,8 11,2 15,14 18,8 30,8");
+    svg.append(line);
+    return [svg];
+  }
+  if (fx === "plain" || fx === "external") return [];
+  return [made("span", `map-fx fx-${fx}`)];
+}
+
+/**
+ * @param {import("./wall-cards.js").Opened | null} open
+ * @param {number} now
+ * @returns {boolean}
+ */
+function showMap(open, now) {
+  const box = byId("map");
+  const details = open?.page.id === "server" ? detailsShown(detail, "server", Date.now()) : null;
+  const mapped = open !== null && isServerMap(details);
+  stage.classList.toggle("mapped", mapped);
+  box.hidden = !mapped;
+  if (!mapped || open === null || !isServerMap(details)) return false;
+  setText(byId("map-by"), byLine(open.page.by) || "On the wall");
+  byId("map-left").style.transform = `scaleX(${pageLeftMs(open, now) / pageShownMs})`;
+  const key = JSON.stringify(details);
+  if (box.dataset.shown === key) return true;
+  box.dataset.shown = key;
+  const view = mapView(details);
+  setText(byId("map-host-name"), view.host);
+  setText(byId("map-watched"), view.watched);
+  byId("map-halos").replaceChildren(
+    ...mapHalos.flatMap((halo) => {
+      const ring = made("span", `map-halo g-${halo.group}`);
+      Object.assign(ring.style, { left: `${halo.x}px`, top: `${halo.y}px`, width: `${halo.w}px`, height: `${halo.h}px` });
+      const label = made("span", `map-group g-${halo.group}`);
+      Object.assign(label.style, { left: `${halo.lx}px`, top: `${halo.ly}px` });
+      label.textContent = halo.label;
+      return [ring, label];
+    }),
+  );
+  byId("map-links").replaceChildren(
+    ...view.links.map((link) => {
+      const line = made("div", `map-link${link.dashed ? " map-dashed" : ""}`);
+      Object.assign(line.style, { left: `${link.x}px`, top: `${link.y}px`, width: `${link.len}px`, transform: `rotate(${link.deg}deg)` });
+      if (link.packet) {
+        const packet = made("span", "map-packet");
+        packet.style.setProperty("--len", `${link.len}px`);
+        packet.style.animationDuration = `${link.seconds}s`;
+        packet.style.animationDelay = `${link.offset}s`;
+        line.append(packet);
+      }
+      return line;
+    }),
+  );
+  byId("map-nodes").replaceChildren(
+    ...view.nodes.map((node) => {
+      const one = made("div", `map-node g-${node.group} s-${node.state}${node.fx === "external" ? " ext" : ""}`);
+      Object.assign(one.style, { left: `${node.left}px`, top: `${node.top}px`, width: `${node.size}px`, height: `${node.size}px`, animationDelay: `${node.delayMs}ms` });
+      const label = made("span", "map-label");
+      Object.assign(label.style, { left: `${node.lx}px`, top: `${node.ly}px`, textAlign: node.align });
+      const note = [stateWord(node.state), node.note].filter((part) => part !== "").join(", ");
+      label.append(node.id);
+      if (note !== "") {
+        const extra = made("span", "map-note");
+        extra.textContent = ` ${note}`;
+        label.append(extra);
+      }
+      one.append(...effectOf(node.fx), made("span", "map-dot"), label);
+      return one;
+    }),
+  );
+  byId("map-chips").replaceChildren(
+    ...view.chips.map((chip) => {
+      const one = made("span", `map-chip t-${chip.tone}`);
+      one.textContent = chip.text;
+      return one;
+    }),
+  );
+  return true;
+}
+
+/**
  * @returns {Target[]}
  */
 function targets() {
   /** @type {Target[]} */
   const list = [];
   if (pages.opened !== null && !card.hidden) list.push({ kind: "card", key: pages.opened.page.id, box: { left: card.offsetLeft, top: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight } });
-  else list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
+  else if (!stage.classList.contains("mapped")) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
   if (!fitChipBox.hidden) list.push({ kind: "fit", key: "fit", box: fitChip });
   return list;
 }

@@ -39,6 +39,7 @@ import { events } from "./modules/events/routes.js";
 import type { EventFeed } from "./modules/events/feed.js";
 import type { JarvisDesk } from "./modules/wall/jarvis.js";
 import { trainPage } from "./modules/wall/page-data.js";
+import { serverMapPage } from "./modules/wall/server-map.js";
 import { buildPicture, keptPicture, wallDoctorMs, wallTrainsMs, type WallSources } from "./modules/wall/picture.js";
 
 export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector; events?: EventFeed; morning?: Morning }) {
@@ -123,7 +124,8 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   };
   const picture = keptPicture(() => buildPicture(shown, { speaking: options.config.wall.speaking, remote: options.config.wall.remote, trainAlerts: features.trainAlerts ? options.config.trainAlerts : null }, new Date()));
   const trainsShown = shown.trains;
-  const pageDetails = { train: trainsShown === undefined ? undefined : async () => trainPage(await trainsShown()) };
+  const doctorShown = shown.doctor;
+  const pageDetails = { train: trainsShown === undefined ? undefined : async () => trainPage(await trainsShown()), server: doctorShown === undefined ? undefined : async () => serverMapPage(await doctorShown().catch(() => null)) };
   app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, guard: options.config.login.guard, desk: options.jarvisDesk, picture, events: feed, pageDetails, mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view().mode : undefined });
   app.register(events, { prefix: "/events", features: options.config.features, feed, apiToken: options.config.apiToken, mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view().mode : undefined });
   app.register(deals, {

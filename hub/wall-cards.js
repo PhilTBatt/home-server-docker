@@ -237,7 +237,7 @@ export function framesASecond(frames, now) {
   return frames.filter((at) => now - at < 1000).length;
 }
 
-export const detailPages = ["train"];
+export const detailPages = ["train", "server"];
 export const detailEveryMs = 30_000;
 export const trainRowsShown = 4;
 export const detailKeptMs = 2 * detailEveryMs;

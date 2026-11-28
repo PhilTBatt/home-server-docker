@@ -1896,6 +1896,641 @@ body.morning-on .caption {
   color: var(--soft);
 }
 
+.map {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.map[hidden] {
+  display: none;
+}
+
+.stage.mapped > .system,
+.stage.mapped > .jarvis,
+.stage.mapped > .top,
+.stage.mapped > .clock,
+.stage.mapped > .middle,
+.stage.mapped > .morning,
+.stage.mapped > .quiet {
+  opacity: 0;
+}
+
+.map-halo {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid #1a2333;
+}
+
+.map-halo.g-media {
+  background: radial-gradient(circle, rgba(255, 159, 90, 0.05), rgba(255, 159, 90, 0) 70%);
+}
+
+.map-halo.g-jarvis {
+  background: radial-gradient(circle, rgba(95, 212, 244, 0.05), rgba(95, 212, 244, 0) 70%);
+}
+
+.map-halo.g-watching {
+  background: radial-gradient(circle, rgba(94, 227, 176, 0.05), rgba(94, 227, 176, 0) 70%);
+}
+
+.map-group {
+  position: absolute;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.map-group.g-media {
+  color: var(--warm);
+}
+
+.map-group.g-jarvis {
+  color: var(--accent);
+}
+
+.map-group.g-watching {
+  color: var(--mint);
+}
+
+.map-link {
+  position: absolute;
+  height: 0;
+  border: 0;
+  border-top: 1px solid #2a3a52;
+  transform-origin: 0 0;
+  animation: map-in 0.8s ease-out both;
+}
+
+.map-link.map-dashed {
+  border-top: 1px dashed #3a4a62;
+}
+
+.map-packet {
+  position: absolute;
+  left: 0;
+  top: -3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: map-packet 2s linear infinite;
+}
+
+.map-host {
+  position: absolute;
+  left: 612px;
+  top: 348px;
+  width: 56px;
+  height: 56px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--yellow);
+  background: radial-gradient(circle, rgba(245, 213, 71, 0.22), rgba(245, 213, 71, 0) 70%);
+  animation: map-core 6s ease-in-out infinite;
+}
+
+.map-host-name {
+  position: absolute;
+  left: 560px;
+  top: 410px;
+  width: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.map-host-title {
+  font-family: var(--heading);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--yellow);
+}
+
+.map-host-note {
+  font-size: 10px;
+  color: #8a96a8;
+}
+
+.map-node {
+  position: absolute;
+  --c: #5a6b82;
+  animation: map-in 0.6s ease-out both;
+}
+
+.map-node.g-front {
+  --c: var(--yellow);
+}
+
+.map-node.g-network {
+  --c: var(--blue);
+}
+
+.map-node.g-media {
+  --c: var(--warm);
+}
+
+.map-node.g-jarvis {
+  --c: var(--accent);
+}
+
+.map-node.g-watching {
+  --c: var(--mint);
+}
+
+.map-node.s-off {
+  opacity: 0.4;
+}
+
+.map-dot {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 10px var(--c);
+}
+
+.map-node.ext .map-dot {
+  box-sizing: border-box;
+  background: none;
+  box-shadow: none;
+  border: 1.5px dashed #5a6b82;
+}
+
+.map-node.s-warn .map-dot,
+.map-node.s-problem .map-dot {
+  outline: 2px solid var(--yellow);
+  outline-offset: 3px;
+  animation: map-alarm 1.6s ease-in-out infinite;
+}
+
+.map-node.s-problem .map-dot {
+  outline-color: var(--warm);
+}
+
+.map-label {
+  position: absolute;
+  width: 128px;
+  font-size: 10.5px;
+  color: var(--soft);
+  white-space: nowrap;
+}
+
+.map-node.ext .map-label {
+  color: #8a96a8;
+}
+
+.map-node.s-ok .map-label::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--mint);
+  vertical-align: 1px;
+}
+
+.map-note {
+  color: #8a96a8;
+}
+
+.map-node.s-warn .map-note {
+  color: var(--yellow);
+}
+
+.map-node.s-problem .map-note {
+  color: var(--warm);
+}
+
+.map-fx {
+  position: absolute;
+  pointer-events: none;
+}
+
+.fx-wobble {
+  inset: -6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--c);
+  animation: map-wob 2.2s ease-in-out infinite;
+}
+
+.fx-sound,
+.fx-sound-late {
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--c);
+  animation: map-wave 1.8s ease-out infinite;
+}
+
+.fx-sound-late {
+  animation-delay: -0.9s;
+}
+
+.fx-listen {
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--c);
+  animation: map-listen 2.4s ease-in infinite;
+}
+
+.fx-type {
+  left: 50%;
+  top: 100%;
+  margin-top: 5px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+}
+
+.fx-type span,
+.fx-grid span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--c);
+  animation: map-blink 1.2s ease-in-out infinite;
+}
+
+.fx-type span:nth-child(2),
+.fx-grid span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.fx-type span:nth-child(3),
+.fx-grid span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.fx-grid span:nth-child(4) {
+  animation-delay: 0.6s;
+}
+
+.fx-spokes {
+  inset: -7px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--c);
+  animation: map-turn 8s linear infinite;
+}
+
+.fx-gate {
+  inset: -7px;
+  border: 1.5px solid var(--c);
+  border-left-color: transparent;
+  border-right-color: transparent;
+  animation: map-turn 6s linear infinite;
+}
+
+.fx-radar {
+  inset: -11px;
+  border-radius: 50%;
+  background: conic-gradient(rgba(143, 168, 255, 0.45), rgba(143, 168, 255, 0) 70deg);
+  animation: map-turn 3s linear infinite;
+}
+
+.fx-screen {
+  inset: -8px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(183, 148, 246, 0.5), rgba(183, 148, 246, 0) 70%);
+  animation: map-flicker 2.6s linear infinite;
+}
+
+.fx-fall {
+  left: 50%;
+  top: -3px;
+  width: 2px;
+  height: 5px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--c);
+  animation: map-fall 1.4s ease-in infinite;
+}
+
+.fx-scan {
+  inset: -6px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  border-top-color: var(--c);
+  border-right-color: var(--c);
+  animation: map-turn 2.4s linear infinite;
+}
+
+.fx-orbit {
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  animation: map-turn 3s linear infinite;
+}
+
+.fx-orbit span {
+  position: absolute;
+  left: 11px;
+  top: -2px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.fx-heart {
+  left: -30px;
+  top: 50%;
+  margin-top: -6px;
+}
+
+.fx-heart polyline {
+  fill: none;
+  stroke: var(--mint);
+  stroke-width: 1.5;
+  stroke-dasharray: 60;
+  animation: map-ecg 1.6s linear infinite;
+}
+
+.fx-bars {
+  left: -18px;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 11px;
+}
+
+.fx-bars span {
+  width: 2px;
+  height: 11px;
+  background: var(--c);
+  transform-origin: bottom;
+  animation: map-bar 1.2s ease-in-out infinite;
+}
+
+.fx-bars span:nth-child(2) {
+  animation-delay: 0.3s;
+}
+
+.fx-bars span:nth-child(3) {
+  animation-delay: 0.6s;
+}
+
+.fx-grid {
+  inset: -8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.fx-grid span:nth-child(even) {
+  justify-self: end;
+}
+
+.fx-star {
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px solid var(--c);
+  animation: map-twinkle 2.2s ease-in-out infinite;
+}
+
+.map-top {
+  position: absolute;
+  left: 32px;
+  top: 27px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.map-by {
+  font-size: 10px;
+  color: var(--accent);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.map-title {
+  font-family: var(--heading);
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.map-chips {
+  position: absolute;
+  left: 32px;
+  bottom: 27px;
+  max-width: 860px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.map-chip {
+  padding: 5px 11px;
+  border-radius: 13px;
+  border: 1px solid #2a3a52;
+  font-size: 11px;
+  color: var(--soft);
+}
+
+.map-chip.t-good {
+  color: #8ef0c9;
+}
+
+.map-chip.t-warn {
+  color: var(--yellow);
+}
+
+.map-chip.t-warm {
+  color: #ffb36b;
+}
+
+.map-watched {
+  position: absolute;
+  right: 32px;
+  bottom: 30px;
+  width: 260px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: right;
+  color: var(--muted);
+}
+
+.map-time {
+  position: absolute;
+  left: 32px;
+  right: 32px;
+  bottom: 12px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.map-left {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: 0 50%;
+  transition: transform 1s linear;
+}
+
+@keyframes map-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes map-packet {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(var(--len));
+    opacity: 0;
+  }
+}
+
+@keyframes map-core {
+  0%,
+  100% {
+    box-shadow: 0 0 24px rgba(245, 213, 71, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 48px rgba(245, 213, 71, 0.55);
+  }
+}
+
+@keyframes map-alarm {
+  0%,
+  100% {
+    outline-offset: 3px;
+  }
+  50% {
+    outline-offset: 6px;
+  }
+}
+
+@keyframes map-wob {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1.1, 0.9);
+  }
+  50% {
+    transform: rotate(180deg) scale(0.9, 1.1);
+  }
+}
+
+@keyframes map-wave {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@keyframes map-listen {
+  0% {
+    transform: scale(2);
+    opacity: 0;
+  }
+  60% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes map-blink {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes map-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes map-flicker {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  20% {
+    opacity: 0.9;
+  }
+  40% {
+    opacity: 0.6;
+  }
+  70% {
+    opacity: 1;
+  }
+}
+
+@keyframes map-fall {
+  0% {
+    transform: translateY(-20px);
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+}
+
+@keyframes map-bar {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes map-ecg {
+  from {
+    stroke-dashoffset: 60;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes map-twinkle {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;
