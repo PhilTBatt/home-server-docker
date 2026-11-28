@@ -23,14 +23,14 @@ import { fillerFor } from "./filler.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, guestChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, systemFor } from "./chat.js";
 import { brainDir, readConfig, type VoiceMode } from "./config.js";
-import { earsCaller } from "./ears-client.js";
+import { earsCaller, guestDoor } from "./ears-client.js";
 import { startHubTools, withHubTools, type HubTools } from "./hub-client.js";
 import { checkHubServer, describeWithHub, hubServerFile, hubServerFor } from "./hub-tools.js";
 import { liveFacts } from "./live-facts.js";
 import { introLine, readIntro } from "./intro.js";
 import { hubModes as modeHub, watchModes, whenCheck } from "./modes.js";
 import { askHubForDue, hubReminders, watchReminders } from "./reminders.js";
-import { hubDesk, phoneVoice, watchPhone, whisperHears } from "./phone.js";
+import { hubDesk, hubModeCheck, phoneVoice, watchPhone, whisperHears } from "./phone.js";
 import { askHubForSessions, watchSessions } from "./session-news.js";
 import { digestFor, digestLine, withDigest } from "./digest.js";
 import { personaLine, readPersona } from "./persona.js";
@@ -245,14 +245,12 @@ try {
     modes: modes === undefined ? undefined : { hub: modes, events: watchModes({ hub: modes, signal: closing.signal }) },
     guest: config.guest ? { open: async () => ({ ...open(guestSetup, true), notes: [] }) } : undefined,
     when: config.modes ? whenCheck({ apiKey: config.apiKey, model: chatModel }) : undefined,
-    voices: config.voices ? { other: config.otherVoices, guests: earsCall === null ? undefined : async (on) => {
-      const answer = await earsCall("POST", `/wake/guests?on=${on ? 1 : 0}`, 3_000);
-      if (answer.status !== 200) throw new Error(answer.error ?? `ears replied ${answer.status}`);
-    } } : undefined,
+    voices: config.voices ? { other: config.otherVoices } : undefined,
+    earsGuests: guestDoor(config.ears, earsCall),
     sessions: config.sessions && config.hubToken !== null ? watchSessions({ ask: askHubForSessions(config.hubToken), signal: closing.signal }) : undefined,
     reminders: config.reminders && config.hubToken !== null ? { news: watchReminders({ ask: askHubForDue(config.hubToken), signal: closing.signal }), hub: hubReminders(config.hubToken) } : undefined,
     wall: shown?.chat,
-    phone: config.phone && config.hubToken !== null ? { news: watchPhone({ desk: hubDesk(config.hubToken), signal: closing.signal }), desk: hubDesk(config.hubToken), hear: whisperHears(), voice: speaking === null ? null : (text, signal) => phoneVoice(speaking.engine, text, signal, config.spokenStyle) } : undefined,
+    phone: config.phone && config.hubToken !== null ? { news: watchPhone({ desk: hubDesk(config.hubToken), signal: closing.signal }), desk: hubDesk(config.hubToken), hear: whisperHears(), mode: hubModeCheck(config.hubToken), voice: speaking === null ? null : (text, signal) => phoneVoice(speaking.engine, text, signal, config.spokenStyle) } : undefined,
     newChat: async () => {
       const setup = await setUpNewChat(config.chats, config.engine);
       const notes = [setup.problem, setup.movedTo === undefined ? null : `The old chat is in jarvis/data/chats/${setup.movedTo}, if you want it back`].flatMap((note) => (note === null ? [] : [`  (${printable(note)})`]));

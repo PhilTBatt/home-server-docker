@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { AnswerSpeech } from "./answer-speech.js";
-import { strangerGuestNote, voiceNote, guestHeldNote, guestHeldSay, guestOffNote, guestOnNote, guestTrainsNote, heardPrefix, modeFailedSay, modeNote, modeUsageNote, notInGuestSay, runChat, unsaidNote, type ChatDeps, type NewChat } from "./chat.js";
+import { guestLeftUntoldNote, guestModesOffNote, guestModesOffSay, guestToldNote, guestUnheardNote, guestUnheardSay, unjudgedModeNote, unjudgedModeSay, strangerGuestNote, voiceNote, guestHeldNote, guestHeldSay, guestOffNote, guestOnNote, guestTrainsNote, heardPrefix, modeFailedSay, modeNote, modeUsageNote, notInGuestSay, runChat, unsaidNote, type ChatDeps, type NewChat } from "./chat.js";
 import type { EarsAnswer, EarsVoice } from "./ears-client.js";
-import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modeSays, whenBackAsk, whenNotCaught, type Mode, type ModeEvent, type ModeHub, type ModeState } from "./modes.js";
+import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modeSays, modesBackNote, modesOffNote, ModesOff, whenBackAsk, whenNotCaught, type Mode, type ModeEvent, type ModeHub, type ModeState } from "./modes.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Sent, Talk } from "./talk.js";
 import type { TrainEvent } from "./train-news.js";
@@ -79,13 +79,14 @@ function earsDone(text: string, voice?: EarsVoice): EarsAnswer {
   return { status: 200, state: "idle", reason: null, error: null, seconds: null, last: { seconds: 3.4, reason: "it went quiet for 1.5 seconds after you spoke", text, textProblem: null, ...(voice === undefined ? {} : { voice }) } };
 }
 
-function fakeHub(fail: Partial<Record<Mode, string>> = {}) {
+function fakeHub(fail: Partial<Record<Mode, string>> = {}, off = { on: false }) {
   const sets: Array<{ mode: Mode; until: string | null; by: string }> = [];
   const schedules: Array<{ mode: Mode; at: string }> = [];
   let at: Mode = "normal";
   const hub: ModeHub = {
     get: async () => Promise.reject(new Error("unused")),
     async set(mode, until, by) {
+      if (off.on) throw new ModesOff(modesOffNote);
       if (fail[mode] !== undefined) throw new Error(fail[mode]);
       if (by === "voice" && at === "guest" && mode !== "guest") throw new Error("a voice can't end guest mode");
       at = mode;
@@ -96,12 +97,12 @@ function fakeHub(fail: Partial<Record<Mode, string>> = {}) {
       schedules.push({ mode, at: at.toISOString() });
     },
   };
-  return { hub, sets, schedules };
+  return { hub, sets, schedules, fail, off };
 }
 
 const now = new Date("2026-11-27T10:00:00Z");
 
-function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Record<Mode, string>>; when?: Date | null; clock?: () => Date; follow?: boolean; voices?: OtherVoices } = {}) {
+function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Record<Mode, string>>; off?: boolean; retryMs?: number; ears?: boolean; when?: Date | null; clock?: () => Date; follow?: boolean; voices?: OtherVoices } = {}) {
   const lines = channel<string>();
   const wake = channel<WakeEvent>();
   const modeEvents = channel<ModeEvent>();
@@ -121,7 +122,7 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
   const whens: string[] = [];
   const sessions: Array<AgentSession & { closed: () => boolean }> = [];
   let output = "";
-  const hub = fakeHub(options.fail);
+  const hub = fakeHub(options.fail ?? {}, { on: options.off === true });
   const chatFor = (label: string): NewChat => {
     const session = fakeSession(label, asked);
     sessions.push(session);
@@ -170,9 +171,10 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
         return taken;
       },
     },
-    ...(options.voices === undefined ? {} : { voices: { other: options.voices, guests: async (on: boolean) => void guestsThrough.push(on) } }),
+    ...(options.voices === undefined ? {} : { voices: { other: options.voices } }),
+    ...(options.ears === false ? {} : { earsGuests: async (on: boolean) => void guestsThrough.push(on) }),
     ...(options.guest === false ? {} : { guest: { open: async () => chatFor("guest") } }),
-    ...(options.modes === true ? { modes: { hub: hub.hub, events: modeEvents.items }, when: async (said: string) => (whens.push(said), options.when === undefined ? new Date("2026-11-29T18:00:00Z") : options.when) } : {}),
+    ...(options.modes === true ? { modes: { hub: hub.hub, events: modeEvents.items, ...(options.retryMs === undefined ? {} : { retryMs: options.retryMs }) }, when: async (said: string) => (whens.push(said), options.when === undefined ? new Date("2026-11-29T18:00:00Z") : options.when) } : {}),
   };
   const running = runChat(deps);
   let id = 0;
@@ -207,6 +209,10 @@ function modeChat(options: { modes?: boolean; guest?: boolean; fail?: Partial<Re
     },
     async mode(state: ModeState) {
       modeEvents.push({ kind: "mode", state });
+      await settled();
+    },
+    async modeNote(line: string) {
+      modeEvents.push({ kind: "mode note", line });
       await settled();
     },
     async train(...more: string[]) {
@@ -595,5 +601,238 @@ test("a session waiting on him is said in coding mode, shown in the others, and 
   const shown = chat.output().length;
   await chat.session(waiting);
   assert.ok(!chat.output().slice(shown).includes("docker"), "a guest never sees his sessions");
+  await chat.end();
+});
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("with the hub down, asking for guest mode still starts a fresh guest chat, says the hub didn't hear, and opens ears to guests", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, fail: { guest: "couldn't reach the hub: fetch failed" }, retryMs: 60_000 });
+  await chat.type("/guest");
+  assert.deepEqual(chat.hub.sets, [], "the hub never heard it");
+  assert.deepEqual(chat.opened, ["guest"], "privacy first: the guest gets a fresh chat");
+  assert.equal(chat.sessions[0].closed(), true);
+  assert.equal(chat.spoken.at(-1), guestUnheardSay);
+  assert.ok(chat.output().includes(`(${guestUnheardNote("couldn't reach the hub: fetch failed")})`), chat.output());
+  assert.ok(chat.output().includes(`(${guestOnNote})`), chat.output());
+  assert.deepEqual(chat.guestsThrough, [false, true]);
+  await chat.type("Who are you?");
+  assert.deepEqual(chat.asked, ["guest: Who are you?"]);
+  await chat.end();
+});
+
+test("a spoken guest mode with the hub down is the same, and the hub is told by voice once it answers", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, fail: { guest: "the hub replied 502" }, retryMs: 60_000 });
+  await chat.say("Guest mode.");
+  assert.deepEqual(chat.opened, ["guest"]);
+  assert.equal(chat.spoken.at(-1), guestUnheardSay);
+  delete chat.hub.fail.guest;
+  await chat.modeNote(modesBackNote);
+  assert.deepEqual(chat.hub.sets, [{ mode: "guest", until: null, by: "voice" }]);
+  assert.ok(!chat.output().includes(`(${guestToldNote})`), "not counted as told until the hub says guest back");
+  await chat.mode({ mode: "guest", until: null, by: "voice" });
+  assert.ok(chat.output().includes(`(${guestToldNote})`), chat.output());
+  assert.deepEqual(chat.opened, ["guest"], "still the same guest chat");
+  await chat.end();
+});
+
+test("while the hub hasn't heard guest mode, its own mode never ends guest mode: Jarvis tells it guest instead", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, fail: { guest: "fetch failed" }, retryMs: 60_000 });
+  await chat.type("/guest");
+  await chat.mode({ mode: "normal", until: null, by: "phone" });
+  assert.deepEqual(chat.opened, ["guest"], "the hub's normal didn't take the guest's chat away");
+  await chat.type("Still a guest?");
+  assert.deepEqual(chat.asked, ["guest: Still a guest?"]);
+  delete chat.hub.fail.guest;
+  await chat.mode({ mode: "bedtime", until: null, by: "typed" });
+  assert.deepEqual(chat.hub.sets, [{ mode: "guest", until: null, by: "typed" }], "the next answer from the hub gets guest mode back to it");
+  assert.deepEqual(chat.opened, ["guest"]);
+  await chat.mode({ mode: "guest", until: null, by: "typed" });
+  await chat.mode({ mode: "normal", until: null, by: "phone" });
+  assert.deepEqual(chat.opened, ["guest", "normal"], "once the hub knows, its mode is followed again");
+  await chat.end();
+});
+
+test("the hub is told guest mode on a timer too, for when it was only a blip and no mode change comes", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, fail: { guest: "fetch failed" }, retryMs: 20 });
+  await chat.type("/guest");
+  await wait(60);
+  await settled();
+  assert.deepEqual(chat.hub.sets, [], "still down, so nothing yet");
+  delete chat.hub.fail.guest;
+  await wait(60);
+  await settled();
+  const sets: Array<{ mode: Mode; by: string }> = chat.hub.sets;
+  assert.ok(sets.length >= 1 && sets.every((set) => set.mode === "guest" && set.by === "typed"), JSON.stringify(sets));
+  await chat.mode({ mode: "guest", until: null, by: "typed" });
+  const told = chat.hub.sets.length;
+  await wait(60);
+  await settled();
+  assert.equal(chat.hub.sets.length, told, "once the hub says guest back, the timer stops asking");
+  await chat.end();
+});
+
+test("a guest mode the hub never heard can still be left by typing /guest off while the hub is down", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, fail: { guest: "fetch failed", normal: "fetch failed" }, retryMs: 60_000 });
+  await chat.type("/guest");
+  await chat.type("/guest off");
+  assert.deepEqual(chat.opened, ["guest", "normal"]);
+  assert.ok(chat.output().includes(`(${guestLeftUntoldNote})`), chat.output());
+  assert.equal(chat.spoken.at(-1), "Guest mode is off.");
+  assert.deepEqual(chat.guestsThrough, [false, true, false]);
+  delete chat.hub.fail.guest;
+  delete chat.hub.fail.normal;
+  await chat.modeNote(modesBackNote);
+  assert.deepEqual(chat.hub.sets, [], "nothing is owed to the hub once it's left");
+  await chat.end();
+});
+
+test("once the hub says guest back, a guest mode that started while it was down needs the hub to end it, like any other", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, fail: { guest: "fetch failed" }, retryMs: 60_000 });
+  await chat.type("/guest");
+  delete chat.hub.fail.guest;
+  await chat.modeNote(modesBackNote);
+  await chat.mode({ mode: "guest", until: null, by: "typed" });
+  assert.ok(chat.output().includes(`(${guestToldNote})`), chat.output());
+  chat.hub.fail.normal = "fetch failed";
+  await chat.type("/guest off");
+  assert.equal(chat.spoken.at(-1), modeFailedSay, "the hub has guest mode now, so it isn't left in Jarvis alone");
+  assert.ok(!chat.output().includes(`(${guestLeftUntoldNote})`), chat.output());
+  assert.deepEqual(chat.opened, ["guest"]);
+  await chat.end();
+});
+
+test("a guest mode the hub heard still can't be left while the hub is down, as before", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, retryMs: 60_000 });
+  await chat.type("/guest");
+  chat.hub.fail.normal = "fetch failed";
+  await chat.type("/guest off");
+  assert.equal(chat.spoken.at(-1), modeFailedSay);
+  assert.deepEqual(chat.opened, ["guest"]);
+  await chat.end();
+});
+
+test("with modes off in the hub, guest mode still starts, says the phone won't show it, and never asks the hub again", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, off: true, retryMs: 20 });
+  await chat.type("/guest");
+  assert.deepEqual(chat.opened, ["guest"]);
+  assert.equal(chat.spoken.at(-1), guestModesOffSay);
+  assert.ok(chat.output().includes(`(${guestModesOffNote(modesOffNote)})`), chat.output());
+  chat.hub.off.on = false;
+  await wait(80);
+  await settled();
+  assert.deepEqual(chat.hub.sets, []);
+  await chat.end();
+});
+
+test("ears's guest door opens in guest mode even with JARVIS_VOICES off, so guests can be heard with ears's voice ID on require", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true });
+  await chat.type("/guest");
+  assert.deepEqual(chat.guestsThrough, [false, true]);
+  await chat.type("/guest off");
+  assert.deepEqual(chat.guestsThrough, [false, true, false]);
+  await chat.end();
+  const typed = modeChat({ guest: true });
+  await typed.type("/guest");
+  assert.deepEqual(typed.guestsThrough, [false, true], "the same with JARVIS_MODES off");
+  await typed.end();
+  assert.deepEqual(typed.guestsThrough, [false, true, false]);
+  const deaf = modeChat({ modes: true, ears: false });
+  await deaf.type("/guest");
+  assert.deepEqual(deaf.opened, ["guest"], "without ears there's no door to open, and guest mode still works");
+  await deaf.end();
+});
+
+test("with voices on, a recording ears gave no verdict on counts as not Phil: it's answered, but can't change the mode or end guest mode", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, voices: "answer" });
+  await chat.say("Bedtime.");
+  assert.deepEqual(chat.hub.sets, []);
+  assert.equal(chat.spoken.at(-1), unjudgedModeSay);
+  assert.ok(chat.output().includes(`(${unjudgedModeNote})`), chat.output());
+  await chat.say("What's the weather like?");
+  assert.deepEqual(chat.asked, ["normal: What's the weather like?"], "it's still answered");
+  await chat.say("Bedtime.", mine);
+  assert.deepEqual(chat.hub.sets, [{ mode: "bedtime", until: null, by: "voice" }], "his judged voice still changes the mode");
+  await chat.type("/mode normal");
+  await chat.type("/guest");
+  await chat.say("Guest mode off.");
+  assert.equal(chat.spoken.at(-1), unjudgedModeSay);
+  assert.deepEqual(chat.opened, ["guest"], "it can't end guest mode");
+  await chat.say("Guest mode off.", mine);
+  assert.deepEqual(chat.opened, ["guest", "normal"]);
+  await chat.end();
+});
+
+test("with voices off, a recording with no verdict changes the mode as before, since no recording has one", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true });
+  await chat.say("Bedtime.");
+  assert.deepEqual(chat.hub.sets, [{ mode: "bedtime", until: null, by: "voice" }]);
+  assert.equal(chat.spoken.at(-1), modeSays.bedtime);
+  await chat.end();
+});
+
+test("a stale normal from the same answer that says the hub is back can't end guest mode after Jarvis has told it", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, fail: { guest: "fetch failed" }, retryMs: 60_000 });
+  await chat.type("/guest");
+  delete chat.hub.fail.guest;
+  await chat.modeNote(modesBackNote);
+  await chat.mode({ mode: "normal", until: null, by: "phone" });
+  assert.deepEqual(chat.opened, ["guest"], "the guest keeps the guest chat");
+  await chat.type("Still me?");
+  assert.deepEqual(chat.asked, ["guest: Still me?"]);
+  assert.ok(chat.hub.sets.length >= 1 && chat.hub.sets.every((set) => set.mode === "guest"));
+  await chat.mode({ mode: "guest", until: null, by: "typed" });
+  assert.deepEqual(chat.opened, ["guest"], "and the hub saying guest opens no other chat");
+  await chat.end();
+});
+
+test("with modes off in the hub, a typed /guest off still leaves the guest mode that only Jarvis had", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, off: true, retryMs: 60_000 });
+  await chat.type("/guest");
+  await chat.type("/guest off");
+  assert.deepEqual(chat.opened, ["guest", "normal"]);
+  assert.ok(chat.output().includes(`(${guestLeftUntoldNote})`), chat.output());
+  await chat.end();
+});
+
+test("leaving a guest mode the hub never heard puts back the mode from before it", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, fail: { guest: "fetch failed", normal: "fetch failed" }, retryMs: 60_000 });
+  await chat.mode({ mode: "bedtime", until: null, by: "schedule" });
+  await chat.type("/guest");
+  await chat.type("/guest off");
+  await chat.train("The 07:05 is cancelled.");
+  assert.ok(chat.output().includes(unsaidNote(trainSay(["The 07:05 is cancelled."]), "bedtime")), "still bedtime, so the train change isn't said");
+  await chat.end();
+});
+
+test("retries don't pile up while he's busy: one waits, however long the answer takes", { timeout: 5_000 }, async () => {
+  let release = () => {};
+  const chat = modeChat({ modes: true, fail: { guest: "fetch failed" }, retryMs: 10 });
+  await chat.type("/guest");
+  const slow = new Promise<void>((resolve) => (release = resolve));
+  const hub = chat.hub.hub;
+  let tries = 0;
+  const set = hub.set.bind(hub);
+  hub.set = async (...args) => {
+    tries++;
+    await slow;
+    return set(...args);
+  };
+  await wait(120);
+  await settled();
+  const during = tries;
+  release();
+  await wait(30);
+  await settled();
+  assert.ok(during <= 1, `only one try while the first was waiting, got ${during}`);
+  assert.ok(tries <= during + 6, `no burst afterwards, got ${tries} after ${during}`);
+  await chat.end();
+});
+
+test("with voices on, a short guest mode with no verdict still starts it, since that only takes things away", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, voices: "answer" });
+  await chat.say("Guest mode.");
+  assert.deepEqual(chat.hub.sets, [{ mode: "guest", until: null, by: "voice" }]);
+  assert.deepEqual(chat.opened, ["guest"]);
   await chat.end();
 });

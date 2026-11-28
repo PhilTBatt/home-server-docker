@@ -1,3 +1,4 @@
+import type { EarsMode } from "./config.js";
 export const earsUrl = "http://ears:8090";
 export const earsQuickMs = 4_000;
 export const earsStopMs = 70_000;
@@ -116,5 +117,13 @@ export function earsCaller(token: string, url = earsUrl): EarsCall {
       throw new Error(`Ears answered ${response.status} without its usual JSON`);
     }
     return readEarsAnswer(response.status, body);
+  };
+}
+
+export function guestDoor(ears: EarsMode, call: EarsCall | null): ((on: boolean) => Promise<void>) | undefined {
+  if (ears !== "wake" || call === null) return undefined;
+  return async (on) => {
+    const answer = await call("POST", `/wake/guests?on=${on ? 1 : 0}`, 3_000);
+    if (answer.status !== 200) throw new Error(answer.error ?? `ears replied ${answer.status}`);
   };
 }

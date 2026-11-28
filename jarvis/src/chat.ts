@@ -20,9 +20,9 @@ import { withNotes, type SessionNotes } from "./session-notes.js";
 import { heardFrom, talkWord, type Heard, type Sent, type Talk } from "./talk.js";
 import { trainSay, type TrainEvent, type TrainNews } from "./train-news.js";
 import { sessionSay, type SessionEvent, type SessionNews } from "./session-news.js";
-import { askOnPhone, phoneNothingToSayNote, withPhoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneEvent, type PhoneParts } from "./phone.js";
+import { askOnPhone, phoneModeUnknownNote, phoneModeUnknownSay, phoneNothingToSayNote, withPhoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneEvent, type PhoneParts } from "./phone.js";
 import { answeredSay, guestRemindersNote, reminderAnswerFailedSay, reminderAnswerIn, reminderAnswerMs, reminderSay, type ReminderAnswer, type ReminderEvent, type ReminderHub, type ReminderNews } from "./reminders.js";
-import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, modeSays, modesOffSay, modeWordIn, speaksUnprompted, whenBackAsk, whenNotCaught, whenSaid, ModesOff, type Mode, type ModeEvent, type ModeHub, type ModeWord, type WhenCheck } from "./modes.js";
+import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, modeSays, modesBackNote, modesOffSay, modeWordIn, speaksUnprompted, whenBackAsk, whenNotCaught, whenSaid, ModesOff, type Mode, type ModeEvent, type ModeHub, type ModeWord, type WhenCheck } from "./modes.js";
 import { seconds, type Answer } from "./timing.js";
 import type { EarsAnswer, EarsVoice } from "./ears-client.js";
 import { spokenOf, type WakeEvent } from "./wake.js";
@@ -185,6 +185,7 @@ export type ChatDeps = {
   confirm?: (prompt: string, signal: AbortSignal) => Promise<string | null>;
   askYes?: (question: string, signal: AbortSignal) => Promise<string | null>;
   answered?: (result: { text: string } | { error: string }) => void;
+  fromPhone?: boolean;
   describe?: (tool: string, input: unknown, signal: AbortSignal) => Promise<string>;
   speak?: (after?: Promise<void>) => AnswerSpeech;
   speechStop?: SpeechStop;
@@ -200,11 +201,12 @@ export type ChatDeps = {
   web?: WebDeps;
   trains?: TrainNews;
   questions?: BrainQuestions;
-  modes?: { hub: ModeHub; events: AsyncIterable<ModeEvent> };
+  modes?: { hub: ModeHub; events: AsyncIterable<ModeEvent>; retryMs?: number };
   guest?: { open(): Promise<NewChat> };
   when?: WhenCheck;
   reminders?: { news: ReminderNews; hub: ReminderHub };
-  voices?: { other: OtherVoices; guests?(on: boolean): Promise<void> };
+  voices?: { other: OtherVoices };
+  earsGuests?(on: boolean): Promise<void>;
   sessions?: SessionNews;
   phone?: PhoneParts;
   wall?: WallChat;
@@ -220,7 +222,7 @@ export function looksLikeCommand(message: string): boolean {
   return /^\/[A-Za-z][\w-]*(\s|$)/.test(message);
 }
 
-type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null; lastReminder: { id: string; at: number } | null; replay: Sent | null; rangAt: number | null };
+type ChatState = { lastRequestTokens: number | null; speech: AnswerSpeech | null; speechLogged: Promise<void>; finishing: AnswerSpeech[]; listening: boolean; wakeId: number | null; talkId: number | null; following: boolean; button: boolean; turn: number; followTurn: number | null; followed: number; sounding: Set<AnswerSpeech>; followsComing: number; questions: QuestionsRun | null; lookUp: { id: number; stop: AbortController; spoken: boolean } | null; lookUps: number; looked: ((event: LookedUpEvent) => void) | null; lastLookUp: Earlier | null; followLookUp: Earlier | null; mode: Mode; modeUntil: string | null; guest: boolean; guestUntold: "voice" | "typed" | "owner" | null; guestLocal: { mode: Mode; until: string | null } | null; guestSay: string | null; tellHub: boolean; retryPending: boolean; awaitingBack: boolean; switching: "guest" | "normal" | null; lastReminder: { id: string; at: number } | null; replay: Sent | null; rangAt: number | null };
 
 function sounds(state: ChatState, speech: AnswerSpeech | null): void {
   if (speech === null || state.sounding.has(speech)) return;
@@ -482,7 +484,7 @@ export function refusedNote(tools: string[]): string {
 }
 
 async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: Heard): Promise<"answered" | "stopped" | "failed"> {
-  const spoken = heard === undefined ? {} : { heard };
+  const spoken = { ...(heard === undefined ? {} : { heard }), ...(deps.fromPhone === true ? { phone: true as const } : {}) };
   let streamed = false;
   let said = "";
   let lineEnded = false;
@@ -705,7 +707,8 @@ async function dropListening(deps: ChatDeps & { talk: Talk }, state: ChatState):
   deps.write(`  (${why === null ? droppedNote : notDroppedNote(printable(why))})\n`);
 }
 
-type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ReminderEvent | SessionEvent | PhoneEvent;
+type ModeRetry = { kind: "mode retry" };
+type NewsEvent = TrainEvent | LookedUpEvent | ModeEvent | ModeRetry | ReminderEvent | SessionEvent | PhoneEvent;
 export type ChatInput = { kind: "line"; text: string } | WakeEvent | NewsEvent;
 
 export async function* chatInputs(lines: AsyncIterable<string>, events?: AsyncIterable<WakeEvent>, closing?: AbortSignal, news?: AsyncIterable<NewsEvent>): AsyncGenerator<ChatInput> {
@@ -851,6 +854,14 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     return "go";
   }
   const modeWord = state.questions === null ? spokenModeWord(deps, state, sent.heard.text) : null;
+  if (modeWord !== null && modeWord.kind !== "guest on" && deps.voices !== undefined && voice === undefined && voiced(sent.heard)) {
+    counted(sent.heard, state);
+    state.turn++;
+    await hush(deps, state);
+    deps.write(`  (${unjudgedModeNote})\n`);
+    await sayLine(deps, state, { say: unjudgedModeSay });
+    return "go";
+  }
   if (modeWord !== null) {
     counted(sent.heard, state);
     await onModeWord(deps, state, modeWord, voiced(sent.heard), voice?.owner === true);
@@ -1054,9 +1065,21 @@ function onModeEvent(deps: ChatDeps, state: ChatState, event: ModeEvent): void {
     deps.interrupt?.();
     deps.write(`  (${printable(event.line)})\n`);
     deps.prompt();
+    if (event.line === modesBackNote && state.guestUntold !== null) state.tellHub = true;
     return;
   }
   const next = event.state;
+  if (state.guestUntold !== null && state.guest) {
+    if (next.mode !== "guest") {
+      state.tellHub = true;
+      return;
+    }
+    state.guestUntold = null;
+    state.guestLocal = null;
+    deps.interrupt?.();
+    deps.write(`  (${guestToldNote})\n`);
+    deps.prompt();
+  }
   const changed = next.mode !== state.mode || next.until !== state.modeUntil;
   state.mode = next.mode;
   state.modeUntil = next.until;
@@ -1070,7 +1093,7 @@ function onModeEvent(deps: ChatDeps, state: ChatState, event: ModeEvent): void {
 }
 
 async function tellEars(base: ChatDeps, current: ChatDeps, on: boolean): Promise<void> {
-  await base.voices?.guests?.(on).catch((error: unknown) => current.write(`  (${printable(`couldn't tell ears to ${on ? "let" : "stop letting"} every voice through: ${error instanceof Error ? error.message : String(error)}`)})\n`));
+  await base.earsGuests?.(on).catch((error: unknown) => current.write(`  (${printable(`couldn't tell ears to ${on ? "let" : "stop letting"} every voice through: ${error instanceof Error ? error.message : String(error)}`)})\n`));
 }
 
 async function applySwitch(base: ChatDeps, current: ChatDeps, state: ChatState): Promise<ChatDeps> {
@@ -1103,11 +1126,47 @@ async function applySwitch(base: ChatDeps, current: ChatDeps, state: ChatState):
   for (const note of notes) current.write(`${note}\n`);
   state.guest = to === "guest";
   if (!state.guest && state.mode === "guest") state.mode = "normal";
+  if (!state.guest) {
+    state.guestUntold = null;
+    state.guestLocal = null;
+  }
   await tellEars(base, current, state.guest);
   const switched: ChatDeps = state.guest ? { ...base, ...chat, codeWords: undefined, questions: undefined } : { ...base, ...chat };
   switched.write(`  (${state.guest ? guestOnNote : guestOffNote})\n`);
-  await sayLine(switched, state, { say: state.guest ? (modeSays.guest) : guestOffSay });
+  const say = state.guest ? (state.guestSay ?? modeSays.guest) : guestOffSay;
+  state.guestSay = null;
+  await sayLine(switched, state, { say });
   return switched;
+}
+
+export const guestUnheardSay = "Guest mode is on, but the hub didn't hear, so your phone won't show it until the hub's back.";
+export const guestModesOffSay = "Guest mode is on, but modes are off in the hub, so your phone won't show it.";
+export const guestToldNote = "the hub is answering again, and now has guest mode on too";
+
+export function guestUnheardNote(why: string): string {
+  return `the hub didn't hear guest mode (${why}), so this is a guest chat anyway, and Jarvis tells the hub as soon as it answers; until then the phone page won't show guest mode`;
+}
+
+export function guestModesOffNote(why: string): string {
+  return `${why}; this is a guest chat anyway, but the phone page won't show guest mode`;
+}
+
+export const guestLeftUntoldNote = "the hub never heard guest mode, so it's left here only";
+export const guestRetryMs = 15_000;
+
+async function tellHubGuest(deps: ChatDeps, state: ChatState): Promise<void> {
+  state.tellHub = false;
+  const by = state.guestUntold;
+  if (by === null || !state.guest || deps.modes === undefined) return;
+  try {
+    await deps.modes.hub.set("guest", null, by, deps.closing ?? new AbortController().signal);
+  } catch (error) {
+    if (!(error instanceof ModesOff)) return;
+    state.guestUntold = null;
+    deps.interrupt?.();
+    deps.write(`  (${printable(guestModesOffNote(error.message))})\n`);
+    deps.prompt();
+  }
 }
 
 function spokenModeWord(deps: ChatDeps, state: ChatState, said: string): ModeWord | null {
@@ -1142,6 +1201,8 @@ function foundWindow(deps: ChatDeps, state: ChatState): boolean {
 }
 
 export const strangerGuestNote = "a voice Jarvis doesn't know, so switching to guest mode first";
+export const unjudgedModeNote = "ears gave no verdict on whose voice that was, usually because it was too short, so it counts as not yours and can't change the mode";
+export const unjudgedModeSay = "I couldn't tell it was you, so I won't change the mode. Say it again, a bit longer.";
 
 export function voiceNote(voice: EarsVoice): string {
   const score = voice.score === null ? "" : `, ${voice.score.toFixed(2)}`;
@@ -1172,12 +1233,39 @@ async function setMode(deps: ChatDeps, state: ChatState, mode: Mode, until: Date
   }
   try {
     const set = await deps.modes.hub.set(mode, until, by, deps.closing ?? new AbortController().signal);
+    state.guestUntold = null;
+    state.guestLocal = null;
     state.mode = set.mode;
     state.modeUntil = set.until;
     if (set.mode === "guest" && !state.guest) state.switching = "guest";
     if (set.mode !== "guest" && state.guest) state.switching = "normal";
     return true;
   } catch (error) {
+    if (mode === "guest" && !state.guest) {
+      state.guestLocal = { mode: state.mode, until: state.modeUntil };
+      state.mode = "guest";
+      state.modeUntil = null;
+      state.switching = "guest";
+      if (error instanceof ModesOff) {
+        deps.write(`  (${printable(guestModesOffNote(error.message))})\n`);
+        state.guestSay = guestModesOffSay;
+      } else {
+        state.guestUntold = by;
+        deps.write(`  (${printable(guestUnheardNote(error instanceof Error ? error.message : String(error)))})\n`);
+        state.guestSay = guestUnheardSay;
+      }
+      return true;
+    }
+    if (mode === "normal" && state.guest && state.guestLocal !== null) {
+      const before = state.guestLocal;
+      state.guestUntold = null;
+      state.guestLocal = null;
+      state.mode = before.mode === "guest" ? "normal" : before.mode;
+      state.modeUntil = before.mode === "guest" ? null : before.until;
+      state.switching = "normal";
+      deps.write(`  (${guestLeftUntoldNote})\n`);
+      return true;
+    }
     deps.write(`  (${printable(error instanceof ModesOff ? error.message : `couldn't change the mode: ${error instanceof Error ? error.message : String(error)}`)})\n`);
     await sayLine(deps, state, { say: modeFailedSay });
     return false;
@@ -1330,9 +1418,17 @@ async function onPhone(deps: ChatDeps, state: ChatState, event: PhoneEvent): Pro
   if (request === null) return "go";
   const signal = deps.closing ?? new AbortController().signal;
   deps.interrupt?.();
-  if (state.guest || state.mode === "guest") {
+  const hubMode = state.guest || state.mode === "guest" ? null : await phone.mode(signal).then((mode) => ({ mode }), (error: unknown) => ({ error: reasonOf(error) }));
+  if (signal.aborted) return "go";
+  if (state.guest || state.mode === "guest" || (hubMode !== null && "mode" in hubMode && hubMode.mode === "guest")) {
     deps.write(`  (${phoneGuestNote})\n`);
     await tellPhone(deps, () => phone.desk.reply(request.id, phoneGuestSay, false, signal));
+    deps.prompt();
+    return "go";
+  }
+  if (hubMode !== null && "error" in hubMode) {
+    deps.write(`  (${printable(phoneModeUnknownNote(hubMode.error))})\n`);
+    await tellPhone(deps, () => phone.desk.reply(request.id, phoneModeUnknownSay, false, signal));
     deps.prompt();
     return "go";
   }
@@ -1359,6 +1455,7 @@ async function onPhone(deps: ChatDeps, state: ChatState, event: PhoneEvent): Pro
   const outcome: { got: { text: string } | { error: string } | null } = { got: null };
   const onPhoneDeps: ChatDeps = {
     ...deps,
+    fromPhone: true,
     speak: undefined,
     wall: deps.wall?.quiet,
     askYes: (question, asking) => {
@@ -1672,16 +1769,23 @@ async function finishQuestions(deps: ChatDeps, state: ChatState): Promise<void> 
 
 export async function runChat(deps: ChatDeps): Promise<void> {
   let current = deps;
-  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, awaitingBack: false, switching: null, lastReminder: null, replay: null, rangAt: null };
+  const state: ChatState = { lastRequestTokens: deps.knownSize ?? null, speech: null, speechLogged: Promise.resolve(), finishing: [], listening: false, wakeId: null, talkId: null, following: false, button: false, turn: 0, followTurn: null, followed: 0, sounding: new Set(), followsComing: 0, questions: null, lookUp: null, lookUps: 0, looked: null, lastLookUp: null, followLookUp: null, mode: "normal", modeUntil: null, guest: false, guestUntold: null, guestLocal: null, guestSay: null, tellHub: false, retryPending: false, awaitingBack: false, switching: null, lastReminder: null, replay: null, rangAt: null };
   const base = deps;
   current.write(`${greeting}\n`);
   if (overCap(current, state.lastRequestTokens)) current.write(`  (${capReachedNote(current.lengthCap)})\n`);
   const found = deps.web === undefined ? null : createEvents<LookedUpEvent>();
   state.looked = found?.push ?? null;
+  const retry = deps.modes === undefined ? null : createEvents<ModeRetry>();
+  const retrying = retry === null ? null : setInterval(() => {
+    if (state.guestUntold === null || state.retryPending) return;
+    state.retryPending = true;
+    retry.push({ kind: "mode retry" });
+  }, deps.modes?.retryMs ?? guestRetryMs);
+  retrying?.unref?.();
   await tellEars(base, current, false);
   try {
     current.prompt();
-    const news = [current.trains?.events, found?.events, current.modes?.events, current.reminders?.news.events, current.sessions?.events, current.phone?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
+    const news = [current.trains?.events, found?.events, current.modes?.events, retry?.events, current.reminders?.news.events, current.sessions?.events, current.phone?.news.events].filter((source) => source !== undefined) as AsyncIterable<NewsEvent>[];
     for await (const input of readied(chatInputs(current.lines, current.wake, current.closing, news.length === 0 ? undefined : news.length === 1 ? news[0] : merged<NewsEvent>(...news)), deps.ready)) {
       if (input.kind === "reminders" || input.kind === "reminders note") {
         await onReminders(current, state, input);
@@ -1702,6 +1806,12 @@ export async function runChat(deps: ChatDeps): Promise<void> {
       if (input.kind === "mode" || input.kind === "mode note") {
         onModeEvent(current, state, input);
         current = await applySwitch(base, current, state);
+        if (state.tellHub) await tellHubGuest(current, state);
+        continue;
+      }
+      if (input.kind === "mode retry") {
+        state.retryPending = false;
+        if (state.guestUntold !== null) await tellHubGuest(current, state);
         continue;
       }
       if (input.kind === "trains" || input.kind === "trains note") {
@@ -1802,6 +1912,8 @@ export async function runChat(deps: ChatDeps): Promise<void> {
     state.lookUp?.stop.abort();
     state.lookUp = null;
     found?.end();
+    if (retrying !== null) clearInterval(retrying);
+    retry?.end();
     if (state.questions !== null) await finishQuestions(current, state).catch(() => {});
     if (state.listening && current.talk !== undefined) await dropListening({ ...current, talk: current.talk }, state).catch(() => {});
     current.session.close();

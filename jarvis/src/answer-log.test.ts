@@ -558,3 +558,13 @@ test("a spoken question's voice goes in the log only as owner, known or unknown,
   assert.equal(heard()?.voice, undefined);
   assert.ok(!JSON.stringify(heard({ who: "alex", owner: false })).includes("alex"));
 });
+
+test("a question from the phone is marked phone: true in its line, and any other question has no phone field", () => {
+  const phone = logLine(apiKeep, "c", 1, at, { answer: answered, phone: true });
+  assert.equal(phone.phone, true);
+  const failed = logLine(apiKeep, "c", 2, at, { error: "The API sent no answer", phone: true });
+  assert.equal(failed.phone, true);
+  const typed = logLine(apiKeep, "c", 3, at, { answer: answered });
+  assert.equal("phone" in typed, false);
+  assert.ok(!JSON.stringify(phone).includes(answered.text), "still no words");
+});

@@ -3,8 +3,9 @@ import { test } from "node:test";
 import { closedMessage, type AgentSession, type AnswerListener } from "./agent.js";
 import type { AnswerSpeech } from "./answer-speech.js";
 import { runChat, type ChatDeps, type NewChat } from "./chat.js";
-import type { ModeEvent, ModeHub } from "./modes.js";
-import { phoneNothingToSayNote, phoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneDesk, type PhoneEvent, type PhoneRequest } from "./phone.js";
+import type { Mode, ModeEvent, ModeHub } from "./modes.js";
+import type { Outcome } from "./answer-log.js";
+import { phoneModeUnknownNote, phoneModeUnknownSay, phoneNothingToSayNote, phoneTag, phoneAskingNote, phoneEmptySay, phoneGuestNote, phoneGuestSay, phoneNothingNote, phoneNothingSay, phonePrefix, phoneTellNote, phoneUnheardNote, phoneVoiceNote, type PhoneDesk, type PhoneEvent, type PhoneRequest } from "./phone.js";
 import type { SpeechReport } from "./speech-queue.js";
 import type { Sent, Talk } from "./talk.js";
 
@@ -91,7 +92,8 @@ const recording: PhoneRequest = { id: "00000000000000a1", audio: new Uint8Array(
 
 const fromPhone = (text: string) => `normal: ${text}\n\n${phoneTag}`;
 
-function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFails?: boolean; voiceNull?: boolean; answers?: Array<"yes" | "no" | null>; answering?: Answering; failTelling?: boolean; guestChat?: boolean } = {}) {
+function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFails?: boolean; voiceNull?: boolean; answers?: Array<"yes" | "no" | null>; answering?: Answering; failTelling?: boolean; guestChat?: boolean; modesOff?: boolean; hubMode?: () => Promise<Mode | "off"> } = {}) {
+  const records: Outcome[] = [];
   const lines = channel<string>();
   const phoneEvents = channel<PhoneEvent>();
   const modeEvents = channel<ModeEvent>();
@@ -113,7 +115,8 @@ function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFail
     speak: () => fakeSpeech(spoken),
     confirm: async () => "yes",
     talk: { check: async () => "Ears: ready", start: async () => ({ ok: true, id: 20 }), send: async (): Promise<Sent> => ({ ok: true, heard: { text: "unused", recordedMs: 1, textMs: 1 } }), drop: async () => null } satisfies Talk,
-    modes: { hub: modeHub, events: modeEvents.items },
+    ...(options.modesOff === true ? {} : { modes: { hub: modeHub, events: modeEvents.items } }),
+    record: async (outcome) => void records.push(outcome),
     ...(options.guestChat === true ? { guest: { open: async () => guestChat() } } : {}),
     phone: {
       news: {
@@ -139,6 +142,7 @@ function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFail
               if (options.voiceNull === true) return null;
               return new Uint8Array(new ArrayBuffer(144));
             },
+      mode: options.hubMode ?? (async () => "normal"),
       askPollMs: 1,
       askMs: 300,
       wait: () => new Promise((resolve) => setImmediate(resolve)),
@@ -147,6 +151,7 @@ function phoneChat(options: { heard?: string | Error; voice?: boolean; voiceFail
   const running = runChat(deps);
   return {
     calls,
+    records,
     asked,
     spoken,
     voiced,
@@ -331,4 +336,54 @@ test("a restart or retry part-way through drops what was said before it, so the 
     assert.deepEqual(chat.calls.find((call) => call[0] === "reply"), ["reply", recording.id, "The whole answer.", true], event);
     await chat.end();
   }
+});
+
+test("phone questions ask the hub's mode each time, so with JARVIS_MODES off a guest mode at the hub still refuses them", { timeout: 5_000 }, async () => {
+  let mode: Mode | "off" = "guest";
+  let asks = 0;
+  const chat = phoneChat({ modesOff: true, hubMode: async () => (asks++, mode) });
+  await chat.record();
+  assert.equal(asks, 1);
+  assert.deepEqual(chat.hears, [], "nothing is heard");
+  assert.deepEqual(chat.asked, []);
+  assert.deepEqual(chat.calls, [["reply", recording.id, phoneGuestSay, false]]);
+  assert.ok(chat.output().includes(`(${phoneGuestNote})`), chat.output());
+  mode = "normal";
+  await chat.record();
+  assert.equal(asks, 2);
+  assert.deepEqual(chat.asked, [fromPhone("what's on today")]);
+  mode = "off";
+  await chat.record();
+  assert.equal(chat.asked.length, 2, "with modes off in the hub there's no guest mode, so it's answered");
+  await chat.end();
+});
+
+test("a phone question is refused when the hub's mode can't be checked, in case it's guest mode", { timeout: 5_000 }, async () => {
+  const chat = phoneChat({ hubMode: async () => Promise.reject(new Error("the hub replied 500")) });
+  await chat.record();
+  assert.deepEqual(chat.hears, []);
+  assert.deepEqual(chat.asked, []);
+  assert.deepEqual(chat.calls, [["reply", recording.id, phoneModeUnknownSay, false]]);
+  assert.ok(chat.output().includes(`(${phoneModeUnknownNote("the hub replied 500")})`), chat.output());
+  await chat.end();
+});
+
+test("with JARVIS_MODES on, a guest mode Jarvis already follows refuses without asking the hub again", { timeout: 5_000 }, async () => {
+  let asks = 0;
+  const chat = phoneChat({ hubMode: async () => (asks++, "normal") });
+  await chat.mode("guest");
+  await chat.record();
+  assert.equal(asks, 0);
+  assert.deepEqual(chat.calls, [["reply", recording.id, phoneGuestSay, false]]);
+  await chat.end();
+});
+
+test("the answer log marks a phone question as one, and a typed one not", { timeout: 5_000 }, async () => {
+  const chat = phoneChat({ hubMode: async () => "normal" });
+  await chat.record();
+  await chat.type("And tomorrow?");
+  assert.equal(chat.records.length, 2);
+  assert.equal(chat.records[0].phone, true);
+  assert.equal("phone" in chat.records[1], false);
+  await chat.end();
 });

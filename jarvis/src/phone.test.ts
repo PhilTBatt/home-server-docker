@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { createServer as createSocketServer, type AddressInfo, type Socket } from "node:net";
 import { test } from "node:test";
 import { typeYes } from "./hub-tools.js";
-import { askOnPhone, phoneQuestion, withPhoneTag, hubDesk, mostVoiceSeconds, phoneBackNote, phoneOffNote, phoneOldHubNote, phoneUnreachableNote, phoneVoice, wavOf, watchPhone, whisperHears, type NextReply, type PhoneDesk, type PhoneEvent } from "./phone.js";
+import { askOnPhone, hubModeCheck, phoneQuestion, withPhoneTag, hubDesk, mostVoiceSeconds, phoneBackNote, phoneOffNote, phoneOldHubNote, phoneUnreachableNote, phoneVoice, wavOf, watchPhone, whisperHears, type NextReply, type PhoneDesk, type PhoneEvent } from "./phone.js";
 import type { SpeechEngine } from "./speech.js";
 import { createEventReader, encodeEvent, type WyomingEvent } from "./wyoming.js";
 
@@ -296,4 +296,24 @@ test("a phone question is marked on a line of its own, and a yes asked on the ph
   assert.equal(phoneQuestion(`Jarvis wants to scan the library. ${typeYes}`), "Jarvis wants to scan the library.");
   assert.equal(phoneQuestion(typeYes), "");
   assert.equal(phoneQuestion("Switch to bedtime?"), "Switch to bedtime?");
+});
+
+test("the phone's mode check reads the hub's GET /mode with the token, says off when modes are off there, and throws on anything else", { timeout: 5_000 }, async () => {
+  let reply: [number, unknown] = [200, { mode: "guest", until: null, by: "phone" }];
+  const hub = await standInHub((_seen, response) => json(response, reply[0], reply[1]));
+  try {
+    const check = hubModeCheck("test-token", hub.url);
+    assert.equal(await check(new AbortController().signal), "guest");
+    assert.deepEqual(hub.seen.map((one) => [one.method, one.url, one.auth]), [["GET", "/mode", "Bearer test-token"]]);
+    reply = [200, { mode: "normal", until: null, by: "typed" }];
+    assert.equal(await check(new AbortController().signal), "normal");
+    reply = [404, { error: "Modes are switched off" }];
+    assert.equal(await check(new AbortController().signal), "off");
+    reply = [500, { error: "broken" }];
+    await assert.rejects(check(new AbortController().signal), /the hub said: broken/);
+    reply = [200, { mode: "party" }];
+    await assert.rejects(check(new AbortController().signal), /couldn't be read/);
+  } finally {
+    await hub.close();
+  }
 });

@@ -2,6 +2,7 @@ import { errorOf, hubAsk, reasonOf } from "./code-words.js";
 import { hubApiUrl, typeYes } from "./hub-tools.js";
 import { createSentences } from "./sentences.js";
 import type { SpeechEngine } from "./speech.js";
+import { ModesOff, hubModes, type Mode } from "./modes.js";
 import { pause } from "./wake.js";
 import { connectWyoming, transcribe, type WyomingConnection } from "./wyoming-client.js";
 
@@ -25,6 +26,11 @@ export const phoneBackNote = "phone: the hub is answering again";
 export const phoneGuestNote = "a question came from your phone, but the hub is in guest mode, so Jarvis said no";
 export const phoneGuestSay = "The hub's in guest mode, so I won't take questions from the phone until it's off.";
 export const phoneNothingNote = "a recording came from your phone, but nothing was heard in it";
+export const phoneModeUnknownSay = "I couldn't check the hub's mode, so I won't take that from the phone just now. Try again in a moment.";
+
+export function phoneModeUnknownNote(why: string): string {
+  return `a question came from your phone, but the hub's mode couldn't be checked (${why}), so Jarvis said no, in case it's guest mode`;
+}
 export const phoneNothingSay = "I didn't hear anything in that recording.";
 export const phoneEmptySay = "I had nothing to say to that.";
 export const phonePrefix = "From your phone: ";
@@ -81,6 +87,7 @@ export type PhoneParts = {
   desk: PhoneDesk;
   hear: (audio: Uint8Array, signal: AbortSignal) => Promise<string>;
   voice: ((text: string, signal: AbortSignal) => Promise<Uint8Array<ArrayBuffer> | null>) | null;
+  mode: (signal: AbortSignal) => Promise<Mode | "off">;
   askPollMs?: number;
   askMs?: number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -272,4 +279,16 @@ export async function askOnPhone(parts: Pick<PhoneParts, "desk" | "askPollMs" | 
     if (answer !== null) return answer;
   }
   return null;
+}
+
+export function hubModeCheck(token: string, url = hubApiUrl): (signal: AbortSignal) => Promise<Mode | "off"> {
+  const modes = hubModes(token, url);
+  return async (signal) => {
+    try {
+      return (await modes.get(signal)).mode;
+    } catch (error) {
+      if (error instanceof ModesOff) return "off";
+      throw error;
+    }
+  };
 }

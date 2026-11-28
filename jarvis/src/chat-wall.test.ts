@@ -265,6 +265,7 @@ test("a question from the phone shows him working and needing you, but never its
     questionTimeoutMs: 1000,
     wall: fakeWall(log),
     phone: {
+      mode: async () => "normal",
       news: {
         events: phoneEvents.items,
         take() {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { earsCaller, earsQuickMs, earsStopMs, earsUrl, readEarsAnswer } from "./ears-client.js";
+import { earsCaller, earsQuickMs, earsStopMs, earsUrl, guestDoor, readEarsAnswer, type EarsCall } from "./ears-client.js";
 
 type Seen = { method: string; path: string; authorization: string | undefined };
 
@@ -196,4 +196,17 @@ test("a recording's voice from ears is read strictly: a plain name or nobody, wh
   assert.deepEqual(voiceOf({ who: "alex", owner: false, score: 0.71 }), { who: "alex", owner: false, score: 0.71 });
   assert.deepEqual(voiceOf({ who: null, owner: false, score: null }), { who: null, owner: false, score: null });
   for (const value of [null, "alex", { who: "Alex", owner: false, score: 0.5 }, { who: "a".repeat(21), owner: false, score: 0.5 }, { who: "alex", owner: "yes", score: 0.5 }, { who: "alex", owner: false, score: 2 }, { who: null, owner: true, score: 0.9 }, { who: "alex; rm", owner: false, score: 0.5 }]) assert.equal(voiceOf(value), null, JSON.stringify(value));
+});
+
+test("ears's guest door is only there with the wake word, since voice ID only holds back wake and follow-up recordings", async () => {
+  const calls: string[] = [];
+  const call: EarsCall = async (method, path) => (calls.push(`${method} ${path}`), { status: path.endsWith("on=1") ? 200 : 404, state: null, reason: null, error: path.endsWith("on=1") ? null : "No such route", seconds: null, last: null });
+  assert.equal(guestDoor("off", call), undefined);
+  assert.equal(guestDoor("push", call), undefined, "push-to-talk has no door, and its ears may not have the route");
+  assert.equal(guestDoor("wake", null), undefined);
+  const door = guestDoor("wake", call);
+  assert.ok(door !== undefined);
+  await door(true);
+  await assert.rejects(door(false), /No such route/);
+  assert.deepEqual(calls, ["POST /wake/guests?on=1", "POST /wake/guests?on=0"]);
 });
