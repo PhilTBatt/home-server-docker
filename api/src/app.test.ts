@@ -959,6 +959,20 @@ test("the wall's token reads the switches page, with what Jarvis last told the h
   assert.deepEqual(offDetails.groups[2].rows, [], "a new start knows nothing Jarvis said before");
 });
 
+test("the wall's token reads the health page, from the same kept server check as the picture and the hub's own readings", async () => {
+  let asked = 0;
+  const report = { state: "ok" as const, summary: "", checkedAt: "", checks: [{ name: "Jellyfin", state: "ok" as const, detail: "Answering.", next: null }, { name: "Heartbeat", state: "ok" as const, detail: "Pinged.", next: null }] };
+  const app = await buildRealApp({ logger: false, config, status: async () => ({ uptimeSeconds: 3600, memoryTotalMB: 8000, memoryAvailableMB: 3000, diskTotalGB: 200, diskAvailableGB: 150 }), wallSources: { doctor: async () => (asked++, report), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
+  const details = (await app.inject({ method: "GET", url: "/wall/pages/health", cookies: { wall_token: wallToken } })).json().details;
+  assert.equal(details.kind, "health");
+  assert.deepEqual([details.memory, details.disk, details.upSeconds, details.beat], [{ used: 5000, total: 8000 }, { used: 50, total: 200 }, 3600, true]);
+  assert.equal(details.groups[1].tiles.find((one: { id: string }) => one.id === "jellyfin").line, "Answering.");
+  assert.equal(asked, 1);
+  const failing = await buildRealApp({ logger: false, config, status: async () => Promise.reject(new Error("no")), wallSources: { doctor: async () => Promise.reject(new Error("down")), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
+  const failed = (await failing.inject({ method: "GET", url: "/wall/pages/health", cookies: { wall_token: wallToken } })).json().details;
+  assert.deepEqual([failed.state, failed.memory], ["unknown", null], "with nothing to read, the page still comes and says so");
+});
+
 test("the wall's token reads the security page, which counts wrong tokens, logins and pairing codes, but never a missing token or the right one", async () => {
   const app = await buildRealApp({ logger: false, config, startedAt: new Date(Date.now() - 60_000), bootTime: async () => new Date("2026-11-24T09:12:00.000Z"), wallSources: { doctor: async () => ({ state: "ok", summary: "", checkedAt: "", checks: [] }), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
   const read = async () => (await app.inject({ method: "GET", url: "/wall/pages/security", cookies: { wall_token: wallToken } })).json().details;

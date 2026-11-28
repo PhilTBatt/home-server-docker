@@ -4,7 +4,7 @@ import { downloading, libraryCounts, media } from "./modules/media/routes.js";
 import cookie from "@fastify/cookie";
 import { isAuthorized, tokenFromHeader } from "./token.js";
 import { auth } from "./modules/auth/routes.js";
-import { doctorReads, system } from "./modules/system/routes.js";
+import { doctorReads, readStatus, system } from "./modules/system/routes.js";
 import { countWaiting, memory } from "./modules/memory/routes.js";
 import type { Config } from "./config.js";
 import { deals } from "./modules/deals/routes.js";
@@ -42,9 +42,11 @@ import { trainPage } from "./modules/wall/page-data.js";
 import { serverMapPage } from "./modules/wall/server-map.js";
 import { createJarvisSwitches, switchboardPage } from "./modules/wall/switchboard.js";
 import { createTally, readBootTime, securityPage, type Tally } from "./modules/wall/security.js";
+import { healthPage } from "./modules/wall/health.js";
+import type { Status } from "./modules/system/alerts.js";
 import { buildPicture, keptPicture, wallDoctorMs, wallTrainsMs, type WallSources } from "./modules/wall/picture.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector; events?: EventFeed; morning?: Morning; tally?: Tally; bootTime?: (now: Date) => Promise<Date | null>; startedAt?: Date }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector; events?: EventFeed; morning?: Morning; tally?: Tally; bootTime?: (now: Date) => Promise<Date | null>; startedAt?: Date; status?: () => Promise<Status> }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const startedAt = options.startedAt ?? new Date();
   const tally = options.tally ?? createTally(startedAt);
@@ -136,6 +138,10 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     train: trainsShown === undefined ? undefined : async () => trainPage(await trainsShown()),
     server: doctorShown === undefined ? undefined : async () => serverMapPage(await doctorShown().catch(() => null)),
     switches: async () => switchboardPage(features, byHand, jarvisSwitches.view(Date.now())),
+    health: doctorShown === undefined ? undefined : async () => {
+      const [report, status] = await Promise.all([doctorShown().catch(() => null), (options.status ?? readStatus)().catch(() => null)]);
+      return healthPage(report, status);
+    },
     security: async () => {
       const now = new Date();
       const [backup, bootAt] = await Promise.all([shown.backup().catch(() => null), (options.bootTime ?? readBootTime)(now).catch(() => null)]);

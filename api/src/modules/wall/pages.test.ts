@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { hiddenNow, isPageBy, isPageId, pageIds, pageShownMs, readPrivatePages, wallPages } from "./pages.js";
 
 test("the wall's pages are one list, each with a short name, a title and the words that open it", () => {
-  assert.deepEqual(pageIds, ["server", "train", "backup", "alerts", "deals", "reminder", "music", "switches", "security"]);
+  assert.deepEqual(pageIds, ["server", "train", "backup", "alerts", "deals", "reminder", "music", "switches", "security", "health"]);
   assert.equal(new Set(pageIds).size, pageIds.length);
   const said = wallPages.flatMap((page) => page.say);
   assert.equal(new Set(said).size, said.length, "no two pages share words");

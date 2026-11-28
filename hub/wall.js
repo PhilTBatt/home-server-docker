@@ -5,6 +5,7 @@ import { morningTrainCard, morningView } from "./wall-morning.js";
 import { isServerMap, mapHalos, mapView, stateWord } from "./wall-map.js";
 import { isSwitchboard, switchboardView } from "./wall-switches.js";
 import { isSecurityPage, securityNote, securityView } from "./wall-security.js";
+import { healthNote, healthView, isHealthPage } from "./wall-health.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -509,7 +510,8 @@ function showCard(now) {
   const mapShown = showMap(open, now);
   const boardShown = showSwitches(open, now);
   const securityShown = showSecurity(open, now);
-  if (mapShown || boardShown || securityShown) {
+  const healthShown = showHealth(open, now);
+  if (mapShown || boardShown || securityShown || healthShown) {
     card.hidden = true;
     card.classList.add("shut");
     return;
@@ -800,13 +802,117 @@ function showSecurity(open, now) {
 }
 
 /**
+ * @param {import("./wall-cards.js").Opened | null} open
+ * @param {number} now
+ * @returns {boolean}
+ */
+function showHealth(open, now) {
+  const box = byId("health");
+  const details = open?.page.id === "health" ? detailsShown(detail, "health", Date.now()) : null;
+  const shown = open !== null && isHealthPage(details);
+  stage.classList.toggle("healthy", shown);
+  box.hidden = !shown;
+  if (!shown || open === null || !isHealthPage(details)) return false;
+  setText(byId("hl-by"), byLine(open.page.by) || "On the wall");
+  byId("hl-left").style.transform = `scaleX(${pageLeftMs(open, now) / pageShownMs})`;
+  const key = JSON.stringify(details);
+  if (box.dataset.shown === key) return true;
+  box.dataset.shown = key;
+  const view = healthView(details);
+  setText(byId("hl-headline"), view.headline);
+  setText(byId("hl-sub"), view.sub);
+  byId("hl-dot").className = `hl-dot d-${view.dot}`;
+  setText(byId("hl-up"), view.up);
+  setText(byId("hl-note"), healthNote);
+  byId("hl-points").setAttribute("points", view.points);
+  byId("hl-line").classList.toggle("hl-flat", !view.beat);
+  byId("hl-groups").replaceChildren(
+    ...view.groups.map((group) => {
+      const row = made("div", `hl-group g-${group.id}`);
+      const name = made("div", "hl-group-name");
+      const title = made("span", "hl-group-title");
+      title.textContent = group.title;
+      const note = made("span", "hl-group-note");
+      note.textContent = group.note;
+      name.append(title, note);
+      row.append(
+        name,
+        ...group.tiles.map((tile) => {
+          const one = made("div", `hl-tile s-${tile.state}`);
+          const head = made("div", "hl-tile-head");
+          const dot = made("span", "hl-tile-dot");
+          dot.setAttribute("aria-hidden", "true");
+          const label = made("span", "hl-tile-name");
+          label.textContent = tile.id;
+          head.append(dot, label);
+          const line = made("span", "hl-tile-line");
+          line.textContent = tile.line;
+          one.append(head, line);
+          if (tile.note !== "") {
+            const extra = made("span", "hl-tile-note");
+            extra.textContent = tile.note;
+            one.append(extra);
+          }
+          return one;
+        }),
+      );
+      return row;
+    }),
+  );
+  byId("hl-cards").replaceChildren(
+    ...view.cards.map((card) => {
+      const one = made("section", `hl-card c-${card.id} s-${card.state}`);
+      one.setAttribute("aria-label", card.title);
+      const title = made("span", "hl-card-title");
+      title.textContent = card.title;
+      const value = made("span", "hl-card-value");
+      value.textContent = card.value;
+      const note = made("span", "hl-card-note");
+      note.textContent = card.note;
+      one.append(title, value, note);
+      return one;
+    }),
+  );
+  byId("hl-others").replaceChildren(
+    ...view.others.map((other) => {
+      const one = made("span", `hl-other s-${other.state}`);
+      const dot = made("span", "hl-other-dot");
+      dot.setAttribute("aria-hidden", "true");
+      one.append(dot, other.name);
+      return one;
+    }),
+  );
+  byId("hl-rows").replaceChildren(
+    ...view.vitals.map((vital) => {
+      const row = made("div", `hl-row r-${vital.label.toLowerCase()} s-${vital.state}`);
+      const head = made("div", "hl-row-head");
+      const label = made("span", "hl-row-label");
+      label.textContent = vital.label;
+      const value = made("span", "hl-row-value");
+      value.textContent = vital.value;
+      head.append(label, value);
+      row.append(head);
+      if (vital.pct !== null) {
+        const bar = made("div", "hl-bar");
+        const fill = made("span", "hl-bar-fill");
+        fill.style.transform = `scaleX(${vital.pct / 100})`;
+        bar.append(fill);
+        row.append(bar);
+      }
+      return row;
+    }),
+  );
+  return true;
+}
+
+/**
  * @returns {Target[]}
  */
 function targets() {
   /** @type {Target[]} */
   const list = [];
   if (pages.opened !== null && !card.hidden) list.push({ kind: "card", key: pages.opened.page.id, box: { left: card.offsetLeft, top: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight } });
-  else if (!["mapped", "switched", "secured"].some((name) => stage.classList.contains(name))) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
+  else if (!["mapped", "switched", "secured", "healthy"].some((name) => stage.classList.contains(name))) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
   if (!fitChipBox.hidden) list.push({ kind: "fit", key: "fit", box: fitChip });
   return list;
 }

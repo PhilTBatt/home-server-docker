@@ -924,7 +924,7 @@ test("EVENTS must be written out, as exactly on or off, and needs no other setti
 test("WALL_PRIVATE_PAGES is the wall's pages to hide in guest mode, none when left out, and only the wall's own page names", () => {
   assert.deepEqual(readConfig(complete).wall.privatePages, []);
   assert.deepEqual(readConfig({ ...complete, WALL_PRIVATE_PAGES: "deals, reminder" }).wall.privatePages, ["deals", "reminder"]);
-  assert.throws(() => readConfig({ ...complete, WALL_PRIVATE_PAGES: "deals,brain" }), /Settings in api\/\.env with a value that isn't allowed: WALL_PRIVATE_PAGES \(the wall's pages to hide in guest mode, by name, with commas between: server, train, backup, alerts, deals, reminder, music, switches, security\)/);
+  assert.throws(() => readConfig({ ...complete, WALL_PRIVATE_PAGES: "deals,brain" }), /Settings in api\/\.env with a value that isn't allowed: WALL_PRIVATE_PAGES \(the wall's pages to hide in guest mode, by name, with commas between: server, train, backup, alerts, deals, reminder, music, switches, security, health\)/);
 });
 
 test("WALL_REMOTE is off unless set to on, and anything else is refused", () => {
