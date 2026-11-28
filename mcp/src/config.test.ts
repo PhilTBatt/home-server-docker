@@ -5,11 +5,11 @@ import { readConfig } from "./config.js";
 const token = "test-token";
 
 test("reads the token and actions on", () => {
-  assert.deepEqual(readConfig({ API_TOKEN: token, MCP_ACTIONS: "on" }), { apiToken: token, actions: true });
+  assert.deepEqual(readConfig({ API_TOKEN: token, MCP_ACTIONS: "on" }), { apiToken: token, actions: true, wallPages: false });
 });
 
 test("actions off means read-only", () => {
-  assert.deepEqual(readConfig({ API_TOKEN: token, MCP_ACTIONS: "off" }), { apiToken: token, actions: false });
+  assert.deepEqual(readConfig({ API_TOKEN: token, MCP_ACTIONS: "off" }), { apiToken: token, actions: false, wallPages: false });
 });
 
 test("refuses a missing API_TOKEN and names it", () => {
@@ -44,5 +44,12 @@ test("the error never includes the token or the bad value", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ API_TOKEN: token, MCP_ACTIONS: "off", QBIT_API_KEY: "other" }), { apiToken: token, actions: false });
+  assert.deepEqual(readConfig({ API_TOKEN: token, MCP_ACTIONS: "off", QBIT_API_KEY: "other" }), { apiToken: token, actions: false, wallPages: false });
+});
+
+test("MCP_WALL_PAGES is off unless it's on, and anything else stops start-up", () => {
+  assert.equal(readConfig({ API_TOKEN: token, MCP_ACTIONS: "off", MCP_WALL_PAGES: "on" }).wallPages, true);
+  assert.equal(readConfig({ API_TOKEN: token, MCP_ACTIONS: "off", MCP_WALL_PAGES: "off" }).wallPages, false);
+  assert.equal(readConfig({ API_TOKEN: token, MCP_ACTIONS: "off" }).wallPages, false);
+  assert.throws(() => readConfig({ API_TOKEN: token, MCP_ACTIONS: "off", MCP_WALL_PAGES: "yes" }), { message: "MCP_WALL_PAGES must be on or off" });
 });

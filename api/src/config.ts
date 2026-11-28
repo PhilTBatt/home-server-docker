@@ -5,6 +5,7 @@ import { mostRepos, readRepos, validToken } from "./modules/catchup/github.js";
 import { latestBedtimeFrom, latestBedtimeUntil, type ModeSettings } from "./modules/modes/modes.js";
 import { readRedirectUri, validClientId, type SpotifySettings } from "./modules/spotify/auth.js";
 import { projectorPowers, type ProjectorSettings } from "./modules/projector/projector.js";
+import { pageIds, readPrivatePages } from "./modules/wall/pages.js";
 
 export type Features = {
   alerts: boolean;
@@ -48,6 +49,8 @@ export const wallSpeakings = ["wobble", "string"] as const;
 export type WallSettings = {
   token: string;
   speaking: (typeof wallSpeakings)[number];
+  privatePages: string[];
+  remote: boolean;
 };
 
 export type CatchUpSettings = {
@@ -244,7 +247,9 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const wallToken = read("WALL_TOKEN", features.wall);
   if (wallToken !== "" && !/^[\x21-\x7E]{32,200}$/.test(wallToken)) notAllowed.push("WALL_TOKEN (32 to 200 printable characters with no spaces, like what openssl rand -hex 24 prints)");
   else if (wallToken !== "" && wallToken === apiToken) notAllowed.push("WALL_TOKEN (a different token from API_TOKEN, since it only lets a screen show the wall)");
-  const wall: WallSettings = { token: wallToken, speaking: readChoice("WALL_SPEAKING", wallSpeakings, features.wall) };
+  const privatePages = readPrivatePages(read("WALL_PRIVATE_PAGES", false));
+  if (privatePages === null) notAllowed.push(`WALL_PRIVATE_PAGES (the wall's pages to hide in guest mode, by name, with commas between: ${pageIds.join(", ")})`);
+  const wall: WallSettings = { token: wallToken, speaking: readChoice("WALL_SPEAKING", wallSpeakings, features.wall), privatePages: privatePages ?? [], remote: readChoice("WALL_REMOTE", ["off", "on"] as const, false) === "on" };
   const login: LoginSettings = { guard: readSwitch("LOGIN_GUARD") };
   const projectorHost = read("PROJECTOR_HOST", features.projector);
   if (projectorHost !== "" && !privateIPv4(projectorHost)) notAllowed.push("PROJECTOR_HOST (the projector's own address on your home network, like 192.168.1.23: an IPv4 address in 10.x, 172.16.x to 172.31.x or 192.168.x)");

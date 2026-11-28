@@ -66,7 +66,7 @@ test("reads every setting into its own field", () => {
     modes: { bedtimeFrom: null, bedtimeUntil: null },
     phone: { ring: "once", seconds: 30 },
     spotify: { clientId: "0123456789abcdef0123456789abcdef", redirectUri: "https://hub.home/spotify.html" },
-    wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble" },
+    wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble", privatePages: [], remote: false },
     login: { guard: false },
     projector: { host: "192.168.1.23", power: "wake-sleep" },
     features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true },
@@ -849,14 +849,14 @@ test("SESSIONS must be written out, as exactly on or off, and needs no other set
 
 test("the wall's token and speaking style are only needed while WALL is on", () => {
   const off = readConfig({ ...complete, WALL: "off", WALL_TOKEN: undefined, WALL_SPEAKING: undefined });
-  assert.deepEqual(off.wall, { token: "", speaking: "wobble" });
+  assert.deepEqual(off.wall, { token: "", speaking: "wobble", privatePages: [], remote: false });
   assert.equal(off.features.wall, false);
   assert.throws(() => readConfig({ ...complete, WALL_TOKEN: undefined }), { message: "Missing settings in api/.env: WALL_TOKEN" });
   assert.throws(() => readConfig({ ...complete, WALL_SPEAKING: "" }), { message: "Missing settings in api/.env: WALL_SPEAKING" });
 });
 
 test("the wall can speak with the string instead of the wobble", () => {
-  assert.deepEqual(readConfig({ ...complete, WALL_SPEAKING: "string" }).wall, { token: "test-wall-token-0123456789abcdef0123", speaking: "string" });
+  assert.deepEqual(readConfig({ ...complete, WALL_SPEAKING: "string" }).wall, { token: "test-wall-token-0123456789abcdef0123", speaking: "string", privatePages: [], remote: false });
 });
 
 test("the wall's speaking style is one of the two by name", () => {
@@ -912,4 +912,17 @@ test("EVENTS must be written out, as exactly on or off, and needs no other setti
   assert.throws(() => readConfig({ ...complete, EVENTS: undefined }), { message: "Missing settings in api/.env: EVENTS" });
   assert.throws(() => readConfig({ ...complete, EVENTS: "yes" }), /EVENTS/);
   assert.deepEqual(switchedOff({ ...readConfig(complete).features, events: false }), ["the events feed"]);
+});
+
+test("WALL_PRIVATE_PAGES is the wall's pages to hide in guest mode, none when left out, and only the wall's own page names", () => {
+  assert.deepEqual(readConfig(complete).wall.privatePages, []);
+  assert.deepEqual(readConfig({ ...complete, WALL_PRIVATE_PAGES: "deals, reminder" }).wall.privatePages, ["deals", "reminder"]);
+  assert.throws(() => readConfig({ ...complete, WALL_PRIVATE_PAGES: "deals,brain" }), /Settings in api\/\.env with a value that isn't allowed: WALL_PRIVATE_PAGES \(the wall's pages to hide in guest mode, by name, with commas between: server, train, backup, alerts, deals, reminder, music\)/);
+});
+
+test("WALL_REMOTE is off unless set to on, and anything else is refused", () => {
+  assert.equal(readConfig(complete).wall.remote, false);
+  assert.equal(readConfig({ ...complete, WALL_REMOTE: "on" }).wall.remote, true);
+  assert.equal(readConfig({ ...complete, WALL_REMOTE: "off" }).wall.remote, false);
+  assert.throws(() => readConfig({ ...complete, WALL_REMOTE: "yes" }), { message: "Settings in api/.env with a value that isn't allowed: WALL_REMOTE (off or on)" });
 });

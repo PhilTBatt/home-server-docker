@@ -1,5 +1,6 @@
 // @ts-check
 import { fitKey, letterbox, matrixFor, moveCorner, readFit, writeFit } from "./wall-fit.js";
+import { bubbleAround, bubbleFor, cardFor, cornerStep, fitChip, framesASecond, fromHub, isPageView, itemBox, movePointer, nextCorner, openHere, pageLeftMs, pageShownMs, pointerShown, privateOf, stillOpen, trailMs, trailOf } from "./wall-cards.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -51,12 +52,25 @@ const pairMessage = byId("login-message");
 const setup = byId("setup");
 const fitOpen = byId("fit-open");
 const handles = /** @type {HTMLElement[]} */ ([...document.querySelectorAll(".handle")]);
+const card = byId("card");
+const pointer = byId("pointer");
+const trail = byId("trail");
+const bubble = byId("bubble");
+const fitChipBox = byId("fit-chip");
+const fps = byId("fps");
 
 /** @type {{ picture: WallPicture | null, pictureAt: number, jarvis: JarvisView | null, jarvisAt: number, speakingAt: number, seq: number, pictureFailures: number, jarvisFailures: number, arrival: string | null, arrivalUntil: number, lastItems: WallItem[] | null, pose: string | null, loggedOut: boolean, running: AbortController | null }} */
 const state = { picture: null, pictureAt: 0, jarvis: null, jarvisAt: 0, speakingAt: -Infinity, seq: -1, pictureFailures: 0, jarvisFailures: 0, arrival: null, arrivalUntil: 0, lastItems: null, pose: null, loggedOut: false, running: null };
 
 /** @type {Map<string, HTMLElement>} */
 const shown = new Map();
+
+/**
+ * @typedef {{ kind: "item" | "card" | "fit", key: string, box: import("./wall-cards.js").Box }} Target
+ */
+
+/** @type {{ opened: import("./wall-cards.js").Opened | null, seen: import("./wall-cards.js").Seen, privateNow: string[], point: import("./wall-cards.js").Spot, movedAt: number, points: import("./wall-cards.js").Point[], boxes: Array<{ key: string, box: import("./wall-cards.js").Box }>, reached: Target | null, closeTimer: ReturnType<typeof setTimeout> | null, facts: string }} */
+const pages = { opened: null, seen: { opens: null, backs: null }, privateNow: [], point: { x: 640, y: 375 }, movedAt: -Infinity, points: [], boxes: [], reached: null, closeTimer: null, facts: "" };
 
 /**
  * @param {HTMLElement} element
@@ -229,7 +243,7 @@ function fillItem(element, item, accent) {
 function jarvisSpot() {
   const picture = state.picture;
   if (picture?.phase === "bedtime") return bedtimeSpot;
-  return currentMiddle() === null ? centre : aside;
+  return pages.opened === null && currentMiddle() === null ? centre : aside;
 }
 
 /**
@@ -282,6 +296,7 @@ function showOrbit(picture, away, accent) {
   const circling = picture.items.filter((item) => item.key !== away);
   const slots = orbitSlots(circling.length, orbit);
   const keys = new Set(circling.map((item) => item.key));
+  pages.boxes = circling.map((item, i) => ({ key: item.key, box: itemBox(slots[i].x, slots[i].y, slots[i].side) }));
   circling.forEach((item, i) => {
     const element = itemElement(item);
     fillItem(element, item, accent);
@@ -322,9 +337,148 @@ function showArcs(picture) {
   byId("arc-alerts").classList.toggle("bad", bad("alerts"));
 }
 
+/**
+ * @param {number} now
+ */
+function showCard(now) {
+  const open = pages.opened;
+  stage.classList.toggle("opened", open !== null);
+  if (open === null) {
+    if (card.hidden || card.classList.contains("shut")) return;
+    card.classList.add("shut");
+    if (pages.closeTimer !== null) clearTimeout(pages.closeTimer);
+    pages.closeTimer = setTimeout(() => {
+      pages.closeTimer = null;
+      if (pages.opened === null) card.hidden = true;
+    }, 1200);
+    return;
+  }
+  const shownCard = cardFor(open.page, state.picture, Date.now() - state.pictureAt);
+  setText(byId("card-kind"), shownCard.kind);
+  setText(byId("card-by"), shownCard.by);
+  setText(byId("card-title"), shownCard.title);
+  const facts = JSON.stringify(shownCard.facts);
+  if (pages.facts !== facts) {
+    pages.facts = facts;
+    byId("card-facts").replaceChildren(
+      ...shownCard.facts.map((fact) => {
+        const line = document.createElement("li");
+        line.textContent = fact;
+        return line;
+      }),
+    );
+  }
+  card.classList.toggle("empty", shownCard.empty);
+  card.classList.toggle("warm", shownCard.colour === "warm");
+  byId("card-left").style.transform = `scaleX(${pageLeftMs(open, now) / pageShownMs})`;
+  if (!card.hidden && !card.classList.contains("shut")) return;
+  if (pages.closeTimer !== null) clearTimeout(pages.closeTimer);
+  pages.closeTimer = null;
+  card.hidden = false;
+  void card.offsetWidth;
+  card.classList.remove("shut");
+}
+
+/**
+ * @returns {Target[]}
+ */
+function targets() {
+  /** @type {Target[]} */
+  const list = [];
+  if (pages.opened !== null && !card.hidden) list.push({ kind: "card", key: pages.opened.page.id, box: { left: card.offsetLeft, top: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight } });
+  else list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
+  if (!fitChipBox.hidden) list.push({ kind: "fit", key: "fit", box: fitChip });
+  return list;
+}
+
+/**
+ * @param {number} now
+ */
+function drawPointer(now) {
+  const showing = pointerShown(pages.movedAt, now) && login.hidden && setup.hidden;
+  pointer.hidden = !showing;
+  fitChipBox.hidden = !showing;
+  pointer.style.transform = `translate(${pages.point.x}px, ${pages.point.y}px)`;
+  const dots = showing ? trailOf(pages.points, now) : [];
+  trail.replaceChildren(
+    ...dots.map((one, i) => {
+      const dot = document.createElement("span");
+      dot.style.left = `${one.x}px`;
+      dot.style.top = `${one.y}px`;
+      dot.style.opacity = String(((i + 1) / (dots.length + 1)) * 0.4);
+      return dot;
+    }),
+  );
+  const list = showing ? targets() : [];
+  const reached = bubbleFor(pages.point, list.map((one) => one.box));
+  pages.reached = reached === null ? null : list[reached];
+  const box = reached === null ? { left: pages.point.x - 18, top: pages.point.y - 18, width: 36, height: 36 } : bubbleAround(list[reached].box);
+  bubble.style.left = `${box.left}px`;
+  bubble.style.top = `${box.top}px`;
+  bubble.style.width = `${box.width}px`;
+  bubble.style.height = `${box.height}px`;
+  bubble.classList.toggle("on", reached !== null);
+}
+
+/**
+ * @param {unknown} view
+ */
+function takePages(view) {
+  pages.privateNow = privateOf(view, pages.privateNow);
+  if (!isPageView(view)) return;
+  const next = fromHub(pages.opened, view, pages.seen, Date.now());
+  pages.opened = next.opened;
+  pages.seen = next.seen;
+}
+
+/**
+ * @param {KeyboardEvent} event
+ * @returns {boolean}
+ */
+function pointerKey(event) {
+  if (state.picture?.remote !== true) return false;
+  const now = Date.now();
+  const showing = pointerShown(pages.movedAt, now);
+  if (["Escape", "Backspace", "GoBack", "BrowserBack"].includes(event.key) && pages.opened !== null) {
+    event.preventDefault();
+    pages.opened = null;
+    render();
+    return true;
+  }
+  const moved = movePointer(pages.point, event.key, { repeat: event.repeat, shift: event.shiftKey });
+  if (moved !== null) {
+    event.preventDefault();
+    if (showing) {
+      pages.points = trailOf([...pages.points, { ...pages.point, at: now }], now);
+      pages.point = moved;
+    } else pages.points = [];
+    pages.movedAt = now;
+    drawPointer(now);
+    setTimeout(() => drawPointer(Date.now()), trailMs + 30);
+    return true;
+  }
+  if (event.key !== "Enter" || !showing) return false;
+  event.preventDefault();
+  pages.movedAt = now;
+  const reached = pages.reached;
+  if (reached?.kind === "fit") {
+    openSetup();
+    return true;
+  }
+  if (reached?.kind === "card") pages.opened = null;
+  if (reached?.kind === "item") {
+    const item = state.picture?.items.find((one) => one.key === reached.key);
+    const next = item === undefined ? null : openHere(item, pages.privateNow, now);
+    if (next !== null) pages.opened = next;
+  }
+  render();
+  return true;
+}
+
 export function render() {
   const picture = state.picture;
   const now = Date.now();
+  pages.opened = stillOpen(pages.opened, now);
   const accent = modeColour(picture?.mode ?? null);
   document.documentElement.style.setProperty("--accent", accent);
   for (const phase of ["morning", "daytime", "bedtime"]) document.body.classList.toggle(`phase-${phase}`, (picture?.phase ?? "daytime") === phase);
@@ -335,11 +489,11 @@ export function render() {
   showPose(pose === "speaking" && picture?.speaking === "string" ? "string" : pose);
   setText(label, poseLabels[pose]);
   poseBox.setAttribute("aria-label", `Jarvis: ${poseLabels[pose]}`);
-  const chosen = currentMiddle();
+  const chosen = pages.opened === null ? currentMiddle() : null;
   const spot = jarvisSpot();
   const scale = picture?.phase === "bedtime" ? bedtimeSpot.scale : 1;
   jarvisBox.style.transform = `translate(${spot.x - 120}px, ${spot.y - 120}px) scale(${scale})`;
-  jarvisBox.classList.toggle("centred-off", chosen !== null || picture?.phase !== "daytime");
+  jarvisBox.classList.toggle("centred-off", chosen !== null || pages.opened !== null || picture?.phase !== "daytime");
   const quietPoses = ["waiting", "guest", "done", "sleepy", "muted"];
   sun.hidden = (picture?.playing ?? null) === null || !quietPoses.includes(pose);
   const counting = picture === null ? null : countdownOf(picture.timers, now);
@@ -347,11 +501,13 @@ export function render() {
   if (counting !== null) countdownLeft.setAttribute("stroke-dashoffset", String(-(1 - counting.fraction) * circumference));
   if (picture !== null) {
     showMiddle(chosen, picture);
-    showOrbit(picture, middleKey(chosen), accent);
+    showOrbit(picture, pages.opened !== null ? pages.opened.page.id : middleKey(chosen), accent);
     showArcs(picture);
     setText(byId("quiet-clock"), londonClock(new Date()));
     setText(byId("quiet-words"), bedtimeLine(picture));
   }
+  showCard(now);
+  drawPointer(now);
   if (state.jarvis?.activity === "speaking") state.speakingAt = now;
   const words = connected ? captionFor(state.jarvis, now - state.jarvisAt, accent, now - state.speakingAt) : null;
   caption.hidden = words === null;
@@ -408,12 +564,13 @@ async function followPicture(signal) {
 async function followJarvis(signal) {
   while (!signal.aborted) {
     try {
-      const response = await fetch(`/api/wall/jarvis?after=${state.seq}`, { cache: "no-store", signal: limited(signal, jarvisLimitMs) });
+      const response = await fetch(`/api/wall/jarvis?after=${state.seq}&private=${encodeURIComponent(pages.privateNow.join(","))}`, { cache: "no-store", signal: limited(signal, jarvisLimitMs) });
       if (refused(response)) return;
       if (!response.ok) throw new Error(`the hub answered ${response.status}`);
       /** @type {JarvisView} */
       const jarvis = await response.json();
       state.jarvis = jarvis;
+      takePages(jarvis);
       state.jarvisAt = Date.now();
       state.seq = jarvis.seq;
       state.jarvisFailures = 0;
@@ -421,6 +578,7 @@ async function followJarvis(signal) {
     } catch {
       if (signal.aborted) return;
       state.jarvisFailures++;
+      pages.seen = { opens: null, backs: null };
       render();
       await pause(retryMs, signal);
     }
@@ -431,6 +589,7 @@ function start() {
   state.running?.abort();
   const running = new AbortController();
   state.running = running;
+  pages.seen = { opens: null, backs: null };
   login.hidden = true;
   void followPicture(running.signal);
   void followJarvis(running.signal);
@@ -523,6 +682,7 @@ function openSetup() {
   fitting.before = fitting.corners;
   fitting.picked = null;
   setup.hidden = false;
+  byId("setup-remote").hidden = state.picture?.remote !== true;
   fitOpen.hidden = true;
   document.body.classList.add("fitting");
   setText(byId("setup-message"), "");
@@ -570,8 +730,20 @@ const nudges = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], Arrow
 window.addEventListener("keydown", (event) => {
   if (!login.hidden) return;
   if (setup.hidden) {
+    if (pointerKey(event)) return;
     if (event.key === "f" || event.key === "F") openSetup();
     else offerSetup();
+    return;
+  }
+  if (event.key === "Enter" && state.picture?.remote === true) {
+    const active = document.activeElement;
+    if (active instanceof HTMLButtonElement && setup.contains(active) && !active.classList.contains("handle")) return;
+    event.preventDefault();
+    const next = nextCorner(fitting.picked);
+    fitting.picked = next === "save" ? null : next;
+    placeHandles();
+    if (next === "save") byId("fit-save").focus();
+    else if (active instanceof HTMLElement) active.blur();
     return;
   }
   if (event.key === "Escape") {
@@ -582,7 +754,7 @@ window.addEventListener("keydown", (event) => {
   const step = nudges[event.key];
   if (step === undefined || fitting.picked === null) return;
   event.preventDefault();
-  const by = event.shiftKey ? 10 : 1;
+  const by = cornerStep(event.repeat && state.picture?.remote === true, event.shiftKey);
   const [x, y] = fitting.corners[fitting.picked];
   tryCorners(moveCorner(fitting.corners, fitting.picked, [x + step[0] * by, y + step[1] * by], window.innerWidth, window.innerHeight));
 });
@@ -615,3 +787,23 @@ fitStage();
 render();
 start();
 setInterval(render, tickMs);
+
+if (new URLSearchParams(window.location.search).get("debug") === "1") {
+  fps.hidden = false;
+  /** @type {number[]} */
+  const frames = [];
+  let shownAt = 0;
+  /**
+   * @param {number} at
+   */
+  const frame = (at) => {
+    frames.push(at);
+    while (frames.length > 0 && at - frames[0] > 2000) frames.shift();
+    if (at - shownAt > 500) {
+      shownAt = at;
+      setText(fps, `${framesASecond(frames, at)} fps`);
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}

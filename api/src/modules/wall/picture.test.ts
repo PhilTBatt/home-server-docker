@@ -134,6 +134,7 @@ test("the picture puts every part on in a fixed order, with the phase, the mode 
     mode: "normal",
     modeUntil: null,
     speaking: "string",
+    remote: false,
     items: [],
     train: { leaves: "07:14", expected: "On time", platform: "2", to: "B", cancelled: false, late: false, inMinutes: 12 },
     timers: [{ text: "Stretch", due: "2026-11-30T07:22:00Z", from: "2026-11-30T06:52:00Z" }],
@@ -177,4 +178,10 @@ test("a picture that failed isn't kept", async () => {
   await assert.rejects(picture());
   await assert.rejects(picture());
   assert.equal(made, 2);
+});
+
+test("the picture tells the wall's page whether the TV remote's pointer is on, off unless WALL_REMOTE says on", async () => {
+  const sources = { problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }) };
+  assert.equal((await buildPicture(sources, { speaking: "wobble", trainAlerts: null }, morning)).remote, false);
+  assert.equal((await buildPicture(sources, { speaking: "wobble", remote: true, trainAlerts: null }, morning)).remote, true);
 });

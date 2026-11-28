@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { hubActionTools, hubReadTools } from "./hub-tools.js";
+import { hubActionTools, hubReadTools, hubWallTools } from "./hub-tools.js";
 
 export const standInHubFile = fileURLToPath(new URL("./stand-in-hub.js", import.meta.url));
 export const hubReadToolNames = hubReadTools;
@@ -17,7 +17,8 @@ function field(value: unknown, key: string): unknown {
 }
 
 export function hubToolNames(env: Record<string, string | undefined>): string[] {
-  return env.MCP_ACTIONS === "on" ? [...hubReadToolNames, ...hubActionToolNames] : hubReadToolNames;
+  const wall = env.MCP_WALL_PAGES === "on" ? hubWallTools : [];
+  return env.MCP_ACTIONS === "on" ? [...hubReadToolNames, ...wall, ...hubActionToolNames] : [...hubReadToolNames, ...wall];
 }
 
 export function hubReply(request: Request, env: Record<string, string | undefined>, record: (call: HubCall) => void): Record<string, unknown> | null {

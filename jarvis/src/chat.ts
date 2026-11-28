@@ -2,7 +2,7 @@ import { closedMessage, type AgentSession } from "./agent.js";
 import type { Outcome, Rating, RateResult } from "./answer-log.js";
 import { speechNotes, type AnswerSpeech } from "./answer-speech.js";
 import { answerMost, findInstruction, isEnd, isSkip, isYes, questionsNoteText, questionsOffNote, questionsWord, readQuestions, type BrainQuestions, type QuestionsRun } from "./brain-questions.js";
-import { clockReply, codeWordIn, phoneFoundIn, earsStoppedWhy, hubOffNote, londonStamp, reasonOf, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply } from "./code-words.js";
+import { clockReply, codeWordIn, phoneFoundIn, earsStoppedWhy, hubOffNote, londonStamp, pagePrivateSay, reasonOf, stopMyselfReply, stoppedReply, timeLine, withTimeLine, type CodeWord, type CodeWordReply, type WallPageWords } from "./code-words.js";
 import type { SpeechReport } from "./speech-queue.js";
 import { createEvents, merged } from "./events.js";
 import { capped, lookingUp, lookUp, noQuestion, questionCap, type Earlier, type Helper, type LookedUp } from "./look-up.js";
@@ -202,6 +202,8 @@ export type ChatDeps = {
   followUp?: { seconds: number; ask(): void; gapMs?: number };
   codeWords?: CodeWordActions;
   projectorWords?: boolean;
+  pageWords?: () => readonly WallPageWords[] | null;
+  wallWords?: WallWords;
   web?: WebDeps;
   trains?: TrainNews;
   questions?: BrainQuestions;
@@ -217,6 +219,8 @@ export type ChatDeps = {
 };
 
 export type CodeWordActions = { note(text: string, signal: AbortSignal): Promise<CodeWordReply>; phone(signal: AbortSignal): Promise<CodeWordReply>; trains(signal: AbortSignal): Promise<CodeWordReply>; server?(signal: AbortSignal): Promise<CodeWordReply>; found?(signal: AbortSignal): Promise<CodeWordReply>; projector?(on: boolean, signal: AbortSignal): Promise<CodeWordReply> };
+
+export type WallWords = { page(id: string, signal: AbortSignal): Promise<CodeWordReply>; back(signal: AbortSignal): Promise<CodeWordReply> };
 
 export const neverMindNote = "left there, so nothing was asked";
 
@@ -871,7 +875,7 @@ async function heardOrNot(deps: ChatDeps, state: ChatState, sent: Sent): Promise
     await onModeWord(deps, state, modeWord, voiced(sent.heard), voice?.owner === true);
     return "go";
   }
-  const word = codeWordIn(sent.heard.text, deps.clock !== undefined, deps.web !== undefined, deps.projectorWords === true);
+  const word = codeWordIn(sent.heard.text, deps.clock !== undefined, deps.web !== undefined, deps.projectorWords === true, deps.pageWords?.() ?? null);
   if (state.questions !== null && word?.kind !== "stop listening") return onAnswer(deps, state, sent.heard.text, "spoken", voiced(sent.heard));
   if (word?.kind === "questions" && (state.guest || heldForGuest(state))) {
     state.turn++;
@@ -1022,12 +1026,23 @@ async function onCodeWord(deps: ChatDeps, state: ChatState, word: Exclude<CodeWo
     await onLookUp(deps, state, word.text, spoken);
     return;
   }
+  if ((word.kind === "page" || word.kind === "back") && !heldForGuest(state)) {
+    if (word.kind === "page" && state.guest && deps.pageWords?.()?.find((page) => page.id === word.id)?.private !== false) {
+      await sayLine(deps, state, { say: pagePrivateSay });
+      return;
+    }
+    const signal = deps.closing ?? new AbortController().signal;
+    const actions = deps.wallWords;
+    const reply = word.kind === "page" ? await actions?.page(word.id, signal) : await actions?.back(signal);
+    await sayLine(deps, state, reply ?? { say: "I couldn't reach the wall.", note: hubOffNote });
+    return;
+  }
   if (state.guest || heldForGuest(state)) {
     await sayLine(deps, state, { say: state.guest ? notInGuestSay : guestHeldSay });
     return;
   }
   const signal = deps.closing ?? new AbortController().signal;
-  const failed = { note: "I couldn't save that note.", phone: "I couldn't reach your phone.", trains: "I couldn't get the train times.", server: "I couldn't check the server.", projector: "I couldn't reach the projector." } as const;
+  const failed = { note: "I couldn't save that note.", phone: "I couldn't reach your phone.", trains: "I couldn't get the train times.", server: "I couldn't check the server.", projector: "I couldn't reach the projector.", page: "I couldn't put that on the wall.", back: "I couldn't reach the wall." } as const;
   if (word.kind === "phone") state.rangAt = (deps.clock?.() ?? new Date()).getTime();
   const reply = deps.codeWords === undefined ? { say: failed[word.kind], note: hubOffNote } : word.kind === "note" ? await deps.codeWords.note(word.text, signal) : word.kind === "phone" ? await deps.codeWords.phone(signal) : word.kind === "trains" ? await deps.codeWords.trains(signal) : word.kind === "projector" ? ((await deps.codeWords.projector?.(word.on, signal)) ?? { say: failed.projector, note: hubOffNote }) : ((await deps.codeWords.server?.(signal)) ?? { say: failed.server, note: hubOffNote });
   await sayLine(deps, state, reply);

@@ -17,10 +17,12 @@
       </header>
       <span id="clock" class="clock"></span>
 
-      <svg class="orbit" width="1280" height="720" viewBox="0 0 1280 720" aria-hidden="true">
-        <ellipse class="orbit-line" cx="640" cy="375" rx="440" ry="245"></ellipse>
-      </svg>
-      <div id="items" class="items"></div>
+      <div id="system" class="system">
+        <svg class="orbit" width="1280" height="720" viewBox="0 0 1280 720" aria-hidden="true">
+          <ellipse class="orbit-line" cx="640" cy="375" rx="440" ry="245"></ellipse>
+        </svg>
+        <div id="items" class="items"></div>
+      </div>
 
       <div id="jarvis" class="jarvis">
         <svg class="arcs" width="340" height="340" viewBox="0 0 340 340" aria-hidden="true">
@@ -55,8 +57,22 @@
         <p id="quiet-words" class="quiet-words"></p>
       </div>
 
+      <section id="card" class="card shut" aria-live="polite" hidden>
+        <div class="card-top"><span id="card-kind" class="card-kind"></span><span id="card-by" class="card-by"></span></div>
+        <h2 id="card-title" class="card-title"></h2>
+        <ul id="card-facts" class="card-facts"></ul>
+        <span class="card-time" aria-hidden="true"><span id="card-left" class="card-left"></span></span>
+      </section>
+
       <p id="caption" class="caption" aria-live="polite" hidden><span id="caption-who" class="caption-who"></span><span id="caption-text" class="caption-text"></span></p>
+
+      <span id="fit-chip" class="fit-chip" hidden>Fit to the wall</span>
+      <div id="trail" class="trail" aria-hidden="true"></div>
+      <div id="bubble" class="bubble" aria-hidden="true"></div>
+      <div id="pointer" class="pointer" aria-hidden="true" hidden><span class="pointer-glow"></span><span class="pointer-dot"></span></div>
     </div>
+
+    <span id="fps" class="fps" aria-hidden="true" hidden></span>
 
     <button id="fit-open" class="fit-open" type="button" hidden>Fit to the wall</button>
     <div id="setup" class="setup" hidden>
@@ -72,6 +88,7 @@
           <li><span>2</span><span>Pick a corner and nudge it with the arrow keys, a pixel at a time, or ten with Shift.</span></li>
           <li><span>3</span><span>Save. He stays fitted on this screen until the projector moves.</span></li>
         </ol>
+        <p id="setup-remote" hidden>With the TV remote, OK picks each corner in turn, then the Save button, and OK again saves. Hold an arrow to move a corner faster.</p>
         <p>Everything outside the shape stays black, so the wall only shows Jarvis.</p>
         <p id="setup-message" class="setup-message" aria-live="polite"></p>
         <div class="setup-buttons">

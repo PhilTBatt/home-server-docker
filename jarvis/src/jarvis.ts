@@ -18,7 +18,7 @@ import { startApiSession } from "./api-session.js";
 import { brainFileExists, fileBrainQuestions } from "./brain-questions.js";
 import { createBrainTools, noBrainTools } from "./brain-tools.js";
 import { chimeFor } from "./chime.js";
-import { projectorCodeWords, findPhone, phoneFound, saveVoiceNote, serverCheck, trainTimes } from "./code-words.js";
+import { projectorCodeWords, findPhone, keepPageWords, openWallPage, pageListFirstMs, phoneFound, saveVoiceNote, serverCheck, trainTimes, wallBack, wallPageList } from "./code-words.js";
 import { fillerFor } from "./filler.js";
 import { setUpChats, setUpNewChat, type ChatSetup } from "./chat-store.js";
 import { apiChatSystem, guestChatSystem, apiMaxTokens, askOnce, chatModel, chatsLine, chatSystem, confirmMs, engineLine, heardLines, lengthHintsFor, lengthLineFor, newChatAdvice, printable, promptWhileOpen, questionTimeoutMs, runChat, settingsLine, systemFor } from "./chat.js";
@@ -83,7 +83,8 @@ try {
   const shown = wall;
   const hints = lengthHintsFor(config.lengthHints, lengthLineFor(pricesPerMTok[chatModel], config.lengthWarn, config.lengthCap, newChatAdvice));
   if (config.hubToken !== null) checkHubServer(hubServerFile);
-  const hub = config.hubToken === null ? undefined : hubServerFor(config.hubToken, config.hubActions, hubServerFile, config.musicYes);
+  const hubBase = config.hubToken === null ? undefined : hubServerFor(config.hubToken, config.hubActions, hubServerFile, config.musicYes);
+  const hub = hubBase === undefined || config.wallPages !== "on" ? hubBase : { ...hubBase, wallPages: true };
   const hubNotes: string[] = [];
   hubTools = hub !== undefined && config.engine === "api" ? await startHubTools(hub, (note) => hubNotes.push(note)) : undefined;
   const notes = config.sessionNotes ? await readSessionNotes() : null;
@@ -107,13 +108,17 @@ try {
   const guestDir = config.guest ? await mkdtemp(join(tmpdir(), "jarvis-guest-")) : null;
   const guestSetup: ChatSetup = { chats: "fresh", history: [], earlierQuestions: null, problem: null, failureHint: null };
   const modes = config.modes && config.hubToken !== null ? modeHub(config.hubToken) : undefined;
+  const pageToken = config.hubToken;
+  const pageWords = config.wallPages === "off" || pageToken === null ? undefined : keepPageWords((signal) => wallPageList(pageToken, signal), warn);
+  closing.signal.addEventListener("abort", () => pageWords?.stop(), { once: true });
   const hubSwitches = config.hubToken === null || !config.liveFacts ? undefined : watchHubFeatures({ read: hubFeaturesReader(config.hubToken), signal: closing.signal });
   await hubSwitches?.first(starting.signal);
+  await pageWords?.first(AbortSignal.any([starting.signal, AbortSignal.timeout(pageListFirstMs)]));
   const open = (setup: ChatSetup, guest = false) => {
     const spoken = voice !== "off" && config.spokenStyle;
     const hubOn = guest ? false : config.engine === "api" ? hubTools !== undefined : hub !== undefined;
     const atHub = hubSwitches?.latest() ?? null;
-    const wired = factsWiring(config, { voice, guest, hubOn, atHub });
+    const wired = factsWiring(config, { voice, guest, hubOn, atHub, wallPageIds: pageWords?.current()?.map((page) => page.id) ?? null });
     const facts = config.liveFacts ? liveFacts(wired.input) : null;
     const relevant = wired.relevant;
     const told = factsTold(atHub);
@@ -247,7 +252,9 @@ try {
     chime: wake === undefined || speaking === null ? undefined : chimeFor(speaking),
     followUp: wake === undefined || follow === undefined || followSeconds === null ? undefined : { seconds: followSeconds, ask: () => follow.ask(followSeconds * 1000) },
     codeWords: { note: (text, signal) => saveVoiceNote(text, config.hubToken, signal), phone: (signal) => findPhone(config.hubToken, signal), found: (signal) => phoneFound(config.hubToken, signal), trains: (signal) => trainTimes(config.hubToken, signal), server: (signal) => serverCheck(config.hubToken, signal), ...(projectorWiring.action === undefined ? {} : { projector: projectorWiring.action }) },
+    wallWords: pageWords === undefined ? undefined : { page: (id, signal) => openWallPage(config.hubToken, id, signal), back: (signal) => wallBack(config.hubToken, signal) },
     projectorWords: projectorWiring.projectorWords,
+    pageWords: pageWords === undefined ? undefined : () => pageWords.current(),
     questions: config.brainQuestions && config.hubToken !== null ? { exists: brainFileExists(), file: (text, signal) => fileBrainQuestions(text, config.hubToken, signal) } : undefined,
     trains: config.trainAlerts && config.hubToken !== null ? watchTrainChanges({ ask: askHubForChanges(config.hubToken), signal: closing.signal }) : undefined,
     interrupt: () => {

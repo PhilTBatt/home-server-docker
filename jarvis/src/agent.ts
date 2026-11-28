@@ -1,5 +1,5 @@
 import type { HookCallback, McpSdkServerConfigWithInstance, Options, SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { actionsEnv, hubNoYesTools, hubProblemNote, hubReadTools, hubServerName, hubToolPrefix, isHubAction, needsHubYes, notDoneNote, withHubToken, type HubServer } from "./hub-tools.js";
+import { actionsEnv, hubNoYesTools, hubProblemNote, hubReadTools, type HubServer, hubServerName, hubToolPrefix, hubWallTools, isHubAction, needsHubYes, notDoneNote, withHubToken } from "./hub-tools.js";
 import { answerCost, pricesPerMTok, type Prices, type TokenUse } from "./prices.js";
 import type { Answer } from "./timing.js";
 import { sdkLookUpTool, webServerName } from "./look-up-tool.js";
@@ -98,7 +98,7 @@ export function agentOptions(settings: AgentSettings, confirm: Confirm = async (
             ...(settings.hub === undefined ? {} : { [hubServerName]: { type: "stdio" as const, command: settings.hub.command, args: settings.hub.args, env: actionsEnv(settings.hub), alwaysLoad: true } }),
             ...(settings.web === undefined ? {} : { [webServerName]: settings.web }),
           },
-          allowedTools: [...(settings.hub === undefined ? [] : [...hubReadTools, ...(settings.hub.actions === true ? hubNoYesTools : [])].map((tool) => `${hubToolPrefix}${tool}`)), ...(settings.web === undefined ? [] : [sdkLookUpTool])],
+          allowedTools: [...(settings.hub === undefined ? [] : [...hubReadTools, ...(settings.hub.wallPages === true ? hubWallTools : []), ...(settings.hub.actions === true ? hubNoYesTools : [])].map((tool) => `${hubToolPrefix}${tool}`)), ...(settings.web === undefined ? [] : [sdkLookUpTool])],
         }),
     ...(settings.hub?.actions === true ? { hooks: { PreToolUse: [{ hooks: [actionHook(confirm, settings.hub)], timeout: actionHookSeconds, onFailure: "block" as const }] } } : {}),
   };

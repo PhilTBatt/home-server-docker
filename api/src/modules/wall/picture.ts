@@ -21,7 +21,7 @@ export type Colour = "mint" | "blue" | "yellow" | "warm" | "grey" | "accent";
 export type WallItem = { key: "server" | "train" | "backup" | "deals" | "reminder" | "alerts" | "music"; label: string; value: string; note: string; colour: Colour; needs: boolean };
 export type WallTrain = { leaves: string; expected: string; platform: string | null; to: string; cancelled: boolean; late: boolean; inMinutes: number | null };
 export type WallTimer = { text: string; due: string; from: string };
-export type WallPicture = { at: string; clock: string; day: string; phase: Phase; mode: Mode | null; modeUntil: string | null; speaking: WallSettings["speaking"]; items: WallItem[]; train: WallTrain | null; timers: WallTimer[]; playing: { title: string; by: string } | null };
+export type WallPicture = { at: string; clock: string; day: string; phase: Phase; mode: Mode | null; modeUntil: string | null; speaking: WallSettings["speaking"]; remote: boolean; items: WallItem[]; train: WallTrain | null; timers: WallTimer[]; playing: { title: string; by: string } | null };
 
 export type WallSources = {
   mode?: () => ModeView;
@@ -34,7 +34,7 @@ export type WallSources = {
   playing?: () => Promise<Playing>;
 };
 
-export type PictureSettings = { speaking: WallSettings["speaking"]; trainAlerts: AlertSettings | null; waitMs?: number };
+export type PictureSettings = { speaking: WallSettings["speaking"]; remote?: boolean; trainAlerts: AlertSettings | null; waitMs?: number };
 
 const weekdays: Record<string, string> = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" };
 
@@ -195,6 +195,7 @@ export async function buildPicture(sources: WallSources, settings: PictureSettin
     mode,
     modeUntil: view?.until ?? null,
     speaking: settings.speaking,
+    remote: settings.remote === true,
     items,
     train,
     timers,

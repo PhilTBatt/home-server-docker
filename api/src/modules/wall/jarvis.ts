@@ -1,4 +1,5 @@
 import { tidyText } from "../talk/desk.js";
+import { pageShownMs, type PageBy } from "./pages.js";
 
 export const activities = ["waiting", "heard", "listening", "thinking", "looking", "speaking", "done", "needs"] as const;
 export const voices = ["owner", "other", "unknown"] as const;
@@ -12,7 +13,8 @@ export type Activity = (typeof activities)[number];
 export type Voice = (typeof voices)[number];
 export type Heard = { text: string; voice: Voice | null; slot: number | null };
 export type JarvisReport = { activity: Activity; muted: boolean | null; heard: Heard | null; said: string | null };
-export type JarvisView = { seq: number; running: boolean; activity: Activity; muted: boolean | null; heard: (Heard & { ageMs: number }) | null; said: string | null; saidAgeMs: number | null };
+export type OpenPage = { id: string; by: PageBy; ageMs: number };
+export type JarvisView = { seq: number; running: boolean; activity: Activity; muted: boolean | null; heard: (Heard & { ageMs: number }) | null; said: string | null; saidAgeMs: number | null; page: OpenPage | null; opens: number; backs: number };
 
 const fields = ["activity", "muted", "heard", "said"];
 const heardFields = ["text", "voice", "slot"];
@@ -62,6 +64,8 @@ export type JarvisDesk = {
   report(report: JarvisReport, at: number): number;
   view(at: number): JarvisView;
   waitForChange(after: number, ms: number, signal: AbortSignal): Promise<void>;
+  openPage(id: string, by: PageBy, at: number): number;
+  closePage(at: number): boolean;
 };
 
 const nothing: JarvisReport = { activity: "waiting", muted: null, heard: null, said: null };
@@ -76,6 +80,9 @@ export function createJarvisDesk(): JarvisDesk {
   let lastAt: number | null = null;
   let wasRunning = false;
   let forgotten: Forgotten = { heard: null, said: null };
+  let page: { id: string; by: PageBy; at: number } | null = null;
+  let opens = 0;
+  let backs = 0;
   const waiters = new Set<() => void>();
 
   const stir = () => {
@@ -91,6 +98,13 @@ export function createJarvisDesk(): JarvisDesk {
   };
 
   const running = (at: number) => lastAt !== null && at - lastAt <= runningMs;
+
+  const pageOver = (at: number) => {
+    if (page === null || at - page.at < pageShownMs) return;
+    page = null;
+    seq++;
+    stir();
+  };
 
   return {
     report(given, at) {
@@ -113,6 +127,7 @@ export function createJarvisDesk(): JarvisDesk {
     },
     view(at) {
       forget(at);
+      pageOver(at);
       if (wasRunning && !running(at)) {
         wasRunning = false;
         kept = { report: nothing, heardAt: null, saidAt: null };
@@ -128,7 +143,26 @@ export function createJarvisDesk(): JarvisDesk {
         heard: report.heard === null || heardAt === null ? null : { ...report.heard, ageMs: at - heardAt },
         said: report.said,
         saidAgeMs: report.said === null || saidAt === null ? null : at - saidAt,
+        page: page === null ? null : { id: page.id, by: page.by, ageMs: Math.max(0, at - page.at) },
+        opens,
+        backs,
       };
+    },
+    openPage(id, by, at) {
+      page = { id, by, at };
+      opens++;
+      seq++;
+      stir();
+      return seq;
+    },
+    closePage(at) {
+      pageOver(at);
+      const was = page !== null;
+      page = null;
+      backs++;
+      seq++;
+      stir();
+      return was;
     },
     waitForChange(after, ms, signal) {
       if (seq !== after || signal.aborted) return Promise.resolve();

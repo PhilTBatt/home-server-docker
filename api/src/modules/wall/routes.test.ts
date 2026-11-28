@@ -6,11 +6,12 @@ import cookie from "@fastify/cookie";
 import type { Features, WallSettings } from "../../config.js";
 import { createJarvisDesk } from "./jarvis.js";
 import type { WallPicture } from "./picture.js";
-import { noSuchCode, pairNeedsJson, plainHttpPairing, switchedOff, tooManyWrongCodes, wall, wallCookie, wallCookieDays, wallReads } from "./routes.js";
+import { noSuchCode, noSuchPage, pageByWrong, pairNeedsJson, plainHttpPairing, privacyCheckMs, privateInGuest, switchedOff, tooManyWrongCodes, wall, wallCookie, wallCookieDays, wallReads } from "./routes.js";
+import { pageIds } from "./pages.js";
 import { createPairings, mostPairings, mostWrongCodes, pairCookie, pairingMs } from "./pairing.js";
 
 const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true };
-const settings: WallSettings = { token: "w".repeat(40), speaking: "wobble" };
+const settings: WallSettings = { token: "w".repeat(40), speaking: "wobble", privatePages: [], remote: false };
 
 async function buildApp(features: Features = allOn, waitMs = 40, picture?: () => Promise<WallPicture>, logs?: string[], guard = false, events?: EventSink) {
   const clock = { at: 1_000_000 };
@@ -41,7 +42,7 @@ test("Jarvis's report is kept and read back", async () => {
   const read = await app.inject({ method: "GET", url: "/wall/jarvis" });
   assert.equal(read.statusCode, 200);
   assert.equal(read.headers["cache-control"], "no-store");
-  assert.deepEqual(read.json(), { seq: 1, running: true, activity: "listening", muted: false, heard: null, said: null, saidAgeMs: null });
+  assert.deepEqual(read.json(), { seq: 1, running: true, activity: "listening", muted: false, heard: null, said: null, saidAgeMs: null, page: null, opens: 0, backs: 0, privateNow: [] });
 });
 
 test("a bad report is a 400 with the reason, and changes nothing", async () => {
@@ -227,7 +228,7 @@ test("logging out clears the wall's cookie", async () => {
   assert.equal(cleared?.value, "");
 });
 
-const sample = { at: "2026-11-30T07:02:00.000Z", clock: "07:02", day: "Monday morning", phase: "morning", mode: "normal", modeUntil: null, speaking: "wobble", items: [], train: null, timers: [], playing: null } satisfies WallPicture;
+const sample = { at: "2026-11-30T07:02:00.000Z", clock: "07:02", day: "Monday morning", phase: "morning", mode: "normal", modeUntil: null, speaking: "wobble", remote: false, items: [], train: null, timers: [], playing: null } satisfies WallPicture;
 
 test("the wall's picture is given as it was made, never kept by the browser", async () => {
   const { app } = await buildApp(allOn, 40, async () => sample);
@@ -330,4 +331,142 @@ test("a screen paired from the phone posts an event, and a wrong code posts none
 
 test("the wall's token may read today's events and the events feed, and that's all it adds", () => {
   assert.deepEqual([...wallReads].sort(), ["GET /events/feed", "GET /events/today", "GET /wall", "GET /wall/jarvis"]);
+});
+
+async function pagesApp(options: { privatePages?: string[]; mode?: string | null; logs?: string[] } = {}) {
+  const clock = { at: 1_000_000 };
+  const desk = createJarvisDesk();
+  const app = Fastify(options.logs === undefined ? {} : { logger: { level: "info", stream: { write: (line: string) => void options.logs?.push(line) } } });
+  await app.register(cookie);
+  const mode = { now: options.mode ?? null };
+  app.register(wall, { prefix: "/wall", features: allOn, settings: { ...settings, privatePages: options.privatePages ?? [] }, desk, now: () => clock.at, waitMs: 40, mode: () => mode.now });
+  return { app, clock, desk, mode };
+}
+
+test("the hub lists the wall's pages with the words that open them, which are private, and how long one shows", async () => {
+  const { app } = await pagesApp({ privatePages: ["deals"] });
+  const listed = await app.inject({ method: "GET", url: "/wall/pages" });
+  assert.equal(listed.statusCode, 200);
+  const body = listed.json();
+  assert.equal(body.seconds, 120);
+  assert.deepEqual(body.pages.map((page: { id: string }) => page.id), pageIds);
+  assert.deepEqual(body.pages.find((page: { id: string }) => page.id === "deals"), { id: "deals", title: "Deals", say: ["show me the deals"], private: true });
+  assert.equal(body.pages.find((page: { id: string }) => page.id === "server").private, false);
+});
+
+test("opening a page puts it on the screen's long poll, with who opened it, and back takes it off", async () => {
+  const { app, clock } = await pagesApp();
+  const opened = await app.inject({ method: "POST", url: "/wall/page", payload: { page: "backup", by: "words" } });
+  assert.deepEqual([opened.statusCode, opened.json()], [200, { open: "backup", seconds: 120 }]);
+  clock.at += 5_000;
+  assert.deepEqual((await app.inject({ method: "GET", url: "/wall/jarvis" })).json().page, { id: "backup", by: "words", ageMs: 5_000, title: "The backup" });
+  const back = await app.inject({ method: "POST", url: "/wall/page/back", payload: { by: "words" } });
+  assert.deepEqual([back.statusCode, back.json()], [200, { back: true }]);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis" })).json().page, null);
+  assert.deepEqual((await app.inject({ method: "POST", url: "/wall/page/back", payload: { by: "jarvis" } })).json(), { back: false });
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis" })).json().backs, 2, "each back is counted, open or not");
+});
+
+test("only a listed page, opened in a known way, is taken", async () => {
+  const { app } = await pagesApp();
+  for (const payload of [{ page: "brain", by: "words" }, { page: "Server", by: "words" }, { by: "words" }, { page: "server" }, { page: "server", by: "claude" }, { page: "server", by: "phone" }, ["server", "words"]]) {
+    const response = await app.inject({ method: "POST", url: "/wall/page", payload });
+    assert.equal(response.statusCode, 400, JSON.stringify(payload));
+  }
+  assert.equal((await app.inject({ method: "POST", url: "/wall/page", payload: "server" })).statusCode, 415);
+  assert.deepEqual((await app.inject({ method: "POST", url: "/wall/page", payload: { page: "brain", by: "words" } })).json(), noSuchPage);
+  assert.deepEqual((await app.inject({ method: "POST", url: "/wall/page", payload: { page: "server", by: "x" } })).json(), pageByWrong);
+  assert.deepEqual((await app.inject({ method: "POST", url: "/wall/page/back", payload: {} })).json(), pageByWrong);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis" })).json().page, null);
+});
+
+test("a private page isn't opened in guest mode, and one already open disappears when guest mode starts", async () => {
+  const { app, mode } = await pagesApp({ privatePages: ["deals"], mode: "guest" });
+  const refused = await app.inject({ method: "POST", url: "/wall/page", payload: { page: "deals", by: "words" } });
+  assert.deepEqual([refused.statusCode, refused.json()], [403, privateInGuest]);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/page", payload: { page: "server", by: "words" } })).statusCode, 200, "every other page shows in guest mode");
+  mode.now = "normal";
+  assert.equal((await app.inject({ method: "POST", url: "/wall/page", payload: { page: "deals", by: "words" } })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis" })).json().page.id, "deals");
+  assert.deepEqual((await app.inject({ method: "GET", url: "/wall/jarvis" })).json().privateNow, [], "outside guest mode the private list isn't sent");
+  mode.now = "guest";
+  const inGuest = (await app.inject({ method: "GET", url: "/wall/jarvis" })).json();
+  assert.deepEqual([inGuest.page, inGuest.privateNow], [null, ["deals"]], "in guest mode the screen is told which pages to keep shut, for anything it opens itself");
+  mode.now = null;
+  assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis" })).json().page.id, "deals", "without modes the hub has no guest mode, so nothing is hidden");
+});
+
+test("a screen waiting on the long poll hears within a second or so when guest mode starts or ends, so a private page goes at once", { timeout: 10_000 }, async () => {
+  const app = Fastify();
+  await app.register(cookie);
+  const mode = { now: "normal" as string | null };
+  const desk = createJarvisDesk();
+  app.register(wall, { prefix: "/wall", features: allOn, settings: { ...settings, privatePages: ["deals"] }, desk, waitMs: 8_000, mode: () => mode.now });
+  desk.openPage("deals", "words", Date.now());
+  const seq = (await app.inject({ method: "GET", url: "/wall/jarvis" })).json().seq;
+  const started = Date.now();
+  setTimeout(() => (mode.now = "guest"), 100);
+  const answered = (await app.inject({ method: "GET", url: `/wall/jarvis?after=${seq}` })).json();
+  assert.ok(Date.now() - started < privacyCheckMs * 2 + 500, `took ${Date.now() - started} ms`);
+  assert.deepEqual([answered.page, answered.privateNow], [null, ["deals"]]);
+  const quiet = Date.now();
+  setTimeout(() => (mode.now = "bedtime"), 100);
+  const out = (await app.inject({ method: "GET", url: `/wall/jarvis?after=${seq}` })).json();
+  assert.ok(Date.now() - quiet < privacyCheckMs * 2 + 500);
+  assert.deepEqual([out.page?.id, out.privateNow], ["deals", []]);
+  await app.close();
+  const calm = Fastify();
+  await calm.register(cookie);
+  const calmMode = { now: "normal" };
+  calm.register(wall, { prefix: "/wall", features: allOn, settings: { ...settings, privatePages: ["deals"] }, desk: createJarvisDesk(), waitMs: 2_500, mode: () => calmMode.now });
+  const calmSeq = (await calm.inject({ method: "GET", url: "/wall/jarvis" })).json().seq;
+  setTimeout(() => (calmMode.now = "bedtime"), 100);
+  const unchanged = Date.now();
+  await calm.inject({ method: "GET", url: `/wall/jarvis?after=${calmSeq}` });
+  assert.ok(Date.now() - unchanged >= 2_300, "a mode change that hides nothing doesn't wake it");
+  await calm.close();
+});
+
+test("a screen that says which pages it was last told are private is answered at once when that's no longer so, even if guest mode changed between its polls", { timeout: 10_000 }, async () => {
+  const app = Fastify();
+  await app.register(cookie);
+  const mode = { now: "normal" as string | null };
+  const desk = createJarvisDesk();
+  app.register(wall, { prefix: "/wall", features: allOn, settings: { ...settings, privatePages: ["deals", "server"] }, desk, waitMs: 4_000, mode: () => mode.now });
+  desk.openPage("deals", "words", Date.now());
+  const first = (await app.inject({ method: "GET", url: "/wall/jarvis" })).json();
+  assert.deepEqual([first.page?.id, first.privateNow], ["deals", []]);
+  mode.now = "guest";
+  const started = Date.now();
+  const answered = (await app.inject({ method: "GET", url: `/wall/jarvis?after=${first.seq}&private=` })).json();
+  assert.ok(Date.now() - started < 300, `took ${Date.now() - started} ms`);
+  assert.deepEqual([answered.page, answered.privateNow], [null, ["deals", "server"]]);
+  const held = Date.now();
+  setTimeout(() => (mode.now = "normal"), 1_500);
+  const out = (await app.inject({ method: "GET", url: `/wall/jarvis?after=${first.seq}&private=server,deals,brain` })).json();
+  assert.ok(Date.now() - held >= 1_400, "a screen already told the same pages waits, whatever order it sends them in and with names that aren't private");
+  assert.deepEqual([out.page?.id, out.privateNow], ["deals", []]);
+  mode.now = "guest";
+  const stale = Date.now();
+  await app.inject({ method: "GET", url: `/wall/jarvis?after=${first.seq}&private=deals` });
+  assert.ok(Date.now() - stale < 300, "one told only some of them is answered at once");
+  for (const bad of ["Deals", "deals,", ",deals", "deals,,server", "deals%20server", "a".repeat(21), Array.from({ length: 51 }, () => "deals").join(",")]) {
+    assert.equal((await app.inject({ method: "GET", url: `/wall/jarvis?after=${first.seq}&private=${bad}` })).statusCode, 400, bad);
+  }
+  assert.equal((await app.inject({ method: "GET", url: `/wall/jarvis?after=${first.seq}&private=deals&private=server` })).statusCode, 400, "given twice");
+  await app.close();
+});
+
+test("the logs say which page, how it was opened and what was refused, and nothing else", async () => {
+  const logs: string[] = [];
+  const { app } = await pagesApp({ privatePages: ["deals"], mode: "guest", logs });
+  await app.inject({ method: "POST", url: "/wall/page", payload: { page: "server", by: "jarvis" } });
+  await app.inject({ method: "POST", url: "/wall/page", payload: { page: "deals", by: "words" } });
+  await app.inject({ method: "POST", url: "/wall/page/back", payload: { by: "words" } });
+  const lines = logs.map((line) => JSON.parse(line)).filter((line) => line.page !== undefined);
+  assert.deepEqual(lines.map((line) => [line.msg, line.page]), [
+    ["a page was opened on the wall", { id: "server", by: "jarvis" }],
+    ["a private page wasn't opened on the wall, in guest mode", { id: "deals", by: "words", refused: "private in guest mode" }],
+    ["the wall was sent back to its main page", { by: "words", wasOpen: true }],
+  ]);
 });

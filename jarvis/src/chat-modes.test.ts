@@ -13,6 +13,7 @@ import { trainSay } from "./train-news.js";
 import type { WakeEvent } from "./wake.js";
 import type { OtherVoices } from "./config.js";
 import type { SessionChange, SessionEvent } from "./session-news.js";
+import { pagePrivateSay } from "./code-words.js";
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -102,7 +103,7 @@ function fakeHub(fail: Partial<Record<Mode, string>> = {}, off = { on: false }) 
 
 const now = new Date("2026-11-27T10:00:00Z");
 
-function modeChat(options: { projector?: boolean; modes?: boolean; guest?: boolean; fail?: Partial<Record<Mode, string>>; off?: boolean; retryMs?: number; ears?: boolean; when?: Date | null; clock?: () => Date; follow?: boolean; voices?: OtherVoices } = {}) {
+function modeChat(options: { pages?: boolean | "private"; projector?: boolean; modes?: boolean; guest?: boolean; fail?: Partial<Record<Mode, string>>; off?: boolean; retryMs?: number; ears?: boolean; when?: Date | null; clock?: () => Date; follow?: boolean; voices?: OtherVoices } = {}) {
   const lines = channel<string>();
   const wake = channel<WakeEvent>();
   const modeEvents = channel<ModeEvent>();
@@ -154,6 +155,7 @@ function modeChat(options: { projector?: boolean; modes?: boolean; guest?: boole
     },
     ...(options.follow === false ? {} : { followUp: { seconds: 5, ask: () => void follows.push("follow"), gapMs: 0 } }),
     codeWords: { note: async () => ({ say: "Noted." }), phone: async () => (phone.push("rang"), { say: "Your phone's ringing for 30 seconds. Say found it when you have it." }), trains: async () => ({ say: "unused" }), found: async () => (phone.push("found"), { say: "Good, I've stopped it ringing." }), ...(options.projector === true ? { projector: async (on: boolean) => (phone.push(on ? "projector on" : "projector off"), { say: on ? "Turning the projector on." : "Turning the projector off." }) } : {}) },
+    ...(options.pages === undefined || options.pages === false ? {} : { wallWords: { page: async (id: string) => (phone.push(`page ${id}`), { say: "It's on the wall." }), back: async () => (phone.push("back"), { say: "Back to the main page." }) } }),
     trains: {
       events: trainEvents.items,
       take() {
@@ -173,6 +175,7 @@ function modeChat(options: { projector?: boolean; modes?: boolean; guest?: boole
     },
     ...(options.voices === undefined ? {} : { voices: { other: options.voices } }),
     projectorWords: options.projector === true,
+    ...(options.pages === undefined || options.pages === false ? {} : { pageWords: () => [{ id: "server", title: "The server", say: ["show me the server"], private: options.pages === "private" }] }),
     ...(options.ears === false ? {} : { earsGuests: async (on: boolean) => void guestsThrough.push(on) }),
     ...(options.guest === false ? {} : { guest: { open: async () => chatFor("guest") } }),
     ...(options.modes === true ? { modes: { hub: hub.hub, events: modeEvents.items, ...(options.retryMs === undefined ? {} : { retryMs: options.retryMs }) }, when: async (said: string) => (whens.push(said), options.when === undefined ? new Date("2026-11-29T18:00:00Z") : options.when) } : {}),
@@ -836,6 +839,48 @@ test("with voices on, a short guest mode with no verdict still starts it, since 
   assert.deepEqual(chat.hub.sets, [{ mode: "guest", until: null, by: "voice" }]);
   assert.deepEqual(chat.opened, ["guest"]);
   await chat.end();
+});
+
+test("with the wall's pages on, saying show me and a page opens it and back closes it, typed it goes to Claude, a guest chat can, and a held one can't", { timeout: 5_000 }, async () => {
+  const chat = modeChat({ modes: true, pages: true });
+  await chat.say("Show me the server.");
+  await chat.say("Back.");
+  assert.deepEqual(chat.phone, ["page server", "back"]);
+  assert.deepEqual(chat.spoken.slice(-2), ["It's on the wall.", "Back to the main page."]);
+  assert.deepEqual(chat.asked, [], "neither reaches Claude");
+  await chat.type("show me the server");
+  assert.deepEqual(chat.phone, ["page server", "back"], "typed words are never code words");
+  assert.equal(chat.asked.at(-1), "normal: show me the server");
+  await chat.type("/guest");
+  await chat.say("Show me the server.");
+  assert.deepEqual(chat.phone, ["page server", "back", "page server"], "a guest chat can open pages: the hub keeps private ones shut in guest mode");
+  await chat.end();
+  const held = modeChat({ modes: true, guest: false, pages: true });
+  await held.mode({ mode: "guest", until: null, by: "phone" });
+  await held.say("Show me the server.");
+  assert.deepEqual(held.phone, []);
+  assert.equal(held.spoken.at(-1), guestHeldSay);
+  await held.end();
+  const off = modeChat({ modes: true });
+  await off.say("Show me the server.");
+  assert.deepEqual(off.phone, []);
+  assert.ok(off.asked.at(-1)?.endsWith("Show me the server."), "with them off, the words go to Claude as before");
+  await off.end();
+});
+
+test("a guest chat refuses a private page itself, even when the hub doesn't know it's in guest mode, and Phil's own chat opens it", { timeout: 5_000 }, async () => {
+  for (const options of [{ modes: false }, { modes: true, fail: { guest: "the hub didn't answer" } }, { modes: true, off: true }]) {
+    const chat = modeChat({ ...options, pages: "private" });
+    await chat.say("Show me the server.");
+    assert.deepEqual(chat.phone, ["page server"], JSON.stringify(options));
+    await chat.type("/guest");
+    await chat.say("Show me the server.");
+    assert.deepEqual(chat.phone, ["page server"], JSON.stringify(options));
+    assert.equal(chat.spoken.at(-1), pagePrivateSay, JSON.stringify(options));
+    await chat.say("Back.");
+    assert.deepEqual(chat.phone, ["page server", "back"], "back still works");
+    await chat.end();
+  }
 });
 
 test("with JARVIS_PROJECTOR on, saying projector on or off switches it through the hub, typed it goes to Claude, and a guest can't", { timeout: 5_000 }, async () => {

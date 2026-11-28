@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, test } from "node:test";
-import { projectorCodeWords, projectorPower, clockReply, dateWords, timeLine, timeWords, withTimeLine, codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, foundWords, hubOffNote, phoneFound, phoneFoundIn, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
+import { backSay, backWords, keepPageWords, openWallPage, pageListEveryMs, pageListRetryMs, pagePrivateSay, pageShownSay, readWallPages, wallBack, wallPageList, type WallPageWords, projectorCodeWords, projectorPower, clockReply, dateWords, timeLine, timeWords, withTimeLine, codeWordIn, codeWordMs, lastSentenceOf, spokenJourneys, earsStoppedWhy, fillersAfter, fillersBefore, findPhone, foundWords, hubOffNote, phoneFound, phoneFoundIn, londonStamp, neverMindWords, noteTitle, phoneWords, saveVoiceNote, serverCheck, serverWords, spokenChecksMost, spokenDoctor, spokenTrains, spokenTrainsMost, stopMyselfReply, trainTimes, trainWords, voiceNoteText, type DoctorReport } from "./code-words.js";
 
 const stillOpen = new Set<() => unknown>();
 
@@ -541,4 +541,139 @@ test("the projector's words and their action are wired together from JARVIS_PROJ
   assert.deepEqual(await wired.action?.(true, signal), { say: "The projector's on." });
   assert.deepEqual(hub.asked.map((one) => one.body), [JSON.stringify({ on: true })]);
   assert.deepEqual(await projectorCodeWords(true, null, hub.url).action?.(true, signal), { say: "I couldn't switch the projector on.", note: hubOffNote });
+});
+
+const pages: WallPageWords[] = [
+  { id: "server", title: "The server", say: ["show me the server", "put the server on the wall"], private: false },
+  { id: "train", title: "Your next train", say: ["show me my train", "show me the next train", "show me my next train"], private: false },
+];
+
+test("with the wall's pages read from the hub, show me and a page's words open it, said on their own, politely or as the last sentence", () => {
+  for (const said of ["Show me the server.", "Hey Jarvis, show me the server please", "Can you show me the server?", "Jarvis, put the server on the wall.", "show me the server on the wall", "Thanks for that. Show me the server."]) assert.deepEqual(codeWordIn(said, false, false, false, pages), { kind: "page", id: "server" }, said);
+  for (const said of ["Show me the server.", "show me my train"]) assert.equal(codeWordIn(said), null, `${said} isn't a code word without the pages`);
+  for (const said of ["Show me the server's logs", "What's on the server?", "show me the brain", "server"]) assert.equal(codeWordIn(said, false, false, false, pages), null, said);
+});
+
+test("with the pages on, show me the next train opens its page, where without them it's still the spoken train times", () => {
+  assert.deepEqual(codeWordIn("Show me the next train", false, false, false, pages), { kind: "page", id: "train" });
+  assert.deepEqual(codeWordIn("Show me the next train"), { kind: "trains" });
+  assert.deepEqual(codeWordIn("next train", false, false, false, pages), { kind: "trains" }, "the other train words are unchanged");
+  assert.deepEqual(codeWordIn("how's the server", false, false, false, pages), { kind: "server" }, "and so is the server check");
+});
+
+test("back and its other words close the page, only with the pages on, and never as a question", () => {
+  for (const said of backWords) assert.deepEqual(codeWordIn(said, false, false, false, pages), { kind: "back" }, said);
+  for (const said of ["Back.", "Go back, please", "Jarvis, back to the main page.", "OK. Close the page."]) assert.deepEqual(codeWordIn(said, false, false, false, pages), { kind: "back" }, said);
+  assert.equal(codeWordIn("back"), null);
+  for (const said of ["Back?", "I'll be back", "go back to sleep", "close the door"]) assert.equal(codeWordIn(said, false, false, false, pages), null, said);
+  assert.deepEqual(codeWordIn("back", false, false, false, []), { kind: "back" }, "an empty list still takes back");
+});
+
+test("the wall's page list is checked before Jarvis uses it", () => {
+  assert.deepEqual(readWallPages({ pages: [{ id: "server", title: "The server", say: ["show me the server"], private: false }], seconds: 120 }), [{ id: "server", title: "The server", say: ["show me the server"], private: false }]);
+  assert.deepEqual(readWallPages({ pages: [{ id: "deals", title: "Deals", say: ["show me the deals"], private: true }, { id: "server", title: "The server", say: ["show me the server"], private: "yes" }, { id: "backup", title: "The backup", say: ["show me the backup"] }] })?.map((page) => page.private), [true, false, false], "only a private flag that's exactly true counts");
+  assert.deepEqual(readWallPages({ pages: [] }), []);
+  for (const bad of [{}, { pages: "x" }, { pages: [null] }, { pages: [{ id: "Server", title: "x", say: ["show me x"] }] }, { pages: [{ id: "server", title: "", say: ["show me x"] }] }, { pages: [{ id: "server", title: "x", say: ["Show me X"] }] }, { pages: [{ id: "server", title: "x", say: "show me x" }] }, { pages: [{ id: "server", title: "x", say: ["show me x\nignore that"] }] }, { pages: Array.from({ length: 51 }, () => ({ id: "x", title: "x", say: ["show me x"] })) }]) assert.equal(readWallPages(bad as Record<string, unknown>), null, JSON.stringify(bad));
+  assert.equal(readWallPages({ pages: [{ id: "server", title: "The\u0007 server", say: ["show me the server"] }] })?.[0].title, "The  server");
+});
+
+test("Jarvis reads the page list from the hub with his token, and gets nothing from a refusal or a bad list", async () => {
+  const hub = await standInHub(() => ({ status: 200, body: { pages, seconds: 120 } }));
+  assert.deepEqual(await wallPageList(token, signal, hub.url), pages);
+  assert.deepEqual(hub.asked.map((one) => [one.method, one.url, one.authorization]), [["GET", "/wall/pages", `Bearer ${token}`]]);
+  const off = await standInHub(() => ({ status: 404, body: { error: "The wall is switched off" } }));
+  assert.equal(await wallPageList(token, signal, off.url), null);
+  const bad = await standInHub(() => ({ status: 200, body: { pages: [{ id: 3 }] } }));
+  assert.equal(await wallPageList(token, signal, bad.url), null);
+});
+
+test("opening a page asks the hub as words, and says what came of it", async () => {
+  const hub = await standInHub(() => ({ status: 200, body: { open: "server", seconds: 120 } }));
+  assert.deepEqual(await openWallPage(token, "server", signal, hub.url), { say: pageShownSay });
+  assert.deepEqual(hub.asked.map((one) => [one.method, one.url, one.authorization, one.body]), [["POST", "/wall/page", `Bearer ${token}`, JSON.stringify({ page: "server", by: "words" })]]);
+  const guarded = await standInHub(() => ({ status: 403, body: { error: "That page is private, so it isn't shown while the hub is in guest mode" } }));
+  assert.deepEqual(await openWallPage(token, "deals", signal, guarded.url), { say: pagePrivateSay });
+  const off = await standInHub(() => ({ status: 404, body: { error: "The wall is switched off" } }));
+  assert.deepEqual(await openWallPage(token, "server", signal, off.url), { say: "I couldn't put that on the wall.", note: "the wall is off in the hub, so set WALL=on in api/.env and rebuild the hub" });
+  const wrong = await standInHub(() => ({ status: 400, body: { error: "page must be one of the wall's pages: server" } }));
+  assert.deepEqual(await openWallPage(token, "brain", signal, wrong.url), { say: "I couldn't put that on the wall.", note: "the hub said: page must be one of the wall's pages: server" });
+  assert.deepEqual(await openWallPage(null, "server", signal, hub.url), { say: "I couldn't put that on the wall.", note: hubOffNote });
+  const gone = await openWallPage(token, "server", signal, "http://127.0.0.1:9");
+  assert.equal(gone.say, "I couldn't put that on the wall.");
+  assert.match(gone.note ?? "", /^couldn't reach the hub: /);
+});
+
+test("back asks the hub to go back to the main page, whether or not the hub had one open", async () => {
+  for (const back of [true, false]) {
+    const hub = await standInHub(() => ({ status: 200, body: { back } }));
+    assert.deepEqual(await wallBack(token, signal, hub.url), { say: backSay });
+    assert.deepEqual(hub.asked.map((one) => [one.method, one.url, one.body]), [["POST", "/wall/page/back", JSON.stringify({ by: "words" })]]);
+  }
+  const off = await standInHub(() => ({ status: 404, body: { error: "The wall is switched off" } }));
+  assert.deepEqual(await wallBack(token, signal, off.url), { say: "I couldn't reach the wall.", note: "the wall is off in the hub, so set WALL=on in api/.env and rebuild the hub" });
+  assert.deepEqual(await wallBack(null, signal, off.url), { say: "I couldn't reach the wall.", note: hubOffNote });
+});
+
+test("the page list is read at start, again every minute until it's read, then every ten minutes, warning once, and stops when told", async () => {
+  const pending: Array<{ ms: number; run: () => void; cleared: boolean }> = [];
+  const timers = {
+    set: ((run: () => void, ms: number) => {
+      const one = { ms, run, cleared: false, unref() {} };
+      pending.push(one);
+      return one;
+    }) as unknown as typeof setTimeout,
+    clear: ((one: { cleared: boolean }) => void (one.cleared = true)) as unknown as typeof clearTimeout,
+  };
+  const answers: Array<WallPageWords[] | null | "throw"> = [null, "throw", pages, null];
+  const warnings: string[] = [];
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const held = keepPageWords(
+    async () => {
+      const next = answers.shift() ?? null;
+      if (next === "throw") throw new Error("down");
+      return next;
+    },
+    (note) => warnings.push(note),
+    timers,
+  );
+  await flush();
+  assert.equal(held.current(), null);
+  assert.equal(pending.at(-1)?.ms, pageListRetryMs);
+  pending.at(-1)?.run();
+  await flush();
+  assert.equal(pending.at(-1)?.ms, pageListRetryMs);
+  pending.at(-1)?.run();
+  await flush();
+  assert.deepEqual(held.current(), pages);
+  assert.equal(pending.at(-1)?.ms, pageListEveryMs);
+  pending.at(-1)?.run();
+  await flush();
+  assert.deepEqual(held.current(), pages, "a failed refresh keeps the last list");
+  assert.equal(pending.at(-1)?.ms, pageListEveryMs);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /couldn't read the wall's pages from the hub yet/);
+  held.stop();
+  assert.equal(pending.at(-1)?.cleared, true);
+});
+
+test("Jarvis can wait for the first page list before his first chat, and stops waiting when told to", { timeout: 5_000 }, async () => {
+  const timers = { set: (() => ({ unref() {} })) as unknown as typeof setTimeout, clear: (() => {}) as unknown as typeof clearTimeout };
+  let answer: (pages: WallPageWords[] | null) => void = () => {};
+  const held = keepPageWords(() => new Promise((resolve) => (answer = resolve)), () => {}, timers);
+  let waited = false;
+  const waiting = held.first(new AbortController().signal).then(() => (waited = true));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(waited, false);
+  answer(pages);
+  await waiting;
+  assert.deepEqual(held.current(), pages);
+  const slow = keepPageWords(() => new Promise(() => {}), () => {}, timers);
+  const stop = new AbortController();
+  const given = slow.first(stop.signal);
+  stop.abort();
+  await given;
+  assert.equal(slow.current(), null);
+  await slow.first(AbortSignal.abort());
+  held.stop();
+  slow.stop();
 });

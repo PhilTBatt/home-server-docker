@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mock, test } from "node:test";
-import { actionQuestion, watchText, actionsEnv, allowedHubTools, checkHubServer, defaultMusicYes, describeAction, describeWithHub, fullHash, hubActionTools, hubApiUrl, hubNoYesTools, hubMusicChanges, hubMusicControls, hubMusicReadTools, hubNotBuilt, hubReadTools, hubServerEnv, hubServerFile, hubServerFor, hubToolPrefix, isHubAction, lookUpDownload, lookupMs, musicText, nameLimit, needsHubYes, noTorrentError, notDoneNote, shownName, withHubToken, type Lookup } from "./hub-tools.js";
+import { actionQuestion, watchText, actionsEnv, allowedHubTools, checkHubServer, defaultMusicYes, describeAction, describeWithHub, fullHash, hubActionTools, hubApiUrl, hubNoYesTools, hubMusicChanges, hubMusicControls, hubMusicReadTools, hubNotBuilt, hubReadTools, hubServerEnv, hubServerFile, hubServerFor, hubToolPrefix, hubWallTools, isHubAction, lookUpDownload, lookupMs, musicText, nameLimit, needsHubYes, noTorrentError, notDoneNote, shownName, withHubToken, type Lookup } from "./hub-tools.js";
 
 test("the hub's MCP server is the built one mounted from mcp/, run with this Node, and its tools are named mcp__hub__ on the Agent SDK", () => {
   assert.equal(hubServerFile, "/mcp/dist/server.js");
@@ -401,4 +401,16 @@ test("run_chore for a session says which session it starts or stops", () => {
   assert.equal(actionQuestion("run_chore", { job: "session-start-docker" }), "Jarvis wants to start the Claude Code session docker. Type yes to let him, or anything else to stop it");
   assert.equal(actionQuestion("run_chore", { job: "session-stop-brain" }), "Jarvis wants to stop the Claude Code session brain. Type yes to let him, or anything else to stop it");
   for (const job of ["session-start-Docker", "session-start-", "session-start-a b"]) assert.equal(actionQuestion("run_chore", { job }), "Jarvis wants to run a chore the runner won't accept. Type yes to let him, or anything else to stop it", job);
+});
+
+test("with the wall's pages on, the hub's MCP server is told to give open_wall_page, which runs without a yes and is never an action", () => {
+  const paged = { ...hubServerFor("t"), wallPages: true };
+  assert.deepEqual(hubWallTools, ["open_wall_page"]);
+  assert.deepEqual(actionsEnv(paged), { MCP_ACTIONS: "off", MCP_WALL_PAGES: "on" });
+  assert.deepEqual(hubServerEnv({ ...hubServerFor("t", true), wallPages: true }), { API_TOKEN: "t", MCP_ACTIONS: "on", MCP_WALL_PAGES: "on" });
+  assert.deepEqual(actionsEnv({ ...hubServerFor("t"), wallPages: false }), { MCP_ACTIONS: "off" }, "off, the server isn't told at all, so it uses its own default, off");
+  assert.deepEqual(allowedHubTools(paged), [...hubReadTools, "open_wall_page"]);
+  assert.deepEqual(allowedHubTools({ ...hubServerFor("t", true), wallPages: true }), [...hubReadTools, "open_wall_page", ...hubNoYesTools, ...hubActionTools]);
+  assert.equal(isHubAction("open_wall_page"), false);
+  assert.equal(needsHubYes({ musicYes: "all" }, "open_wall_page"), false);
 });

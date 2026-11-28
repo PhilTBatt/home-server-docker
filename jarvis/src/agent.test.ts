@@ -1017,3 +1017,11 @@ test("with the hub's tools and the look-up tool, both servers are there, the hub
   assert.equal(acting.hooks?.PreToolUse?.length, 1);
   assert.equal("hooks" in agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: {}, web }), false);
 });
+
+test("with the wall's pages on, the engine may open a wall page by name with nothing asked, and the hub's server is told to give the tool", () => {
+  const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub: { ...hub, wallPages: true } });
+  assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "off", MCP_WALL_PAGES: "on" }, alwaysLoad: true } });
+  assert.ok(options.allowedTools?.includes("mcp__hub__open_wall_page"));
+  assert.equal("hooks" in options, false, "no yes is asked for it");
+  assert.ok(!agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub }).allowedTools?.includes("mcp__hub__open_wall_page"));
+});

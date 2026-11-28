@@ -12,6 +12,7 @@ export const hubMusicChanges = ["spotify_playlist_add", "spotify_save"];
 export const hubReadTools = ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_events", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden", ...hubMusicReadTools];
 export const hubActionTools = ["scan_library", "stop_download", "start_download", "add_watcher", "cancel_watcher", "cancel_reminder", "run_chore", ...hubMusicControls, ...hubMusicChanges];
 export const hubNoYesTools = ["set_reminder", "snooze_reminder"];
+export const hubWallTools = ["open_wall_page"];
 export const defaultMusicYes: MusicYes = "changes";
 export const notDoneNote = "Phil didn't say yes, so it wasn't done";
 export const hubApiUrl = "http://api:3000";
@@ -20,14 +21,14 @@ export const nameLimit = 80;
 export const noTorrentError = "No torrent with that hash";
 export const typeYes = "Type yes to let him, or anything else to stop it";
 
-export type HubServer = { command: string; args: string[]; token: string; actions?: boolean; musicYes?: MusicYes };
+export type HubServer = { command: string; args: string[]; token: string; actions?: boolean; musicYes?: MusicYes; wallPages?: boolean };
 
 export function hubServerFor(token: string, actions = false, file = hubServerFile, musicYes: MusicYes = defaultMusicYes): HubServer {
   return { command: process.execPath, args: [file], token, actions, musicYes };
 }
 
 export function actionsEnv(server: HubServer): Record<string, string> {
-  return { MCP_ACTIONS: server.actions === true ? "on" : "off" };
+  return { MCP_ACTIONS: server.actions === true ? "on" : "off", ...(server.wallPages === true ? { MCP_WALL_PAGES: "on" } : {}) };
 }
 
 export function hubServerEnv(server: HubServer): Record<string, string> {
@@ -35,7 +36,8 @@ export function hubServerEnv(server: HubServer): Record<string, string> {
 }
 
 export function allowedHubTools(server: HubServer): string[] {
-  return server.actions === true ? [...hubReadTools, ...hubNoYesTools, ...hubActionTools] : hubReadTools;
+  const wall = server.wallPages === true ? hubWallTools : [];
+  return server.actions === true ? [...hubReadTools, ...wall, ...hubNoYesTools, ...hubActionTools] : [...hubReadTools, ...wall];
 }
 
 export function isHubAction(name: string): boolean {

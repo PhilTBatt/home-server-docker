@@ -246,7 +246,16 @@ function lookupPath(path: string, query: Record<string, string | undefined>): st
   return `${path}?${params.toString()}`;
 }
 
-export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGet: ApiGet, remove: ApiDelete): McpServer {
+const wallPageInput = z.object({
+  page: z.string().regex(/^[a-z]{1,20}$/).describe("The page's short name, such as server or train"),
+});
+
+export const openWallPageTool = {
+  name: "open_wall_page",
+  description: "Puts one of the wall's pages on the screen in Phil's room for two minutes, for anyone in the room to see, guests included; then the wall goes back to its main page, or sooner if Phil says back. Only the wall's own pages can be opened, by their short names; it can't show anything else, and it changes nothing. Use it when seeing a page would help with what Phil is asking, not to fill the screen. Fails with a 400 that lists the pages for a name that isn't one of them, a 403 for a page that's private while the hub is in guest mode, and a 404 while the wall is switched off (WALL).",
+};
+
+export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGet: ApiGet, remove: ApiDelete, wallPages = false): McpServer {
   const server = new McpServer({ name: "home-hub", version: "1.0.0" });
   for (const tool of readTools) {
     server.registerTool(tool.name, { description: tool.description }, async () => asText(await get(tool.path)));
@@ -330,6 +339,7 @@ export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGe
     async ({ item, search }) => asText(await slowGet(lookupPath("/deals/ai/explain", { item, search }))),
   );
   registerSpotifyReads(server, get);
+  if (wallPages) server.registerTool(openWallPageTool.name, { description: openWallPageTool.description, inputSchema: wallPageInput }, async ({ page }) => asText(await post("/wall/page", { page, by: "jarvis" })));
   if (!actions) return server;
 
   server.registerTool(

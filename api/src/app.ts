@@ -116,8 +116,8 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     playing: spotifyParts === undefined ? undefined : () => spotifyParts.client.playing(),
     ...options.wallSources,
   };
-  const picture = keptPicture(() => buildPicture(shown, { speaking: options.config.wall.speaking, trainAlerts: features.trainAlerts ? options.config.trainAlerts : null }, new Date()));
-  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, guard: options.config.login.guard, desk: options.jarvisDesk, picture, events: feed });
+  const picture = keptPicture(() => buildPicture(shown, { speaking: options.config.wall.speaking, remote: options.config.wall.remote, trainAlerts: features.trainAlerts ? options.config.trainAlerts : null }, new Date()));
+  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, guard: options.config.login.guard, desk: options.jarvisDesk, picture, events: feed, mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view().mode : undefined });
   app.register(events, { prefix: "/events", features: options.config.features, feed, apiToken: options.config.apiToken, mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view().mode : undefined });
   app.register(deals, {
     prefix: "/deals",

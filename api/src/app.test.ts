@@ -26,7 +26,7 @@ const config: Config = {
   modes: { bedtimeFrom: null, bedtimeUntil: null },
   phone: { ring: "once", seconds: 30 },
   spotify: { clientId: "", redirectUri: "" },
-  wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble" },
+  wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble", privatePages: [], remote: false },
   login: { guard: false },
   projector: { host: "192.168.1.23", power: "wake-sleep" },
   features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true }
@@ -772,11 +772,26 @@ test("Spotify's routes are the hub's, behind its token like every other, and a 4
 
 const wallToken = config.wall.token;
 
+test("the hub's own mode keeps the wall's private pages shut in guest mode, and only with modes on", async () => {
+  const handed = createModes({ store: { load: async () => "missing", save: async () => {} }, settings: config.modes, topic: "test-topic", send: async () => {} });
+  await handed.load(new Date("2026-11-27T12:00:00.000Z"));
+  const privateConfig = { ...config, wall: { ...config.wall, privatePages: ["deals"] } };
+  const app = await buildRealApp({ logger: false, config: privateConfig, modes: handed });
+  const open = () => app.inject({ method: "POST", url: "/wall/page", headers: goodHeader, payload: { page: "deals", by: "words" } });
+  assert.equal((await open()).statusCode, 200);
+  assert.equal((await app.inject({ method: "POST", url: "/mode", headers: goodHeader, payload: { mode: "guest", by: "phone" } })).json().mode, "guest");
+  assert.equal((await open()).statusCode, 403);
+  assert.deepEqual((await app.inject({ method: "GET", url: "/wall/jarvis", headers: { authorization: `Bearer ${wallToken}` } })).json().privateNow, ["deals"]);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/page", headers: goodHeader, payload: { page: "server", by: "words" } })).statusCode, 200, "a page that isn't private still opens");
+  const modesOff = await buildRealApp({ logger: false, config: { ...privateConfig, features: { ...privateConfig.features, modes: false } }, modes: handed });
+  assert.equal((await modesOff.inject({ method: "POST", url: "/wall/page", headers: goodHeader, payload: { page: "deals", by: "words" } })).statusCode, 200, "with modes off the hub has no guest mode to go by");
+});
+
 test("the wall's token reads Jarvis's state for the wall and nothing else", async () => {
   const app = await buildRealApp({ logger: false, config });
   assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", headers: { authorization: `Bearer ${wallToken}` } })).statusCode, 200);
   assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: wallToken } })).statusCode, 200);
-  for (const [method, url] of [["GET", "/health"], ["GET", "/system/features"], ["GET", "/mode"], ["POST", "/mode"], ["POST", "/wall/jarvis"], ["GET", "/talk/status"], ["POST", "/phone/find"], ["GET", "/wall/jarvis/"], ["HEAD", "/wall/jarvis"]] as const) {
+  for (const [method, url] of [["GET", "/health"], ["GET", "/system/features"], ["GET", "/mode"], ["POST", "/mode"], ["POST", "/wall/jarvis"], ["GET", "/talk/status"], ["POST", "/phone/find"], ["GET", "/wall/jarvis/"], ["HEAD", "/wall/jarvis"], ["GET", "/wall/pages"], ["POST", "/wall/page"], ["POST", "/wall/page/back"]] as const) {
     assert.equal((await app.inject({ method, url, cookies: { wall_token: wallToken }, payload: method === "POST" ? {} : undefined })).statusCode, 401, `${method} ${url} with the cookie`);
     assert.equal((await app.inject({ method, url, headers: { authorization: `Bearer ${wallToken}` }, payload: method === "POST" ? {} : undefined })).statusCode, 401, `${method} ${url} with the header`);
   }
@@ -849,7 +864,7 @@ test("with WALL off, the wall's token opens nothing, pairing is a 404, and the h
 });
 
 test("with no wall token set, an empty one opens nothing", async () => {
-  const app = await buildRealApp({ logger: false, config: { ...config, wall: { token: "", speaking: "wobble" } } });
+  const app = await buildRealApp({ logger: false, config: { ...config, wall: { token: "", speaking: "wobble", privatePages: [], remote: false } } });
   assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", headers: { authorization: "Bearer " } })).statusCode, 401);
   assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: "" } })).statusCode, 401);
 });
@@ -878,7 +893,10 @@ test("the wall's token reads the wall's picture, made from the hub's own reads",
     assert.equal(response.statusCode, 200, url);
     assert.deepEqual(response.json().items.map((item: { key: string }) => item.key), ["server", "backup", "alerts"]);
     assert.equal(response.json().speaking, "wobble");
+    assert.equal(response.json().remote, false);
   }
+  const remote = await buildRealApp({ logger: false, config: { ...config, wall: { ...config.wall, remote: true } }, wallSources: { doctor: async () => ({ state: "ok", summary: "", checkedAt: "", checks: [] }), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
+  assert.equal((await remote.inject({ method: "GET", url: "/wall", cookies: { wall_token: wallToken } })).json().remote, true, "WALL_REMOTE reaches the page");
   assert.equal((await app.inject({ method: "HEAD", url: "/wall", cookies: { wall_token: wallToken } })).statusCode, 401);
   assert.equal((await app.inject({ method: "GET", url: "/wall" })).statusCode, 401);
 });

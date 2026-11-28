@@ -78,14 +78,14 @@ function fakeApi(data: unknown = { ok: true, problems: [] }) {
   return { get, post, remove, calls };
 }
 
-async function connect(api: { get: ApiGet; post: ApiPost; slowGet?: ApiGet; remove?: ApiDelete }, actions = true) {
+async function connect(api: { get: ApiGet; post: ApiPost; slowGet?: ApiGet; remove?: ApiDelete }, actions = true, wallPages = false) {
   const [client, serverSide] = InMemoryTransport.createLinkedPair();
   const waiting = new Map<number, (reply: Reply) => void>();
   client.onmessage = (message) => {
     const reply = message as Reply;
     waiting.get(reply.id)?.(reply);
   };
-  await buildServer(api.get, api.post, actions, api.slowGet ?? api.get, api.remove ?? fakeApi().remove).connect(serverSide);
+  await buildServer(api.get, api.post, actions, api.slowGet ?? api.get, api.remove ?? fakeApi().remove, wallPages).connect(serverSide);
   await client.start();
 
   let nextId = 1;
@@ -652,4 +652,30 @@ test("get_sessions asks GET /sessions and says a restart forgets them", async ()
   assert.match((await listTools()).find((one) => one.name === "get_sessions")?.description ?? "", /a restart of the API forgets them/);
   await callTool("get_sessions", {});
   assert.deepEqual(fake.calls, ["GET /sessions"]);
+});
+
+test("open_wall_page is offered only with MCP_WALL_PAGES on, with or without the actions, and opens the page as Jarvis", async () => {
+  for (const actions of [false, true]) {
+    const off = await connect(fakeApi(), actions);
+    assert.ok(!(await off.listTools()).some((tool) => tool.name === "open_wall_page"), `off, with actions ${actions}`);
+    const api = fakeApi({ open: "server", seconds: 120 });
+    const on = await connect(api, actions, true);
+    const tool = (await on.listTools()).find((one) => one.name === "open_wall_page");
+    assert.ok(tool !== undefined, `on, with actions ${actions}`);
+    assert.match(tool.description ?? "", /two minutes/);
+    assert.match(tool.description ?? "", /guests included/);
+    const reply = await on.callTool("open_wall_page", { page: "server" });
+    assert.deepEqual(api.calls, ['POST /wall/page {"page":"server","by":"jarvis"}']);
+    assert.equal((reply.result as { content: Array<{ text: string }> }).content[0].text, JSON.stringify({ open: "server", seconds: 120 }));
+  }
+});
+
+test("open_wall_page takes one page name of lowercase letters and nothing else, refusing anything else without calling the API", async () => {
+  const api = fakeApi();
+  const on = await connect(api, false, true);
+  for (const page of ["Server", "../wall", "server; rm", "", "a".repeat(21)]) {
+    const reply = await on.callTool("open_wall_page", { page });
+    assert.ok((reply.result as { isError?: boolean } | undefined)?.isError === true || reply.error !== undefined, page);
+  }
+  assert.deepEqual(api.calls, []);
 });

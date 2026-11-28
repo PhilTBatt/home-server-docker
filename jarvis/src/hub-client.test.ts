@@ -204,6 +204,28 @@ test("only the hub tools Jarvis knows are taken: the read tools, plus the action
   assert.deepEqual(notes, [hubProblemNote("no tools listed")]);
 });
 
+test("on the plain engine, open_wall_page is taken only with the wall's pages on, and needs no yes; over a real pipe the server is told to give it", async () => {
+  const listed = ["get_status", "open_wall_page"].map((name) => ({ name, inputSchema: { type: "object" } }));
+  const lister = fakeConnection({ listTools: async () => ({ tools: listed }) });
+  assert.deepEqual((await startHubTools(server, () => assert.fail("no note expected"), async () => lister.connection))?.definitions.map((tool) => tool.name), ["get_status"]);
+  const paged = await startHubTools({ ...server, wallPages: true }, () => assert.fail("no note expected"), async () => lister.connection);
+  assert.deepEqual(paged?.definitions.map((tool) => tool.name), ["get_status", "open_wall_page"]);
+  assert.equal(paged?.needsYes?.("open_wall_page"), false);
+  const dir = await mkdtemp(join(tmpdir(), "jarvis-hub-client-"));
+  try {
+    const log = join(dir, "calls.jsonl");
+    const hub = await startHubTools({ command: process.execPath, args: [standInHubFile, log], token: "hub-token", wallPages: true }, () => assert.fail("no note expected"), connectOverStdio, 10_000);
+    stillOpen.add(() => hub?.close());
+    assert.deepEqual(hub?.definitions.map((tool) => tool.name), [...hubReadToolNames, "open_wall_page"]);
+    await hub?.run("open_wall_page", { page: "server" });
+    await hub?.close();
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as HubCall);
+    assert.deepEqual(calls, [{ tool: "open_wall_page", input: { page: "server" }, token: "hub-token", actions: "off", anthropicKey: false }]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("on the plain engine Spotify's playback controls need no yes unless JARVIS_MUSIC_YES=all, and its playlist and library changes always do", async () => {
   const listed = ["get_spotify_playing", "spotify_pause", "spotify_volume", "spotify_playlist_add", "spotify_save"].map((name) => ({ name, inputSchema: { type: "object" } }));
   const lister = fakeConnection({ listTools: async () => ({ tools: listed }) });

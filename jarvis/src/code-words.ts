@@ -1,6 +1,6 @@
 import { hubApiUrl } from "./hub-tools.js";
 
-export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "projector"; on: boolean } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" } | { kind: "questions" } | { kind: "time" } | { kind: "date" } | { kind: "look up"; text: string };
+export type CodeWord = { kind: "note"; text: string } | { kind: "phone" } | { kind: "projector"; on: boolean } | { kind: "page"; id: string } | { kind: "back" } | { kind: "never mind" } | { kind: "trains" } | { kind: "server" } | { kind: "stop listening" } | { kind: "questions" } | { kind: "time" } | { kind: "date" } | { kind: "look up"; text: string };
 
 const address = /^\s*(?:(?:hey|hi|ok|okay)\b[\s,.!?]*)?(?:\S*vis\b[\s,.!?]*)?/i;
 const askingWords = "can you|could you|would you|will you|can u|please|just|jarvis";
@@ -34,6 +34,8 @@ export const phoneWords = ["find my phone", "help me find my phone", "where's my
 export const foundWords = ["found it", "i found it", "i've found it", "i have found it", "found my phone", "i found my phone", "i've found my phone", "i have found my phone", "found the phone", "i've found the phone", "got my phone", "i've got my phone", "stop ringing", "stop ringing my phone", "you can stop ringing", "you can stop ringing my phone"];
 export const projectorOnWords = ["projector on", "turn the projector on", "turn on the projector", "switch the projector on", "switch on the projector", "put the projector on", "wake the projector", "wake up the projector"];
 export const projectorOffWords = ["projector off", "turn the projector off", "turn off the projector", "switch the projector off", "switch off the projector", "put the projector to sleep", "projector to sleep"];
+export const backWords = ["back", "go back", "back to the main page", "go back to the main page", "close the page", "close that page"];
+export type WallPageWords = { id: string; title: string; say: string[]; private: boolean };
 export const serverWords = ["server check", "check the server", "how's the server", "how is the server", "how's the server doing", "how is the server doing", "is the server ok", "is the server okay"];
 const serverAfter = fillersAfter.split("|").filter((word) => word !== "ok" && word !== "okay").join("|");
 export const questionWords = ["brain questions", "any brain questions", "ask me some brain questions", "ask me your brain questions", "any questions for me", "have you got any questions for me", "do you have any questions for me", "got any questions for me"];
@@ -42,7 +44,7 @@ export const trainWords = ["train times", "train time", "trains", "next train", 
 export const timeWords = ["what time is it", "what time's it", "what's the time", "what is the time", "tell me the time", "tell me what time it is", "do you know the time", "do you know what time it is"];
 export const dateWords = ["what's the date", "what is the date", "what's the date today", "what is the date today", "what's today's date", "what is today's date", "tell me the date", "tell me today's date", "what day is it", "what day is it today", "what day's it", "tell me what day it is", "do you know what day it is"];
 
-function codeWordAlone(said: string, clock: boolean, web: boolean, projector: boolean): CodeWord | null {
+function codeWordAlone(said: string, clock: boolean, web: boolean, projector: boolean, pages: readonly WallPageWords[] | null): CodeWord | null {
   const text = said.replace(/[\u2018\u2019]/g, "'").replace(address, "");
   const note = noteStart.exec(text);
   if (note !== null) return { kind: "note", text: text.slice(note[0].length).trim() };
@@ -57,6 +59,11 @@ function codeWordAlone(said: string, clock: boolean, web: boolean, projector: bo
   const bareQuestion = /\?\s*$/.test(text) && (request === "projector on" || request === "projector off");
   if (projector && !bareQuestion && projectorOnWords.includes(request)) return { kind: "projector", on: true };
   if (projector && !bareQuestion && projectorOffWords.includes(request)) return { kind: "projector", on: false };
+  if (pages !== null) {
+    const shown = pages.find((page) => page.say.includes(request) || page.say.includes(request.replace(/ on the wall$/, "")));
+    if (shown !== undefined) return { kind: "page", id: shown.id };
+    if (backWords.includes(request) && !/\?\s*$/.test(text)) return { kind: "back" };
+  }
   if (neverMindWords.includes(words) && !/\?\s*$/.test(text)) return { kind: "never mind" };
   if (trainWords.includes(request) || trainWords.includes(request.replace(trainAsking, ""))) return { kind: "trains" };
   const server = asked(plainWords(text).replace(new RegExp(`^(?:(?:${fillersBefore}) )+`), "").replace(new RegExp(`(?: (?:${serverAfter}))+$`), ""));
@@ -77,11 +84,11 @@ export function lastSentenceOf(said: string): string | null {
   return sentences.length > 1 ? sentences[sentences.length - 1] : null;
 }
 
-export function codeWordIn(said: string, clock = false, web = false, projector = false): CodeWord | null {
-  const whole = codeWordAlone(said, clock, web, projector);
+export function codeWordIn(said: string, clock = false, web = false, projector = false, pages: readonly WallPageWords[] | null = null): CodeWord | null {
+  const whole = codeWordAlone(said, clock, web, projector, pages);
   if (whole !== null) return whole;
   const last = lastSentenceOf(said);
-  return last === null ? null : codeWordAlone(last, false, false, projector);
+  return last === null ? null : codeWordAlone(last, false, false, projector, pages);
 }
 
 export type CodeWordReply = { say: string; note?: string };
@@ -187,6 +194,102 @@ export async function projectorPower(token: string | null, on: boolean, signal: 
   } catch (error) {
     return { say: failed, note: `couldn't reach the hub: ${reasonOf(error)}` };
   }
+}
+
+const pageIdPattern = /^[a-z]{1,20}$/;
+const sayPattern = /^[a-z][a-z' ]{2,60}[a-z]$/;
+
+export function readWallPages(fields: Record<string, unknown>): WallPageWords[] | null {
+  if (!Array.isArray(fields.pages) || fields.pages.length > 50) return null;
+  const pages: WallPageWords[] = [];
+  for (const page of fields.pages as unknown[]) {
+    if (typeof page !== "object" || page === null) return null;
+    const { id, title, say, private: hidden } = page as Record<string, unknown>;
+    if (typeof id !== "string" || !pageIdPattern.test(id) || typeof title !== "string" || title.length === 0 || title.length > 60 || !Array.isArray(say) || say.length > 10 || !say.every((words) => typeof words === "string" && sayPattern.test(words))) return null;
+    pages.push({ id, title: title.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " "), say: say as string[], private: hidden === true });
+  }
+  return pages;
+}
+
+export async function wallPageList(token: string, signal: AbortSignal, url = hubApiUrl): Promise<WallPageWords[] | null> {
+  const { status, fields } = await hubAsk("/wall/pages", { headers: { Authorization: `Bearer ${token}` } }, signal, url);
+  return status === 200 ? readWallPages(fields) : null;
+}
+
+export const pageShownSay = "It's on the wall.";
+export const pagePrivateSay = "That page is private while guests are here.";
+export const backSay = "Back to the main page.";
+const pageFailed = "I couldn't put that on the wall.";
+const backFailed = "I couldn't reach the wall.";
+const wallOffNote = "the wall is off in the hub, so set WALL=on in api/.env and rebuild the hub";
+
+export async function openWallPage(token: string | null, id: string, signal: AbortSignal, url = hubApiUrl): Promise<CodeWordReply> {
+  if (token === null) return { say: pageFailed, note: hubOffNote };
+  try {
+    const { status, fields } = await hubPost("/wall/page", { page: id, by: "words" }, token, signal, url);
+    if (status === 200) return { say: pageShownSay };
+    if (status === 403) return { say: pagePrivateSay };
+    if (status === 404 && fields.error === "The wall is switched off") return { say: pageFailed, note: wallOffNote };
+    return { say: pageFailed, note: `the hub said: ${errorOf(fields, status)}` };
+  } catch (error) {
+    return { say: pageFailed, note: `couldn't reach the hub: ${reasonOf(error)}` };
+  }
+}
+
+export async function wallBack(token: string | null, signal: AbortSignal, url = hubApiUrl): Promise<CodeWordReply> {
+  if (token === null) return { say: backFailed, note: hubOffNote };
+  try {
+    const { status, fields } = await hubPost("/wall/page/back", { by: "words" }, token, signal, url);
+    if (status === 200) return { say: backSay };
+    if (status === 404 && fields.error === "The wall is switched off") return { say: backFailed, note: wallOffNote };
+    return { say: backFailed, note: `the hub said: ${errorOf(fields, status)}` };
+  } catch (error) {
+    return { say: backFailed, note: `couldn't reach the hub: ${reasonOf(error)}` };
+  }
+}
+
+export const pageListEveryMs = 10 * 60_000;
+export const pageListRetryMs = 60_000;
+export const pageListFirstMs = 3_000;
+
+export type PageWordsHolder = { current(): readonly WallPageWords[] | null; first(signal: AbortSignal): Promise<void>; stop(): void };
+
+export function keepPageWords(load: (signal: AbortSignal) => Promise<WallPageWords[] | null>, warn: (note: string) => void, timers: { set: typeof setTimeout; clear: typeof clearTimeout } = { set: setTimeout, clear: clearTimeout }): PageWordsHolder {
+  let pages: readonly WallPageWords[] | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let warned = false;
+  const stopping = new AbortController();
+  const next = (ms: number) => {
+    if (stopping.signal.aborted) return;
+    timer = timers.set(() => void fetchNow(), ms);
+    timer.unref?.();
+  };
+  const fetchNow = async () => {
+    const got = await load(stopping.signal).catch(() => null);
+    if (got !== null) {
+      pages = got;
+      warned = false;
+      next(pageListEveryMs);
+      return;
+    }
+    if (!warned && pages === null) warn("couldn't read the wall's pages from the hub yet, so page words won't work until it can; trying again every minute");
+    warned = true;
+    next(pages === null ? pageListRetryMs : pageListEveryMs);
+  };
+  const started = fetchNow();
+  return {
+    current: () => pages,
+    first: (signal) =>
+      new Promise<void>((resolve) => {
+        if (signal.aborted) return resolve();
+        signal.addEventListener("abort", () => resolve(), { once: true });
+        void started.then(() => resolve());
+      }),
+    stop() {
+      stopping.abort();
+      if (timer !== null) timers.clear(timer);
+    },
+  };
 }
 
 export function projectorCodeWords(on: boolean, token: string | null, url = hubApiUrl): { projectorWords: boolean; action?: (want: boolean, signal: AbortSignal) => Promise<CodeWordReply> } {

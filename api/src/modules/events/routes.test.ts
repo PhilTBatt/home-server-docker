@@ -21,7 +21,7 @@ const config: Config = {
   modes: { bedtimeFrom: null, bedtimeUntil: null },
   phone: { ring: "once", seconds: 30 },
   spotify: { clientId: "", redirectUri: "" },
-  wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble" },
+  wall: { token: "test-wall-token-0123456789abcdef0123", speaking: "wobble", privatePages: [], remote: false },
   login: { guard: false },
   projector: { host: "192.168.1.23", power: "wake-sleep" },
   features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: true, projector: false, events: true },

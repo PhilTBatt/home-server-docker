@@ -10,7 +10,7 @@ test("the brain is always mounted at /brain", () => {
 });
 
 test("reads the API key, and uses the Agent SDK unless told otherwise", () => {
-  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, musicYes: "changes", sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, digest: false, phone: false, wall: false, projector: false, intro: false, guest: false, modes: false, reminders: false, voices: false, sessions: false, otherVoices: "answer", web: "off", webBy: "claude", webToken: null, webLog: false, log: false });
+  assert.deepEqual(readConfig(base), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, musicYes: "changes", sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, digest: false, phone: false, wall: false, projector: false, wallPages: "off", intro: false, guest: false, modes: false, reminders: false, voices: false, sessions: false, otherVoices: "answer", web: "off", webBy: "claude", webToken: null, webLog: false, log: false });
 });
 
 test("there are two engines, the Agent SDK and the plain API", () => {
@@ -100,7 +100,7 @@ test("refuses an empty API key", () => {
 });
 
 test("ignores other settings", () => {
-  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, musicYes: "changes", sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, digest: false, phone: false, wall: false, projector: false, intro: false, guest: false, modes: false, reminders: false, voices: false, sessions: false, otherVoices: "answer", web: "off", webBy: "claude", webToken: null, webLog: false, log: false });
+  assert.deepEqual(readConfig({ ...base, API_TOKEN: "other", OTHER_SETTING: "x" }), { apiKey: key, engine: "sdk", thinkingHistory: "keep", chats: "fresh", lengthHints: "note", lengthWarn: 80000, lengthCap: null, hubToken: null, hubActions: false, musicYes: "changes", sessionNotes: false, voice: "off", kokoroVoice: "bm_george", kokoroSpeed: 1, piperVoice: "en_GB-alan-medium", volume: 80, speechStart: "sentence", speechStop: "now", speechBundle: false, spokenStyle: false, persona: null, liveFacts: false, filler: false, ears: "off", earsToken: null, followUp: null, turnCheck: false, trainAlerts: false, brainQuestions: false, clock: false, digest: false, phone: false, wall: false, projector: false, wallPages: "off", intro: false, guest: false, modes: false, reminders: false, voices: false, sessions: false, otherVoices: "answer", web: "off", webBy: "claude", webToken: null, webLog: false, log: false });
 });
 test("JARVIS_LENGTH_HINTS chooses who says a chat is getting long: the length note by default, or Jarvis himself", () => {
   assert.equal(readConfig(base).lengthHints, "note");
@@ -671,6 +671,13 @@ test("look-ups by the API need no plan token and keep none, and look-ups by Clau
   assert.equal(readConfig({ ...base, JARVIS_WEB: "ask", JARVIS_WEB_BY: "api", JARVIS_WEB_TOKEN: "plan-token" }).webToken, null);
   assert.equal(readConfig({ ...base, JARVIS_WEB: "ask", JARVIS_WEB_BY: "api", JARVIS_WEB_TOKEN: "has spaces" }).webToken, null);
   assert.throws(() => readConfig({ ...base, JARVIS_WEB: "ask", JARVIS_WEB_BY: "claude" }), { message: "Missing setting: JARVIS_WEB_TOKEN (the token claude setup-token prints), which look-ups by Claude Code need" });
+});
+
+test("JARVIS_WALL_PAGES is off by default, words or on, and needs the hub's tools, since pages are opened through the hub", () => {
+  assert.equal(readConfig(base).wallPages, "off");
+  for (const value of ["words", "on"] as const) assert.equal(readConfig({ ...base, JARVIS_HUB_TOOLS: "on", API_TOKEN: "a-token", JARVIS_WALL_PAGES: ` ${value} ` }).wallPages, value);
+  assert.throws(() => readConfig({ ...base, JARVIS_WALL_PAGES: "words" }), /JARVIS_WALL_PAGES is words, but pages are opened through the hub/);
+  assert.throws(() => readConfig({ ...base, JARVIS_HUB_TOOLS: "on", API_TOKEN: "a-token", JARVIS_WALL_PAGES: "yes" }), /JARVIS_WALL_PAGES must be off, words or on, not "yes"/);
 });
 
 test("JARVIS_PROJECTOR is off by default, and needs the hub's tools, since the projector is switched through the hub", () => {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { activities, createJarvisDesk, mostHeardChars, mostSaidChars, readReport, runningMs, wordsKeptMs, type JarvisReport } from "./jarvis.js";
+import { pageShownMs } from "./pages.js";
 
 const quiet: JarvisReport = { activity: "waiting", muted: false, heard: null, said: null };
 
@@ -50,13 +51,13 @@ test("words are tidied and cut to their limits", () => {
 });
 
 test("before Jarvis reports, the desk says he isn't running", () => {
-  assert.deepEqual(createJarvisDesk().view(1000), { seq: 0, running: false, activity: "waiting", muted: null, heard: null, said: null, saidAgeMs: null });
+  assert.deepEqual(createJarvisDesk().view(1000), { seq: 0, running: false, activity: "waiting", muted: null, heard: null, said: null, saidAgeMs: null, page: null, opens: 0, backs: 0 });
 });
 
 test("a report is shown with how long ago the words came, and moves seq on", () => {
   const desk = createJarvisDesk();
   assert.equal(desk.report({ activity: "thinking", muted: false, heard: { text: "hi", voice: "other", slot: 2 }, said: null }, 1000), 1);
-  assert.deepEqual(desk.view(1500), { seq: 1, running: true, activity: "thinking", muted: false, heard: { text: "hi", voice: "other", slot: 2, ageMs: 500 }, said: null, saidAgeMs: null });
+  assert.deepEqual(desk.view(1500), { seq: 1, running: true, activity: "thinking", muted: false, heard: { text: "hi", voice: "other", slot: 2, ageMs: 500 }, said: null, saidAgeMs: null, page: null, opens: 0, backs: 0 });
 });
 
 test("the same report again keeps seq and the words' ages, so a heartbeat wakes nobody", () => {
@@ -116,7 +117,7 @@ test("with no report for a while he counts as not running, and his state is drop
   const desk = createJarvisDesk();
   desk.report({ activity: "speaking", muted: true, heard: { text: "hi", voice: null, slot: null }, said: "Hi." }, 1000);
   assert.equal(desk.view(1000 + runningMs).running, true);
-  assert.deepEqual(desk.view(1001 + runningMs), { seq: 2, running: false, activity: "waiting", muted: null, heard: null, said: null, saidAgeMs: null });
+  assert.deepEqual(desk.view(1001 + runningMs), { seq: 2, running: false, activity: "waiting", muted: null, heard: null, said: null, saidAgeMs: null, page: null, opens: 0, backs: 0 });
   assert.equal(desk.view(5000 + runningMs).seq, 2);
   assert.equal(desk.report({ ...quiet }, 6000 + runningMs), 3);
 });
@@ -149,4 +150,47 @@ test("waiting ends after its time, or when called off", async () => {
   await waiting;
   stop.abort();
   await desk.waitForChange(0, 60_000, stop.signal);
+});
+
+test("a page opened on the wall shows for two minutes, from when it was opened, then the main page comes back", () => {
+  const desk = createJarvisDesk();
+  const before = desk.view(1000).seq;
+  const opened = desk.openPage("server", "words", 1000);
+  assert.equal(opened, before + 1);
+  assert.equal(desk.view(1000).opens, 1, "each opening is counted, so a screen can tell a new one from the same one read again");
+  assert.deepEqual(desk.view(61_000).page, { id: "server", by: "words", ageMs: 60_000 });
+  assert.equal(desk.view(1000 + pageShownMs - 1).page?.id, "server");
+  const atEnd = desk.view(1000 + pageShownMs);
+  assert.deepEqual([atEnd.page, atEnd.seq], [null, opened + 1], "its end moves the number on, so a screen waiting hears of it");
+});
+
+test("if the server's clock steps back while a page is open, its age reads as nought, never less", () => {
+  const desk = createJarvisDesk();
+  desk.openPage("server", "words", 60_000);
+  assert.deepEqual(desk.view(1000).page, { id: "server", by: "words", ageMs: 0 });
+});
+
+test("opening another page replaces the first and starts its two minutes again, and back closes it at once", () => {
+  const desk = createJarvisDesk();
+  desk.openPage("server", "words", 0);
+  desk.openPage("deals", "jarvis", 100_000);
+  assert.deepEqual(desk.view(200_000).page, { id: "deals", by: "jarvis", ageMs: 100_000 });
+  assert.equal(desk.view(200_000).opens, 2);
+  const seq = desk.view(200_000).seq;
+  assert.equal(desk.closePage(200_000), true);
+  assert.deepEqual([desk.view(200_000).page, desk.view(200_000).seq, desk.view(200_000).backs], [null, seq + 1, 1]);
+  assert.equal(desk.closePage(200_000), false, "back with nothing open on the hub says so");
+  assert.deepEqual([desk.view(200_000).seq, desk.view(200_000).backs], [seq + 2, 2], "but still counts, so a screen with a card of its own open closes it too");
+  desk.openPage("server", "words", 300_000);
+  assert.equal(desk.closePage(300_000 + pageShownMs + 1), false, "a page whose time is up is already gone");
+});
+
+test("a page opening wakes a screen waiting on the long poll", { timeout: 5_000 }, async () => {
+  const desk = createJarvisDesk();
+  const seq = desk.view(0).seq;
+  const waiting = desk.waitForChange(seq, 4_000, new AbortController().signal);
+  setTimeout(() => desk.openPage("alerts", "words", 0), 20);
+  const started = Date.now();
+  await waiting;
+  assert.ok(Date.now() - started < 2_000);
 });

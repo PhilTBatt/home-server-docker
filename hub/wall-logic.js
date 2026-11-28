@@ -8,7 +8,7 @@
  * @typedef {{ key: string, label: string, value: string, note: string, colour: string, needs: boolean }} WallItem
  * @typedef {{ leaves: string, expected: string, platform: string | null, to: string, cancelled: boolean, late: boolean, inMinutes: number | null }} WallTrain
  * @typedef {{ text: string, due: string, from: string }} WallTimer
- * @typedef {{ at: string, clock: string, day: string, phase: "morning" | "daytime" | "bedtime", mode: string | null, modeUntil: string | null, speaking: "wobble" | "string", items: WallItem[], train: WallTrain | null, timers: WallTimer[], playing: { title: string, by: string } | null }} WallPicture
+ * @typedef {{ at: string, clock: string, day: string, phase: "morning" | "daytime" | "bedtime", mode: string | null, modeUntil: string | null, speaking: "wobble" | "string", remote?: boolean, items: WallItem[], train: WallTrain | null, timers: WallTimer[], playing: { title: string, by: string } | null }} WallPicture
  * @typedef {{ x: number, y: number, side: "left" | "right" | "top" | "bottom" }} Slot
  * @typedef {{ kind: "needs", key: string } | { kind: "timer", timer: WallTimer } | { kind: "arrival", key: string } | { kind: "train" } | null} Middle
  */

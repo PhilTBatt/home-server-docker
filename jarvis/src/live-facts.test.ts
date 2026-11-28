@@ -190,7 +190,7 @@ test("the hub actions' exceptions follow the hub's own switches: no reminders ex
   assert.equal(liveFacts({ ...all, musicYes: "changes", remindersAtHub: true, spotifyAtHub: true }), liveFacts({ ...all, musicYes: "changes" }), "unknown counts as on, as before");
 });
 
-const wiringConfig = { ears: "wake", followUp: 6, hubActions: true, hubToken: "a-token", trainAlerts: true, web: "off", brainQuestions: true, clock: true, modes: true, guest: true, reminders: true, voices: true, otherVoices: "answer", musicYes: "changes", phone: true, wall: true, projector: false } as const;
+const wiringConfig = { ears: "wake", followUp: 6, hubActions: true, hubToken: "a-token", trainAlerts: true, web: "off", brainQuestions: true, clock: true, modes: true, guest: true, reminders: true, voices: true, otherVoices: "answer", musicYes: "changes", phone: true, wall: true, projector: false, wallPages: "off" } as const;
 const allAtHub = { reminders: true, spotify: true, talk: true, wall: true, modes: true, trainAlerts: true, projector: true };
 
 test("in a guest chat the facts give him nothing of Phil's hub, and only the wall's switch counts as a change", () => {
@@ -223,4 +223,18 @@ test("with JARVIS_PROJECTOR on, he's told his own code switches the projector, a
   assert.ok(!facts(true, allAtHub, true).includes(line));
   assert.ok(!facts(true, allAtHub, false, "off").includes(line));
   assert.ok(factsWiring({ ...wiringConfig, projector: true }, { voice: "kokoro", guest: false, hubOn: true, atHub: allAtHub }).relevant.includes("projector"));
+});
+
+test("with JARVIS_WALL_PAGES, he's told his code opens pages when he says show me and closes them on back, and with on, about his own tool and the pages it opens", () => {
+  const facts = (wallPages: "off" | "words" | "on", options: { atHub?: typeof allAtHub; guest?: boolean; hubOn?: boolean; ears?: "wake" | "off"; ids?: string[] | null } = {}) => liveFacts(factsWiring({ ...wiringConfig, wallPages, ears: options.ears ?? "wake" }, { voice: "kokoro", guest: options.guest ?? false, hubOn: options.hubOn ?? true, atHub: options.atHub ?? allAtHub, wallPageIds: options.ids === undefined ? ["server", "train"] : options.ids }).input);
+  const words = "Your own code also puts one of the wall's pages on the screen in the room for two minutes when he says show me and its name";
+  const tool = "You can put one of the wall's pages up yourself with open_wall_page";
+  assert.ok(!facts("off").includes(words) && !facts("off").includes(tool));
+  assert.ok(facts("words").includes(words) && !facts("words").includes(tool));
+  assert.ok(facts("on").includes(words) && facts("on").includes(`${tool}, by its short name: server, train.`));
+  assert.ok(facts("on", { ids: null }).includes(`${tool}. It shows for two minutes`), "before the hub's list is read, the names are left out");
+  assert.ok(!facts("on", { atHub: { ...allAtHub, wall: false } }).includes(words) && !facts("on", { atHub: { ...allAtHub, wall: false } }).includes(tool), "not while the hub's wall is off");
+  assert.ok(facts("on", { guest: true, hubOn: false }).includes(words) && !facts("on", { guest: true, hubOn: false }).includes(tool), "a guest chat has the words, which the hub keeps to pages that aren't private, but not the tool");
+  assert.ok(!facts("on", { ears: "off" }).includes(words) && facts("on", { ears: "off" }).includes(tool), "words need ears; the tool doesn't");
+  assert.ok(factsWiring({ ...wiringConfig, wall: false, wallPages: "words" }, { voice: "kokoro", guest: false, hubOn: true, atHub: allAtHub }).relevant.includes("wall"), "the hub's wall switch matters with only the pages on");
 });
