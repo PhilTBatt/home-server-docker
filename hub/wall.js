@@ -7,6 +7,7 @@ import { isSwitchboard, switchboardView } from "./wall-switches.js";
 import { isSecurityPage, securityNote, securityView } from "./wall-security.js";
 import { healthNote, healthView, isHealthPage } from "./wall-health.js";
 import { codeNote, codeView, isCodePage, skylineBase } from "./wall-code.js";
+import { howCentre, howView, isHowPage, lineY } from "./wall-how.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -513,7 +514,8 @@ function showCard(now) {
   const securityShown = showSecurity(open, now);
   const healthShown = showHealth(open, now);
   const codeShown = showCode(open, now);
-  if (mapShown || boardShown || securityShown || healthShown || codeShown) {
+  const howShown = showHow(open, now);
+  if (mapShown || boardShown || securityShown || healthShown || codeShown || howShown) {
     card.hidden = true;
     card.classList.add("shut");
     return;
@@ -977,13 +979,87 @@ function showCode(open, now) {
 }
 
 /**
+ * @param {import("./wall-how.js").SpotView} spot
+ * @param {"step" | "sat"} kind
+ * @returns {HTMLElement}
+ */
+function howSpot(spot, kind) {
+  const one = made("div", `hw-${kind} p-${spot.id} s-${spot.state} t-${spot.tone}${spot.lit ? " lit" : ""}${spot.muted ? " muted" : ""}${kind === "sat" && spot.y < lineY ? " above" : ""}`);
+  Object.assign(one.style, { left: `${spot.x - spot.size / 2}px`, top: `${spot.y - spot.size / 2}px`, width: `${spot.size}px`, height: `${spot.size}px` });
+  const extras = spot.id === "claude" ? ["hw-orbit", "hw-glow"] : spot.id === "voice" ? ["hw-wave", "hw-wave late"] : [];
+  for (const name of [...extras, "hw-ring"]) {
+    const shape = made("span", name);
+    shape.setAttribute("aria-hidden", "true");
+    one.append(shape);
+  }
+  if (spot.id === "whisper") {
+    const dots = made("span", "hw-dots");
+    dots.setAttribute("aria-hidden", "true");
+    dots.append(made("span", "hw-dot"), made("span", "hw-dot"), made("span", "hw-dot"));
+    one.append(dots);
+  }
+  const text = made("div", "hw-text");
+  const name = made("span", "hw-name");
+  name.textContent = spot.name;
+  const note = made("span", "hw-note-line");
+  note.textContent = spot.note;
+  text.append(name, note);
+  one.append(text);
+  return one;
+}
+
+/**
+ * @param {import("./wall-cards.js").Opened | null} open
+ * @param {number} now
+ * @returns {boolean}
+ */
+function showHow(open, now) {
+  const box = byId("how");
+  const details = open?.page.id === "how" ? detailsShown(detail, "how", Date.now()) : null;
+  const shown = open !== null && isHowPage(details);
+  stage.classList.toggle("explained", shown);
+  box.hidden = !shown;
+  if (!shown || open === null || !isHowPage(details)) return false;
+  setText(byId("hw-by"), byLine(open.page.by) || "On the wall");
+  byId("hw-left").style.transform = `scaleX(${pageLeftMs(open, now) / pageShownMs})`;
+  const connected = state.pictureFailures < failuresBeforeLost && state.jarvisFailures < failuresBeforeLost;
+  const mode = state.picture?.mode ?? null;
+  const pose = poseFor({ jarvis: state.jarvis, connected, mode, phase: state.picture?.phase ?? "daytime" });
+  const key = JSON.stringify([details, pose, mode]);
+  if (box.dataset.shown === key) return true;
+  box.dataset.shown = key;
+  const view = howView(details, pose, mode);
+  for (const flow of ["demo", "ask", "think", "reply", "still"]) box.classList.toggle(`flow-${flow}`, view.flow === flow);
+  setText(byId("hw-note"), view.note);
+  byId("hw-pills").replaceChildren(
+    ...view.pills.map((pill) => {
+      const one = made("span", `hw-pill t-${pill.tone}`);
+      one.textContent = pill.text;
+      return one;
+    }),
+  );
+  byId("hw-links").replaceChildren(
+    ...view.sats.map((sat) => {
+      const dx = sat.x - howCentre.x;
+      const dy = sat.y - howCentre.y;
+      const one = made("span", `hw-link s-${sat.state}${sat.lit ? " lit" : ""}`);
+      Object.assign(one.style, { left: `${howCentre.x}px`, top: `${howCentre.y}px`, width: `${Math.round(Math.hypot(dx, dy))}px`, transform: `rotate(${((Math.atan2(dy, dx) * 180) / Math.PI).toFixed(1)}deg)` });
+      return one;
+    }),
+  );
+  byId("hw-steps").replaceChildren(...view.steps.map((spot) => howSpot(spot, "step")));
+  byId("hw-sats").replaceChildren(...view.sats.map((spot) => howSpot(spot, "sat")));
+  return true;
+}
+
+/**
  * @returns {Target[]}
  */
 function targets() {
   /** @type {Target[]} */
   const list = [];
   if (pages.opened !== null && !card.hidden) list.push({ kind: "card", key: pages.opened.page.id, box: { left: card.offsetLeft, top: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight } });
-  else if (!["mapped", "switched", "secured", "healthy", "coded"].some((name) => stage.classList.contains(name))) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
+  else if (!["mapped", "switched", "secured", "healthy", "coded", "explained"].some((name) => stage.classList.contains(name))) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
   if (!fitChipBox.hidden) list.push({ kind: "fit", key: "fit", box: fitChip });
   return list;
 }

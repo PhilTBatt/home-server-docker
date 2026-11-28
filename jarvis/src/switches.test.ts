@@ -10,12 +10,13 @@ import { wallOffWhy } from "./wall.js";
 const key = "sk-ant-test-key";
 const base = { ANTHROPIC_API_KEY: key, JARVIS_LOG: "off" };
 
-test("his switches are every on-or-off setting he reads, each as on, off or its choice word, in the order he reads them", () => {
+test("his switches are every on-or-off setting he reads, each as on, off or its choice word, in the order he reads them, then his engine", () => {
   const source = readFileSync(new URL("../src/config.ts", import.meta.url), "utf8");
   const read = [...source.matchAll(/env\.(JARVIS_[A-Z_]+)\?\.trim\(\) \|\| "off"/g)].map((match) => match[1]).filter((name) => name !== "JARVIS_LENGTH_CAP");
   const switches = switchesOf(readConfig(base));
-  assert.deepEqual(Object.keys(switches), [...read, "JARVIS_LOG"]);
-  assert.deepEqual(Object.values(switches), Object.keys(switches).map(() => "off"));
+  assert.deepEqual(Object.keys(switches), [...read, "JARVIS_LOG", "JARVIS_ENGINE"]);
+  assert.deepEqual(Object.values(switches), Object.keys(switches).map((name) => (name === "JARVIS_ENGINE" ? "sdk" : "off")));
+  assert.equal(switchesOf(readConfig({ ...base, JARVIS_ENGINE: "api" })).JARVIS_ENGINE, "api");
 });
 
 test("a setting with choices sends its choice, and anything that's a name, a number or a key sends only on", () => {

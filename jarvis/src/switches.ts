@@ -43,6 +43,7 @@ export function switchesOf(config: Config): Switches {
     JARVIS_WEB: config.web,
     JARVIS_WEB_LOG: onOff(config.webLog),
     JARVIS_LOG: onOff(config.log),
+    JARVIS_ENGINE: config.engine,
   };
 }
 

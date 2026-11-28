@@ -959,6 +959,17 @@ test("the wall's token reads the switches page, with what Jarvis last told the h
   assert.deepEqual(offDetails.groups[2].rows, [], "a new start knows nothing Jarvis said before");
 });
 
+test("the wall's token reads how Jarvis works, from the switches he last told the hub and the hub's own", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, talk: false } } });
+  const before = (await app.inject({ method: "GET", url: "/wall/pages/how", cookies: { wall_token: wallToken } })).json().details;
+  assert.deepEqual([before.kind, before.told, before.steps.find((part: { id: string }) => part.id === "mic").state], ["how", false, "untold"]);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/jarvis/switches", headers: goodHeader, payload: { switches: { JARVIS_WALL: "on", JARVIS_HUB_TOOLS: "on", JARVIS_EARS: "wake", JARVIS_PHONE: "on", JARVIS_ENGINE: "sdk" } } })).statusCode, 200);
+  const after = (await app.inject({ method: "GET", url: "/wall/pages/how", cookies: { wall_token: wallToken } })).json().details;
+  assert.equal(after.told, true);
+  assert.deepEqual(after.steps.find((part: { id: string }) => part.id === "claude"), { id: "claude", state: "on", value: "sdk", blockedBy: [] });
+  assert.deepEqual(after.reach.find((part: { id: string }) => part.id === "phone"), { id: "phone", state: "blocked", value: null, blockedBy: ["TALK"] });
+});
+
 test("the wall's token reads the code page, saying what's off, and with chores on the latest run-tests result's counts", async () => {
   const app = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, catchUp: false, chores: false } } });
   const off = (await app.inject({ method: "GET", url: "/wall/pages/code", cookies: { wall_token: wallToken } })).json().details;

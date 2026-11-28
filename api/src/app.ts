@@ -44,6 +44,7 @@ import { createJarvisSwitches, switchboardPage } from "./modules/wall/switchboar
 import { createTally, readBootTime, securityPage, type Tally } from "./modules/wall/security.js";
 import { healthPage } from "./modules/wall/health.js";
 import { codePage, commitsOf, heatDays, testsOf } from "./modules/wall/code.js";
+import { howPage } from "./modules/wall/how.js";
 import type { Status } from "./modules/system/alerts.js";
 import { buildPicture, keptPicture, wallDoctorMs, wallTrainsMs, type WallSources } from "./modules/wall/picture.js";
 
@@ -139,6 +140,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     train: trainsShown === undefined ? undefined : async () => trainPage(await trainsShown()),
     server: doctorShown === undefined ? undefined : async () => serverMapPage(await doctorShown().catch(() => null)),
     switches: async () => switchboardPage(features, byHand, jarvisSwitches.view(Date.now())),
+    how: async () => howPage(features, jarvisSwitches.view(Date.now())),
     health: doctorShown === undefined ? undefined : async () => {
       const [report, status] = await Promise.all([doctorShown().catch(() => null), (options.status ?? readStatus)().catch(() => null)]);
       return healthPage(report, status);
