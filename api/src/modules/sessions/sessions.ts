@@ -1,3 +1,5 @@
+import type { EventSink } from "../events/feed.js";
+
 export const sessionStates = ["waiting", "working", "stopped"] as const;
 export const namePattern = /^[a-z0-9-]{1,20}$/;
 export const mostSessions = 10;
@@ -18,8 +20,8 @@ export type Sessions = {
   changes(after: number, now: Date): ChangesAnswer;
 };
 
-export function createSessions(options: { log?: SessionLog } = {}): Sessions {
-  const { log } = options;
+export function createSessions(options: { log?: SessionLog; events?: EventSink } = {}): Sessions {
+  const { log, events } = options;
   const sessions = new Map<string, Session>();
   let feed: SessionChange[] = [];
   let seq = 0;
@@ -41,6 +43,7 @@ export function createSessions(options: { log?: SessionLog } = {}): Sessions {
       feed.push({ seq, name, state, was: before?.state ?? null, at });
       feed = feed.filter((one) => Date.parse(one.at) + keptChangesMs > now.getTime()).slice(-keptChanges);
       log?.info?.({ name, from: before?.state ?? null, to: state, seq, forSeconds: before === undefined ? null : Math.round((now.getTime() - Date.parse(before.since)) / 1000), sessions: sessions.size }, "session state changed");
+      if (state === "waiting") events?.post("session.waiting", { name }, now);
       return { ...session };
     },
     list() {

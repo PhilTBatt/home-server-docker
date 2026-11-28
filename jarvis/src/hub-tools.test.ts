@@ -25,7 +25,7 @@ test("an MCP server started by Jarvis himself gets the token and the actions set
 });
 
 test("Jarvis knows the hub's read tools and actions by name, Spotify's among them, and accepts the actions only when they're on", () => {
-  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden", "get_spotify_playing", "get_spotify_devices", "get_spotify_queue", "get_spotify_search", "get_spotify_playlists"]);
+  assert.deepEqual(hubReadTools, ["get_status", "get_alerts", "get_features", "get_downloads", "get_library", "get_wifi_reconnects", "get_backup", "get_watchers", "get_expiries", "get_doctor", "get_mode", "get_reminders", "get_chore", "get_sessions", "get_events", "get_deal_status", "get_deal_searches", "get_catch_up", "get_deal_matches", "get_deal_listing", "get_deal_hidden", "get_spotify_playing", "get_spotify_devices", "get_spotify_queue", "get_spotify_search", "get_spotify_playlists"]);
   assert.deepEqual(hubMusicReadTools, ["get_spotify_playing", "get_spotify_devices", "get_spotify_queue", "get_spotify_search", "get_spotify_playlists"]);
   assert.deepEqual(hubMusicControls, ["spotify_play", "spotify_pause", "spotify_next", "spotify_previous", "spotify_seek", "spotify_volume", "spotify_shuffle", "spotify_repeat", "spotify_queue_add", "spotify_transfer"]);
   assert.deepEqual(hubMusicChanges, ["spotify_playlist_add", "spotify_save"]);

@@ -33,10 +33,12 @@ import { spotifyFor } from "./modules/spotify/setup.js";
 import { wall, wallCookie, wallReads } from "./modules/wall/routes.js";
 import { projector } from "./modules/projector/routes.js";
 import type { Projector } from "./modules/projector/projector.js";
+import { events } from "./modules/events/routes.js";
+import type { EventFeed } from "./modules/events/feed.js";
 import type { JarvisDesk } from "./modules/wall/jarvis.js";
 import { buildPicture, keptPicture, wallDoctorMs, wallTrainsMs, type WallSources } from "./modules/wall/picture.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector; events?: EventFeed }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const dealWatcher = options.config.features.deals ? options.dealWatcher : undefined;
   const expiryChecker = options.config.features.expiryAlerts ? options.expiryChecker : undefined;
@@ -90,7 +92,8 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   });
   app.register(catchUp, { prefix: "/catch-up", features, catchUp: catchingUp });
   app.register(memory, { prefix: "/memory", features: options.config.features });
-  app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic, ring: options.config.phone });
+  const feed = options.config.features.events ? options.events : undefined;
+  app.register(phone, { prefix: "/phone", features: options.config.features, ntfyTopic: options.config.ntfyTopic, ring: options.config.phone, events: feed });
   app.register(trains, { prefix: "/trains", features: options.config.features, settings: options.config.trains, changes: options.config.features.trainAlerts ? options.trainChanges : undefined });
   app.register(expiry, { prefix: "/expiry", features: options.config.features, checker: expiryChecker });
   app.register(watchers, { prefix: "/watchers", features: options.config.features, watchers: watching });
@@ -114,7 +117,8 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     ...options.wallSources,
   };
   const picture = keptPicture(() => buildPicture(shown, { speaking: options.config.wall.speaking, trainAlerts: features.trainAlerts ? options.config.trainAlerts : null }, new Date()));
-  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, guard: options.config.login.guard, desk: options.jarvisDesk, picture });
+  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, guard: options.config.login.guard, desk: options.jarvisDesk, picture, events: feed });
+  app.register(events, { prefix: "/events", features: options.config.features, feed, apiToken: options.config.apiToken, mode: features.modes && options.modes !== undefined ? () => (options.modes as Modes).view().mode : undefined });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,

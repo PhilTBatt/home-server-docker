@@ -5,7 +5,7 @@ import type { Features } from "../../config.js";
 import { sessions } from "./routes.js";
 import { createSessions, keptChanges, mostSessions } from "./sessions.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true };
 const at = (iso: string) => new Date(iso);
 
 function setUp() {
@@ -78,4 +78,18 @@ test("with the switch off, every route says so", async () => {
     const reply = await app.inject({ method, url, payload: method === "POST" ? { state: "waiting" } : undefined });
     assert.deepEqual([reply.statusCode, reply.json()], [404, { error: "Sessions are switched off" }], url);
   }
+});
+
+test("a session that starts waiting on Phil posts an event with its name, and nothing else does", () => {
+  const posted: unknown[] = [];
+  const kept = createSessions({ events: { post: (kind, facts, when) => (posted.push([kind, facts, when?.toISOString()]), null) } });
+  kept.set("docker", "working", at("2026-11-28T12:00:00.000Z"));
+  kept.set("docker", "waiting", at("2026-11-28T12:01:00.000Z"));
+  kept.set("docker", "waiting", at("2026-11-28T12:02:00.000Z"));
+  kept.set("docker", "stopped", at("2026-11-28T12:03:00.000Z"));
+  kept.set("brain", "waiting", at("2026-11-28T12:04:00.000Z"));
+  assert.deepEqual(posted, [
+    ["session.waiting", { name: "docker" }, "2026-11-28T12:01:00.000Z"],
+    ["session.waiting", { name: "brain" }, "2026-11-28T12:04:00.000Z"],
+  ]);
 });

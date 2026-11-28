@@ -1,5 +1,6 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import type { Notification } from "../notify/notifier.js";
+import type { EventSink } from "../events/feed.js";
 import { clockText, londonNow } from "../trains/alerts.js";
 
 export const modeNames = ["normal", "guest", "bedtime", "gaming", "coding", "away"] as const;
@@ -135,8 +136,8 @@ export function heldNotification(held: Held[], more: number, lost: number): Noti
   return { title, message: lines.join("\n\n"), tags: "zzz" };
 }
 
-export function createModes(options: { store: ModeStore; settings: ModeSettings; send: (topic: string, notification: Notification) => Promise<void>; topic: string; log?: ModeLog }): Modes {
-  const { settings, log } = options;
+export function createModes(options: { store: ModeStore; settings: ModeSettings; send: (topic: string, notification: Notification) => Promise<void>; topic: string; log?: ModeLog; events?: EventSink }): Modes {
+  const { settings, log, events } = options;
   let state: ModeState = { mode: "normal", since: new Date(0).toISOString(), until: null, by: "start" };
   let bedtimeDay: string | null = null;
   let held: Held[] = [];
@@ -197,6 +198,7 @@ export function createModes(options: { store: ModeStore; settings: ModeSettings;
     const before = state;
     state = next;
     log?.info?.({ from: before.mode, to: next.mode, by: next.by, until: next.until, wasSince: before.since, held: heldCount() }, before.mode === next.mode ? "mode kept, with a new end or source" : "mode switched");
+    if (before.mode !== next.mode) events?.post("mode.switched", { to: next.mode, from: before.mode, by: next.by }, now);
     await save();
     if (before.mode === "bedtime" && next.mode !== "bedtime") await flush(now);
   }

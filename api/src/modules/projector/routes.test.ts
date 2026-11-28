@@ -5,7 +5,7 @@ import type { Features } from "../../config.js";
 import type { CodeResult, Projector, PowerResult, ProjectorStatus } from "./projector.js";
 import { alreadyBusy, badCode, codeTimedOut, notPairing, pairingFailed, projector, projectorOff, wrongCode } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true };
 
 function fake(overrides: Partial<{ pair: "started" | "busy"; code: CodeResult; power: PowerResult }> = {}) {
   const calls: unknown[] = [];

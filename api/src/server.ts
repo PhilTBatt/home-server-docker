@@ -22,8 +22,18 @@ import { projectorFor } from "./modules/projector/setup.js";
 import { tickMs as reminderTickMs } from "./modules/reminders/reminders.js";
 import { choresFor } from "./modules/chores/setup.js";
 import { createSessions } from "./modules/sessions/sessions.js";
+import { createEventFeed, createEventStore } from "./modules/events/feed.js";
 
 const config = readConfig(process.env);
+const events = config.features.events
+  ? createEventFeed({
+      store: createEventStore(),
+      log: {
+        info: (fields, message) => app.log.info(fields, message),
+        warn: (fields, message) => app.log.warn(fields, message),
+      },
+    })
+  : undefined;
 const dealWatcher = config.features.deals ? dealWatcherFor(config) : undefined;
 
 const trainChanges = config.features.trainAlerts ? createChangeFeed() : undefined;
@@ -43,14 +53,14 @@ const modes = config.features.modes
   ? modesFor(config, {
       info: (fields, message) => app.log.info({ modes: fields }, message),
       warn: (fields, message) => app.log.warn({ modes: fields }, message),
-    })
+    }, undefined, events)
   : undefined;
 
 const reminders = config.features.reminders
   ? remindersFor(config, modes, {
       info: (fields, message) => app.log.info({ reminders: fields }, message),
       warn: (fields, message) => app.log.warn({ reminders: fields }, message),
-    })
+    }, undefined, events)
   : undefined;
 
 const chores = config.features.chores
@@ -66,6 +76,7 @@ const sessions = config.features.sessions
         info: (fields, message) => app.log.info({ sessions: fields }, message),
         warn: (fields, message) => app.log.warn({ sessions: fields }, message),
       },
+      events,
     })
   : undefined;
 
@@ -73,11 +84,13 @@ const projector = config.features.projector
   ? projectorFor(config.projector, {
       info: (fields, message) => app.log.info(fields, message),
       warn: (fields, message) => app.log.warn(fields, message),
-    })
+    }, events)
   : undefined;
 
-const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders, chores, sessions, projector });
+const app = await buildApp({ logger: true, config, dealWatcher, trainChanges, expiryChecker, tries, watchers, modes, reminders, chores, sessions, projector, events });
 app.log.info({ features: config.features }, "feature switches");
+
+if (events !== undefined) await events.load();
 
 if (modes !== undefined) {
   await modes.load(new Date());
@@ -102,6 +115,7 @@ if (reminders !== undefined) {
 if (projector !== undefined) await projector.start();
 
 await app.listen({ port: 3000, host: "0.0.0.0" });
+events?.post("hub.started");
 
 
 const allProblems = () => currentProblems(undefined, [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])]);
@@ -167,7 +181,10 @@ if (config.features.trainAlerts) {
   const hooks: AlertHooks = {
     settings: config.trainAlerts,
     send: (notification) => sendToNtfy(config.ntfyTopic, notification),
-    changed: (lines, at) => trainChanges?.add(lines, at),
+    changed: (lines, at) => {
+      trainChanges?.add(lines, at);
+      if (lines.length > 0) events?.post("trains.changed", { count: Math.min(lines.length, 1000) }, at);
+    },
     warn: (message) => app.log.warn(message),
     info: (message) => app.log.info(message),
   };

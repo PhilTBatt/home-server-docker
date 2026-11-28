@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { EventSink } from "../events/feed.js";
 import { access, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +22,7 @@ function memoryStore(start: Kept | "missing" | null = "missing") {
   return { store, saves };
 }
 
-function setUp(options: { start?: Kept | "missing" | null; modes?: Modes; failSend?: () => boolean; failClear?: boolean; ids?: string[] } = {}) {
+function setUp(options: { start?: Kept | "missing" | null; modes?: Modes; failSend?: () => boolean; failClear?: boolean; ids?: string[]; events?: EventSink } = {}) {
   const { store, saves } = memoryStore(options.start);
   const sent: Notification[] = [];
   const cleared: string[] = [];
@@ -30,6 +31,7 @@ function setUp(options: { start?: Kept | "missing" | null; modes?: Modes; failSe
   const reminders = createReminders({
     store,
     modes: options.modes,
+    events: options.events,
     makeId: () => ids.shift() ?? "ffffffff",
     send: async (notification) => {
       if (options.failSend?.() === true) throw new Error("ntfy replied 500");
@@ -691,4 +693,19 @@ test("putting a late message right logs only the id and whether something was pu
   const settled = phone.logs.find((line) => line.message.startsWith("a reminder's old message"));
   assert.deepEqual(settled?.fields, { id: "0000000a", putBack: true });
   assert.equal(JSON.stringify(phone.logs).includes("Private"), false);
+});
+
+test("a reminder going off posts an event with its id, whether it's urgent and whether it's late, never its words", { timeout: 5_000 }, async () => {
+  const posted: unknown[] = [];
+  const { reminders } = setUp({ events: { post: (kind, facts, when) => (posted.push([kind, facts, when?.toISOString()]), null) } });
+  await reminders.load(at("2026-11-27T12:00:00.000Z"));
+  await reminders.add(ask(), at("2026-11-27T12:00:00.000Z"));
+  await reminders.add(ask({ urgent: true, at: at("2026-11-27T20:00:00.000Z") }), at("2026-11-27T12:00:00.000Z"));
+  await reminders.tick(at("2026-11-27T19:00:10.000Z"));
+  await reminders.tick(at("2026-11-27T21:00:00.000Z"));
+  assert.deepEqual(posted, [
+    ["reminder.due", { id: "0000000a", urgent: false, late: false }, "2026-11-27T19:00:10.000Z"],
+    ["reminder.due", { id: "0000000b", urgent: true, late: true }, "2026-11-27T21:00:00.000Z"],
+  ]);
+  assert.ok(!JSON.stringify(posted).includes("bins"));
 });

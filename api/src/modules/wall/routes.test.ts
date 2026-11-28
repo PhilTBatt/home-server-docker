@@ -1,24 +1,25 @@
 import assert from "node:assert/strict";
+import type { EventSink } from "../events/feed.js";
 import { test } from "node:test";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import type { Features, WallSettings } from "../../config.js";
 import { createJarvisDesk } from "./jarvis.js";
 import type { WallPicture } from "./picture.js";
-import { noSuchCode, pairNeedsJson, plainHttpPairing, switchedOff, tooManyWrongCodes, wall, wallCookie, wallCookieDays } from "./routes.js";
+import { noSuchCode, pairNeedsJson, plainHttpPairing, switchedOff, tooManyWrongCodes, wall, wallCookie, wallCookieDays, wallReads } from "./routes.js";
 import { createPairings, mostPairings, mostWrongCodes, pairCookie, pairingMs } from "./pairing.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true };
 const settings: WallSettings = { token: "w".repeat(40), speaking: "wobble" };
 
-async function buildApp(features: Features = allOn, waitMs = 40, picture?: () => Promise<WallPicture>, logs?: string[], guard = false) {
+async function buildApp(features: Features = allOn, waitMs = 40, picture?: () => Promise<WallPicture>, logs?: string[], guard = false, events?: EventSink) {
   const clock = { at: 1_000_000 };
   const desk = createJarvisDesk();
   const codes = ["123456", "123456", "123456"];
   const pairings = createPairings({ makeCode: () => codes.shift() ?? "999999" });
   const app = Fastify({ trustProxy: true, ...(logs === undefined ? {} : { logger: { level: "info", stream: { write: (line: string) => void logs.push(line) } } }) });
   await app.register(cookie);
-  app.register(wall, { prefix: "/wall", features, settings, guard, desk, pairings, picture, now: () => clock.at, waitMs });
+  app.register(wall, { prefix: "/wall", features, settings, guard, desk, pairings, picture, now: () => clock.at, waitMs, events });
   return { app, clock, desk };
 }
 
@@ -315,4 +316,18 @@ test("a look that's cut off just as its code is confirmed doesn't take the login
   } finally {
     await app.close();
   }
+});
+
+test("a screen paired from the phone posts an event, and a wrong code posts none", async () => {
+  const posted: unknown[] = [];
+  const { app } = await buildApp(allOn, 40, undefined, undefined, false, { post: (kind, facts) => (posted.push([kind, facts]), null) });
+  await startPairing(app);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code: "654321" } })).statusCode, 404);
+  assert.deepEqual(posted, []);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code: "123456" } })).statusCode, 200);
+  assert.deepEqual(posted, [["screen.paired", undefined]]);
+});
+
+test("the wall's token may read today's events and the events feed, and that's all it adds", () => {
+  assert.deepEqual([...wallReads].sort(), ["GET /events/feed", "GET /events/today", "GET /wall", "GET /wall/jarvis"]);
 });

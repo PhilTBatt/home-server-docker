@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import type { Features, PhoneSettings } from "../../config.js";
 import { clearOnNtfy, sendToNtfy, type Notification } from "../notify/notifier.js";
+import type { EventSink } from "../events/feed.js";
 
 export const findAgainMs = 10_000;
 export const repeatEveryMs = 5_000;
@@ -18,6 +19,7 @@ export const phone: FastifyPluginAsync<{
   clear?: (topic: string, sequence: string) => Promise<void>;
   now?: () => number;
   makeSequence?: () => string;
+  events?: EventSink;
 }> = async (app, options) => {
   const send = options.send ?? sendToNtfy;
   const clear = options.clear ?? clearOnNtfy;
@@ -62,6 +64,7 @@ export const phone: FastifyPluginAsync<{
         return reply.code(502).send({ error: "Couldn't reach ntfy" });
       }
       app.log.info({ phone: { ring: "once" } }, "finding the phone: sent once");
+      options.events?.post("phone.rang");
       return { sent: true };
     }
     const sequence = makeSequence();
@@ -88,6 +91,7 @@ export const phone: FastifyPluginAsync<{
     }
     timers.push(setTimeout(() => void finish("time"), ring.seconds * 1000));
     app.log.info({ phone: { ring: ring.ring, seconds: ring.seconds, sequence } }, "finding the phone: ringing");
+    options.events?.post("phone.rang");
     return { sent: true, ring: ring.ring, seconds: ring.seconds };
   });
 

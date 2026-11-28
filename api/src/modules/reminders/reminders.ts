@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import type { Notification } from "../notify/notifier.js";
+import type { EventSink } from "../events/feed.js";
 import { londonAt, modeNames, nextDay, type Mode, type Modes } from "../modes/modes.js";
 import { clockText, londonNow } from "../trains/alerts.js";
 
@@ -174,7 +175,7 @@ function nextFire(reminder: Reminder): number | null {
   return times.length === 0 ? null : Math.min(...times);
 }
 
-export function createReminders(options: { store: ReminderStore; send: (notification: Notification) => Promise<void>; clear?: (sequence: string) => Promise<void>; modes?: Modes; makeId?: () => string; log?: ReminderLog }): Reminders {
+export function createReminders(options: { store: ReminderStore; send: (notification: Notification) => Promise<void>; clear?: (sequence: string) => Promise<void>; modes?: Modes; makeId?: () => string; log?: ReminderLog; events?: EventSink }): Reminders {
   const { log } = options;
   const makeId = options.makeId ?? newId;
   let reminders: Reminder[] = [];
@@ -241,6 +242,7 @@ export function createReminders(options: { store: ReminderStore; send: (notifica
     if (feed.length > keptDue) feed = feed.slice(-keptDue);
     dropUnsent(reminder.id);
     const notification = reminderNotification(reminder, new Date(dueAt), late);
+    options.events?.post("reminder.due", { id: reminder.id, urgent: reminder.urgent, late }, now);
     shows.set(reminder.id, notification);
     const sent = await send(notification, reminder.id, now);
     log?.info?.({ id: reminder.id, seq, late, lateSeconds: Math.round(lateBy / 1000), urgent: reminder.urgent, repeat: reminder.repeat, snoozed, sent, next: reminder.at }, "reminder due");

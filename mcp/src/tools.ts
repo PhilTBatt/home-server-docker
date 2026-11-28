@@ -76,6 +76,11 @@ export const readTools: ReadTool[] = [
     path: "/sessions",
   },
   {
+    name: "get_events",
+    description: "What's happened on the hub today, from its events feed, oldest first: each event's seq, at (when), kind (hub.started, mode.switched, reminder.due, trains.changed, phone.rang, session.waiting, screen.paired or projector.switched), audience (room: anyone at a screen may see it, guests too; home: the household's screens outside guest mode; owner: only Phil), title (the hub's own words for it) and facts (its details: mode names, how a mode was set, a reminder's id, a count, a session's name, whether the projector is on). day is today's London date and more is how many earlier events were left out (at most the latest 100 are given). Events hold no one's words: a reminder's event is its id, never its text. Today's events are kept through a restart and dropped at midnight. Fails with a 404 while the events feed is switched off (EVENTS).",
+    path: "/events/today",
+  },
+  {
     name: "get_deal_status",
     description: "How the deal watcher is doing: when it last ran, today's counts of calls and alerts against their limits, quiet hours, when the digest goes and whether today's has, where it keeps seen listings, and any problems. Fails with a 404 while the deal watcher is switched off.",
     path: "/deals/status",

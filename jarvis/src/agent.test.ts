@@ -829,7 +829,7 @@ const hub = { command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], tok
 test("with the hub's tools, the engine starts the hub's MCP server read-only, loads its tools up front, and may use only its eight read tools, by name, with nothing asked; the built-in tools don't change", () => {
   const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub });
   assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "off" }, alwaysLoad: true } });
-  assert.deepEqual(options.allowedTools, ["mcp__hub__get_status", "mcp__hub__get_alerts", "mcp__hub__get_features", "mcp__hub__get_downloads", "mcp__hub__get_library", "mcp__hub__get_wifi_reconnects", "mcp__hub__get_backup", "mcp__hub__get_watchers", "mcp__hub__get_expiries", "mcp__hub__get_doctor", "mcp__hub__get_mode", "mcp__hub__get_reminders", "mcp__hub__get_chore", "mcp__hub__get_sessions", "mcp__hub__get_deal_status", "mcp__hub__get_deal_searches", "mcp__hub__get_catch_up", "mcp__hub__get_deal_matches", "mcp__hub__get_deal_listing", "mcp__hub__get_deal_hidden", "mcp__hub__get_spotify_playing", "mcp__hub__get_spotify_devices", "mcp__hub__get_spotify_queue", "mcp__hub__get_spotify_search", "mcp__hub__get_spotify_playlists"]);
+  assert.deepEqual(options.allowedTools, ["mcp__hub__get_status", "mcp__hub__get_alerts", "mcp__hub__get_features", "mcp__hub__get_downloads", "mcp__hub__get_library", "mcp__hub__get_wifi_reconnects", "mcp__hub__get_backup", "mcp__hub__get_watchers", "mcp__hub__get_expiries", "mcp__hub__get_doctor", "mcp__hub__get_mode", "mcp__hub__get_reminders", "mcp__hub__get_chore", "mcp__hub__get_sessions", "mcp__hub__get_events", "mcp__hub__get_deal_status", "mcp__hub__get_deal_searches", "mcp__hub__get_catch_up", "mcp__hub__get_deal_matches", "mcp__hub__get_deal_listing", "mcp__hub__get_deal_hidden", "mcp__hub__get_spotify_playing", "mcp__hub__get_spotify_devices", "mcp__hub__get_spotify_queue", "mcp__hub__get_spotify_search", "mcp__hub__get_spotify_playlists"]);
   assert.equal("hooks" in options, false);
   assert.deepEqual(options.tools, ["Read", "Grep", "Glob"]);
   assert.equal(options.strictMcpConfig, true);
@@ -917,7 +917,7 @@ test("with the hub's actions on, the MCP server gets them, the read tools and th
   const options = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: {}, hub: actionsHub });
   assert.deepEqual(options.mcpServers, { hub: { type: "stdio", command: "/usr/local/bin/node", args: ["/mcp/dist/server.js"], env: { MCP_ACTIONS: "on" }, alwaysLoad: true } });
   assert.deepEqual(options.allowedTools?.filter((tool) => !tool.startsWith("mcp__hub__get_")), ["mcp__hub__set_reminder", "mcp__hub__snooze_reminder"]);
-  assert.equal(options.allowedTools?.length, 27);
+  assert.equal(options.allowedTools?.length, 28);
   assert.ok(!options.allowedTools?.some((tool) => isHubAction(tool.replace("mcp__hub__", ""))), "no action that needs a yes is allowed by name");
   const matchers = options.hooks?.PreToolUse ?? [];
   assert.equal(matchers.length, 1);
@@ -1011,7 +1011,7 @@ test("with the hub's tools and the look-up tool, both servers are there, the hub
   assert.deepEqual(Object.keys(both.mcpServers ?? {}), ["hub", "web"]);
   assert.deepEqual(both.mcpServers?.hub, agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub }).mcpServers?.hub);
   assert.deepEqual(both.allowedTools?.slice(-2), ["mcp__hub__get_spotify_playlists", "mcp__web__look_up"]);
-  assert.equal(both.allowedTools?.length, 26);
+  assert.equal(both.allowedTools?.length, 27);
   assert.equal("hooks" in both, false);
   const acting = agentOptions({ model: "m", system: "s", cwd: "/brain", now: () => 0, env: { PATH: "/usr/bin" }, hub: { ...hub, actions: true }, web });
   assert.equal(acting.hooks?.PreToolUse?.length, 1);

@@ -43,6 +43,7 @@
       "mcp__hub__get_reminders",
       "mcp__hub__get_chore",
       "mcp__hub__get_sessions",
+      "mcp__hub__get_events",
       "mcp__hub__get_catch_up",
       "mcp__hub__get_deal_status",
       "mcp__hub__get_deal_searches",

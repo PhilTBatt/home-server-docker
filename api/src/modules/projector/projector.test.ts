@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { Link, LinkCommand, LinkEvent, LinkStart } from "./link.js";
 import { busyPairing, busySending, codeWaitMs, confirmMs, createProjector, forgottenByProjector, notPairedYet, notReached, notSaved, pairingMs, powerWaitMs, pressStopped, readyMs, unknownPower, type ProjectorPower } from "./projector.js";
 import type { Pairing, PairingStore } from "./store.js";
+import type { EventSink } from "../events/feed.js";
 
 const key = "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n";
 const cert = "-----BEGIN CERTIFICATE-----\nBBBB\n-----END CERTIFICATE-----\n";
@@ -32,7 +33,7 @@ function fakeTimers() {
   return { set, clear, advance, pending: () => pending.size };
 }
 
-function setUp(options: { start?: Pairing | "missing" | "unreadable" | null; power?: ProjectorPower; failSave?: boolean; save?: Promise<void>; openFails?: boolean } = {}) {
+function setUp(options: { start?: Pairing | "missing" | "unreadable" | null; power?: ProjectorPower; failSave?: boolean; save?: Promise<void>; openFails?: boolean; events?: EventSink } = {}) {
   const links: Array<{ start: LinkStart; sent: Array<Exclude<LinkCommand, { kind: "stop" }>>; stopped: boolean; refuse: boolean; emit: (event: LinkEvent) => void }> = [];
   const order: string[] = [];
   const saved: Pairing[] = [];
@@ -72,6 +73,7 @@ function setUp(options: { start?: Pairing | "missing" | "unreadable" | null; pow
     log: { info: (fields, message) => logs.push({ fields, message }), warn: (fields, message) => logs.push({ fields, message }) },
     now: () => new Date("2026-11-28T10:00:00.000Z"),
     timers,
+    events: options.events,
   });
   return { projector, links, saved, logs, timers, order, forgotten: () => forgotten };
 }
@@ -468,4 +470,39 @@ test("events from a link the hub has let go of change nothing", { timeout: 5_000
   links[0].emit({ kind: "powered", on: true });
   links[0].emit({ kind: "ready" });
   assert.equal(projector.status().on, null);
+});
+
+test("a switch the hub's key caused posts an event, once the projector has said how it was before and after, and nothing else does", { timeout: 5_000 }, async () => {
+  const posted: unknown[] = [];
+  const { projector, links, timers } = setUp({ start: kept, events: { post: (kind, facts, when) => (posted.push([kind, facts, when?.toISOString()]), null) } });
+  await projector.start();
+  const on = projector.power(true);
+  links[0].emit({ kind: "ready" });
+  links[0].emit({ kind: "powered", on: false });
+  await flush();
+  links[0].emit({ kind: "powered", on: true });
+  await on;
+  const remoteUsed = projector.power(true);
+  links[1].emit({ kind: "ready" });
+  links[1].emit({ kind: "powered", on: false });
+  await flush();
+  timers.advance(confirmMs);
+  await remoteUsed;
+  const unsaid = projector.power(false);
+  links[2].emit({ kind: "ready" });
+  await flush();
+  timers.advance(powerWaitMs);
+  await flush();
+  links[2].emit({ kind: "powered", on: false });
+  await unsaid;
+  const off = projector.power(false);
+  links[3].emit({ kind: "ready" });
+  links[3].emit({ kind: "powered", on: true });
+  await flush();
+  links[3].emit({ kind: "powered", on: false });
+  await off;
+  assert.deepEqual(posted, [
+    ["projector.switched", { on: true }, "2026-11-28T10:00:00.000Z"],
+    ["projector.switched", { on: false }, "2026-11-28T10:00:00.000Z"],
+  ], "not when it was found off after the remote switched it, and not when it didn't say how it was before");
 });

@@ -1,6 +1,7 @@
 // @ts-check
 import { onArrival, slotFor, voicePieces, voiceUrl } from "./talk-voice.js";
 import { busyCheckMs, forgetConfirmMs, isProjectorView, powerLine, projectorLine, projectorShows } from "./projector-card.js";
+import { todayLines } from "./today.js";
 /**
  * @typedef {object} Download
  * @property {string} name
@@ -89,6 +90,7 @@ import { busyCheckMs, forgetConfirmMs, isProjectorView, powerLine, projectorLine
  * @property {boolean} [talk]
  * @property {boolean} [wall]
  * @property {boolean} [projector]
+ * @property {boolean} [events]
  */
 
 /**
@@ -348,7 +350,7 @@ import { busyCheckMs, forgetConfirmMs, isProjectorView, powerLine, projectorLine
  */
 
 /** @type {Record<string, string>} */
-const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify", talk: "talk to Jarvis", wall: "the wall", projector: "the projector" };
+const featureLabels = { alerts: "alerts", heartbeat: "heartbeat", dailySummary: "daily summary", memoryInbox: "brain inbox", memoryUpload: "note uploads", deals: "deal watcher", findPhone: "find my phone", trains: "train times", trainAlerts: "train alerts", expiryAlerts: "expiry alerts", watchers: "watchers", catchUp: "catch-up", modes: "modes", spotify: "Spotify", talk: "talk to Jarvis", wall: "the wall", projector: "the projector", events: "the events feed" };
 
 /**
  * @param {string} id
@@ -443,6 +445,8 @@ const trainTo = byId("train-to");
 const trainState = byId("train-state");
 const remindersCard = byId("reminders-card");
 const remindersList = byId("reminders-list");
+const todayCard = byId("today-card");
+const todayList = byId("today-list");
 const spotifyCard = byId("spotify-card");
 const spotifyNow = byId("spotify-now");
 const nowPlaying = byId("now-playing");
@@ -1628,6 +1632,7 @@ function showHome(features) {
   remindersCard.hidden = features.reminders !== true;
   spotifyCard.hidden = features.spotify !== true;
   projectorCard.hidden = features.projector !== true;
+  todayCard.hidden = features.events !== true;
   talkButton.hidden = features.talk !== true;
   if (features.spotify !== true) nowPlaying.hidden = true;
   lastTrainAt = 0;
@@ -1641,6 +1646,7 @@ function refreshHome() {
   if (byId("tab-home").hidden) return;
   if (knownFeatures.reminders === true) loadReminders();
   if (knownFeatures.projector === true) loadProjector();
+  if (knownFeatures.events === true) loadToday();
   if (knownFeatures.trains && Date.now() - lastTrainAt >= trainEveryMs) {
     lastTrainAt = Date.now();
     loadTrain();
@@ -1722,6 +1728,16 @@ function isReminderItem(reminder) {
 function reminderTime(when) {
   const today = when.toDateString() === new Date().toDateString();
   return today ? when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : when.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadToday() {
+  const got = await fetchReply("/api/events/today?most=20", "Couldn't load today");
+  if ("text" in got) {
+    todayList.replaceChildren(listItem(got.text));
+    return;
+  }
+  const lines = todayLines(got.reply, (at) => new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }));
+  todayList.replaceChildren(...(lines ?? ["Couldn't read the API's reply."]).map(listItem));
 }
 
 /**

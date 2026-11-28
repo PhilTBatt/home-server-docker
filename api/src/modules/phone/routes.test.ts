@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
+import type { EventSink } from "../events/feed.js";
 import { afterEach, mock, test } from "node:test";
 import Fastify from "fastify";
 import type { Features, PhoneSettings } from "../../config.js";
 import type { Notification } from "../notify/notifier.js";
 import { findAgainMs, findNotification, phone, repeatEveryMs } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true };
 
 afterEach(() => {
   mock.timers.reset();
 });
 
-function buildApp(options: { features?: Features; fail?: boolean; ring?: PhoneSettings; failClear?: boolean; failAfter?: number } = {}) {
+function buildApp(options: { features?: Features; fail?: boolean; ring?: PhoneSettings; failClear?: boolean; failAfter?: number; events?: EventSink } = {}) {
   const sent: { topic: string; notification: Notification }[] = [];
   const clears: { topic: string; sequence: string }[] = [];
   const clock = { at: 50_000 };
@@ -24,6 +25,7 @@ function buildApp(options: { features?: Features; fail?: boolean; ring?: PhoneSe
     ring: options.ring,
     now: () => clock.at,
     makeSequence: () => "find-0a1b2c3d",
+    events: options.events,
     send: async (topic, notification) => {
       tries.count++;
       if (options.fail === true || (options.failAfter !== undefined && sent.length >= options.failAfter)) throw new Error("ntfy replied 500");
@@ -172,4 +174,23 @@ test("found is switched off with finding the phone", async () => {
   const { app } = buildApp({ features: { ...allOn, findPhone: false } });
   const reply = await app.inject({ method: "POST", url: "/phone/found" });
   assert.deepEqual([reply.statusCode, reply.json()], [404, { error: "Finding the phone is switched off" }]);
+});
+
+test("ringing the phone posts an event, once each time it's sent, and nothing when ntfy doesn't take it", async () => {
+  for (const ring of [undefined, { ring: "repeat", seconds: 30 }] as const) {
+    const posted: unknown[] = [];
+    const events: EventSink = { post: (kind, facts) => (posted.push([kind, facts]), null) };
+    const { app, clock } = buildApp({ ring, events });
+    assert.equal((await app.inject({ method: "POST", url: "/phone/find" })).statusCode, 200);
+    await app.inject({ method: "POST", url: "/phone/found" });
+    clock.at += 60_000;
+    assert.equal((await app.inject({ method: "POST", url: "/phone/find" })).statusCode, 200);
+    await app.inject({ method: "POST", url: "/phone/found" });
+    assert.deepEqual(posted, [["phone.rang", undefined], ["phone.rang", undefined]], JSON.stringify(ring));
+    await app.close();
+    const failed: string[] = [];
+    const failing = buildApp({ ring, events: { post: (kind) => (failed.push(kind), null) }, fail: true });
+    assert.equal((await failing.app.inject({ method: "POST", url: "/phone/find" })).statusCode, 502);
+    assert.deepEqual(failed, []);
+  }
 });

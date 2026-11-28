@@ -38,6 +38,7 @@ const readPaths: Record<string, string> = {
   get_mode: "/mode",
   get_reminders: "/reminders",
   get_sessions: "/sessions",
+  get_events: "/events/today",
   get_deal_status: "/deals/status",
   get_deal_searches: "/deals/searches",
 };

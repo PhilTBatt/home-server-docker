@@ -3,11 +3,12 @@ import type { Features, WallSettings } from "../../config.js";
 import { createJarvisDesk, readReport, type JarvisDesk } from "./jarvis.js";
 import { codePattern, createPairings, pairCookie, pairIdPattern, pairingMs, type Pairings } from "./pairing.js";
 import type { WallPicture } from "./picture.js";
+import type { EventSink } from "../events/feed.js";
 
 export const nextWaitMs = 20_000;
 export const wallCookie = "wall_token";
 export const wallCookieDays = 365;
-export const wallReads = new Set(["GET /wall", "GET /wall/jarvis"]);
+export const wallReads = new Set(["GET /wall", "GET /wall/jarvis", "GET /events/today", "GET /events/feed"]);
 export const switchedOff = { error: "The wall is switched off" };
 export const noSuchCode = { error: "No screen is showing that code. Check the code on the screen and try again." };
 export const tooManyWrongCodes = { error: "Too many wrong codes, so every screen that was pairing starts again with a new code." };
@@ -18,7 +19,7 @@ const quiet = { logLevel: "warn" as const };
 export const plainHttpPairing = { error: "Pair at https://hub.home: with LOGIN_GUARD on, pairing over plain http is refused" };
 export const pairNeedsJson = { error: "Ask for a code with a JSON body, application/json" };
 
-export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; guard?: boolean; desk?: JarvisDesk; pairings?: Pairings; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number }> = async (app, options) => {
+export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; guard?: boolean; desk?: JarvisDesk; pairings?: Pairings; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number; events?: EventSink }> = async (app, options) => {
   const desk = options.desk ?? createJarvisDesk();
   const pairings = options.pairings ?? createPairings();
   const now = options.now ?? (() => Date.now());
@@ -83,6 +84,7 @@ export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettin
     const result = pairings.confirm(code, now());
     if (result === "paired") {
       app.log.info({ pairing: { confirmed: true } }, "a screen was paired from the phone");
+      options.events?.post("screen.paired");
       return { paired: true };
     }
     if (result === "dropped") {

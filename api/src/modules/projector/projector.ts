@@ -1,5 +1,6 @@
 import type { Link, LinkEvent, OpenLink, PowerKey } from "./link.js";
 import type { Pairing, PairingStore } from "./store.js";
+import type { EventSink } from "../events/feed.js";
 
 export const projectorPowers = ["wake-sleep", "toggle"] as const;
 
@@ -45,8 +46,9 @@ export const pressStopped = "That press stopped before anything was sent (the pa
 
 type Session = { link: Link; events: (event: LinkEvent) => void; abort?: () => void };
 
-export function createProjector(options: { settings: ProjectorSettings; store: PairingStore; open: OpenLink; log?: ProjectorLog; now?: () => Date; timers?: { set: typeof setTimeout; clear: typeof clearTimeout } }): Projector {
+export function createProjector(options: { settings: ProjectorSettings; store: PairingStore; open: OpenLink; log?: ProjectorLog; now?: () => Date; timers?: { set: typeof setTimeout; clear: typeof clearTimeout }; events?: EventSink }): Projector {
   const { settings, store, open, log } = options;
+  const feed = options.events;
   const now = options.now ?? (() => new Date());
   const set = options.timers?.set ?? setTimeout;
   const clear = options.timers?.clear ?? clearTimeout;
@@ -210,6 +212,7 @@ export function createProjector(options: { settings: ProjectorSettings; store: P
     endSession();
     problem = null;
     log?.info?.({ projector: { key, want: want ? "on" : "off", was, now: after, ...(lost === null ? {} : { link: "stopped before it said" }) } }, "projector: power key sent");
+    if (was !== null && after !== null && after !== was) feed?.post("projector.switched", { on: after }, now());
     return { sent: true, was, on: after };
   }
 

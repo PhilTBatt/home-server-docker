@@ -428,3 +428,24 @@ test("with the hold in place in bedtime, finding the phone and a cancelled train
   assert.deepEqual(fetchMock.mock.calls.map((call) => new Headers(call.arguments[1]?.headers).get("Title")), ["Here's your phone", "Train change"]);
   assert.equal(modes.view().held, 2);
 });
+
+test("each switch to another mode posts an event saying where it went, where from and how, and a mode kept with a new end posts none", async () => {
+  const posted: unknown[] = [];
+  const modes = createModes({
+    store: memoryStore().store,
+    settings: { bedtimeFrom: null, bedtimeUntil: null },
+    topic: "test-topic",
+    send: async () => {},
+    events: { post: (kind, facts, when) => (posted.push([kind, facts, when?.toISOString()]), null) },
+  });
+  await modes.load(at("2026-11-28T09:00:00.000Z"));
+  await modes.set({ mode: "gaming", until: null, by: "voice" }, at("2026-11-28T10:00:00.000Z"));
+  await modes.set({ mode: "away", until: at("2026-11-29T10:00:00.000Z"), by: "phone" }, at("2026-11-28T11:00:00.000Z"));
+  await modes.set({ mode: "away", until: at("2026-11-30T10:00:00.000Z"), by: "phone" }, at("2026-11-28T12:00:00.000Z"));
+  await modes.tick(at("2026-11-30T10:00:30.000Z"));
+  assert.deepEqual(posted, [
+    ["mode.switched", { to: "gaming", from: "normal", by: "voice" }, "2026-11-28T10:00:00.000Z"],
+    ["mode.switched", { to: "away", from: "gaming", by: "phone" }, "2026-11-28T11:00:00.000Z"],
+    ["mode.switched", { to: "normal", from: "away", by: "schedule" }, "2026-11-30T10:00:30.000Z"],
+  ]);
+});

@@ -27,6 +27,7 @@ export type Features = {
   talk: boolean;
   wall: boolean;
   projector: boolean;
+  events: boolean;
 };
 
 export type DealSettings = {
@@ -98,6 +99,7 @@ const featureLabels: Record<keyof Features, string> = {
   talk: "talk to Jarvis",
   wall: "the wall",
   projector: "the projector",
+  events: "the events feed",
 };
 
 export function privateIPv4(text: string): boolean {
@@ -161,6 +163,7 @@ export function readConfig(env: Record<string, string | undefined>): Config {
     talk: readSwitch("TALK"),
     wall: readSwitch("WALL"),
     projector: readSwitch("PROJECTOR"),
+    events: readSwitch("EVENTS"),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers || features.reminders);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);
