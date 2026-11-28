@@ -156,9 +156,17 @@ export function createReminderStore(path: string): ReminderStore {
   };
 }
 
+export function reminderSequence(id: string): string {
+  return `reminder-${id}`;
+}
+
 export function reminderNotification(reminder: Reminder, dueAt: Date, late: boolean): Notification {
   const when = late ? ` (due at ${clockText(londonNow(dueAt).minutes)}, sent late because the hub was down)` : "";
-  return { title: "Reminder", message: `${reminder.text}${when}`, tags: "alarm_clock", ...(reminder.urgent ? { priority: 4 as const, urgent: true } : {}) };
+  return { title: "Reminder", message: `${reminder.text}${when}`, tags: "alarm_clock", sequence: reminderSequence(reminder.id), ...(reminder.urgent ? { priority: 4 as const, urgent: true } : {}) };
+}
+
+export function snoozedNotification(reminder: Reminder, until: Date): Notification {
+  return { title: "Reminder snoozed", message: `${reminder.text} (snoozed until ${clockText(londonNow(until).minutes)})`, tags: "zzz", priority: 2, sequence: reminderSequence(reminder.id), ...(reminder.urgent ? { urgent: true } : {}) };
 }
 
 function nextFire(reminder: Reminder): number | null {
@@ -166,13 +174,18 @@ function nextFire(reminder: Reminder): number | null {
   return times.length === 0 ? null : Math.min(...times);
 }
 
-export function createReminders(options: { store: ReminderStore; send: (notification: Notification) => Promise<void>; modes?: Modes; makeId?: () => string; log?: ReminderLog }): Reminders {
+export function createReminders(options: { store: ReminderStore; send: (notification: Notification) => Promise<void>; clear?: (sequence: string) => Promise<void>; modes?: Modes; makeId?: () => string; log?: ReminderLog }): Reminders {
   const { log } = options;
   const makeId = options.makeId ?? newId;
   let reminders: Reminder[] = [];
   let feed: Due[] = [];
   let seq = 0;
-  let unsent: { notification: Notification; until: number; id: string }[] = [];
+  type Unsent = { notification: Notification; until: number; id: string };
+  type Flight = { id: string; dropped: boolean };
+  let unsent: Unsent[] = [];
+  let retrying: Unsent[] = [];
+  const flying = new Set<Flight>();
+  const shows = new Map<string, Notification>();
   let saving: Promise<void> = Promise.resolve();
   let running = false;
 
@@ -186,15 +199,25 @@ export function createReminders(options: { store: ReminderStore; send: (notifica
     return saving;
   }
 
-  async function send(notification: Notification, id: string, now: Date): Promise<boolean> {
+  async function send(notification: Notification, id: string, now: Date, again?: Unsent): Promise<boolean> {
+    const flight: Flight = { id, dropped: false };
+    flying.add(flight);
+    let sent = false;
     try {
       await options.send(notification);
-      return true;
+      sent = true;
     } catch {
-      unsent.push({ notification, until: now.getTime() + unsentKeptMs, id });
-      log?.warn?.({ id }, "a reminder couldn't be sent to the phone, and will be tried again");
-      return false;
+      sent = false;
+    } finally {
+      flying.delete(flight);
     }
+    if (sent && again !== undefined) log?.info?.({ id }, "a reminder that couldn't be sent before was sent");
+    if (sent && flight.dropped) await settleDropped(id, now);
+    if (!sent && !flight.dropped) {
+      unsent.push(again ?? { notification, until: now.getTime() + unsentKeptMs, id });
+      if (again === undefined) log?.warn?.({ id }, "a reminder couldn't be sent to the phone, and will be tried again");
+    }
+    return sent;
   }
 
   async function fire(reminder: Reminder, dueAt: number, now: Date): Promise<void> {
@@ -216,7 +239,10 @@ export function createReminders(options: { store: ReminderStore; send: (notifica
     seq++;
     feed.push({ seq, id: reminder.id, text: reminder.text, at: new Date(dueAt).toISOString(), late, urgent: reminder.urgent, addedAt: now.toISOString() });
     if (feed.length > keptDue) feed = feed.slice(-keptDue);
-    const sent = await send(reminderNotification(reminder, new Date(dueAt), late), reminder.id, now);
+    dropUnsent(reminder.id);
+    const notification = reminderNotification(reminder, new Date(dueAt), late);
+    shows.set(reminder.id, notification);
+    const sent = await send(notification, reminder.id, now);
     log?.info?.({ id: reminder.id, seq, late, lateSeconds: Math.round(lateBy / 1000), urgent: reminder.urgent, repeat: reminder.repeat, snoozed, sent, next: reminder.at }, "reminder due");
   }
 
@@ -232,6 +258,7 @@ export function createReminders(options: { store: ReminderStore; send: (notifica
     }
     const before = reminders.length;
     reminders = reminders.filter((one) => one.repeat !== null || nextFire(one) !== null || one.firedAt === null || Date.parse(one.firedAt) + firedKeptMs > at);
+    for (const id of [...shows.keys()]) if (find(id) === undefined) shows.delete(id);
     if (reminders.length !== before) {
       log?.info?.({ removed: before - reminders.length }, "reminders that fired a day ago and weren't snoozed or done were removed");
       changed = true;
@@ -239,25 +266,55 @@ export function createReminders(options: { store: ReminderStore; send: (notifica
     const feedBefore = feed.length;
     feed = feed.filter((one) => Date.parse(one.addedAt) + keptDueMs > at);
     if (feed.length !== feedBefore) changed = true;
-    const retrying = unsent;
+    retrying = unsent;
     unsent = [];
-    for (const one of retrying) {
+    for (let one = retrying.shift(); one !== undefined; one = retrying.shift()) {
       if (one.until <= at) {
         log?.warn?.({ id: one.id }, "a reminder was never sent to the phone, and was dropped after an hour of tries");
         continue;
       }
-      try {
-        await options.send(one.notification);
-        log?.info?.({ id: one.id }, "a reminder that couldn't be sent before was sent");
-      } catch {
-        unsent.push(one);
-      }
+      await send(one.notification, one.id, now, one);
     }
     if (changed) await save();
   }
 
   function find(id: string): Reminder | undefined {
     return reminders.find((one) => one.id === id);
+  }
+
+  function dropUnsent(id: string): number {
+    const before = unsent.length + retrying.length;
+    unsent = unsent.filter((one) => one.id !== id);
+    retrying = retrying.filter((one) => one.id !== id);
+    let dropped = before - unsent.length - retrying.length;
+    for (const flight of flying) {
+      if (flight.id === id && !flight.dropped) {
+        flight.dropped = true;
+        dropped++;
+      }
+    }
+    return dropped;
+  }
+
+  async function settleDropped(id: string, now: Date): Promise<void> {
+    const showing = shows.get(id);
+    log?.info?.({ id, putBack: showing !== undefined }, "a reminder's old message reached the phone after it changed, so it's put right");
+    if (showing !== undefined) {
+      await send(showing, id, now);
+      return;
+    }
+    await options.clear?.(reminderSequence(id)).catch(() => log?.warn?.({ id }, "a reminder's message couldn't be cleared from the phone"));
+  }
+
+  async function clearPhone(reminder: Reminder): Promise<boolean> {
+    if (reminder.firedAt === null || options.clear === undefined) return false;
+    try {
+      await options.clear(reminderSequence(reminder.id));
+      return true;
+    } catch {
+      log?.warn?.({ id: reminder.id }, "a reminder's message couldn't be cleared from the phone");
+      return false;
+    }
   }
 
   return {
@@ -289,10 +346,13 @@ export function createReminders(options: { store: ReminderStore; send: (notifica
       return reminders.map((one) => ({ ...one })).sort((a, b) => (nextFire(a) ?? Infinity) - (nextFire(b) ?? Infinity));
     },
     async cancel(id) {
-      const before = reminders.length;
+      const reminder = find(id);
+      if (reminder === undefined) return false;
       reminders = reminders.filter((one) => one.id !== id);
-      if (reminders.length === before) return false;
-      log?.info?.({ id, reminders: reminders.length }, "reminder cancelled");
+      shows.delete(id);
+      const unsentDropped = dropUnsent(id);
+      const cleared = await clearPhone(reminder);
+      log?.info?.({ id, reminders: reminders.length, cleared, unsentDropped }, "reminder cancelled");
       await save();
       return true;
     },
@@ -300,22 +360,30 @@ export function createReminders(options: { store: ReminderStore; send: (notifica
       const reminder = find(id);
       if (reminder === undefined) return null;
       if (reminder.kind === "mode") return { refused: "A timed mode switch can't be snoozed: cancel it and set a new one" };
-      reminder.snoozedTo = new Date(now.getTime() + minutes * 60_000).toISOString();
-      log?.info?.({ id, minutes, repeat: reminder.repeat }, "reminder snoozed");
+      const until = new Date(now.getTime() + minutes * 60_000);
+      reminder.snoozedTo = until.toISOString();
+      const unsentDropped = dropUnsent(id);
+      const message = reminder.firedAt === null ? null : snoozedNotification(reminder, until);
+      if (message !== null) shows.set(id, message);
+      const replaced = message === null ? false : await send(message, id, now);
+      log?.info?.({ id, minutes, repeat: reminder.repeat, replaced, unsentDropped }, "reminder snoozed");
       await save();
       return { snoozed: { ...reminder } };
     },
     async done(id) {
       const reminder = find(id);
       if (reminder === undefined) return null;
+      shows.delete(id);
+      const unsentDropped = dropUnsent(id);
+      const cleared = await clearPhone(reminder);
       if (reminder.repeat === null) {
         reminders = reminders.filter((one) => one.id !== id);
-        log?.info?.({ id, repeat: null }, "reminder done");
+        log?.info?.({ id, repeat: null, cleared, unsentDropped }, "reminder done");
         await save();
         return { done: null };
       }
       reminder.snoozedTo = null;
-      log?.info?.({ id, repeat: reminder.repeat }, "reminder done, and its next time kept");
+      log?.info?.({ id, repeat: reminder.repeat, cleared, unsentDropped }, "reminder done, and its next time kept");
       await save();
       return { done: { ...reminder } };
     },
