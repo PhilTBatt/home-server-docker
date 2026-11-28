@@ -17,7 +17,7 @@ import type { ExpiryChecker } from "./modules/expiry/checker.js";
 import { kept, runDoctor, type DoctorSources, type Tries } from "./modules/system/doctor.js";
 import { watchers } from "./modules/watchers/routes.js";
 import type { Watchers } from "./modules/watchers/watchers.js";
-import { catchUpDoctorMs, createCatchUp } from "./modules/catchup/catchup.js";
+import { catchUpDoctorMs, createCatchUp, type CatchUp } from "./modules/catchup/catchup.js";
 import { catchUp } from "./modules/catchup/routes.js";
 import { modes } from "./modules/modes/routes.js";
 import type { Modes } from "./modules/modes/modes.js";
@@ -43,10 +43,11 @@ import { serverMapPage } from "./modules/wall/server-map.js";
 import { createJarvisSwitches, switchboardPage } from "./modules/wall/switchboard.js";
 import { createTally, readBootTime, securityPage, type Tally } from "./modules/wall/security.js";
 import { healthPage } from "./modules/wall/health.js";
+import { codePage, commitsOf, heatDays, testsOf } from "./modules/wall/code.js";
 import type { Status } from "./modules/system/alerts.js";
 import { buildPicture, keptPicture, wallDoctorMs, wallTrainsMs, type WallSources } from "./modules/wall/picture.js";
 
-export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector; events?: EventFeed; morning?: Morning; tally?: Tally; bootTime?: (now: Date) => Promise<Date | null>; startedAt?: Date; status?: () => Promise<Status> }) {
+export async function buildApp(options: { logger: boolean; config: Config; dealWatcher?: DealWatcher; trainChanges?: ChangeFeed; expiryChecker?: ExpiryChecker; tries?: { heartbeat: Tries; alerts: Tries }; watchers?: Watchers; doctor?: Partial<DoctorSources>; modes?: Modes; reminders?: Reminders; chores?: Chores; sessions?: Sessions; spotify?: SpotifyParts; jarvisDesk?: JarvisDesk; wallSources?: Partial<WallSources>; projector?: Projector; events?: EventFeed; morning?: Morning; tally?: Tally; bootTime?: (now: Date) => Promise<Date | null>; startedAt?: Date; status?: () => Promise<Status>; catchUp?: CatchUp }) {
   const app = Fastify({ logger: options.logger, trustProxy: true });
   const startedAt = options.startedAt ?? new Date();
   const tally = options.tally ?? createTally(startedAt);
@@ -89,7 +90,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   const moreProblems = () => [...(dealWatcher?.problems() ?? []), ...(expiryChecker?.problems() ?? [])];
   app.register(system, { prefix: "/system", features: options.config.features, moreProblems, doctor });
   const features = options.config.features;
-  const catchingUp = createCatchUp({
+  const catchingUp = options.catchUp ?? createCatchUp({
     repos: options.config.catchUp.repos,
     token: options.config.catchUp.token,
     hub: {
@@ -141,6 +142,12 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     health: doctorShown === undefined ? undefined : async () => {
       const [report, status] = await Promise.all([doctorShown().catch(() => null), (options.status ?? readStatus)().catch(() => null)]);
       return healthPage(report, status);
+    },
+    code: async () => {
+      const now = new Date();
+      const choresOn = features.chores && options.chores !== undefined;
+      const [result, reports] = await Promise.all([choresOn ? (options.chores as Chores).latest("run-tests").catch(() => null) : null, features.catchUp ? catchingUp.commits(heatDays, now) : null]);
+      return codePage(testsOf(result, choresOn), commitsOf(reports, now));
     },
     security: async () => {
       const now = new Date();

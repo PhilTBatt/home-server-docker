@@ -6,6 +6,7 @@ import { isServerMap, mapHalos, mapView, stateWord } from "./wall-map.js";
 import { isSwitchboard, switchboardView } from "./wall-switches.js";
 import { isSecurityPage, securityNote, securityView } from "./wall-security.js";
 import { healthNote, healthView, isHealthPage } from "./wall-health.js";
+import { codeNote, codeView, isCodePage, skylineBase } from "./wall-code.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -511,7 +512,8 @@ function showCard(now) {
   const boardShown = showSwitches(open, now);
   const securityShown = showSecurity(open, now);
   const healthShown = showHealth(open, now);
-  if (mapShown || boardShown || securityShown || healthShown) {
+  const codeShown = showCode(open, now);
+  if (mapShown || boardShown || securityShown || healthShown || codeShown) {
     card.hidden = true;
     card.classList.add("shut");
     return;
@@ -906,13 +908,82 @@ function showHealth(open, now) {
 }
 
 /**
+ * @param {import("./wall-cards.js").Opened | null} open
+ * @param {number} now
+ * @returns {boolean}
+ */
+function showCode(open, now) {
+  const box = byId("code");
+  const details = open?.page.id === "code" ? detailsShown(detail, "code", Date.now()) : null;
+  const shown = open !== null && isCodePage(details);
+  stage.classList.toggle("coded", shown);
+  box.hidden = !shown;
+  if (!shown || open === null || !isCodePage(details)) return false;
+  setText(byId("cd-by"), byLine(open.page.by) || "On the wall");
+  byId("cd-left").style.transform = `scaleX(${pageLeftMs(open, now) / pageShownMs})`;
+  const key = JSON.stringify(details);
+  if (box.dataset.shown === key) return true;
+  box.dataset.shown = key;
+  const view = codeView(details, new Date());
+  setText(byId("cd-tests-title"), view.testsTitle);
+  setText(byId("cd-tests-empty"), view.testsEmpty);
+  setText(byId("cd-heat-title"), view.heatTitle);
+  setText(byId("cd-heat-empty"), view.heatEmpty);
+  setText(byId("cd-latest-empty"), view.latestEmpty);
+  setText(byId("cd-note"), codeNote);
+  byId("cd-pills").replaceChildren(
+    ...view.pills.map((pill) => {
+      const one = made("span", `cd-pill t-${pill.tone}`);
+      one.textContent = pill.text;
+      return one;
+    }),
+  );
+  byId("cd-bars").replaceChildren(
+    ...view.bars.map((bar) => {
+      const one = made("div", `cd-bar${bar.failing ? " failing" : ""}`);
+      Object.assign(one.style, { left: `${bar.left}px`, top: `${skylineBase - 88 - bar.height}px`, height: `${bar.height}px` });
+      const shape = made("span", "cd-bar-shape");
+      shape.setAttribute("aria-hidden", "true");
+      const count = made("span", "cd-bar-count");
+      count.textContent = bar.count;
+      const name = made("span", "cd-bar-name");
+      name.textContent = bar.name;
+      one.append(shape, count, name);
+      return one;
+    }),
+  );
+  const width = view.cols === 0 ? 0 : Math.floor((445 - (view.cols - 1) * 6) / view.cols);
+  byId("cd-cells").replaceChildren(
+    ...view.cells.map((cell) => {
+      const one = made("span", `cd-cell l-${cell.level}${cell.today ? " today" : ""}${cell.unknown ? " unknown" : ""}`);
+      Object.assign(one.style, { left: `${cell.col * (width + 6)}px`, top: `${cell.row * 29}px`, width: `${width}px` });
+      return one;
+    }),
+  );
+  byId("cd-commits").replaceChildren(
+    ...view.latest.map((commit) => {
+      const one = made("div", "cd-commit");
+      const sha = made("span", "cd-sha");
+      sha.textContent = commit.sha;
+      const what = made("span", "cd-what");
+      what.textContent = commit.what;
+      const where = made("span", "cd-where");
+      where.textContent = commit.where;
+      one.append(sha, what, where);
+      return one;
+    }),
+  );
+  return true;
+}
+
+/**
  * @returns {Target[]}
  */
 function targets() {
   /** @type {Target[]} */
   const list = [];
   if (pages.opened !== null && !card.hidden) list.push({ kind: "card", key: pages.opened.page.id, box: { left: card.offsetLeft, top: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight } });
-  else if (!["mapped", "switched", "secured", "healthy"].some((name) => stage.classList.contains(name))) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
+  else if (!["mapped", "switched", "secured", "healthy", "coded"].some((name) => stage.classList.contains(name))) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
   if (!fitChipBox.hidden) list.push({ kind: "fit", key: "fit", box: fitChip });
   return list;
 }

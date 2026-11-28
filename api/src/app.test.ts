@@ -959,6 +959,23 @@ test("the wall's token reads the switches page, with what Jarvis last told the h
   assert.deepEqual(offDetails.groups[2].rows, [], "a new start knows nothing Jarvis said before");
 });
 
+test("the wall's token reads the code page, saying what's off, and with chores on the latest run-tests result's counts", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, catchUp: false, chores: false } } });
+  const off = (await app.inject({ method: "GET", url: "/wall/pages/code", cookies: { wall_token: wallToken } })).json().details;
+  assert.deepEqual([off.kind, off.tests, off.commits], ["code", { none: "chores-off" }, { none: "catch-up-off" }]);
+  const run = { id: "0123456789abcdef", state: "done" as const, job: "run-tests", exit: 0, timedOut: false, seconds: 300, startedAt: "2026-11-30T09:00:00Z", endedAt: "2026-11-30T09:05:00Z", limitSeconds: 2400, why: null, output: ["== api", "ℹ tests 1814", "ℹ pass 1814", "ℹ fail 0"] };
+  const asked: string[] = [];
+  const withChores = await buildRealApp({ logger: false, config: { ...config, catchUp: { ...config.catchUp, repos: [] } }, chores: { request: async () => ({ refused: "no", status: 409 }), result: async () => null, latest: async (job) => (asked.push(job), run) } });
+  const on = (await withChores.inject({ method: "GET", url: "/wall/pages/code", cookies: { wall_token: wallToken } })).json().details;
+  assert.deepEqual(on.tests, { at: "2026-11-30T09:05:00Z", ok: true, timedOut: false, suites: [{ id: "api", name: "The API", tests: 1814, pass: 1814, fail: 0 }] });
+  assert.deepEqual(on.commits, { none: "no-repos" });
+  assert.deepEqual(asked, ["run-tests"]);
+  const days: number[] = [];
+  const withCommits = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, chores: false } }, catchUp: { read: async () => Promise.reject(new Error("not this")), commits: async (count) => (days.push(count), [{ repo: "alpha/one", count: 1, more: false, latestAt: new Date().toISOString(), days: [{ day: new Date().toISOString().slice(0, 10), commits: [{ sha: "abcdef1", at: new Date().toISOString(), message: "Add the code page" }] }] }]) } });
+  const commits = (await withCommits.inject({ method: "GET", url: "/wall/pages/code", cookies: { wall_token: wallToken } })).json().details.commits;
+  assert.deepEqual([commits.total, commits.latest[0].what, commits.latest[0].repo, days], [1, "Add the code page", "one", [28]]);
+});
+
 test("the wall's token reads the health page, from the same kept server check as the picture and the hub's own readings", async () => {
   let asked = 0;
   const report = { state: "ok" as const, summary: "", checkedAt: "", checks: [{ name: "Jellyfin", state: "ok" as const, detail: "Answering.", next: null }, { name: "Heartbeat", state: "ok" as const, detail: "Pinged.", next: null }] };

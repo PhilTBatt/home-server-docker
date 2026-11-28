@@ -49,6 +49,7 @@ export type ChoreLog = {
 export type Chores = {
   request(job: string, now: Date): Promise<Requested | { refused: string; status: 409 | 500 }>;
   result(id: string): Promise<ChoreResult | null>;
+  latest(job: string): Promise<ChoreResult | null>;
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -159,6 +160,19 @@ export function createChores(options: { dir: string; jobs?: (job: string) => boo
       }
       log?.info?.({ id, job }, "chore requested");
       return { id, job, requestedAt: now.toISOString() };
+    },
+    async latest(job) {
+      const names = (await readdir(results).catch(() => [] as string[])).filter((name) => /^[0-9a-f]{16}\.json$/.test(name));
+      let best: Omit<ChoreResult, "output"> | null = null;
+      for (const name of names) {
+        const text = await readFile(join(results, name), "utf8").catch(() => null);
+        const found = text === null ? null : readResult(name.slice(0, 16), text);
+        if (found === null || found.job !== job || found.state !== "done" || found.endedAt === null) continue;
+        if (best === null || Date.parse(found.endedAt) > Date.parse(best.endedAt ?? "")) best = found;
+      }
+      if (best === null) return null;
+      const output = await readFile(join(results, `${best.id}.out`), "utf8").catch(() => "");
+      return { ...best, output: outputLines(output) };
     },
     async result(id) {
       const empty = { job: null, exit: null, timedOut: null, seconds: null, startedAt: null, endedAt: null, limitSeconds: null, why: null, output: [] };

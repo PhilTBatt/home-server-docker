@@ -258,3 +258,16 @@ test("the summary says in plain words how many commits, where the latest was, an
   assert.equal(summaryOf(report({ repos: [{ repo: "beta/two", failed: "x" }] })), "Couldn't read beta/two. Server: Fine.");
   assert.equal(summaryOf(report({ waiting: { inbox: { notes: 1 }, expiring: { off: "EXPIRY_ALERTS" }, watchers: { failed: "x" }, problems: { messages: [] } } })), "No repos are listed in CATCH_UP_REPOS. Waiting: 1 note in the brain inbox. Server: Fine.");
 });
+
+test("commits alone asks GitHub once per repo and keeps the answer, without asking the hub for anything else", async () => {
+  const stand = github({ "alpha/one": () => Response.json([commit(1, "2026-11-25T08:00:00Z", "First")]) });
+  let hubAsked = 0;
+  const catchUp = createCatchUp({ repos: ["alpha/one"], token: "", hub: hub({ server: async () => (hubAsked++, Promise.reject(new Error("not this"))), problems: async () => (hubAsked++, []) }), fetcher: stand.fetcher });
+  const first = await catchUp.commits(28, now);
+  const again = await catchUp.commits(28, new Date(now.getTime() + 60_000));
+  assert.deepEqual(first, again);
+  assert.equal(stand.asked.length, 1);
+  assert.equal(hubAsked, 0);
+  assert.ok(stand.asked[0].includes("per_page=30"));
+  assert.deepEqual(first.map((one) => ("days" in one ? one.days.map((day) => day.day) : one.failed)), [["2026-11-25"]]);
+});

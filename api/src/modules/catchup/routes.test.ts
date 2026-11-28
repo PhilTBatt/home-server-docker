@@ -11,6 +11,7 @@ const now = () => new Date("2026-11-26T12:00:00Z");
 function recording() {
   const asked: [number, string][] = [];
   const reader: CatchUp = {
+    commits: async () => [],
     read: async (days, at) => {
       asked.push([days, at.toISOString()]);
       return { days } as never;

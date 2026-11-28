@@ -51,7 +51,7 @@ export type CatchUpReport = {
   server: Got<Pick<DoctorReport, "state" | "summary">>;
 };
 
-export type CatchUp = { read(days: number, now: Date): Promise<CatchUpReport> };
+export type CatchUp = { read(days: number, now: Date): Promise<CatchUpReport>; commits(days: number, now: Date): Promise<RepoReport[]> };
 
 export const hubWaitMs = 5_000;
 export const catchUpDoctorMs = 4_000;
@@ -174,6 +174,9 @@ export function createCatchUp(options: CatchUpOptions): CatchUp {
   };
 
   return {
+    async commits(days, now) {
+      return Promise.all(options.repos.map((repo) => commitsFor(repo, days, now).answer));
+    },
     async read(days, now) {
       const github = options.repos.map((repo) => commitsFor(repo, days, now));
       const askedAt = github.flatMap((entry) => (entry.at === null ? [] : [entry.at]));

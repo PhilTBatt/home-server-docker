@@ -211,3 +211,23 @@ test("with switch flipping on, a switch job is written like any chore, and with 
   assert.equal(readResult("0123456789abcdef", JSON.stringify({ id: "0123456789abcdef", state: "done", job: "switch-off-find-phone" }))?.job, "switch-off-find-phone");
   assert.equal(readResult("0123456789abcdef", JSON.stringify({ id: "0123456789abcdef", state: "done", job: "switch-off-login-guard" }))?.job, null);
 });
+
+test("the latest finished run of a job is read with its output, ignoring other jobs, running ones and odd files", async () => {
+  const dir = await folder();
+  const chores = createChores({ dir, jobs: choreJobFor(true, true) });
+  assert.equal(await chores.latest("run-tests"), null);
+  const write = async (id: string, fields: Record<string, unknown>, out = "") => {
+    await writeFile(join(dir, "results", `${id}.json`), JSON.stringify({ id, ...fields }));
+    if (out !== "") await writeFile(join(dir, "results", `${id}.out`), out);
+  };
+  await write("aaaaaaaaaaaaaaaa", { job: "run-tests", state: "done", exit: 0, timedOut: false, seconds: 300, startedAt: "2026-11-29T09:00:00Z", endedAt: "2026-11-29T09:05:00Z", limitSeconds: 2400 }, "== api\nℹ tests 1\n");
+  await write("bbbbbbbbbbbbbbbb", { job: "run-tests", state: "done", exit: 1, timedOut: false, seconds: 300, startedAt: "2026-11-30T09:00:00Z", endedAt: "2026-11-30T09:05:00Z", limitSeconds: 2400 }, "== api\nℹ tests 2\n");
+  await write("cccccccccccccccc", { job: "run-tests", state: "running", startedAt: "2026-11-30T10:00:00Z", limitSeconds: 2400 });
+  await write("dddddddddddddddd", { job: "rebuild-api", state: "done", exit: 0, timedOut: false, seconds: 30, startedAt: "2026-11-30T11:00:00Z", endedAt: "2026-11-30T11:00:30Z", limitSeconds: 900 });
+  await writeFile(join(dir, "results", "not-a-result.json"), JSON.stringify({ job: "run-tests", state: "done", endedAt: "2026-12-30T09:05:00Z" }));
+  await writeFile(join(dir, "results", "eeeeeeeeeeeeeeee.json"), "not json");
+  const latest = await chores.latest("run-tests");
+  assert.deepEqual([latest?.id, latest?.exit, latest?.output], ["bbbbbbbbbbbbbbbb", 1, ["== api", "ℹ tests 2"]]);
+  assert.equal((await chores.latest("rebuild-api"))?.id, "dddddddddddddddd");
+  assert.equal(await chores.latest("pull-images"), null);
+});
