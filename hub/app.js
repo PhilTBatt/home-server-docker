@@ -85,6 +85,7 @@
  * @property {boolean} [sessions]
  * @property {boolean} [spotify]
  * @property {boolean} [talk]
+ * @property {boolean} [wall]
  */
 
 /**
@@ -371,6 +372,11 @@ const alertsList = byId("alerts");
 const doctorSummary = byId("doctor-summary");
 const doctorChecks = byId("doctor-checks");
 const switchesText = byId("switches");
+const pairSection = byId("pair-screen");
+const pairForm = /** @type {HTMLFormElement} */ (byId("pair-form"));
+const pairInput = /** @type {HTMLInputElement} */ (byId("pair-code"));
+const pairButton = /** @type {HTMLButtonElement} */ (byId("pair-button"));
+const pairStatus = byId("pair-status");
 const scanButton = /** @type {HTMLButtonElement} */ (byId("scan-library"));
 const brainSection = byId("brain");
 const inboxText = byId("brain-inbox");
@@ -725,6 +731,7 @@ async function loadSwitches() {
   showCatchUp(features);
   showMode(features);
   showHome(features);
+  pairSection.hidden = features.wall !== true;
 }
 
 /**
@@ -1499,6 +1506,39 @@ function explainedItems(explained) {
   items.push(last);
   return items;
 }
+
+/**
+ * @param {string} typed
+ * @returns {string | null}
+ */
+function pairingCode(typed) {
+  const code = typed.replace(/\s+/g, "");
+  return /^\d{6}$/.test(code) ? code : null;
+}
+
+pairForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const code = pairingCode(pairInput.value);
+  if (code === null) {
+    pairStatus.textContent = "The code is the 6 digits on the screen.";
+    return;
+  }
+  pairButton.disabled = true;
+  pairStatus.textContent = "Pairing...";
+  try {
+    const response = await fetch("/api/wall/pair/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+    /** @type {unknown} */
+    const body = await response.json().catch(() => null);
+    const said = isObject(body) && typeof body.error === "string" ? body.error : `The API replied ${response.status}.`;
+    if (response.ok) {
+      pairForm.reset();
+      pairStatus.textContent = "Paired. The screen shows the wall in a moment.";
+    } else pairStatus.textContent = said;
+  } catch {
+    pairStatus.textContent = "Couldn't reach the API.";
+  }
+  pairButton.disabled = false;
+});
 
 explainForm.addEventListener("submit", async (event) => {
   event.preventDefault();

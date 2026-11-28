@@ -24,6 +24,34 @@ export const heardShownMs = 8000;
 export const saidShownMs = 10000;
 export const arrivalShownMs = 6000;
 export const mostCaptionChars = 160;
+export const pairRetryMs = 30_000;
+
+/**
+ * @param {string} code
+ * @returns {string}
+ */
+export function spacedCode(code) {
+  return /^\d{6}$/.test(code) ? `${code.slice(0, 3)} ${code.slice(3)}` : "";
+}
+
+/**
+ * @param {number} seconds
+ * @returns {string}
+ */
+export function pairingLine(seconds) {
+  if (seconds <= 60) return "This code works for less than a minute more. A new one comes after.";
+  return `This code works for ${Math.ceil(seconds / 60)} more minutes.`;
+}
+
+/**
+ * @param {number} status
+ * @returns {string}
+ */
+export function pairRefusedLine(status) {
+  if (status === 404) return "The wall is switched off on the hub.";
+  if (status === 429) return "Other screens are pairing right now. Trying again in 30 seconds.";
+  return `The hub answered ${status}. Trying again in a moment.`;
+}
 
 /**
  * @param {string | null} mode

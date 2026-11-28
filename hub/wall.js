@@ -1,6 +1,6 @@
 // @ts-check
 import { fitKey, letterbox, matrixFor, moveCorner, readFit, writeFit } from "./wall-fit.js";
-import { arrivalShownMs, arrivalsBetween, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
+import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
  * @typedef {import("./wall-logic.js").WallPicture} WallPicture
@@ -45,8 +45,9 @@ const countdownLeft = byId("countdown-left");
 const sparks = byId("sparks");
 const middle = byId("middle");
 const caption = byId("caption");
-const login = /** @type {HTMLFormElement} */ (byId("login"));
-const tokenInput = /** @type {HTMLInputElement} */ (byId("token"));
+const login = byId("login");
+const pairCode = byId("pair-code");
+const pairMessage = byId("login-message");
 const setup = byId("setup");
 const fitOpen = byId("fit-open");
 const handles = /** @type {HTMLElement[]} */ ([...document.querySelectorAll(".handle")]);
@@ -366,7 +367,7 @@ export function render() {
  */
 function refused(response) {
   if (response.status !== 401) return false;
-  showLogin();
+  if (login.hidden) showLogin();
   return true;
 }
 
@@ -436,28 +437,63 @@ function start() {
 
 function showLogin() {
   state.running?.abort();
-  state.running = null;
+  const pairing = new AbortController();
+  state.running = pairing;
   login.hidden = false;
-  tokenInput.focus();
+  void pairScreen(pairing.signal);
 }
 
-login.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const message = byId("login-message");
-  setText(message, "Checking...");
-  try {
-    const response = await fetch("/api/wall/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: tokenInput.value }), signal: limited(new AbortController().signal, pictureLimitMs) });
-    if (response.ok) {
-      tokenInput.value = "";
-      setText(message, "");
-      start();
-      return;
+/**
+ * @param {AbortSignal} signal
+ */
+async function pairScreen(signal) {
+  while (!signal.aborted) {
+    setText(pairCode, "");
+    setText(pairMessage, "Asking the hub for a code...");
+    /** @type {{ code: string, seconds: number } | null} */
+    let started = null;
+    try {
+      const response = await fetch("/api/wall/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store", signal: limited(signal, pictureLimitMs) });
+      if (response.ok) started = await response.json();
+      else {
+        setText(pairMessage, pairRefusedLine(response.status));
+        await pause(response.status === 429 ? pairRetryMs : retryMs * 3, signal);
+        continue;
+      }
+    } catch {
+      if (signal.aborted) return;
+      setText(pairMessage, "Couldn't reach the hub. Trying again in a moment.");
+      await pause(retryMs, signal);
+      continue;
     }
-    setText(message, response.status === 401 ? "That isn't the wall's token." : response.status === 404 ? "The wall is switched off on the hub." : `The hub answered ${response.status}.`);
-  } catch {
-    setText(message, "Couldn't reach the hub.");
+    if (started === null) {
+      await pause(retryMs, signal);
+      continue;
+    }
+    setText(pairCode, spacedCode(started.code));
+    setText(pairMessage, pairingLine(started.seconds));
+    for (;;) {
+      if (signal.aborted) return;
+      try {
+        const response = await fetch("/api/wall/pair", { cache: "no-store", signal: limited(signal, jarvisLimitMs) });
+        if (!response.ok) throw new Error(`the hub answered ${response.status}`);
+        /** @type {{ state: "waiting" | "paired" | "gone", seconds: number }} */
+        const looked = await response.json();
+        if (looked.state === "paired") {
+          setText(pairCode, "");
+          setText(pairMessage, "");
+          start();
+          return;
+        }
+        if (looked.state === "gone") break;
+        setText(pairMessage, pairingLine(looked.seconds));
+      } catch {
+        if (signal.aborted) return;
+        await pause(retryMs, signal);
+      }
+    }
   }
-});
+}
 
 /** @type {{ corners: import("./wall-fit.js").Corners, before: import("./wall-fit.js").Corners, picked: number | null, dragging: number | null, buttonTimer: ReturnType<typeof setTimeout> | null }} */
 const fitting = { corners: cornersNow(), before: cornersNow(), picked: null, dragging: null, buttonTimer: null };

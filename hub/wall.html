@@ -82,14 +82,12 @@
       </section>
     </div>
 
-    <form id="login" class="login" hidden>
-      <h1>Jarvis on the wall</h1>
-      <p>Type the wall's token once. This screen remembers it for a year, and it can only show the wall.</p>
-      <label for="token">Wall token</label>
-      <input id="token" type="password" autocomplete="off" required>
-      <button type="submit">Show the wall</button>
+    <section id="login" class="login" aria-labelledby="pair-heading" hidden>
+      <h1 id="pair-heading">Jarvis on the wall</h1>
+      <p>To show the wall here, open the hub app on your phone, go to Server, and type this code under Pair a screen.</p>
+      <p id="pair-code" class="pair-code" aria-live="polite"></p>
       <p id="login-message" class="login-message" aria-live="polite"></p>
-    </form>
+    </section>
 
     <template id="pose-waiting"><div class="p ring-soft breathe-5"></div><div class="p core breathe-5"></div></template>
     <template id="pose-heard"><div class="p ring-flash"></div><div class="p core"></div></template>

@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { modeColours, arrivalsBetween, bedtimeLine, captionFor, countdownMostMs, countdownOf, countdownText, heardShownMs, itemColour, lastWords, leavesText, londonClock, middleFor, middleKey, modeColour, mostCaptionChars, orbitSlots, poseFor, poseLabels, saidShownMs, timerMiddleMs, trainState, unknownVoiceColour, voiceColour, voiceColours } from "./wall-logic.js";
+import { modeColours, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, arrivalsBetween, bedtimeLine, captionFor, countdownMostMs, countdownOf, countdownText, heardShownMs, itemColour, lastWords, leavesText, londonClock, middleFor, middleKey, modeColour, mostCaptionChars, orbitSlots, poseFor, poseLabels, saidShownMs, timerMiddleMs, trainState, unknownVoiceColour, voiceColour, voiceColours } from "./wall-logic.js";
 
 /** @type {import("./wall-logic.js").JarvisView} */
 const running = { seq: 1, running: true, activity: "waiting", muted: false, heard: null, said: null, saidAgeMs: null };
@@ -152,4 +152,19 @@ test("bedtime's line says all's well, what's next and the train", () => {
   const picture = { at: "", clock: "23:41", day: "Monday night", phase: "bedtime", mode: "bedtime", modeUntil: null, speaking: "wobble", items: [item({})], train: null, timers: [], playing: null };
   assert.equal(bedtimeLine(picture), "All good");
   assert.equal(bedtimeLine({ ...picture, items: [item({ needs: true })], timers: [{ text: "Alarm", due: "2026-12-01T06:40:00Z", from: "" }], train: { ...train, expected: "07:20" } }), "Something needs a look · Alarm 06:40 · Next train 07:14, expected 07:20");
+});
+
+test("the pairing code shows as two groups of three, and anything else shows nothing", () => {
+  assert.equal(spacedCode("042917"), "042 917");
+  for (const bad of ["12345", "1234567", "12a456", ""]) assert.equal(spacedCode(bad), "", bad);
+});
+
+test("the pairing lines say how long the code lasts, and why a screen couldn't get one", () => {
+  assert.equal(pairingLine(300), "This code works for 5 more minutes.");
+  assert.equal(pairingLine(61), "This code works for 2 more minutes.");
+  assert.equal(pairingLine(60), "This code works for less than a minute more. A new one comes after.");
+  assert.equal(pairRefusedLine(404), "The wall is switched off on the hub.");
+  assert.match(pairRefusedLine(429), /Other screens are pairing/);
+  assert.match(pairRefusedLine(502), /The hub answered 502/);
+  assert.equal(pairRetryMs, 30_000);
 });

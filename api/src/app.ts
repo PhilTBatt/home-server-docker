@@ -43,7 +43,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
   await app.register(cookie);
 
   app.addHook("onRequest", async (request, reply) => {
-    if (request.routeOptions.url === "/auth/login" || request.routeOptions.url === "/wall/login" || request.routeOptions.url === "/wall/logout") return;
+    if (request.routeOptions.url === "/auth/login" || request.routeOptions.url === "/wall/pair" || request.routeOptions.url === "/wall/logout") return;
 
     const token = tokenFromHeader(request.headers.authorization) ?? request.cookies.hub_token ?? "";
     if (isAuthorized(token, options.config.apiToken)) return;
@@ -111,7 +111,7 @@ export async function buildApp(options: { logger: boolean; config: Config; dealW
     ...options.wallSources,
   };
   const picture = keptPicture(() => buildPicture(shown, { speaking: options.config.wall.speaking, trainAlerts: features.trainAlerts ? options.config.trainAlerts : null }, new Date()));
-  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, desk: options.jarvisDesk, picture });
+  app.register(wall, { prefix: "/wall", features: options.config.features, settings: options.config.wall, guard: options.config.login.guard, desk: options.jarvisDesk, picture });
   app.register(deals, {
     prefix: "/deals",
     features: options.config.features,

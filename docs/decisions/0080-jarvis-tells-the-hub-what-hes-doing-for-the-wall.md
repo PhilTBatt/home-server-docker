@@ -1,7 +1,7 @@
 # 0080. Jarvis tells the hub what he's doing, for the wall
 
 - Date: 2026-11-27
-- Status: accepted
+- Status: accepted; how a screen logs in replaced by 0086
 
 ## Context
 The plan is to show Jarvis on a wall, first on the TV through the Xbox's browser and maybe later with a projector, so a web page needs to know what he's doing right now: waiting, listening, thinking, speaking and the rest. Until now only Jarvis knew that, and only inside his chat. Ears knows when it's muted or recording, but nothing about thinking or speaking. The screen will be in a room that guests sit in, and probably on plain `http`, since nothing shows that an Xbox can install Caddy's root certificate.

@@ -807,20 +807,41 @@ test("only Jarvis, with the hub's token, can report his state", async () => {
   assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: wallToken } })).json().activity, "thinking");
 });
 
-test("the wall's login needs no token, takes only the wall's, and gives a cookie that reads the wall", async () => {
+test("pairing needs no token to start or to look, the phone's hub token to confirm, and gives a cookie that reads the wall", async () => {
   const app = await buildRealApp({ logger: false, config });
-  assert.equal((await app.inject({ method: "POST", url: "/wall/login", payload: { token: "test-token" } })).statusCode, 401);
-  const login = await app.inject({ method: "POST", url: "/wall/login", payload: { token: wallToken } });
-  assert.equal(login.statusCode, 200);
-  const given = login.cookies.find((one) => one.name === "wall_token");
+  const started = await app.inject({ method: "POST", url: "/wall/pair", payload: {} });
+  assert.equal(started.statusCode, 200);
+  const pairing = started.cookies.find((one) => one.name === "wall_pair")?.value ?? "";
+  const { code } = started.json() as { code: string };
+  assert.equal((await app.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code } })).statusCode, 401, "no token can't confirm");
+  assert.equal((await app.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code }, cookies: { wall_token: wallToken } })).statusCode, 401, "the wall's own token can't confirm");
+  assert.equal((await app.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code }, headers: { authorization: `Bearer ${wallToken}` } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code }, headers: goodHeader })).statusCode, 200);
+  const paired = await app.inject({ method: "GET", url: "/wall/pair", cookies: { wall_pair: pairing } });
+  const given = paired.cookies.find((one) => one.name === "wall_token");
   assert.equal(given?.value, wallToken);
   assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: given?.value ?? "" } })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/health", cookies: { wall_token: given?.value ?? "" } })).statusCode, 401, "and nothing else");
 });
 
-test("with WALL off, the wall's token opens nothing, its login is a 404, and the hub's token gets a 404 that says so", async () => {
+test("with LOGIN_GUARD on, a screen can't pair over plain http", async () => {
+  const app = await buildRealApp({ logger: false, config: { ...config, login: { guard: true } } });
+  const plain = await app.inject({ method: "POST", url: "/wall/pair", headers: { "x-forwarded-proto": "http" }, payload: {} });
+  assert.equal(plain.statusCode, 403);
+  assert.equal(plain.cookies.length, 0);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/pair", headers: { "x-forwarded-proto": "https" }, payload: {} })).statusCode, 200);
+});
+
+test("the wall's old token login is gone, and needs a token like any unknown route", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  assert.equal((await app.inject({ method: "POST", url: "/wall/login", payload: { token: wallToken } })).statusCode, 401);
+});
+
+test("with WALL off, the wall's token opens nothing, pairing is a 404, and the hub's token gets a 404 that says so", async () => {
   const off = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, wall: false } } });
   assert.equal((await off.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: wallToken } })).statusCode, 401);
-  assert.equal((await off.inject({ method: "POST", url: "/wall/login", payload: { token: wallToken } })).statusCode, 404);
+  assert.equal((await off.inject({ method: "POST", url: "/wall/pair", payload: {} })).statusCode, 404);
+  assert.equal((await off.inject({ method: "POST", url: "/wall/pair/confirm", payload: { code: "123456" }, headers: goodHeader })).statusCode, 404);
   const refused = await off.inject({ method: "GET", url: "/wall/jarvis", headers: goodHeader });
   assert.deepEqual([refused.statusCode, refused.json()], [404, { error: "The wall is switched off" }]);
   assert.equal((await off.inject({ method: "GET", url: "/system/features", headers: goodHeader })).json().wall, false);
@@ -830,7 +851,6 @@ test("with no wall token set, an empty one opens nothing", async () => {
   const app = await buildRealApp({ logger: false, config: { ...config, wall: { token: "", speaking: "wobble" } } });
   assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", headers: { authorization: "Bearer " } })).statusCode, 401);
   assert.equal((await app.inject({ method: "GET", url: "/wall/jarvis", cookies: { wall_token: "" } })).statusCode, 401);
-  assert.equal((await app.inject({ method: "POST", url: "/wall/login", payload: { token: "" } })).statusCode, 401);
 });
 
 for (const [method, url] of protectedRoutes) {

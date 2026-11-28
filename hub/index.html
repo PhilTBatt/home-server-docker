@@ -151,6 +151,16 @@
           <p id="catch-up-summary">Loading...</p>
           <ul id="catch-up-repos"></ul>
         </div>
+        <section id="pair-screen" class="card" hidden>
+          <h2>Pair a screen</h2>
+          <p>Type the code the wall shows, to let that screen show the wall. It can only show the wall.</p>
+          <form id="pair-form">
+            <label for="pair-code">Code on the screen</label>
+            <input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required>
+            <button id="pair-button" type="submit">Pair</button>
+          </form>
+          <p id="pair-status" aria-live="polite"></p>
+        </section>
         <section class="card">
           <h2>Switches</h2>
           <p id="switches">Loading...</p>
