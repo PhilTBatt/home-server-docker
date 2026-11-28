@@ -27,7 +27,7 @@ import { awaySay, guestModeRefusedSay, guestOffByVoiceSay, modes as modeNames, m
 import { seconds, type Answer } from "./timing.js";
 import type { EarsAnswer, EarsVoice } from "./ears-client.js";
 import { spokenOf, type WakeEvent } from "./wake.js";
-import type { WallChat } from "./wall.js";
+import type { SpokenPiece, WallChat } from "./wall.js";
 
 export const chatModel = "claude-haiku-5-5";
 export const questionTimeoutMs = 120_000;
@@ -190,7 +190,7 @@ export type ChatDeps = {
   factsChange?: () => string | null;
   features?: AsyncIterable<FeaturesEvent>;
   describe?: (tool: string, input: unknown, signal: AbortSignal) => Promise<string>;
-  speak?: (after?: Promise<void>) => AnswerSpeech;
+  speak?: (after?: Promise<void>, caption?: (piece: SpokenPiece) => () => void) => AnswerSpeech;
   speechStop?: SpeechStop;
   recordSpeech?: (report: Promise<SpeechReport>) => Promise<void>;
   talk?: Talk;
@@ -497,9 +497,9 @@ async function reply(deps: ChatDeps, message: string, state: ChatState, heard?: 
   };
   const newLine = () => (lineEnded ? "" : "\n");
   show("Jarvis: ");
-  const speech = deps.speak?.(state.finishing.length === 0 ? undefined : Promise.all(state.finishing.map((old) => old.done())).then(() => {})) ?? null;
-  state.speech = speech;
   const shown = (heard === undefined ? deps.wall?.quiet : deps.wall)?.answer();
+  const speech = deps.speak?.(state.finishing.length === 0 ? undefined : Promise.all(state.finishing.map((old) => old.done())).then(() => {}), shown === undefined ? undefined : (piece) => shown.caption(piece)) ?? null;
+  state.speech = speech;
   let waiting: Promise<unknown> = Promise.resolve();
   const asking = new AbortController();
   const typedYes = deps.confirm;

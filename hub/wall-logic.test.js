@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { modeColours, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, arrivalsBetween, bedtimeLine, captionFor, countdownMostMs, countdownOf, countdownText, heardShownMs, itemColour, lastWords, leavesText, londonClock, middleFor, middleKey, modeColour, mostCaptionChars, orbitSlots, poseFor, poseLabels, saidShownMs, timerMiddleMs, trainState, unknownVoiceColour, voiceColour, voiceColours } from "./wall-logic.js";
+import { modeColours, saidAfterSpeechMs, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, arrivalsBetween, bedtimeLine, captionFor, countdownMostMs, countdownOf, countdownText, heardShownMs, itemColour, lastWords, leavesText, londonClock, middleFor, middleKey, modeColour, mostCaptionChars, orbitSlots, poseFor, poseLabels, saidShownMs, timerMiddleMs, trainState, unknownVoiceColour, voiceColour, voiceColours } from "./wall-logic.js";
 
 /** @type {import("./wall-logic.js").JarvisView} */
 const running = { seq: 1, running: true, activity: "waiting", muted: false, heard: null, said: null, saidAgeMs: null };
@@ -167,4 +167,13 @@ test("the pairing lines say how long the code lasts, and why a screen couldn't g
   assert.match(pairRefusedLine(429), /Other screens are pairing/);
   assert.match(pairRefusedLine(502), /The hub answered 502/);
   assert.equal(pairRetryMs, 30_000);
+});
+
+test("his last caption stays up while he's speaking, and for a while after, however long ago it came", () => {
+  const view = { seq: 1, running: true, activity: /** @type {"speaking"} */ ("speaking"), muted: false, heard: null, said: "A long sentence that started a while ago.", saidAgeMs: 14_000 };
+  assert.equal(captionFor(view, 0, "#abc"), null, "without knowing he's speaking, an old caption goes as before");
+  assert.equal(captionFor(view, 0, "#abc", 0)?.text, "A long sentence that started a while ago.");
+  assert.equal(captionFor(view, 0, "#abc", saidAfterSpeechMs - 1)?.text, "A long sentence that started a while ago.");
+  assert.equal(captionFor(view, 0, "#abc", saidAfterSpeechMs), null);
+  assert.equal(captionFor({ ...view, saidAgeMs: 2_000 }, 0, "#abc", 60_000)?.text, "A long sentence that started a while ago.", "a new one shows its 10 seconds anyway");
 });

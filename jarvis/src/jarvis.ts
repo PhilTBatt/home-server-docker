@@ -197,6 +197,7 @@ try {
   hold?.during(() => starts.then(() => {}));
   ({ mode: voice, speaker } = await starts);
   const speaking = speaker;
+  shown?.voiced(speaking !== null);
   const talk = earsCall === null ? undefined : startTalk({ call: earsCall, wake: config.ears === "wake" });
   if (talk !== undefined) process.stdout.write(`${printable(await talk.check(starting.signal))}\n`);
   let chatReady = false;
@@ -229,8 +230,8 @@ try {
     speak:
       speaking === null
         ? undefined
-        : (after) => {
-            const speech = startAnswerSpeech({ ...playOnWall(speakerParts(speaking), shown), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after, ...(config.filler ? { filler: fillerFor(speaking) } : {}) });
+        : (after, caption) => {
+            const speech = startAnswerSpeech({ ...playOnWall(speakerParts(speaking), shown, speaking.engine.sampleRate, caption), now, start: config.speechStart, skipCode: config.spokenStyle, bundle: config.speechBundle, after, ...(config.filler ? { filler: fillerFor(speaking) } : {}) });
             speeches.add(speech);
             const over = spokenOf(speech)().finally(() => speeches.delete(speech));
             hold?.during(() => over);

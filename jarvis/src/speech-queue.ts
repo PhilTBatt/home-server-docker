@@ -25,7 +25,7 @@ export type SpeechReport = {
 
 export type SpeechQueueDeps = {
   make: (sentence: string, signal: AbortSignal) => Promise<Uint8Array>;
-  play: (sound: Uint8Array, signal: AbortSignal) => Promise<void>;
+  play: (sound: Uint8Array, signal: AbortSignal, text?: string) => Promise<void>;
   beforePlay?: (signal: AbortSignal) => Promise<void>;
   now: () => number;
   since: number;
@@ -60,7 +60,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
   const makingOff = new AbortController();
   const making = AbortSignal.any([calledOff.signal, makingOff.signal]);
   const waiting: string[] = [];
-  const ready: { sound: Uint8Array; sentences: number }[] = [];
+  const ready: { sound: Uint8Array; sentences: number; text: string }[] = [];
   const report: SpeechReport = { firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, requests: 0, requestedSentences: 0, problem: null, gaveUp: false, tooLong: false, stopped: false };
   let taken = 0;
   let ended = false;
@@ -138,7 +138,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
           report.firstSoundMadeMs ??= sinceMs();
           makeFailures = 0;
           lastPiece = piece.length;
-          ready.push({ sound, sentences: piece.sentences });
+          ready.push({ sound, sentences: piece.sentences, text: piece.text });
         } catch (error) {
           if (over) {
             report.left += piece.sentences;
@@ -181,7 +181,7 @@ export function startSpeechQueue(deps: SpeechQueueDeps): SpeechQueue {
         }
         const handed = sinceMs();
         try {
-          await unlessCalledOff(deps.play(made.sound, calledOff.signal), calledOff.signal).finally(() => (playing = false));
+          await unlessCalledOff(deps.play(made.sound, calledOff.signal, made.text), calledOff.signal).finally(() => (playing = false));
           begun(handed);
           lastEnded = sinceMs();
           report.spoken += made.sentences;

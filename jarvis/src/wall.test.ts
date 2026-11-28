@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mock, test } from "node:test";
 import { mutedFrom, mutedLine, onLine, wakeStatus } from "./wake.js";
-import { activityOf, createWall, doneFlashMs, heardFlashMs, hubWall, lookingOnWall, mostSaidChars, playOnWall, slotGiver, slots, speakingLingerMs, voiceOnWall, wallBackNote, wallOffLine, wallOnLine, wallOffWhy, wallProblemLine, wallStoppedNote, wordsShownMs, type Counts, type WallReport } from "./wall.js";
+import { captionChars, captionParts, captionTimes, activityOf, createWall, doneFlashMs, heardFlashMs, hubWall, lookingOnWall, mostSaidChars, playOnWall, slotGiver, slots, speakingLingerMs, voiceOnWall, wallBackNote, wallOffLine, wallOnLine, wallOffWhy, wallProblemLine, wallStoppedNote, wordsShownMs, type Counts, type WallReport } from "./wall.js";
 
 const still: Counts = { needs: 0, playing: 0, speakingUntil: 0, looking: 0, thinking: 0, listening: false, heardUntil: 0, doneUntil: 0 };
 
@@ -396,4 +396,201 @@ test("the hub is told with his token, as JSON, and its answers are read in plain
     server.close();
   }
   assert.deepEqual(seen[0], { auth: "Bearer the-token", type: "application/json", body: JSON.stringify(report), url: "/wall/jarvis" });
+});
+
+test("a caption is one piece when it fits, or whole sentences joined up to the caption's size", () => {
+  assert.equal(captionChars, 160);
+  assert.deepEqual(captionParts("  The bins go out tonight.  "), ["The bins go out tonight."]);
+  assert.deepEqual(captionParts(""), []);
+  const sentences = `${"a".repeat(70)}. ${"b".repeat(70)}. ${"c".repeat(70)}.`;
+  assert.deepEqual(captionParts(sentences), [`${"a".repeat(70)}. ${"b".repeat(70)}.`, `${"c".repeat(70)}.`]);
+});
+
+test("a sentence too long for one caption is split at its commas, then between words, never mid-word unless a word is longer than a caption", () => {
+  const clauses = `${"one ".repeat(30).trim()}, ${"two ".repeat(30).trim()}, three`;
+  const parts = captionParts(clauses);
+  assert.ok(parts.every((part) => part.length <= 160), JSON.stringify(parts));
+  assert.equal(parts.join(" "), clauses);
+  const words = "word ".repeat(80).trim();
+  const split = captionParts(words);
+  assert.ok(split.length >= 3 && split.every((part) => part.length <= 160 && !part.startsWith(" ") && !part.endsWith(" ")));
+  assert.equal(split.join(" "), words);
+  const huge = "x".repeat(400);
+  assert.deepEqual(captionParts(huge).map((part) => part.length), [160, 160, 80]);
+});
+
+test("each part of a split caption comes in at its share of the sound's time, by length", () => {
+  assert.deepEqual(captionTimes(["aaaa", "bb", "cccc"], 1000), [0, 400, 600]);
+  assert.deepEqual(captionTimes(["one"], 2500), [0]);
+});
+
+test("with his voice on, his words show only as each piece starts playing, beginning first, and stay until the next", async () => {
+  const { wall, last } = recorder();
+  wall.voiced(true);
+  const answer = wall.chat.answer();
+  answer.text("The bins go out tonight. ");
+  answer.text("And the recycling.");
+  await settled();
+  assert.equal(last().said, null, "nothing runs ahead of his voice");
+  answer.caption({ text: "The bins go out tonight.", ms: 1500 });
+  await settled();
+  assert.equal(last().said, "The bins go out tonight.");
+  answer.end(true);
+  await settled();
+  assert.equal(last().said, "The bins go out tonight.", "the last caption stays up after the text has all come");
+  answer.caption({ text: "And the recycling.", ms: 1200 });
+  await settled();
+  assert.equal(last().said, "And the recycling.");
+  wall.close();
+});
+
+test("a piece too long for one caption is split and timed across its speech", async () => {
+  const { wall, sent, last } = recorder();
+  wall.voiced(true);
+  const answer = wall.chat.answer();
+  const first = "a".repeat(120);
+  const second = "b".repeat(120);
+  answer.caption({ text: `${first}, ${second}`, ms: 60 });
+  await settled();
+  assert.equal(last().said, `${first},`);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await settled();
+  assert.equal(last().said, second);
+  assert.ok(sent.some((report) => report.said === `${first},`));
+  wall.close();
+});
+
+test("a new piece or a restart drops a split caption's later parts, so an old one can't come in late", async () => {
+  const { wall, last } = recorder();
+  wall.voiced(true);
+  const answer = wall.chat.answer();
+  answer.caption({ text: `${"a".repeat(120)}, ${"b".repeat(120)}`, ms: 40 });
+  answer.caption({ text: "Next one.", ms: 500 });
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  await settled();
+  assert.equal(last().said, "Next one.");
+  answer.caption({ text: `${"c".repeat(120)}, ${"d".repeat(120)}`, ms: 40 });
+  answer.restart();
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  await settled();
+  assert.equal(last().said, null);
+  wall.close();
+});
+
+test("a typed question's speech is never captioned, and neither is anything with his voice off", async () => {
+  const { wall, last } = recorder();
+  wall.voiced(true);
+  const quiet = wall.chat.quiet.answer();
+  quiet.caption({ text: "Your private answer.", ms: 1000 });
+  quiet.text("Your private answer.");
+  quiet.end(true);
+  await settled();
+  assert.equal(last().said, null);
+  const off = recorder();
+  const answer = off.wall.chat.answer();
+  answer.caption({ text: "Never shown this way.", ms: 1000 });
+  answer.text("Shown as it's written.");
+  await settled();
+  assert.equal(off.last().said, "Shown as it's written.", "voice off keeps the old way");
+  wall.close();
+  off.wall.close();
+});
+
+test("with his voice on but nothing spoken, the answer still shows once it's done", async () => {
+  const { wall, last } = recorder();
+  wall.voiced(true);
+  const answer = wall.chat.answer();
+  answer.text("Kokoro was down, so this was never spoken.");
+  answer.end(true);
+  await settled();
+  assert.equal(last().said, "Kokoro was down, so this was never spoken.");
+  const failed = wall.chat.answer();
+  failed.text("Half an ans");
+  failed.end(false);
+  await settled();
+  assert.equal(last().said, null, "a failed answer isn't shown");
+  wall.close();
+});
+
+test("playing on the wall hands each piece's text and length to the caption, and the text on to the player", async () => {
+  const { wall } = recorder();
+  const got: Array<[number, string | undefined]> = [];
+  const pieces: Array<{ text: string; ms: number }> = [];
+  const parts = { play: async (sound: Uint8Array, _signal: AbortSignal, text?: string) => void got.push([sound.length, text]) };
+  const played = playOnWall(parts, wall, 24_000, (piece) => void pieces.push(piece));
+  await played.play(new Uint8Array(48_000), new AbortController().signal, "One second of sound.");
+  await played.play(new Uint8Array(4), new AbortController().signal);
+  assert.deepEqual(pieces, [{ text: "One second of sound.", ms: 1000 }]);
+  assert.deepEqual(got, [[48_000, "One second of sound."], [4, undefined]]);
+  wall.close();
+});
+
+test("a piece already stopped before it plays never puts its caption up", async () => {
+  const { wall } = recorder();
+  const pieces: Array<{ text: string; ms: number }> = [];
+  const parts = { play: async (_sound: Uint8Array, _signal: AbortSignal, _text?: string) => {} };
+  const stopped = new AbortController();
+  stopped.abort();
+  await playOnWall(parts, wall, 24_000, (piece) => void pieces.push(piece)).play(new Uint8Array(48_000), stopped.signal, "Never said.");
+  assert.deepEqual(pieces, []);
+  wall.close();
+});
+
+const longPiece = `${"a".repeat(120)}, ${"b".repeat(120)}, ${"c".repeat(120)}`;
+
+test("a piece stopped part-way, by a cut-in, a new question or Ctrl+C, drops its later caption parts, so words he never said can't show", async () => {
+  const { wall, last } = recorder();
+  wall.voiced(true);
+  const answer = wall.chat.answer();
+  const parts = { play: (_sound: Uint8Array, signal: AbortSignal, _text?: string) => new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true })) };
+  const played = playOnWall(parts, wall, 24_000, (piece) => answer.caption(piece));
+  const stopping = new AbortController();
+  const playing = played.play(new Uint8Array(24_000 * 2 * 0.3), stopping.signal, longPiece);
+  await settled();
+  assert.equal(last().said, `${"a".repeat(120)},`);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  stopping.abort();
+  await playing;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await settled();
+  assert.equal(last().said, `${"a".repeat(120)},`, "the parts after the stop never came");
+  wall.close();
+});
+
+test("a piece whose sound fails to play drops its later caption parts too", async () => {
+  const { wall, last } = recorder();
+  wall.voiced(true);
+  const answer = wall.chat.answer();
+  const parts = { play: async (_sound: Uint8Array, _signal: AbortSignal, _text?: string): Promise<void> => Promise.reject(new Error("aplay failed")) };
+  const played = playOnWall(parts, wall, 24_000, (piece) => answer.caption(piece));
+  await assert.rejects(played.play(new Uint8Array(24_000 * 2 * 0.06), new AbortController().signal, longPiece), /aplay failed/);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await settled();
+  assert.equal(last().said, `${"a".repeat(120)},`);
+  wall.close();
+});
+
+test("a new question heard stops the last answer's caption parts still to come, so they can't push in front of what you said", async () => {
+  const { wall, last } = recorder();
+  wall.voiced(true);
+  const answer = wall.chat.answer();
+  answer.caption({ text: longPiece, ms: 60 });
+  wall.chat.heard({ text: "What's next?", recordedMs: 1000, textMs: 200 });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await settled();
+  assert.equal(last().said, `${"a".repeat(120)},`);
+  assert.equal(last().heard?.text, "What's next?");
+  wall.close();
+});
+
+test("a new answer stops the last one's caption parts still to come", async () => {
+  const { wall, last } = recorder();
+  wall.voiced(true);
+  const first = wall.chat.answer();
+  first.caption({ text: longPiece, ms: 60 });
+  wall.chat.answer();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await settled();
+  assert.equal(last().said, null);
+  wall.close();
 });

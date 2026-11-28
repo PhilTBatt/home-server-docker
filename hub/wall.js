@@ -52,8 +52,8 @@ const setup = byId("setup");
 const fitOpen = byId("fit-open");
 const handles = /** @type {HTMLElement[]} */ ([...document.querySelectorAll(".handle")]);
 
-/** @type {{ picture: WallPicture | null, pictureAt: number, jarvis: JarvisView | null, jarvisAt: number, seq: number, pictureFailures: number, jarvisFailures: number, arrival: string | null, arrivalUntil: number, lastItems: WallItem[] | null, pose: string | null, loggedOut: boolean, running: AbortController | null }} */
-const state = { picture: null, pictureAt: 0, jarvis: null, jarvisAt: 0, seq: -1, pictureFailures: 0, jarvisFailures: 0, arrival: null, arrivalUntil: 0, lastItems: null, pose: null, loggedOut: false, running: null };
+/** @type {{ picture: WallPicture | null, pictureAt: number, jarvis: JarvisView | null, jarvisAt: number, speakingAt: number, seq: number, pictureFailures: number, jarvisFailures: number, arrival: string | null, arrivalUntil: number, lastItems: WallItem[] | null, pose: string | null, loggedOut: boolean, running: AbortController | null }} */
+const state = { picture: null, pictureAt: 0, jarvis: null, jarvisAt: 0, speakingAt: -Infinity, seq: -1, pictureFailures: 0, jarvisFailures: 0, arrival: null, arrivalUntil: 0, lastItems: null, pose: null, loggedOut: false, running: null };
 
 /** @type {Map<string, HTMLElement>} */
 const shown = new Map();
@@ -352,7 +352,8 @@ export function render() {
     setText(byId("quiet-clock"), londonClock(new Date()));
     setText(byId("quiet-words"), bedtimeLine(picture));
   }
-  const words = connected ? captionFor(state.jarvis, now - state.jarvisAt, accent) : null;
+  if (state.jarvis?.activity === "speaking") state.speakingAt = now;
+  const words = connected ? captionFor(state.jarvis, now - state.jarvisAt, accent, now - state.speakingAt) : null;
   caption.hidden = words === null;
   if (words !== null) {
     setText(byId("caption-who"), words.who === "you" ? "You said" : words.who === "them" ? "Heard" : "Jarvis");

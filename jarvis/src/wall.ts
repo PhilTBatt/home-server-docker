@@ -10,15 +10,17 @@ export const doneFlashMs = 2_500;
 export const speakingLingerMs = 1_500;
 export const wordsShownMs = 45_000;
 export const mostSaidChars = 600;
+export const captionChars = 160;
 export const slots = 5;
 
 export type WallActivity = "waiting" | "heard" | "listening" | "thinking" | "looking" | "speaking" | "done" | "needs";
 export type WallVoice = "owner" | "other" | "unknown";
 export type WallHeard = { text: string; voice: WallVoice | null; slot: number | null };
 export type WallReport = { activity: WallActivity; muted: boolean | null; heard: WallHeard | null; said: string | null };
-export type WallAnswer = { text(delta: string): void; restart(): void; asking<T>(waiting: Promise<T>): Promise<T>; end(answered: boolean): void };
+export type SpokenPiece = { text: string; ms: number };
+export type WallAnswer = { text(delta: string): void; restart(): void; asking<T>(waiting: Promise<T>): Promise<T>; end(answered: boolean): void; caption(piece: SpokenPiece): () => void };
 export type WallChat = { answer(): WallAnswer; listening(on: boolean): void; woke(): void; heard(heard: Heard): void; quiet: WallChat };
-export type Wall = { chat: WallChat; during<T>(kind: "speaking" | "looking", work: () => Promise<T>): Promise<T>; speech(over: Promise<unknown>): void; muted(on: boolean | null): void; ready(): Promise<string>; close(): void };
+export type Wall = { chat: WallChat; during<T>(kind: "speaking" | "looking", work: () => Promise<T>): Promise<T>; speech(over: Promise<unknown>): void; muted(on: boolean | null): void; voiced(on: boolean): void; ready(): Promise<string>; close(): void };
 export type WallSend = (report: WallReport, signal: AbortSignal) => Promise<void>;
 export type WallDeps = { send: WallSend; now?: () => number; note?: (line: string) => void; heartbeatMs?: number; gapMs?: number };
 
@@ -73,6 +75,60 @@ function tail(text: string): string {
   return space === -1 || space > 40 ? cut : cut.slice(space + 1);
 }
 
+export function captionParts(text: string, most = captionChars): string[] {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat === "") return [];
+  if (flat.length <= most) return [flat];
+  const pieces: string[] = [];
+  const cut = (part: string) => {
+    if (part.length <= most) return void pieces.push(part);
+    const clauses = part.split(/(?<=[,;:\u2014\u2013])\s+/);
+    if (clauses.length > 1) return void join(clauses, cut);
+    let line = "";
+    for (const word of part.split(" ")) {
+      if (word.length > most) {
+        if (line !== "") pieces.push(line);
+        line = "";
+        for (let at = 0; at < word.length; at += most) pieces.push(word.slice(at, at + most));
+        continue;
+      }
+      if (line !== "" && line.length + 1 + word.length > most) {
+        pieces.push(line);
+        line = word;
+      } else line = line === "" ? word : `${line} ${word}`;
+    }
+    if (line !== "") pieces.push(line);
+  };
+  const join = (parts: string[], tooLong: (part: string) => void) => {
+    let line = "";
+    for (const part of parts) {
+      if (part.length > most) {
+        if (line !== "") pieces.push(line);
+        line = "";
+        tooLong(part);
+        continue;
+      }
+      if (line !== "" && line.length + 1 + part.length > most) {
+        pieces.push(line);
+        line = part;
+      } else line = line === "" ? part : `${line} ${part}`;
+    }
+    if (line !== "") pieces.push(line);
+  };
+  join(flat.split(/(?<=[.!?\u2026]["'\u201d\u2019)\]]*)\s+/), cut);
+  return pieces;
+}
+
+export function captionTimes(parts: readonly string[], ms: number): number[] {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  let before = 0;
+  return parts.map((part) => {
+    const at = total === 0 ? 0 : Math.round((ms * before) / total);
+    before += part.length;
+    return at;
+  });
+}
+
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -90,6 +146,12 @@ export function createWall(deps: WallDeps): Wall {
   let said: string | null = null;
   let heardTimer: ReturnType<typeof setTimeout> | null = null;
   let saidTimer: ReturnType<typeof setTimeout> | null = null;
+  let voiced = false;
+  const captionTimers = new Set<ReturnType<typeof setTimeout>>();
+  const stopCaptions = () => {
+    for (const timer of captionTimers) clearTimeout(timer);
+    captionTimers.clear();
+  };
   const wakeTimers = new Set<ReturnType<typeof setTimeout>>();
   let dirty = true;
   let sending: Promise<void> | null = null;
@@ -168,25 +230,59 @@ export function createWall(deps: WallDeps): Wall {
       answer() {
         let ended = false;
         let text = "";
+        let captioned = false;
+        const captions = voiced;
         counts.thinking++;
         if (words) {
           said = null;
+          stopCaptions();
           if (saidTimer !== null) clearTimeout(saidTimer);
           saidTimer = null;
         }
         pump();
+        const showCaption = (part: string) => {
+          said = part;
+          forgetLater("said");
+          pump();
+        };
         return {
           text(delta) {
             if (!words || ended || delta === "") return;
             text = tail(text + delta);
+            if (captions) return;
             said = text.trim() === "" ? null : text.trim();
             pump();
           },
           restart() {
             if (!words || ended) return;
             text = "";
+            stopCaptions();
             said = null;
             pump();
+          },
+          caption(piece) {
+            if (!words || !captions) return () => {};
+            const parts = captionParts(piece.text);
+            if (parts.length === 0) return () => {};
+            captioned = true;
+            stopCaptions();
+            const times = captionTimes(parts, piece.ms);
+            showCaption(parts[0]);
+            const mine = parts.slice(1).map((part, i) => {
+              const timer = setTimeout(() => {
+                captionTimers.delete(timer);
+                showCaption(part);
+              }, times[i + 1]);
+              timer.unref?.();
+              captionTimers.add(timer);
+              return timer;
+            });
+            return () => {
+              for (const timer of mine) {
+                clearTimeout(timer);
+                captionTimers.delete(timer);
+              }
+            };
           },
           async asking(waiting) {
             counts.needs++;
@@ -203,6 +299,7 @@ export function createWall(deps: WallDeps): Wall {
             ended = true;
             counts.thinking--;
             if (answered) doneDue = true;
+            if (words && captions && !captioned && answered && text.trim() !== "") said = text.trim();
             if (words && said !== null) forgetLater("said");
             pump();
           },
@@ -223,6 +320,7 @@ export function createWall(deps: WallDeps): Wall {
         const text = got.text.replace(/\s+/g, " ").trim();
         if (text === "") return;
         heard = { text, ...voiceOnWall(got.voice, slotFor) };
+        stopCaptions();
         forgetLater("heard");
         pump();
       },
@@ -263,6 +361,9 @@ export function createWall(deps: WallDeps): Wall {
       muted = on;
       pump();
     },
+    voiced(on) {
+      voiced = on;
+    },
     ready() {
       first ??= deps.send(report(), AbortSignal.any([closing.signal, AbortSignal.timeout(wallSendMs)])).then(
         () => wallOnLine,
@@ -281,15 +382,32 @@ export function createWall(deps: WallDeps): Wall {
       wakeTimers.clear();
       if (heardTimer !== null) clearTimeout(heardTimer);
       if (saidTimer !== null) clearTimeout(saidTimer);
+      stopCaptions();
     },
   };
 }
 
 export const wallOffWhy = "the hub's WALL switch is off";
 
-export function playOnWall<Parts extends { play: (sound: Uint8Array, signal: AbortSignal) => Promise<void> }>(parts: Parts, wall: Wall | undefined): Parts {
+export function playOnWall<Parts extends { play: (sound: Uint8Array, signal: AbortSignal, text?: string) => Promise<void> }>(parts: Parts, wall: Wall | undefined, rate = 24_000, caption?: (piece: SpokenPiece) => (() => void) | void): Parts {
   if (wall === undefined) return parts;
-  return { ...parts, play: (sound: Uint8Array, signal: AbortSignal) => wall.during("speaking", () => parts.play(sound, signal)) };
+  return {
+    ...parts,
+    play: (sound: Uint8Array, signal: AbortSignal, text?: string) =>
+      wall.during("speaking", async () => {
+        const cancel = text !== undefined && caption !== undefined && !signal.aborted ? caption({ text, ms: Math.round((sound.length / 2 / rate) * 1000) }) : undefined;
+        const stop = () => cancel?.();
+        signal.addEventListener("abort", stop, { once: true });
+        try {
+          await parts.play(sound, signal, text);
+        } catch (error) {
+          stop();
+          throw error;
+        } finally {
+          signal.removeEventListener("abort", stop);
+        }
+      }),
+  };
 }
 
 export function lookingOnWall<Ask extends (question: string, signal: AbortSignal) => Promise<unknown>>(ask: Ask, wall: Wall | undefined): Ask {

@@ -69,6 +69,7 @@ function fakeWall(log: string[]): WallChat {
           }
         },
         end: (answered) => void log.push(`${label}end ${answered}`),
+        caption: (piece) => (log.push(`${label}caption ${piece.text} ${piece.ms}`), () => {}),
       };
     },
     listening: (on) => void log.push(`${label}listening ${on}`),
@@ -286,4 +287,28 @@ test("a question from the phone shows him working and needing you, but never its
   phoneEvents.close();
   await running;
   assert.deepEqual(log, ["quiet answer", "quiet asking", "quiet asked", "quiet text Scanning now.", "quiet end true"]);
+});
+
+function captioningSpeech(): ChatDeps["speak"] {
+  return (_after, caption) => ({
+    text: (delta: string) => caption?.({ text: delta.trim(), ms: 900 }),
+    gap: () => {},
+    tool: () => {},
+    restart: () => {},
+    end: () => {},
+    stop: () => {},
+    finish: () => false,
+    done: () => Promise.resolve(),
+    report: () => ({ firstSentenceMs: null, firstSoundMadeMs: null, firstSoundMs: null, longestSilenceMs: null, spoken: 0, failed: 0, failedMaking: 0, failedPlaying: 0, left: 0, requests: 0, requestedSentences: 0, problem: null, gaveUp: false, tooLong: false, stopped: false }),
+  });
+}
+
+test("each spoken answer's speech gets that answer's caption hook, so a typed question's captions go only to the quiet wall", async () => {
+  const typed = chat(["When are the bins?"], { speak: captioningSpeech() });
+  await typed.run();
+  assert.ok(typed.log.includes("quiet caption Bins tonight. 900"), typed.log.join(" | "));
+  assert.ok(!typed.log.some((line) => line.startsWith("caption")), typed.log.join(" | "));
+  const spoken = chat(["/talk", ""], { talk: talkWith(), speak: captioningSpeech() });
+  await spoken.run();
+  assert.ok(spoken.log.includes("caption Bins tonight. 900"), spoken.log.join(" | "));
 });

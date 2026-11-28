@@ -1186,3 +1186,21 @@ test("the queue is quiet only when nothing is waiting, being made, made and held
   await turn();
   assert.equal(held.queue.quiet(), true);
 });
+
+test("each piece is played with the words it was made from, bundled ones joined, for the wall's captions", async () => {
+  const texts: Array<string | undefined> = [];
+  const queue = startSpeechQueue({
+    make: async (sentence) => new Uint8Array(sentence.length * 2),
+    play: async (_sound, _signal, text) => void texts.push(text),
+    now: () => 0,
+    since: 0,
+    bundle: true,
+  });
+  queue.add("First one.");
+  queue.add("Second one.");
+  queue.add("Third.");
+  queue.end();
+  await queue.done;
+  assert.equal(texts[0], "First one.");
+  assert.equal(texts.join(" "), "First one. Second one. Third.");
+});

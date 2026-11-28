@@ -22,6 +22,7 @@ export const timerMiddleMs = 3 * 60 * 1000;
 export const countdownMostMs = 60 * 60 * 1000;
 export const heardShownMs = 8000;
 export const saidShownMs = 10000;
+export const saidAfterSpeechMs = 6000;
 export const arrivalShownMs = 6000;
 export const mostCaptionChars = 160;
 export const pairRetryMs = 30_000;
@@ -204,14 +205,15 @@ export function lastWords(text) {
  * @param {JarvisView | null} jarvis
  * @param {number} sinceMs
  * @param {string} accent
+ * @param {number} [speakingAgoMs]
  * @returns {{ who: "you" | "them" | "him", text: string, colour: string } | null}
  */
-export function captionFor(jarvis, sinceMs, accent) {
+export function captionFor(jarvis, sinceMs, accent, speakingAgoMs = Infinity) {
   if (jarvis === null || !jarvis.running) return null;
   const heard = jarvis.heard;
   const heardAge = heard === null ? Infinity : heard.ageMs + sinceMs;
   const saidAge = jarvis.said === null || jarvis.saidAgeMs === null ? Infinity : jarvis.saidAgeMs + sinceMs;
-  if (jarvis.said !== null && saidAge < saidShownMs && saidAge <= heardAge) return { who: "him", text: lastWords(jarvis.said), colour: accent };
+  if (jarvis.said !== null && (saidAge < saidShownMs || speakingAgoMs < saidAfterSpeechMs) && saidAge <= heardAge) return { who: "him", text: lastWords(jarvis.said), colour: accent };
   if (heard !== null && heardAge < heardShownMs) return { who: heard.voice === "other" || heard.voice === "unknown" ? "them" : "you", text: heard.text, colour: voiceColour(heard, accent) };
   return null;
 }
