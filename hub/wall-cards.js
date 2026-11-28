@@ -236,3 +236,133 @@ export function cornerStep(repeat, shift) {
 export function framesASecond(frames, now) {
   return frames.filter((at) => now - at < 1000).length;
 }
+
+export const detailPages = ["train"];
+export const detailEveryMs = 30_000;
+export const trainRowsShown = 4;
+export const detailKeptMs = 2 * detailEveryMs;
+
+/**
+ * @typedef {{ id: string | null, details: unknown, at: string, goodAt: number }} HeldDetails
+ */
+
+/**
+ * @param {HeldDetails} held
+ * @param {string} id
+ * @param {{ details: unknown, at: string } | null | undefined} got
+ * @param {number} now
+ * @returns {HeldDetails}
+ */
+export function nextDetails(held, id, got, now) {
+  if (got !== undefined && got !== null) return { id, details: got.details, at: got.at, goodAt: now };
+  if (got === undefined && held.id === id && held.details !== null && now - held.goodAt < detailKeptMs) return { ...held };
+  return { id, details: null, at: "", goodAt: -Infinity };
+}
+
+/**
+ * @param {HeldDetails} held
+ * @param {string} id
+ * @param {number} now
+ * @returns {unknown}
+ */
+export function detailsShown(held, id, now) {
+  return held.id === id && now - held.goodAt <= detailKeptMs ? held.details : null;
+}
+
+/**
+ * @typedef {{ arrives: string | null, leaves: string, expected: string, platform: string | null, minutes: number | null, bus: boolean }} TrainChange
+ * @typedef {{ leaves: string, expected: string, late: boolean, cancelled: boolean, bus: boolean, platform: string | null, destination: string | null, arrives: string | null, arrivesExpected: string | null, change: TrainChange | null, tight: boolean }} TrainRow
+ * @typedef {{ kind: "trains", from: string, via: string | null, to: string, rows: TrainRow[], updates: number }} TrainDetails
+ * @typedef {{ leaves: string, leavesWas: string | null, arrives: string, arrivesWas: string | null, platform: string, status: string, tone: "good" | "warm" | "muted", second: string }} TrainRowView
+ */
+
+/**
+ * @param {unknown} value
+ * @returns {value is string | null}
+ */
+function isTextOrNull(value) {
+  return value === null || typeof value === "string";
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is TrainDetails}
+ */
+export function isTrainDetails(value) {
+  if (!isObject(value) || value.kind !== "trains" || typeof value.from !== "string" || !isTextOrNull(value.via) || typeof value.to !== "string" || typeof value.updates !== "number" || !Array.isArray(value.rows)) return false;
+  return value.rows.every((row) => {
+    if (!isObject(row) || typeof row.leaves !== "string" || typeof row.expected !== "string" || typeof row.late !== "boolean" || typeof row.cancelled !== "boolean" || !isTextOrNull(row.platform) || !isTextOrNull(row.destination) || !isTextOrNull(row.arrives) || !isTextOrNull(row.arrivesExpected)) return false;
+    const change = row.change;
+    return change === null || (isObject(change) && typeof change.leaves === "string" && typeof change.expected === "string" && isTextOrNull(change.arrives) && isTextOrNull(change.platform) && (change.minutes === null || typeof change.minutes === "number"));
+  });
+}
+
+/**
+ * @param {string} text
+ * @returns {number | null}
+ */
+function minutesOfDay(text) {
+  const match = /^(\d\d):(\d\d)$/.exec(text);
+  return match === null ? null : Number(match[1]) * 60 + Number(match[2]);
+}
+
+/**
+ * @param {string} due
+ * @param {string} expected
+ * @returns {number | null}
+ */
+export function minutesLate(due, expected) {
+  const was = minutesOfDay(due);
+  const now = minutesOfDay(expected);
+  if (was === null || now === null) return null;
+  const late = (now - was + 24 * 60) % (24 * 60);
+  return late > 12 * 60 ? null : late;
+}
+
+/**
+ * @param {string} due
+ * @param {string | null} expected
+ * @returns {{ shown: string, was: string | null }}
+ */
+function timeShown(due, expected) {
+  if (expected !== null && /^\d\d:\d\d$/.test(expected) && expected !== due) return { shown: expected, was: due };
+  return { shown: due, was: null };
+}
+
+/**
+ * @param {TrainRow} row
+ * @param {string | null} via
+ * @returns {TrainRowView}
+ */
+export function trainRowView(row, via) {
+  const leaves = timeShown(row.leaves, row.expected);
+  const arrives = row.arrives === null ? { shown: "", was: null } : timeShown(row.arrives, row.arrivesExpected);
+  const late = minutesLate(row.leaves, row.expected);
+  let status = "On time";
+  /** @type {"good" | "warm" | "muted"} */
+  let tone = "good";
+  if (row.cancelled) [status, tone] = ["Cancelled", "warm"];
+  else if (row.expected === "Delayed") [status, tone] = ["Delayed", "warm"];
+  else if (row.expected === "No time yet") [status, tone] = ["No time yet", "muted"];
+  else if (late !== null && late > 0) [status, tone] = [`${late} min late`, "warm"];
+  if (row.bus && !row.cancelled) status = `${status}, by bus`;
+  let second = row.destination === null ? "" : `To ${row.destination}`;
+  const change = row.change;
+  if (change !== null && via !== null) {
+    const out = timeShown(change.leaves, change.expected).shown;
+    const parts = [`Change at ${via}: ${change.arrives === null ? "" : `${change.arrives} to `}${out}`, change.platform === null ? "" : `, platform ${change.platform}`, change.minutes === null ? "" : ` (${change.minutes} min)`, change.bus ? ", by bus" : "", row.tight ? ". An earlier one if you run" : ""];
+    second = parts.join("");
+  } else if (via !== null) second = row.cancelled ? "" : "No connection on the board yet";
+  return { leaves: leaves.shown, leavesWas: leaves.was, arrives: arrives.shown, arrivesWas: arrives.was, platform: row.platform ?? "", status, tone, second };
+}
+
+/**
+ * @param {TrainDetails} details
+ * @param {string} checkedAt
+ * @returns {{ title: string, sub: string, empty: string | null, rows: TrainRowView[], plain: boolean }}
+ */
+export function trainView(details, checkedAt) {
+  const sub = [details.via === null ? "" : `Change at ${details.via}`, details.updates === 0 ? "" : details.updates === 1 ? "1 update on the board" : `${details.updates} updates on the board`, checkedAt === "" ? "" : `checked ${checkedAt}`].filter((part) => part !== "").join(" · ");
+  const rows = details.rows.slice(0, trainRowsShown).map((row) => trainRowView(row, details.via));
+  return { title: `${details.from} → ${details.to}`, sub, empty: rows.length === 0 ? "Nothing on the board right now. It only looks about two hours ahead." : null, rows, plain: details.via === null };
+}

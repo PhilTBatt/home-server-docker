@@ -886,6 +886,20 @@ test("the wall's logout needs no token, since all it does is clear the screen's 
   assert.equal(response.cookies.find((one) => one.name === "wall_token")?.value, "");
 });
 
+test("the wall's token reads the train page's details, made from the same kept board as the picture, but never the page list", async () => {
+  let asked = 0;
+  const board = { from: "Northgate", to: "Midtown", buses: 0, messages: [], departures: [{ due: "07:14", expected: "On time", platform: "2", cancelled: false, reason: null, destination: "Midtown" }] };
+  const app = await buildRealApp({ logger: false, config, wallSources: { doctor: async () => ({ state: "ok", summary: "", checkedAt: "", checks: [] }), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: async () => (asked++, board), playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
+  const read = await app.inject({ method: "GET", url: "/wall/pages/train", cookies: { wall_token: wallToken } });
+  assert.equal(read.statusCode, 200);
+  assert.deepEqual(read.json().details.rows.map((row: { leaves: string; platform: string }) => [row.leaves, row.platform]), [["07:14", "2"]]);
+  assert.equal(asked, 1);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/pages", cookies: { wall_token: wallToken } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/wall/pages/train" })).statusCode, 401);
+  const noTrains = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, trains: false } } });
+  assert.equal((await noTrains.inject({ method: "GET", url: "/wall/pages/train", cookies: { wall_token: wallToken } })).statusCode, 404, "with train times off, the page has nothing more than its card");
+});
+
 test("the wall's token reads the wall's picture, made from the hub's own reads", async () => {
   const app = await buildRealApp({ logger: false, config, wallSources: { doctor: async () => ({ state: "ok", summary: "", checkedAt: "", checks: [] }), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
   for (const url of ["/wall", "/wall/"]) {

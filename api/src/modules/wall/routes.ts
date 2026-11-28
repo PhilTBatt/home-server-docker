@@ -10,7 +10,7 @@ export const nextWaitMs = 20_000;
 export const privacyCheckMs = 1_000;
 export const wallCookie = "wall_token";
 export const wallCookieDays = 365;
-export const wallReads = new Set(["GET /wall", "GET /wall/jarvis", "GET /events/today", "GET /events/feed"]);
+export const wallReads = new Set(["GET /wall", "GET /wall/jarvis", "GET /wall/pages/:id", "GET /events/today", "GET /events/feed"]);
 export const switchedOff = { error: "The wall is switched off" };
 export const noSuchCode = { error: "No screen is showing that code. Check the code on the screen and try again." };
 export const tooManyWrongCodes = { error: "Too many wrong codes, so every screen that was pairing starts again with a new code." };
@@ -23,8 +23,10 @@ export const pairNeedsJson = { error: "Ask for a code with a JSON body, applicat
 export const noSuchPage = { error: `page must be one of the wall's pages: ${pageIds.join(", ")}` };
 export const pageByWrong = { error: `by must be ${pageBys.join(", ")}` };
 export const privateInGuest = { error: "That page is private, so it isn't shown while the hub is in guest mode" };
+export const noPageDetails = { error: "That page has nothing more than its card on the wall yet, or what it shows is switched off" };
+export const pageDetailsFailed = { error: "The hub couldn't read that page's details just now" };
 
-export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; guard?: boolean; desk?: JarvisDesk; pairings?: Pairings; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number; events?: EventSink; mode?: () => string | null }> = async (app, options) => {
+export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; guard?: boolean; desk?: JarvisDesk; pairings?: Pairings; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number; events?: EventSink; mode?: () => string | null; pageDetails?: Partial<Record<string, () => Promise<unknown>>> }> = async (app, options) => {
   const desk = options.desk ?? createJarvisDesk();
   const pairings = options.pairings ?? createPairings();
   const now = options.now ?? (() => Date.now());
@@ -138,6 +140,21 @@ export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettin
 
   app.get("/pages", quiet, async (_request, reply) => {
     return reply.header("cache-control", "no-store").send({ pages: wallPages.map((page) => ({ ...page, private: options.settings.privatePages.includes(page.id) })), seconds: pageShownMs / 1000 });
+  });
+
+  app.get<{ Params: { id: string } }>("/pages/:id", quiet, async (request, reply) => {
+    const id = request.params.id;
+    if (!isPageId(id)) return reply.code(404).send(noSuchPage);
+    if (hidden(id)) return reply.code(403).send(privateInGuest);
+    const read = options.pageDetails?.[id];
+    if (read === undefined) return reply.code(404).send(noPageDetails);
+    try {
+      const details = await read();
+      return reply.header("cache-control", "no-store").send({ id, at: new Date(now()).toISOString(), details });
+    } catch (error) {
+      app.log.warn({ page: { id, why: error instanceof Error ? error.message.slice(0, 120) : "no reason given" } }, "a page's details couldn't be read");
+      return reply.code(502).send(pageDetailsFailed);
+    }
   });
 
   app.post("/page", { bodyLimit }, async (request, reply) => {

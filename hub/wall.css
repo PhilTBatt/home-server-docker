@@ -1440,6 +1440,95 @@ body {
   color: var(--warm);
 }
 
+.card.rich {
+  max-height: 540px;
+}
+
+.card.rich .card-title {
+  font-size: 24px;
+}
+
+.card-sub {
+  margin: -6px 0 0;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.card-sub[hidden],
+.card-rows[hidden],
+.card-facts[hidden] {
+  display: none;
+}
+
+.card-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.train-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 12px;
+  border: 1px solid #1a2333;
+  border-radius: 12px;
+}
+
+.train-main {
+  display: grid;
+  grid-template-columns: 112px 100px 48px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.train-time {
+  font-family: var(--heading);
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.train-time s,
+.train-arrives s {
+  margin-right: 6px;
+  font-family: var(--body);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.train-arrives,
+.train-platform {
+  font-size: 16px;
+  color: var(--soft);
+}
+
+.train-status {
+  font-size: 15px;
+}
+
+.train-status.good {
+  color: #8ef0c9;
+}
+
+.train-status.warm,
+.train-row.warm .train-time {
+  color: var(--warm);
+}
+
+.train-status.muted {
+  color: var(--muted);
+}
+
+.train-change {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.train-change:empty {
+  display: none;
+}
+
 .card-time {
   display: block;
   height: 2px;

@@ -6,7 +6,7 @@ export type PageBy = (typeof pageBys)[number];
 
 export const wallPages: readonly WallPage[] = [
   { id: "server", title: "The server", say: ["show me the server", "put the server on the wall"] },
-  { id: "train", title: "Your next train", say: ["show me my train", "show me the next train", "show me my next train"] },
+  { id: "train", title: "Your trains", say: ["show me my trains", "show me the trains", "show me my journey", "show me my train", "show me the next train", "show me my next train"] },
   { id: "backup", title: "The backup", say: ["show me the backup"] },
   { id: "alerts", title: "Alerts", say: ["show me the alerts"] },
   { id: "deals", title: "Deals", say: ["show me the deals"] },

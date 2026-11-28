@@ -6,7 +6,7 @@ import cookie from "@fastify/cookie";
 import type { Features, WallSettings } from "../../config.js";
 import { createJarvisDesk } from "./jarvis.js";
 import type { WallPicture } from "./picture.js";
-import { noSuchCode, noSuchPage, pageByWrong, pairNeedsJson, plainHttpPairing, privacyCheckMs, privateInGuest, switchedOff, tooManyWrongCodes, wall, wallCookie, wallCookieDays, wallReads } from "./routes.js";
+import { noPageDetails, noSuchCode, noSuchPage, pageByWrong, pageDetailsFailed, pairNeedsJson, plainHttpPairing, privacyCheckMs, privateInGuest, switchedOff, tooManyWrongCodes, wall, wallCookie, wallCookieDays, wallReads } from "./routes.js";
 import { pageIds } from "./pages.js";
 import { createPairings, mostPairings, mostWrongCodes, pairCookie, pairingMs } from "./pairing.js";
 
@@ -329,8 +329,8 @@ test("a screen paired from the phone posts an event, and a wrong code posts none
   assert.deepEqual(posted, [["screen.paired", undefined]]);
 });
 
-test("the wall's token may read today's events and the events feed, and that's all it adds", () => {
-  assert.deepEqual([...wallReads].sort(), ["GET /events/feed", "GET /events/today", "GET /wall", "GET /wall/jarvis"]);
+test("the wall's token may read the wall, one page's details, today's events and the events feed, and nothing else", () => {
+  assert.deepEqual([...wallReads].sort(), ["GET /events/feed", "GET /events/today", "GET /wall", "GET /wall/jarvis", "GET /wall/pages/:id"]);
 });
 
 async function pagesApp(options: { privatePages?: string[]; mode?: string | null; logs?: string[] } = {}) {
@@ -469,4 +469,25 @@ test("the logs say which page, how it was opened and what was refused, and nothi
     ["a private page wasn't opened on the wall, in guest mode", { id: "deals", by: "words", refused: "private in guest mode" }],
     ["the wall was sent back to its main page", { by: "words", wasOpen: true }],
   ]);
+});
+
+test("a screen reads a page's details with the wall's token, never a private page in guest mode, and a page with no details says so", { timeout: 5_000 }, async () => {
+  const logs: string[] = [];
+  const app = Fastify({ logger: { level: "info", stream: { write: (line: string) => void logs.push(line) } } });
+  await app.register(cookie);
+  const mode = { now: "normal" as string | null };
+  app.register(wall, { prefix: "/wall", features: allOn, settings: { ...settings, privatePages: ["train"] }, mode: () => mode.now, pageDetails: { train: async () => ({ kind: "trains", rows: [] }), backup: async () => Promise.reject(new Error("the backup state file is missing")) } });
+  const read = await app.inject({ method: "GET", url: "/wall/pages/train" });
+  assert.equal(read.statusCode, 200);
+  assert.equal(read.headers["cache-control"], "no-store");
+  assert.deepEqual([read.json().id, read.json().details], ["train", { kind: "trains", rows: [] }]);
+  assert.deepEqual([(await app.inject({ method: "GET", url: "/wall/pages/server" })).statusCode, (await app.inject({ method: "GET", url: "/wall/pages/server" })).json()], [404, noPageDetails]);
+  assert.deepEqual((await app.inject({ method: "GET", url: "/wall/pages/brain" })).json(), noSuchPage);
+  assert.deepEqual([(await app.inject({ method: "GET", url: "/wall/pages/backup" })).statusCode, (await app.inject({ method: "GET", url: "/wall/pages/backup" })).json()], [502, pageDetailsFailed]);
+  mode.now = "guest";
+  assert.deepEqual([(await app.inject({ method: "GET", url: "/wall/pages/train" })).statusCode, (await app.inject({ method: "GET", url: "/wall/pages/train" })).json()], [403, privateInGuest]);
+  assert.ok(wallReads.has("GET /wall/pages/:id") && !wallReads.has("GET /wall/pages"), "screens read one page's details, never the list with its words");
+  const failed = logs.map((line) => JSON.parse(line)).filter((line) => line.msg === "a page's details couldn't be read");
+  assert.deepEqual(failed.map((line) => [line.level, line.page]), [[40, { id: "backup", why: "the backup state file is missing" }], [40, { id: "backup", why: "the backup state file is missing" }]], "a warning with the page and the hub's own reason");
+  await app.close();
 });

@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bubbleAround, bubbleFor, byLine, cardFor, cornerStep, framesASecond, fromHub, isPageView, itemBox, movePointer, nextCorner, openHere, pageLeftMs, pageShownMs, pointerIdleMs, pointerShown, privateOf, stillOpen, trailOf } from "./wall-cards.js";
+import { detailKeptMs, detailsShown, isTrainDetails, minutesLate, nextDetails, trainRowView, trainView, bubbleAround, bubbleFor, byLine, cardFor, cornerStep, framesASecond, fromHub, isPageView, itemBox, movePointer, nextCorner, openHere, pageLeftMs, pageShownMs, pointerIdleMs, pointerShown, privateOf, stillOpen, trailOf } from "./wall-cards.js";
 
 /** @type {import("./wall-cards.js").OpenPage} */
 const page = { id: "server", title: "The server", by: "words", ageMs: 0 };
@@ -171,4 +171,67 @@ test("with a remote, OK picks each corner in turn and then the save button, and 
 test("the debug counter counts the frames drawn in the last second", () => {
   assert.equal(framesASecond([0, 100, 500, 999, 1000, 1500], 1500), 3, "a frame exactly a second ago is out");
   assert.equal(framesASecond([], 0), 0);
+});
+
+/**
+ * @param {Partial<import("./wall-cards.js").TrainRow>} fields
+ * @returns {import("./wall-cards.js").TrainRow}
+ */
+function row(fields = {}) {
+  return { leaves: "07:14", expected: "On time", late: false, cancelled: false, bus: false, platform: null, destination: null, arrives: "08:21", arrivesExpected: "On time", change: { arrives: "07:24", leaves: "07:33", expected: "On time", platform: "15", minutes: 9, bus: false }, tight: false, ...fields };
+}
+
+test("each train row shows its times, how late, and the change at the station between on a line of its own", () => {
+  assert.deepEqual(trainRowView(row(), "Midtown"), { leaves: "07:14", leavesWas: null, arrives: "08:21", arrivesWas: null, platform: "", status: "On time", tone: "good", second: "Change at Midtown: 07:24 to 07:33, platform 15 (9 min)" });
+  const late = trainRowView(row({ leaves: "07:44", expected: "07:51", late: true, arrives: "08:52", arrivesExpected: "08:59", change: { arrives: "08:01", leaves: "08:10", expected: "08:12", platform: "16", minutes: 9, bus: false } }), "Midtown");
+  assert.deepEqual([late.leaves, late.leavesWas, late.arrives, late.arrivesWas, late.status, late.tone, late.second], ["07:51", "07:44", "08:59", "08:52", "7 min late", "warm", "Change at Midtown: 08:01 to 08:12, platform 16 (9 min)"]);
+  assert.equal(trainRowView(row({ tight: true }), "Midtown").second, "Change at Midtown: 07:24 to 07:33, platform 15 (9 min). An earlier one if you run");
+  assert.deepEqual([trainRowView(row({ change: { arrives: null, leaves: "07:33", expected: "On time", platform: null, minutes: null, bus: true } }), "Midtown").second], ["Change at Midtown: 07:33, by bus"]);
+});
+
+test("a cancelled, delayed, bus or unknown train says so, and a plain board's row says where it's going", () => {
+  const cancelled = trainRowView(row({ expected: "Cancelled", cancelled: true, change: null, arrives: null, arrivesExpected: null }), "Midtown");
+  assert.deepEqual([cancelled.status, cancelled.tone, cancelled.second, cancelled.arrives], ["Cancelled", "warm", "", ""]);
+  assert.deepEqual([trainRowView(row({ expected: "Delayed" }), "Midtown").status, trainRowView(row({ expected: "No time yet" }), "Midtown").tone, trainRowView(row({ bus: true }), "Midtown").status], ["Delayed", "muted", "On time, by bus"]);
+  const plain = trainRowView(row({ change: null, arrives: null, arrivesExpected: null, platform: "2", destination: "Midtown" }), null);
+  assert.deepEqual([plain.platform, plain.second, plain.arrives], ["2", "To Midtown", ""]);
+  assert.equal(trainRowView(row({ change: null }), "Midtown").second, "No connection on the board yet");
+  assert.equal(trainRowView(row({ expected: "Cancelled", cancelled: true, bus: true }), "Midtown").status, "Cancelled", "a cancelled bus is just cancelled");
+});
+
+test("a page's details are kept for a minute through a failed read, dropped at once when the hub says there are none or they're private, and never shown for another page or once old", () => {
+  const empty = { id: null, details: null, at: "", goodAt: -Infinity };
+  const good = nextDetails(empty, "train", { details: { kind: "trains" }, at: "2026-11-30T07:00:00.000Z" }, 1_000);
+  assert.deepEqual(good, { id: "train", details: { kind: "trains" }, at: "2026-11-30T07:00:00.000Z", goodAt: 1_000 });
+  assert.deepEqual(nextDetails(good, "train", undefined, 1_000 + detailKeptMs - 1), good, "a failed read keeps the last good ones a while");
+  assert.deepEqual(nextDetails(good, "train", undefined, 1_000 + detailKeptMs), { id: "train", details: null, at: "", goodAt: -Infinity }, "but not for ever");
+  assert.deepEqual(nextDetails(good, "train", null, 2_000).details, null, "a 403 or 404 drops them at once");
+  assert.deepEqual(nextDetails(good, "server", undefined, 2_000).details, null, "a failed read for another page doesn't borrow them");
+  assert.deepEqual([detailsShown(good, "train", 1_000 + detailKeptMs), detailsShown(good, "train", 1_000 + detailKeptMs + 1), detailsShown(good, "server", 2_000)], [{ kind: "trains" }, null, null], "old rows aren't shown when a card opens again later");
+});
+
+test("minutes late counts across midnight, and anything that isn't two clock times isn't counted", () => {
+  assert.equal(minutesLate("07:44", "07:51"), 7);
+  assert.equal(minutesLate("23:58", "00:03"), 5);
+  assert.equal(minutesLate("07:44", "07:44"), 0);
+  assert.equal(minutesLate("07:44", "07:40"), null, "early, or a time from before, isn't late");
+  assert.equal(minutesLate("07:44", "Delayed"), null);
+});
+
+test("the train card's heading, its line under, and what an empty board says", () => {
+  /** @type {import("./wall-cards.js").TrainDetails} */
+  const details = { kind: "trains", from: "Northgate", via: "Midtown", to: "Southfield", rows: [row()], updates: 2 };
+  const view = trainView(details, "07:02");
+  assert.deepEqual([view.title, view.sub, view.empty, view.rows.length, view.plain], ["Northgate → Southfield", "Change at Midtown · 2 updates on the board · checked 07:02", null, 1, false]);
+  assert.equal(trainView({ ...details, updates: 1 }, "").sub, "Change at Midtown · 1 update on the board");
+  assert.equal(trainView({ ...details, rows: Array.from({ length: 6 }, () => row()) }, "").rows.length, 4, "at most four rows fit the card");
+  const empty = trainView({ ...details, via: null, rows: [], updates: 0 }, "07:02");
+  assert.deepEqual([empty.sub, empty.empty, empty.plain], ["checked 07:02", "Nothing on the board right now. It only looks about two hours ahead.", true]);
+});
+
+test("the train details are checked before the page uses them", () => {
+  /** @type {import("./wall-cards.js").TrainDetails} */
+  const details = { kind: "trains", from: "A", via: null, to: "B", rows: [row()], updates: 0 };
+  assert.ok(isTrainDetails(details));
+  for (const bad of [null, { ...details, kind: "server" }, { ...details, rows: "x" }, { ...details, rows: [{ ...row(), leaves: 7 }] }, { ...details, rows: [{ ...row(), change: { leaves: "07:33" } }] }, { ...details, updates: "2" }]) assert.equal(isTrainDetails(bad), false, JSON.stringify(bad));
 });

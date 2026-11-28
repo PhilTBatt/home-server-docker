@@ -1,6 +1,6 @@
 // @ts-check
 import { fitKey, letterbox, matrixFor, moveCorner, readFit, writeFit } from "./wall-fit.js";
-import { bubbleAround, bubbleFor, cardFor, cornerStep, fitChip, framesASecond, fromHub, isPageView, itemBox, movePointer, nextCorner, openHere, pageLeftMs, pageShownMs, pointerShown, privateOf, stillOpen, trailMs, trailOf } from "./wall-cards.js";
+import { bubbleAround, bubbleFor, cardFor, cornerStep, detailEveryMs, detailPages, detailsShown, fitChip, framesASecond, fromHub, isPageView, isTrainDetails, itemBox, movePointer, nextCorner, nextDetails, openHere, pageLeftMs, pageShownMs, pointerShown, privateOf, stillOpen, trailMs, trailOf, trainView } from "./wall-cards.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -71,6 +71,106 @@ const shown = new Map();
 
 /** @type {{ opened: import("./wall-cards.js").Opened | null, seen: import("./wall-cards.js").Seen, privateNow: string[], point: import("./wall-cards.js").Spot, movedAt: number, points: import("./wall-cards.js").Point[], boxes: Array<{ key: string, box: import("./wall-cards.js").Box }>, reached: Target | null, closeTimer: ReturnType<typeof setTimeout> | null, facts: string }} */
 const pages = { opened: null, seen: { opens: null, backs: null }, privateNow: [], point: { x: 640, y: 375 }, movedAt: -Infinity, points: [], boxes: [], reached: null, closeTimer: null, facts: "" };
+
+/** @type {import("./wall-cards.js").HeldDetails & { fetchedAt: number, asking: boolean, shown: string }} */
+const detail = { id: null, details: null, at: "", goodAt: -Infinity, fetchedAt: -Infinity, asking: false, shown: "" };
+
+/**
+ * @param {string} id
+ */
+async function readDetails(id) {
+  detail.asking = true;
+  try {
+    const response = await fetch(`/api/wall/pages/${id}`, { cache: "no-store", signal: limited(state.running?.signal ?? new AbortController().signal, pictureLimitMs) });
+    if (refused(response)) return;
+    const body = response.ok ? await response.json() : null;
+    const got = response.ok ? { details: body?.details ?? null, at: typeof body?.at === "string" ? body.at : "" } : response.status === 403 || response.status === 404 ? null : undefined;
+    Object.assign(detail, nextDetails(detail, id, got, Date.now()), { fetchedAt: Date.now() });
+  } catch {
+    Object.assign(detail, nextDetails(detail, id, undefined, Date.now()), { fetchedAt: Date.now() });
+  } finally {
+    detail.asking = false;
+  }
+  render();
+}
+
+/**
+ * @param {number} now
+ */
+function followDetails(now) {
+  const id = pages.opened?.page.id ?? null;
+  if (id === null || !detailPages.includes(id) || detail.asking) return;
+  if (detail.id === id && now - detail.fetchedAt < detailEveryMs) return;
+  void readDetails(id);
+}
+
+/**
+ * @param {import("./wall-cards.js").TrainRowView} view
+ * @returns {HTMLElement}
+ */
+function trainRowElement(view) {
+  const line = document.createElement("div");
+  line.className = `train-row ${view.tone}`;
+  line.setAttribute("role", "row");
+  const main = document.createElement("div");
+  main.className = "train-main";
+  /**
+   * @param {string} name
+   * @param {string} text
+   * @param {string | null} was
+   */
+  const cell = (name, text, was) => {
+    const one = document.createElement("span");
+    one.className = name;
+    one.setAttribute("role", "cell");
+    if (was !== null) {
+      const struck = document.createElement("s");
+      struck.textContent = was;
+      one.append(struck);
+    }
+    one.append(text);
+    return one;
+  };
+  const status = cell(`train-status ${view.tone}`, view.status, null);
+  main.append(cell("train-time", view.leaves, view.leavesWas), cell("train-arrives", view.arrives, view.arrivesWas), cell("train-platform", view.platform, null), status);
+  const second = document.createElement("span");
+  second.className = "train-change";
+  second.textContent = view.second;
+  line.append(main, second);
+  return line;
+}
+
+/**
+ * @param {string} id
+ * @returns {boolean}
+ */
+function showDetails(id) {
+  const rows = byId("card-rows");
+  const sub = byId("card-sub");
+  const facts = byId("card-facts");
+  const details = detailsShown(detail, id, Date.now());
+  const rich = isTrainDetails(details);
+  card.classList.toggle("rich", rich);
+  rows.hidden = !rich;
+  sub.hidden = !rich;
+  facts.hidden = rich;
+  if (!rich) return false;
+  const view = trainView(details, detail.at === "" ? "" : londonClock(new Date(detail.at)));
+  setText(byId("card-kind"), "Trains");
+  setText(byId("card-title"), view.title);
+  setText(sub, view.sub);
+  const key = JSON.stringify(view);
+  if (detail.shown !== key) {
+    detail.shown = key;
+    if (view.empty !== null) {
+      const empty = document.createElement("p");
+      empty.className = "train-change";
+      empty.textContent = view.empty;
+      rows.replaceChildren(empty);
+    } else rows.replaceChildren(...view.rows.map(trainRowElement));
+  }
+  return true;
+}
 
 /**
  * @param {HTMLElement} element
@@ -370,6 +470,7 @@ function showCard(now) {
   }
   card.classList.toggle("empty", shownCard.empty);
   card.classList.toggle("warm", shownCard.colour === "warm");
+  showDetails(open.page.id);
   byId("card-left").style.transform = `scaleX(${pageLeftMs(open, now) / pageShownMs})`;
   if (!card.hidden && !card.classList.contains("shut")) return;
   if (pages.closeTimer !== null) clearTimeout(pages.closeTimer);
@@ -506,6 +607,7 @@ export function render() {
     setText(byId("quiet-clock"), londonClock(new Date()));
     setText(byId("quiet-words"), bedtimeLine(picture));
   }
+  followDetails(now);
   showCard(now);
   drawPointer(now);
   if (state.jarvis?.activity === "speaking") state.speakingAt = now;
