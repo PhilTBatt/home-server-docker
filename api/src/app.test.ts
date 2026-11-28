@@ -31,7 +31,7 @@ const config: Config = {
   login: { guard: false },
   projector: { host: "192.168.1.23", power: "wake-sleep" },
   morning: { at: 405, days: ["mon", "tue", "wed", "thu", "fri"] },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true }
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true }
 };
 
 function buildApp(options: { logger: boolean }) {
@@ -303,7 +303,7 @@ test("the media module gets its keys from the settings it's given", async () => 
 });
 
 test("the features route shows the switches from the settings it's given", async () => {
-  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: false, events: false, morning: false };
+  const features = { alerts: true, heartbeat: false, dailySummary: true, memoryInbox: false, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: false, events: false, morning: false, switches: false };
   const app = await buildRealApp({ logger: false, config: { ...config, features } });
   const response = await app.inject({ method: "GET", url: "/system/features", headers: goodHeader });
   assert.equal(response.statusCode, 200);
@@ -934,6 +934,29 @@ test("the wall's token reads the server map, its states from the same kept serve
   const failing = await buildRealApp({ logger: false, config, wallSources: { doctor: async () => Promise.reject(new Error("down")), problems: async () => [], backup: async () => ({ lastRun: null, lastSuccess: null }), trains: undefined, playing: undefined, deals: undefined, reminders: undefined, mode: undefined } });
   const failed = (await failing.inject({ method: "GET", url: "/wall/pages/server", cookies: { wall_token: wallToken } })).json();
   assert.deepEqual([failed.details.chips[0].text, failed.details.nodes.find((node: { id: string }) => node.id === "qbittorrent").state], ["Couldn't run the server check just now", "unchecked"], "a check that fails still gives the map, saying so");
+});
+
+test("the wall's token reads the switches page, with what Jarvis last told the hub through his token, but can't tell it his switches itself", async () => {
+  const app = await buildRealApp({ logger: false, config });
+  assert.equal((await app.inject({ method: "POST", url: "/wall/jarvis/switches", headers: { authorization: `Bearer ${wallToken}` }, payload: { switches: { JARVIS_WALL: "on" } } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: "/wall/jarvis/switches", headers: goodHeader, payload: { switches: { JARVIS_WALL: "on", JARVIS_VOICE: "piper" } } })).statusCode, 200);
+  const read = await app.inject({ method: "GET", url: "/wall/pages/switches", cookies: { wall_token: wallToken } });
+  assert.equal(read.statusCode, 200);
+  const details = read.json().details;
+  assert.equal(details.kind, "switches");
+  assert.deepEqual(details.groups.map((group: { id: string }) => group.id), ["hub", "hand", "jarvis"]);
+  assert.equal(details.groups[0].rows.length, 23);
+  assert.equal(details.flipping, config.features.chores && config.features.switches ? "on" : config.features.chores ? "off" : "chores-off");
+  assert.deepEqual(details.groups[1].rows.map((row: { key: string; on: boolean }) => [row.key, row.on]), [["DEALS_AI", config.deals.ai], ["LOGIN_GUARD", config.login.guard]]);
+  assert.deepEqual(details.groups[2].rows.map((row: { key: string; value: string }) => [row.key, row.value]), [["JARVIS_WALL", "on"], ["JARVIS_VOICE", "piper"]]);
+  const guarded = await buildRealApp({ logger: false, config: { ...config, login: { guard: true } } });
+  const guardedRows = (await guarded.inject({ method: "GET", url: "/wall/pages/switches", headers: { authorization: `Bearer ${wallToken}` } })).json().details.groups[1].rows;
+  assert.deepEqual(guardedRows.map((row: { key: string; on: boolean }) => [row.key, row.on]), [["DEALS_AI", false], ["LOGIN_GUARD", true]], "each by-hand switch comes from its own setting");
+  const offSwitches = await buildRealApp({ logger: false, config: { ...config, features: { ...config.features, switches: false } } });
+  const offDetails = (await offSwitches.inject({ method: "GET", url: "/wall/pages/switches", cookies: { wall_token: wallToken } })).json().details;
+  assert.equal(offDetails.flipping, "off");
+  assert.equal(offDetails.groups[0].rows.find((row: { key: string }) => row.key === "SWITCHES").on, false);
+  assert.deepEqual(offDetails.groups[2].rows, [], "a new start knows nothing Jarvis said before");
 });
 
 test("the wall's token reads the wall's picture, made from the hub's own reads", async () => {

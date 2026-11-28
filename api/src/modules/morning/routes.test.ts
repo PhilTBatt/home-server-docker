@@ -5,7 +5,7 @@ import type { Features } from "../../config.js";
 import { createMorning, notSpeakingTime, notWakingTime, type Morning } from "./morning.js";
 import { bodyLimit, morning, morningByWrong, morningOff } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true };
 
 function setup(at = "06:50") {
   const clock = { now: new Date(`2026-11-30T${at}:00.000Z`) };

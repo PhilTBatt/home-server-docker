@@ -114,7 +114,7 @@ for package in api mcp jarvis ears; do
 done
 check_lacks "never as a writable mount" ":/app" "$log"
 check_has "copying it inside the container, without the server's packages" "--exclude=./node_modules" "$log"
-check_has "or its secrets and data, which npm's install scripts would see" "--exclude=./.env --exclude=./data" "$log"
+check_has "or its secrets and data, which npm's install scripts would see" "--exclude=./.env --exclude=\"./.env.*\" --exclude=./data" "$log"
 check_has "each package is named in the output" "== jarvis" "$(cat "$work/hub/chores/results/$id1.out")"
 
 fresh
@@ -339,6 +339,139 @@ check_has "and only read results" "source: ./chores/results
         target: /chores/results
         read_only: true" "$compose"
 check_lacks "and never gets the Docker socket" "docker.sock" "$compose"
+
+switch_env() {
+  mkdir -p "$work/hub/api"
+  printf 'CHORES=on\nSWITCHES=on\n%s' "$1" > "$work/hub/api/.env"
+  chmod 600 "$work/hub/api/.env"
+}
+
+flat_env() {
+  grep -v -x -e 'CHORES=on' -e 'SWITCHES=on' "$work/hub/api/.env" | tr '\n' ' ' | sed 's/ $//'
+}
+
+raw_env() {
+  mkdir -p "$work/hub/api"
+  printf '%s' "$1" > "$work/hub/api/.env"
+  chmod 600 "$work/hub/api/.env"
+}
+
+fresh
+switch_env $'API_TOKEN=secret-value-123\nREMINDERS=off\nMODES=on\n'
+ask "$id1" switch-on-reminders
+output=$(run)
+check "switch-on-reminders changes only that one line of api/.env" "API_TOKEN=secret-value-123 REMINDERS=on MODES=on" "$(flat_env)"
+check "and restarts only the API, recreated so it reads the new setting, waiting for its health check" "$work/hub :: compose --ansi never up -d --no-deps --force-recreate --wait api" "$(cat "$work/docker.log")"
+check "api/.env keeps its permissions" "600" "$(stat -c %a "$work/hub/api/.env")"
+check "and no copy of it is left beside it" "" "$(ls -A "$work/hub/api" | grep -v '^\.env$')"
+
+fresh
+switch_env $'REMINDERS=off\n'
+printf 'API_TOKEN=left-from-a-killed-run\n' > "$work/hub/api/.env.switch.AbC123"
+ask "$id1" switch-on-reminders
+run > /dev/null
+check "a copy left by a run that was killed part-way is cleared at the next switch chore" "" "$(ls -A "$work/hub/api" | grep -v '^\.env$')"
+check_has "the result says it's done" '"job":"switch-on-reminders","state":"done","exit":0,"timedOut":false' "$(result "$id1")"
+check_has "with a 5-minute limit" '"limitSeconds":300}' "$(result "$id1")"
+check_has "the output says what was set" "set REMINDERS=on in api/.env, restarting the API" "$(cat "$work/hub/chores/results/$id1.out")"
+check_lacks "nothing else from api/.env is ever in the output" "secret-value-123" "$(cat "$work/hub/chores/results/$id1.out") $output"
+
+fresh
+switch_env $'MODES=off\nFIND_PHONE=on\n'
+ask "$id1" switch-off-find-phone
+run > /dev/null
+check "a switch with an underscore is named with a dash" "MODES=off FIND_PHONE=off" "$(flat_env)"
+
+fresh
+switch_env $'MODES=off\n'
+ask "$id1" switch-off-modes
+run > /dev/null
+check "a switch already that way changes nothing" "MODES=off" "$(flat_env)"
+check "and restarts nothing" "" "$(cat "$work/docker.log")"
+check_has "and says so" "MODES is already off, so nothing was changed" "$(cat "$work/hub/chores/results/$id1.out")"
+
+fresh
+switch_env $'SPOTIFY=off\n'
+ask "$id1" switch-on-spotify
+DOCKER_FAIL="up -d" run > /dev/null
+check "if the API doesn't come back, the switch is put back" "SPOTIFY=off" "$(flat_env)"
+check "and the API started again with it" "2" "$(grep -c 'up -d --no-deps --force-recreate --wait api' "$work/docker.log")"
+check_has "the chore fails, saying why" '"exit":70' "$(result "$id1")"
+check_has "in words" "the API didn't come back with SPOTIFY=on, so it was put back to SPOTIFY=off" "$(cat "$work/hub/chores/results/$id1.out")"
+
+for case in "LOGIN_GUARD=off:switch-on-login-guard" "API_TOKEN=x:switch-on-api-token" "DEALS_AI=off:switch-on-deals-ai"; do
+  fresh
+  switch_env "${case%%:*}"$'\n'
+  ask "$id1" "${case#*:}"
+  run > /dev/null
+  check "${case#*:} isn't one of the hub's feature switches, so it's refused" "${case%%:*}" "$(flat_env)"
+  check_has "saying so" "\"state\":\"refused\",\"why\":\"that isn't one of the hub's switches\"" "$(result "$id1")"
+  check "and docker isn't touched" "" "$(cat "$work/docker.log")"
+done
+
+for job in "switch-on-REMINDERS" "switch-on-reminders;ls" 'switch-on-$(touch x)' "switch-maybe-reminders" "switch-on-" "switch-on-reminders "; do
+  fresh
+  switch_env $'REMINDERS=off\n'
+  ask "$id1" "$job"
+  run > /dev/null
+  check "$job is refused and changes nothing" "REMINDERS=off" "$(flat_env)"
+  check "with no docker" "" "$(cat "$work/docker.log")"
+done
+
+for env in $'REMINDERS=off\nREMINDERS=off\n' $'MODES=on\n' $'REMINDERS=off # off for now\n' $'REMINDERS=no\n' $'REMINDERS=off\nREMINDERS="on"\n' $'REMINDERS=off\n  REMINDERS = on\n' $'REMINDERS=off\r\n'; do
+  fresh
+  switch_env "$env"
+  ask "$id1" switch-on-reminders
+  run > /dev/null
+  check "api/.env without exactly one REMINDERS=on or off line is left as it was" "$(printf '%s' "$env" | tr '\n' ' ' | sed 's/ $//')" "$(flat_env)"
+  check_has "and the chore says why" "doesn't have exactly one REMINDERS=on or REMINDERS=off line" "$(cat "$work/hub/chores/results/$id1.out")"
+done
+
+fresh
+mkdir -p "$work/hub/api"
+printf 'REMINDERS=off\n' > "$work/elsewhere.env"
+ln -s "$work/elsewhere.env" "$work/hub/api/.env"
+ask "$id1" switch-on-reminders
+run > /dev/null
+check "api/.env as a link isn't followed" "REMINDERS=off" "$(cat "$work/elsewhere.env")"
+check_has "and the chore says so" "api/.env isn't a plain file" "$(cat "$work/hub/chores/results/$id1.out")"
+
+for env in $'CHORES=on\nSWITCHES=off\nTALK=off\n' $'CHORES=off\nSWITCHES=on\nTALK=off\n' $'TALK=off\n' $'CHORES=on\nSWITCHES=on # yes\nTALK=off\n' $'CHORES="on"\nSWITCHES=on\nTALK=off\n'; do
+  fresh
+  raw_env "$env"
+  ask "$id1" switch-on-talk
+  run > /dev/null
+  check "without CHORES=on and SWITCHES=on written plainly in api/.env, the runner itself refuses a switch chore" "$(printf '%s' "$env" | tr '\n' ' ')" "$(tr '\n' ' ' < "$work/hub/api/.env")"
+  check "and docker isn't touched" "" "$(cat "$work/docker.log")"
+  check_has "saying why" "api/.env doesn't say CHORES=on and SWITCHES=on, so switch chores are off" "$(cat "$work/hub/chores/results/$id1.out")"
+done
+
+fresh
+raw_env $'CHORES=on\nSWITCHES=on\n'
+ask "$id1" switch-off-switches
+run > /dev/null
+check "switching SWITCHES itself off works, since it's on beforehand" "CHORES=on SWITCHES=off" "$(tr '\n' ' ' < "$work/hub/api/.env" | sed 's/ $//')"
+
+fresh
+switch_env $'TRAIN_ALERTS=off\nALERTS=off\nEXPIRY_ALERTS=off\n'
+ask "$id1" switch-on-alerts
+run > /dev/null
+check "a switch whose name ends another's changes only its own line" "TRAIN_ALERTS=off ALERTS=on EXPIRY_ALERTS=off" "$(flat_env)"
+
+fresh
+switch_env $'REMINDERS=off\n'
+chmod 640 "$work/hub/api/.env"
+ask "$id1" switch-on-reminders
+run > /dev/null
+check "api/.env keeps whatever permissions it had" "640" "$(stat -c %a "$work/hub/api/.env")"
+check "and no copy of it, the runner's or sed's, is left beside it" "" "$(ls -A "$work/hub/api" | grep -v '^\.env$')"
+
+check "both restarts have a 2-minute limit" "2" "$(grep -c 'timeout --kill-after=15 120 docker compose --ansi never up -d --no-deps --force-recreate --wait api' "$script")"
+check "and nothing writes api/.env with sed -i, which leaves its own copy if killed" "0" "$(grep -c 'sed -i' "$script")"
+
+hub_switches=$(sed -n '/^export const switchKeys/,/^};/p' "$here/../api/src/config.ts" | sed -n -E 's/^  [a-zA-Z]+: "([A-Z_]+)",$/\1/p' | tr '\n' ' ' | sed 's/ $//')
+check "the hub has its switch list" "23" "$(wc -w <<< "$hub_switches" | tr -d ' ')"
+check "and the runner's list is the same, in the same order" "$hub_switches" "$(sed -n -E 's/^switches="([A-Z_ ]+)"$/\1/p' "$script")"
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

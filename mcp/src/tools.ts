@@ -194,8 +194,8 @@ export const choreJobs = ["rebuild-api", "run-tests", "pull-images"] as const;
 
 const choreInput = z.object({
   job: z
-    .union([z.enum(choreJobs), z.string().regex(/^session-(?:start|stop)-[a-z0-9-]{1,20}$/)])
-    .describe("session-start-<name> and session-stop-<name> start or stop one of the Claude Code sessions the runner knows (from get_sessions' names), in tmux, and work only while sessions are switched on (SESSIONS). rebuild-api rebuilds the API from the server's copy of the repo and restarts it (docker compose up -d --build --wait api). run-tests runs the api, mcp, jarvis and ears tests, each in a throwaway node:26-alpine container with its folder mounted read-only. pull-images downloads newer images for the services (docker compose pull --ignore-buildable) without restarting anything."),
+    .union([z.enum(choreJobs), z.string().regex(/^session-(?:start|stop)-[a-z0-9-]{1,20}$/), z.string().regex(/^switch-(?:on|off)-[a-z-]{2,30}$/)])
+    .describe("switch-on-<switch> and switch-off-<switch> flip one of the hub's own switches in api/.env, named in lower case with dashes (switch-on-reminders for REMINDERS, switch-off-find-phone for FIND_PHONE), and restart the API; if the API doesn't come back, the switch is put back as it was. Only the hub's feature switches, never any other setting, and never Jarvis's. session-start-<name> and session-stop-<name> start or stop one of the Claude Code sessions the runner knows (from get_sessions' names), in tmux, and work only while sessions are switched on (SESSIONS). rebuild-api rebuilds the API from the server's copy of the repo and restarts it (docker compose up -d --build --wait api). run-tests runs the api, mcp, jarvis and ears tests, each in a throwaway node:26-alpine container with its folder mounted read-only. pull-images downloads newer images for the services (docker compose pull --ignore-buildable) without restarting anything."),
 });
 
 const choreIdInput = z.object({
@@ -381,7 +381,7 @@ export function buildServer(get: ApiGet, post: ApiPost, actions: boolean, slowGe
   server.registerTool(
     "run_chore",
     {
-      description: "Asks the server's runner to run one dev chore from a fixed list: rebuild-api, run-tests or pull-images, or session-start-<name> or session-stop-<name> for a Claude Code session in the runner's own list. The runner is outside Docker and runs only these, with a time limit (15, 40 and 20 minutes, 30 seconds for a session). One at a time: a second while one waits or runs is refused with a 409 saying why. Answers with the chore's id; read how it went with get_chore. Fails with a 404 while chores are switched off (CHORES), and a 500 when the request can't be written.",
+      description: "Asks the server's runner to run one dev chore from a fixed list: rebuild-api, run-tests or pull-images, session-start-<name> or session-stop-<name> for a Claude Code session in the runner's own list, or switch-on-<switch> or switch-off-<switch> for one of the hub's switches. The runner is outside Docker and runs only these, with a time limit (15, 40 and 20 minutes, 30 seconds for a session, 5 minutes for a switch). One at a time: a second while one waits or runs is refused with a 409 saying why. Answers with the chore's id; read how it went with get_chore. Fails with a 404 while chores are switched off (CHORES), and a 500 when the request can't be written.",
       inputSchema: choreInput,
     },
     async ({ job }) => asText(await post(`/chores/${job}`)),

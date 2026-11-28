@@ -125,6 +125,7 @@ export function byLine(by) {
 export function cardFor(page, picture, sinceMs) {
   const item = picture?.items.find((one) => one.key === page.id);
   const by = byLine(page.by);
+  if (picture !== null && item === undefined && detailPages.includes(page.id)) return { kind: page.title, title: `Reading ${page.title.charAt(0).toLowerCase()}${page.title.slice(1)}`, facts: ["If this stays, the hub couldn't be read just now."], colour: "grey", empty: true, by };
   if (picture === null || item === undefined) return { kind: page.title, title: "Nothing to show", facts: ["It may be switched off on the hub, or there's nothing right now."], colour: "grey", empty: true, by };
   if (page.id === "train" && picture.train !== null) {
     const train = picture.train;
@@ -237,7 +238,7 @@ export function framesASecond(frames, now) {
   return frames.filter((at) => now - at < 1000).length;
 }
 
-export const detailPages = ["train", "server"];
+export const detailPages = ["train", "server", "switches"];
 export const detailEveryMs = 30_000;
 export const trainRowsShown = 4;
 export const detailKeptMs = 2 * detailEveryMs;

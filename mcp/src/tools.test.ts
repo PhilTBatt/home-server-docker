@@ -646,6 +646,18 @@ test("run_chore takes a session job by its plain name, and nothing like one that
   assert.deepEqual(fake.calls, ["POST /chores/session-start-docker", "POST /chores/session-stop-brain"]);
 });
 
+test("run_chore takes a switch job by its lower-case name, says what it flips, and nothing like one that isn't", async () => {
+  const fake = fakeApi();
+  const { listTools, callTool } = await connect(fake);
+  await callTool("run_chore", { job: "switch-on-reminders" });
+  await callTool("run_chore", { job: "switch-off-find-phone" });
+  for (const job of ["switch-on-Reminders", "switch-on-", "switch-on-a", "switch-on-a;b", "switch-on-find_phone", "switch-maybe-reminders", `switch-on-${"a".repeat(31)}`]) assert.ok(refused(await callTool("run_chore", { job })), job);
+  assert.deepEqual(fake.calls, ["POST /chores/switch-on-reminders", "POST /chores/switch-off-find-phone"]);
+  const run = (await listTools()).find((one) => one.name === "run_chore");
+  assert.match(run?.description ?? "", /switch-on-<switch> or switch-off-<switch> for one of the hub's switches/);
+  assert.match(JSON.stringify(run?.inputSchema), /never Jarvis's/);
+});
+
 test("get_sessions asks GET /sessions and says a restart forgets them", async () => {
   const fake = fakeApi();
   const { listTools, callTool } = await connect(fake, false);

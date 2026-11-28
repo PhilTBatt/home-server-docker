@@ -12,6 +12,7 @@ export const wallPages: readonly WallPage[] = [
   { id: "deals", title: "Deals", say: ["show me the deals"] },
   { id: "reminder", title: "Reminders", say: ["show me my reminders", "show me the reminders"] },
   { id: "music", title: "Now playing", say: ["show me what's playing", "show me the music"] },
+  { id: "switches", title: "The switches", say: ["show me the switches", "show me the switchboard"] },
 ];
 
 export const pageIds: readonly string[] = wallPages.map((page) => page.id);

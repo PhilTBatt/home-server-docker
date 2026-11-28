@@ -5,6 +5,7 @@ import { codePattern, createPairings, pairCookie, pairIdPattern, pairingMs, type
 import type { WallPicture } from "./picture.js";
 import type { EventSink } from "../events/feed.js";
 import { hiddenNow, isPageBy, isPageId, pageBys, pageIds, pageShownMs, wallPages } from "./pages.js";
+import { createJarvisSwitches, type JarvisSwitches } from "./switchboard.js";
 
 export const nextWaitMs = 20_000;
 export const privacyCheckMs = 1_000;
@@ -26,8 +27,9 @@ export const privateInGuest = { error: "That page is private, so it isn't shown 
 export const noPageDetails = { error: "That page has nothing more than its card on the wall yet, or what it shows is switched off" };
 export const pageDetailsFailed = { error: "The hub couldn't read that page's details just now" };
 
-export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; guard?: boolean; desk?: JarvisDesk; pairings?: Pairings; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number; events?: EventSink; mode?: () => string | null; pageDetails?: Partial<Record<string, () => Promise<unknown>>> }> = async (app, options) => {
+export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettings; guard?: boolean; desk?: JarvisDesk; pairings?: Pairings; picture?: () => Promise<WallPicture>; now?: () => number; waitMs?: number; events?: EventSink; mode?: () => string | null; pageDetails?: Partial<Record<string, () => Promise<unknown>>>; jarvisSwitches?: JarvisSwitches }> = async (app, options) => {
   const desk = options.desk ?? createJarvisDesk();
+  const jarvisSwitches = options.jarvisSwitches ?? createJarvisSwitches();
   const pairings = options.pairings ?? createPairings();
   const now = options.now ?? (() => Date.now());
   const waitMs = options.waitMs ?? nextWaitMs;
@@ -120,6 +122,13 @@ export const wall: FastifyPluginAsync<{ features: Features; settings: WallSettin
     const report = readReport(request.body);
     if ("refused" in report) return reply.code(400).send({ error: report.refused });
     return { seq: desk.report(report, now()) };
+  });
+
+  app.post("/jarvis/switches", { ...quiet, bodyLimit }, async (request, reply) => {
+    const told = jarvisSwitches.tell(request.body, now());
+    if ("refused" in told) return reply.code(400).send({ error: told.refused });
+    if (told.changed) app.log.info({ jarvisSwitches: { count: told.count, on: told.on } }, "Jarvis told the wall his switches, and they had changed");
+    return { count: told.count };
   });
 
   app.get<{ Querystring: { after?: string; private?: string } }>("/jarvis", quiet, async (request, reply) => {

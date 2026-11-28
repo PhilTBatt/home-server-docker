@@ -113,6 +113,11 @@ test("a page with nothing on the wall behind it says so, under the page's title,
   assert.deepEqual(cardFor({ ...page, id: "reminder", title: "Reminders" }, none, 0).title, "none");
 });
 
+test("a page drawn only from its details, like the switches, says it's reading them until they come, never that there's nothing", () => {
+  assert.deepEqual(cardFor({ ...page, id: "switches", title: "The switches" }, picture(), 0), { kind: "The switches", title: "Reading the switches", facts: ["If this stays, the hub couldn't be read just now."], colour: "grey", empty: true, by: "You asked" });
+  assert.equal(cardFor({ ...page, id: "switches", title: "The switches" }, null, 0).title, "Nothing to show", "with no picture at all, the hub can't be read");
+});
+
 test("each item's box, for the pointer, covers its dot and its words on whichever side they sit", () => {
   assert.deepEqual(itemBox(1000, 300, "right"), { left: 990, top: 272, width: 234, height: 76 });
   assert.deepEqual(itemBox(300, 300, "left"), { left: 76, top: 272, width: 234, height: 76 });

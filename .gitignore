@@ -2,6 +2,7 @@ adguard/work/
 adguard/conf/AdGuardHome.yaml
 homepage/config/logs/
 .env
+api/.env.switch.*
 kuma/data/
 jellyfin/config/
 jellyfin/cache/

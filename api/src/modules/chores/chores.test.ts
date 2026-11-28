@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import Fastify from "fastify";
-import type { Features } from "../../config.js";
-import { choreJobFor, createChores, outputLines, pickUpMs, readResult } from "./chores.js";
+import { switchKeys, type Features } from "../../config.js";
+import { choreJobFor, createChores, outputLines, pickUpMs, readResult, switchJobOf, switchOfJob } from "./chores.js";
 import { chores } from "./routes.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true };
 const now = new Date("2026-11-27T12:00:00.000Z");
 
 async function folder() {
@@ -141,7 +141,7 @@ test("the routes refuse a job not on the list, an odd id, and an unknown one, an
   const dir = await folder();
   const app = await buildApp(dir);
   const odd = await app.inject({ method: "POST", url: "/chores/reboot" });
-  assert.deepEqual([odd.statusCode, odd.json()], [400, { error: "job must be one of rebuild-api, run-tests, pull-images, or session-start-<name> or session-stop-<name> for a session the runner knows" }]);
+  assert.deepEqual([odd.statusCode, odd.json()], [400, { error: "job must be one of rebuild-api, run-tests, pull-images, or session-start-<name> or session-stop-<name> for a session the runner knows, or switch-on-<switch> or switch-off-<switch> for one of the hub's switches, like switch-on-reminders" }]);
   assert.deepEqual((await app.inject({ method: "GET", url: "/chores/xyz" })).json(), { error: "id must be a chore's id, as POST /chores/<job> gave it" });
   assert.deepEqual((await app.inject({ method: "GET", url: "/chores/1111111111111111" })).json(), { error: "No chore with that id" });
   assert.deepEqual(await readdir(join(dir, "requests")), []);
@@ -169,7 +169,7 @@ test("with sessions on, a session job is written like any chore, and with them o
   assert.equal(await readFile(join(dir, "requests", "0123456789abcdef.job"), "utf8"), "session-start-docker\n");
   const offDir = await folder();
   const off = Fastify();
-  off.register(chores, { prefix: "/chores", features: { ...allOn, sessions: false }, chores: createChores({ dir: offDir, jobs: choreJobFor(false) }) });
+  off.register(chores, { prefix: "/chores", features: { ...allOn, sessions: false, switches: false }, chores: createChores({ dir: offDir, jobs: choreJobFor(false) }) });
   const refused = await off.inject({ method: "POST", url: "/chores/session-start-docker" });
   assert.deepEqual([refused.statusCode, refused.json()], [400, { error: "job must be one of rebuild-api, run-tests, pull-images" }]);
   assert.deepEqual(await readdir(join(offDir, "requests")), []);
@@ -179,4 +179,35 @@ test("a session job's result keeps its name, and a job no list has is dropped fr
   const id = "0123456789abcdef";
   assert.equal(readResult(id, JSON.stringify({ id, state: "done", job: "session-stop-brain" }))?.job, "session-stop-brain");
   assert.equal(readResult(id, JSON.stringify({ id, state: "done", job: "session-stop-Brain!" }))?.job, null);
+});
+
+test("a switch job names one of the hub's feature switches, in lower case with dashes, and is a chore only while switch flipping is on", () => {
+  assert.deepEqual(switchOfJob("switch-on-reminders"), { key: "REMINDERS", on: true });
+  assert.deepEqual(switchOfJob("switch-off-find-phone"), { key: "FIND_PHONE", on: false });
+  assert.deepEqual(switchOfJob("switch-off-switches"), { key: "SWITCHES", on: false });
+  for (const key of Object.values(switchKeys)) for (const on of [true, false]) assert.deepEqual(switchOfJob(switchJobOf(key, on)), { key, on }, key);
+  for (const job of ["switch-on-login-guard", "switch-on-deals-ai", "switch-on-api-token", "switch-on-REMINDERS", "switch-on-reminders ", "switch-maybe-reminders", "switch-on-", "switch-on-reminders;ls", "switch-on-find_phone", "switch-on-../reminders", `switch-on-${"a".repeat(31)}`]) {
+    assert.equal(switchOfJob(job), null, job);
+    assert.equal(choreJobFor(true, true)(job), false, job);
+  }
+  assert.deepEqual(["switch-on-reminders", "switch-off-chores", "rebuild-api"].map(choreJobFor(true, false)), [false, false, true]);
+  assert.deepEqual(["switch-on-reminders", "switch-off-chores", "session-start-docker"].map(choreJobFor(false, true)), [true, true, false]);
+});
+
+test("with switch flipping on, a switch job is written like any chore, and with it off it's a 400 that doesn't offer one", async () => {
+  const dir = await folder();
+  const app = Fastify();
+  app.register(chores, { prefix: "/chores", features: allOn, chores: createChores({ dir, jobs: choreJobFor(true, true), makeId: () => "0123456789abcdef" }) });
+  assert.equal((await app.inject({ method: "POST", url: "/chores/switch-on-reminders" })).json().job, "switch-on-reminders");
+  assert.equal(await readFile(join(dir, "requests", "0123456789abcdef.job"), "utf8"), "switch-on-reminders\n");
+  const refused = await app.inject({ method: "POST", url: "/chores/switch-on-login-guard" });
+  assert.equal(refused.statusCode, 400);
+  const offDir = await folder();
+  const off = Fastify();
+  off.register(chores, { prefix: "/chores", features: { ...allOn, switches: false }, chores: createChores({ dir: offDir, jobs: choreJobFor(true, false) }) });
+  const offRefused = await off.inject({ method: "POST", url: "/chores/switch-on-reminders" });
+  assert.deepEqual([offRefused.statusCode, offRefused.json()], [400, { error: "job must be one of rebuild-api, run-tests, pull-images, or session-start-<name> or session-stop-<name> for a session the runner knows" }]);
+  assert.deepEqual(await readdir(join(offDir, "requests")), []);
+  assert.equal(readResult("0123456789abcdef", JSON.stringify({ id: "0123456789abcdef", state: "done", job: "switch-off-find-phone" }))?.job, "switch-off-find-phone");
+  assert.equal(readResult("0123456789abcdef", JSON.stringify({ id: "0123456789abcdef", state: "done", job: "switch-off-login-guard" }))?.job, null);
 });

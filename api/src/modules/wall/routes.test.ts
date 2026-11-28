@@ -8,9 +8,10 @@ import { createJarvisDesk } from "./jarvis.js";
 import type { WallPicture } from "./picture.js";
 import { noPageDetails, noSuchCode, noSuchPage, pageByWrong, pageDetailsFailed, pairNeedsJson, plainHttpPairing, privacyCheckMs, privateInGuest, switchedOff, tooManyWrongCodes, wall, wallCookie, wallCookieDays, wallReads } from "./routes.js";
 import { pageIds } from "./pages.js";
+import { createJarvisSwitches, jarvisSwitchesShape } from "./switchboard.js";
 import { createPairings, mostPairings, mostWrongCodes, pairCookie, pairingMs } from "./pairing.js";
 
-const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true };
+const allOn: Features = { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true };
 const settings: WallSettings = { token: "w".repeat(40), speaking: "wobble", privatePages: [], remote: false };
 
 async function buildApp(features: Features = allOn, waitMs = 40, picture?: () => Promise<WallPicture>, logs?: string[], guard = false, events?: EventSink) {
@@ -490,4 +491,29 @@ test("a screen reads a page's details with the wall's token, never a private pag
   const failed = logs.map((line) => JSON.parse(line)).filter((line) => line.msg === "a page's details couldn't be read");
   assert.deepEqual(failed.map((line) => [line.level, line.page]), [[40, { id: "backup", why: "the backup state file is missing" }], [40, { id: "backup", why: "the backup state file is missing" }]], "a warning with the page and the hub's own reason");
   await app.close();
+});
+
+test("Jarvis tells the wall his switches, they come back on the switches page, and a bad list is a 400 naming the shape", async () => {
+  const logs: string[] = [];
+  const app = Fastify({ logger: { level: "info", stream: { write: (line: string) => void logs.push(line) } } });
+  await app.register(cookie);
+  const told = createJarvisSwitches();
+  app.register(wall, { prefix: "/wall", features: allOn, settings, jarvisSwitches: told, now: () => 7_000, pageDetails: { switches: async () => told.view(7_000) } });
+  const posted = await app.inject({ method: "POST", url: "/wall/jarvis/switches", payload: { switches: { JARVIS_VOICE: "kokoro", JARVIS_WALL: "on", JARVIS_GUEST: "off" } } });
+  assert.deepEqual([posted.statusCode, posted.json()], [200, { count: 3 }]);
+  assert.deepEqual((await app.inject({ method: "GET", url: "/wall/pages/switches" })).json().details.switches, [["JARVIS_VOICE", "kokoro"], ["JARVIS_WALL", "on"], ["JARVIS_GUEST", "off"]]);
+  await app.inject({ method: "POST", url: "/wall/jarvis/switches", payload: { switches: { JARVIS_VOICE: "kokoro", JARVIS_WALL: "on", JARVIS_GUEST: "off" } } });
+  const changes = logs.filter((line) => line.includes("Jarvis told the wall his switches"));
+  assert.equal(changes.length, 1, "the same list again isn't logged");
+  assert.deepEqual(JSON.parse(changes[0]).jarvisSwitches, { count: 3, on: 2 });
+  assert.ok(!logs.join("").includes("kokoro"), "the log has counts, never his settings");
+  const refused = await app.inject({ method: "POST", url: "/wall/jarvis/switches", payload: { switches: { JARVIS_PERSONA: "a long persona text" } } });
+  assert.deepEqual([refused.statusCode, refused.json()], [400, { error: jarvisSwitchesShape }]);
+  const big = await app.inject({ method: "POST", url: "/wall/jarvis/switches", headers: { "content-type": "application/json" }, payload: JSON.stringify({ switches: { JARVIS_WALL: "on" }, pad: "x".repeat(5000) }) });
+  assert.equal(big.statusCode, 413);
+  const off = Fastify();
+  await off.register(cookie);
+  off.register(wall, { prefix: "/wall", features: { ...allOn, wall: false }, settings });
+  assert.deepEqual([(await off.inject({ method: "POST", url: "/wall/jarvis/switches", payload: { switches: {} } })).statusCode], [404]);
+  assert.ok(!wallReads.has("POST /wall/jarvis/switches"), "the wall's own token can't tell the hub Jarvis's switches");
 });

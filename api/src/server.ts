@@ -68,7 +68,7 @@ const chores = config.features.chores
   ? choresFor(config.features.sessions, {
       info: (fields, message) => app.log.info({ chores: fields }, message),
       warn: (fields, message) => app.log.warn({ chores: fields }, message),
-    })
+    }, undefined, config.features.switches)
   : undefined;
 
 const sessions = config.features.sessions

@@ -1,13 +1,27 @@
 import { randomBytes } from "node:crypto";
 import { readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { switchKeys } from "../../config.js";
 
 export const choreJobs = ["rebuild-api", "run-tests", "pull-images"] as const;
 export const idPattern = /^[0-9a-f]{16}$/;
 export const sessionJobPattern = /^session-(?:start|stop)-[a-z0-9-]{1,20}$/;
 
-export function choreJobFor(sessions: boolean): (job: string) => boolean {
-  return (job) => (choreJobs as readonly string[]).includes(job) || (sessions && sessionJobPattern.test(job));
+export const switchJobPattern = /^switch-(on|off)-([a-z-]{2,30})$/;
+
+export function switchOfJob(job: string): { key: string; on: boolean } | null {
+  const match = switchJobPattern.exec(job);
+  if (match === null) return null;
+  const key = match[2].toUpperCase().replace(/-/g, "_");
+  return (Object.values(switchKeys) as string[]).includes(key) ? { key, on: match[1] === "on" } : null;
+}
+
+export function switchJobOf(key: string, on: boolean): string {
+  return `switch-${on ? "on" : "off"}-${key.toLowerCase().replace(/_/g, "-")}`;
+}
+
+export function choreJobFor(sessions: boolean, switches = false): (job: string) => boolean {
+  return (job) => (choreJobs as readonly string[]).includes(job) || (sessions && sessionJobPattern.test(job)) || (switches && switchOfJob(job) !== null);
 }
 export const pickUpMs = 2 * 60 * 1000;
 export const runningSlackMs = 2 * 60 * 1000;
@@ -59,7 +73,7 @@ export function readResult(id: string, text: string): Omit<ChoreResult, "output"
   if (!isObject(parsed) || parsed.id !== id) return null;
   const state = (["running", "done", "refused"] as const).find((one) => one === parsed.state);
   if (state === undefined) return null;
-  const job = typeof parsed.job === "string" && (choreJobFor(true)(parsed.job)) ? parsed.job : null;
+  const job = typeof parsed.job === "string" && (choreJobFor(true, true)(parsed.job)) ? parsed.job : null;
   return {
     id,
     state,

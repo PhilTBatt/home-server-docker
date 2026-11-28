@@ -9,6 +9,7 @@ results="$hub/chores/results"
 kept_results=20
 output_lines=40
 output_bytes=4000
+switches="ALERTS HEARTBEAT DAILY_SUMMARY MEMORY_INBOX MEMORY_UPLOAD DEALS FIND_PHONE TRAINS TRAIN_ALERTS EXPIRY_ALERTS WATCHERS CATCH_UP MODES REMINDERS CHORES SESSIONS SPOTIFY TALK WALL PROJECTOR EVENTS MORNING SWITCHES"
 
 say() {
   echo "home-hub-runner: $*"
@@ -21,6 +22,10 @@ now() {
 limit_for() {
   if [[ "$1" =~ ^session-(start|stop)-[a-z0-9-]{1,20}$ ]]; then
     echo 30
+    return
+  fi
+  if [[ "$1" =~ ^switch-(on|off)-[a-z-]{2,30}$ ]]; then
+    echo 300
     return
   fi
   case "$1" in
@@ -66,6 +71,61 @@ session_job() {
   timeout --kill-after=5 30 tmux -L home-hub kill-session -t "=$tmux" && echo "stopped the tmux session for $name"
 }
 
+switch_key() {
+  local key
+  key=$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')
+  [[ " $switches " == *" $key "* ]] || return 1
+  printf '%s' "$key"
+}
+
+set_switch() {
+  local key="$1" value="$2" part
+  part=$(mktemp api/.env.switch.XXXXXX) || return 1
+  if sed -E "s/^${key}=(on|off)\$/${key}=${value}/" api/.env > "$part" && chmod --reference=api/.env "$part" && mv -f "$part" api/.env; then
+    return 0
+  fi
+  rm -f "$part"
+  return 1
+}
+
+switch_job() {
+  local value="$1" key was lines any
+  key=$(switch_key "$2") || { echo "that isn't one of the hub's switches"; return 65; }
+  rm -f api/.env.switch.*
+  if [ ! -f api/.env ] || [ -L api/.env ]; then
+    echo "api/.env isn't a plain file, so nothing was changed"
+    return 66
+  fi
+  if [ "$(grep -c -x 'CHORES=on' api/.env)" != 1 ] || [ "$(grep -c -x 'SWITCHES=on' api/.env)" != 1 ]; then
+    echo "api/.env doesn't say CHORES=on and SWITCHES=on, so switch chores are off and nothing was changed"
+    return 71
+  fi
+  lines=$(grep -c -E "^${key}=(on|off)\$" api/.env)
+  any=$(grep -c -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" api/.env)
+  if [ "$lines" != 1 ] || [ "$any" != 1 ]; then
+    echo "api/.env doesn't have exactly one ${key}=on or ${key}=off line, so nothing was changed"
+    return 67
+  fi
+  was=$(sed -n -E "s/^${key}=(on|off)\$/\1/p" api/.env)
+  if [ "$was" = "$value" ]; then
+    echo "${key} is already ${value}, so nothing was changed"
+    return 0
+  fi
+  if ! set_switch "$key" "$value"; then
+    echo "couldn't write api/.env, so ${key} is still ${was}"
+    return 68
+  fi
+  echo "set ${key}=${value} in api/.env, restarting the API"
+  if timeout --kill-after=15 120 docker compose --ansi never up -d --no-deps --force-recreate --wait api; then
+    echo "the API is back with ${key}=${value}"
+    return 0
+  fi
+  set_switch "$key" "$was" || { echo "the API didn't come back with ${key}=${value}, and api/.env couldn't be put back: set ${key}=${was} by hand"; return 69; }
+  echo "the API didn't come back with ${key}=${value}, so it was put back to ${key}=${was}"
+  timeout --kill-after=15 120 docker compose --ansi never up -d --no-deps --force-recreate --wait api
+  return 70
+}
+
 write_result() {
   local id="$1" body="$2"
   printf '%s\n' "$body" > "$results/.$id.json.tmp" && mv -f "$results/.$id.json.tmp" "$results/$id.json"
@@ -80,7 +140,7 @@ run_job() {
       local status=0 package
       for package in api mcp jarvis ears; do
         echo "== $package"
-        timeout --kill-after=30 600 docker run --rm --init -v "$hub/$package:/src:ro" node:26-alpine sh -c 'mkdir /tmp/app && tar -C /src --exclude=./node_modules --exclude=./dist --exclude=./.env --exclude=./data -cf - . | tar -C /tmp/app -xf - && cd /tmp/app && npm ci --no-audit --no-fund > /dev/null 2>&1 && npm test > /tmp/test.txt 2>&1; status=$?; grep -E "^(ℹ|#) (tests|pass|fail|skipped)" /tmp/test.txt; exit $status' || status=$?
+        timeout --kill-after=30 600 docker run --rm --init -v "$hub/$package:/src:ro" node:26-alpine sh -c 'mkdir /tmp/app && tar -C /src --exclude=./node_modules --exclude=./dist --exclude=./.env --exclude="./.env.*" --exclude=./data -cf - . | tar -C /tmp/app -xf - && cd /tmp/app && npm ci --no-audit --no-fund > /dev/null 2>&1 && npm test > /tmp/test.txt 2>&1; status=$?; grep -E "^(ℹ|#) (tests|pass|fail|skipped)" /tmp/test.txt; exit $status' || status=$?
       done
       return "$status"
       ;;
@@ -92,6 +152,12 @@ run_job() {
       ;;
     session-stop-*)
       session_job stop "${1#session-stop-}"
+      ;;
+    switch-on-*)
+      switch_job on "${1#switch-on-}"
+      ;;
+    switch-off-*)
+      switch_job off "${1#switch-off-}"
       ;;
     *)
       return 64
@@ -132,6 +198,11 @@ handle() {
   if [ "$limit" = 0 ]; then
     write_result "$id" "{\"id\":\"$id\",\"state\":\"refused\",\"why\":\"that job isn't on the runner's list\",\"endedAt\":\"$(now)\"}"
     say "request $id refused: not a job on the list"
+    return
+  fi
+  if [[ "$job" =~ ^switch-(on|off)-(.*)$ ]] && ! switch_key "${BASH_REMATCH[2]}" > /dev/null; then
+    write_result "$id" "{\"id\":\"$id\",\"job\":\"$job\",\"state\":\"refused\",\"why\":\"that isn't one of the hub's switches\",\"endedAt\":\"$(now)\"}"
+    say "request $id refused: a switch that isn't one of the hub's"
     return
   fi
   if [[ "$job" =~ ^session-(start|stop)-(.*)$ ]] && ! session_line "${BASH_REMATCH[2]}" > /dev/null; then

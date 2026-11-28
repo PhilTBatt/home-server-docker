@@ -4,8 +4,8 @@ import { choreJobFor, choreJobs, idPattern, type Chores } from "./chores.js";
 
 export const chores: FastifyPluginAsync<{ features: Features; chores?: Chores; now?: () => Date }> = async (app, options) => {
   const switchedOff = { error: "Chores are switched off" };
-  const isJob = choreJobFor(options.features.sessions);
-  const jobsText = `job must be one of ${choreJobs.join(", ")}${options.features.sessions ? ", or session-start-<name> or session-stop-<name> for a session the runner knows" : ""}`;
+  const isJob = choreJobFor(options.features.sessions, options.features.switches);
+  const jobsText = `job must be one of ${choreJobs.join(", ")}${options.features.sessions ? ", or session-start-<name> or session-stop-<name> for a session the runner knows" : ""}${options.features.switches ? ", or switch-on-<switch> or switch-off-<switch> for one of the hub's switches, like switch-on-reminders" : ""}`;
 
   app.post<{ Params: { job: string } }>("/:job", { bodyLimit: 1024 }, async (request, reply) => {
     if (!options.features.chores || options.chores === undefined) return reply.code(404).send(switchedOff);

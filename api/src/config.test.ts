@@ -49,9 +49,10 @@ const complete = {
   EVENTS: "on",
   MORNING: "on",
   MORNING_AT: "06:45",
+  SWITCHES: "on",
 };
 
-const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off", FIND_PHONE: "off", TRAINS: "off", TRAIN_ALERTS: "off", EXPIRY_ALERTS: "off", WATCHERS: "off", CATCH_UP: "off", MODES: "off", REMINDERS: "off", CHORES: "off", SESSIONS: "off", SPOTIFY: "off", TALK: "off", WALL: "off", PROJECTOR: "off", EVENTS: "off", MORNING: "off" };
+const allOff = { ...complete, ALERTS: "off", HEARTBEAT: "off", DAILY_SUMMARY: "off", MEMORY_INBOX: "off", MEMORY_UPLOAD: "off", DEALS: "off", FIND_PHONE: "off", TRAINS: "off", TRAIN_ALERTS: "off", EXPIRY_ALERTS: "off", WATCHERS: "off", CATCH_UP: "off", MODES: "off", REMINDERS: "off", CHORES: "off", SESSIONS: "off", SPOTIFY: "off", TALK: "off", WALL: "off", PROJECTOR: "off", EVENTS: "off", MORNING: "off", SWITCHES: "off" };
 const dealSettings = { seen: "memory", ebayEnvironment: "production", ebayClientId: "test-ebay-id", ebayClientSecret: "test-ebay-secret", ai: false };
 
 test("reads every setting into its own field", () => {
@@ -72,7 +73,7 @@ test("reads every setting into its own field", () => {
     login: { guard: false },
     projector: { host: "192.168.1.23", power: "wake-sleep" },
     morning: { at: 405, days: ["mon", "tue", "wed", "thu", "fri"] },
-    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true },
+    features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true },
   });
 });
 
@@ -118,12 +119,12 @@ test("an empty setting counts as missing", () => {
 
 test("with nothing set, the always-needed settings and every switch are named, in a fixed order", () => {
   assert.throws(() => readConfig({}), {
-    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE, TRAINS, TRAIN_ALERTS, EXPIRY_ALERTS, WATCHERS, CATCH_UP, MODES, REMINDERS, CHORES, SESSIONS, SPOTIFY, TALK, WALL, PROJECTOR, EVENTS, MORNING, LOGIN_GUARD",
+    message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, ALERTS, HEARTBEAT, DAILY_SUMMARY, MEMORY_INBOX, MEMORY_UPLOAD, DEALS, FIND_PHONE, TRAINS, TRAIN_ALERTS, EXPIRY_ALERTS, WATCHERS, CATCH_UP, MODES, REMINDERS, CHORES, SESSIONS, SPOTIFY, TALK, WALL, PROJECTOR, EVENTS, MORNING, SWITCHES, LOGIN_GUARD",
   });
 });
 
 test("with every switch on and nothing else set, every other setting is named, in a fixed order", () => {
-  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on", TRAINS: "on", TRAIN_ALERTS: "on", EXPIRY_ALERTS: "on", WATCHERS: "on", CATCH_UP: "on", MODES: "on", REMINDERS: "on", CHORES: "on", SESSIONS: "on", SPOTIFY: "on", TALK: "on", WALL: "on", LOGIN_GUARD: "on", PROJECTOR: "on", EVENTS: "on", MORNING: "on" }), {
+  assert.throws(() => readConfig({ ALERTS: "on", HEARTBEAT: "on", DAILY_SUMMARY: "on", MEMORY_INBOX: "on", MEMORY_UPLOAD: "on", DEALS: "on", FIND_PHONE: "on", TRAINS: "on", TRAIN_ALERTS: "on", EXPIRY_ALERTS: "on", WATCHERS: "on", CATCH_UP: "on", MODES: "on", REMINDERS: "on", CHORES: "on", SESSIONS: "on", SPOTIFY: "on", TALK: "on", WALL: "on", LOGIN_GUARD: "on", PROJECTOR: "on", EVENTS: "on", MORNING: "on", SWITCHES: "on" }), {
     message: "Missing settings in api/.env: API_TOKEN, QBIT_API_KEY, JELLYFIN_API_KEY, NTFY_TOPIC, HEALTHCHECK_URL, DEALS_SEEN, EBAY_ENVIRONMENT, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, DEALS_AI, RAIL_DATA_KEY, TRAINS_FROM, TRAINS_TO, TRAINS_BOARD_URL, TRAIN_ALERT_DAYS, TRAIN_ALERT_WINDOW, TRAIN_ALERT_REMINDER, SPOTIFY_CLIENT_ID, SPOTIFY_REDIRECT_URI, WALL_TOKEN, WALL_SPEAKING, PROJECTOR_HOST, MORNING_AT",
   });
 });
@@ -164,7 +165,7 @@ test("each switch can be turned off on its own", () => {
     spotify: true,
     talk: true,
     wall: true,
-    projector: true, events: true, morning: true,
+    projector: true, events: true, morning: true, switches: true,
   });
   assert.deepEqual(readConfig({ ...complete, HEARTBEAT: "off" }).features, {
     alerts: true,
@@ -186,7 +187,7 @@ test("each switch can be turned off on its own", () => {
     spotify: true,
     talk: true,
     wall: true,
-    projector: true, events: true, morning: true,
+    projector: true, events: true, morning: true, switches: true,
   });
   assert.deepEqual(readConfig({ ...complete, DAILY_SUMMARY: "off" }).features, {
     alerts: true,
@@ -208,7 +209,7 @@ test("each switch can be turned off on its own", () => {
     spotify: true,
     talk: true,
     wall: true,
-    projector: true, events: true, morning: true,
+    projector: true, events: true, morning: true, switches: true,
   });
   assert.deepEqual(readConfig({ ...complete, MEMORY_INBOX: "off" }).features, {
     alerts: true,
@@ -230,7 +231,7 @@ test("each switch can be turned off on its own", () => {
     spotify: true,
     talk: true,
     wall: true,
-    projector: true, events: true, morning: true,
+    projector: true, events: true, morning: true, switches: true,
   });
   assert.deepEqual(readConfig({ ...complete, MEMORY_UPLOAD: "off" }).features, {
     alerts: true,
@@ -252,7 +253,7 @@ test("each switch can be turned off on its own", () => {
     spotify: true,
     talk: true,
     wall: true,
-    projector: true, events: true, morning: true,
+    projector: true, events: true, morning: true, switches: true,
   });
 });
 
@@ -328,7 +329,7 @@ test("EXPIRY_ALERTS must be written out, as exactly on or off, and needs no sett
   for (const value of ["yes", "On", "true", " on"]) assert.throws(() => readConfig({ ...complete, EXPIRY_ALERTS: value }), { message: "Settings in api/.env that must be on or off: EXPIRY_ALERTS" }, value);
   assert.equal(readConfig({ ...complete, EXPIRY_ALERTS: "off" }).features.expiryAlerts, false);
   const on = readConfig({ ...allOff, EXPIRY_ALERTS: "on", HEALTHCHECK_URL: undefined });
-  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "watchers", "catch-up", "modes", "reminders", "dev chores", "sessions", "Spotify", "talk to Jarvis", "the wall", "the projector", "the events feed", "the morning"]);
+  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "watchers", "catch-up", "modes", "reminders", "dev chores", "sessions", "Spotify", "talk to Jarvis", "the wall", "the projector", "the events feed", "the morning", "switch flipping"]);
 });
 
 test("WATCHERS must be written out, as exactly on or off, and needs no setting but the ntfy topic", () => {
@@ -336,7 +337,7 @@ test("WATCHERS must be written out, as exactly on or off, and needs no setting b
   for (const value of ["yes", "On", "true", " on"]) assert.throws(() => readConfig({ ...complete, WATCHERS: value }), { message: "Settings in api/.env that must be on or off: WATCHERS" }, value);
   assert.equal(readConfig({ ...complete, WATCHERS: "off" }).features.watchers, false);
   const on = readConfig({ ...allOff, WATCHERS: "on", HEALTHCHECK_URL: undefined });
-  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "catch-up", "modes", "reminders", "dev chores", "sessions", "Spotify", "talk to Jarvis", "the wall", "the projector", "the events feed", "the morning"]);
+  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "catch-up", "modes", "reminders", "dev chores", "sessions", "Spotify", "talk to Jarvis", "the wall", "the projector", "the events feed", "the morning", "switch flipping"]);
   assert.throws(() => readConfig({ ...allOff, WATCHERS: "on", NTFY_TOPIC: undefined }), { message: "Missing settings in api/.env: NTFY_TOPIC" });
 });
 
@@ -349,7 +350,7 @@ test("CATCH_UP must be written out, as exactly on or off, and needs no other set
   const on = readConfig({ ...allOff, CATCH_UP: "on", NTFY_TOPIC: undefined, HEALTHCHECK_URL: undefined });
   assert.equal(on.features.catchUp, true);
   assert.deepEqual(on.catchUp, { repos: [], token: "" });
-  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "watchers", "modes", "reminders", "dev chores", "sessions", "Spotify", "talk to Jarvis", "the wall", "the projector", "the events feed", "the morning"]);
+  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "watchers", "modes", "reminders", "dev chores", "sessions", "Spotify", "talk to Jarvis", "the wall", "the projector", "the events feed", "the morning", "switch flipping"]);
 });
 
 test("CATCH_UP_REPOS and CATCH_UP_GITHUB_TOKEN are read as given, in order, and both may be left out", () => {
@@ -414,7 +415,7 @@ test("SPOTIFY must be written out, as exactly on or off, and needs no ntfy topic
   for (const value of ["yes", "On", "true", " on"]) assert.throws(() => readConfig({ ...complete, SPOTIFY: value }), { message: "Settings in api/.env that must be on or off: SPOTIFY" }, value);
   const on = readConfig({ ...allOff, SPOTIFY: "on", NTFY_TOPIC: undefined, HEALTHCHECK_URL: undefined });
   assert.equal(on.features.spotify, true);
-  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "watchers", "catch-up", "modes", "reminders", "dev chores", "sessions", "talk to Jarvis", "the wall", "the projector", "the events feed", "the morning"]);
+  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "watchers", "catch-up", "modes", "reminders", "dev chores", "sessions", "talk to Jarvis", "the wall", "the projector", "the events feed", "the morning", "switch flipping"]);
   assert.deepEqual(on.spotify, { clientId: "0123456789abcdef0123456789abcdef", redirectUri: "https://hub.home/spotify.html" });
 });
 
@@ -447,7 +448,7 @@ test("TALK must be written out, as exactly on or off, and needs no other setting
   for (const value of ["yes", "On", "true", " on"]) assert.throws(() => readConfig({ ...complete, TALK: value }), { message: "Settings in api/.env that must be on or off: TALK" }, value);
   const on = readConfig({ ...allOff, TALK: "on", NTFY_TOPIC: undefined, HEALTHCHECK_URL: undefined });
   assert.equal(on.features.talk, true);
-  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "watchers", "catch-up", "modes", "reminders", "dev chores", "sessions", "Spotify", "the wall", "the projector", "the events feed", "the morning"]);
+  assert.deepEqual(switchedOff(on.features), ["alerts", "heartbeat", "daily summary", "brain inbox", "note uploads", "deal watcher", "find my phone", "train times", "train alerts", "expiry alerts", "watchers", "catch-up", "modes", "reminders", "dev chores", "sessions", "Spotify", "the wall", "the projector", "the events feed", "the morning", "switch flipping"]);
   assert.equal(readConfig({ ...complete, TALK: "off" }).features.talk, false);
 });
 
@@ -457,7 +458,7 @@ test("LOGIN_GUARD must be written out, as exactly on or off, needs no other sett
   for (const value of ["yes", "On", "true", " on", "on "]) assert.throws(() => readConfig({ ...complete, LOGIN_GUARD: value }), { message: "Settings in api/.env that must be on or off: LOGIN_GUARD" }, value);
   const on = readConfig({ ...allOff, LOGIN_GUARD: "on", NTFY_TOPIC: undefined, HEALTHCHECK_URL: undefined });
   assert.deepEqual(on.login, { guard: true });
-  assert.equal(switchedOff(on.features).length, 22);
+  assert.equal(switchedOff(on.features).length, 23);
   assert.deepEqual(readConfig({ ...complete, LOGIN_GUARD: "off" }).login, { guard: false });
   assert.deepEqual(readConfig({ ...complete, LOGIN_GUARD: "on" }).features, readConfig(complete).features);
 });
@@ -483,17 +484,17 @@ test("the API token and service keys are needed even with every feature off", ()
 
 test("everything off still works when the feature settings are present", () => {
   const config = readConfig(allOff);
-  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false, modes: false, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: false, projector: false, events: false, morning: false });
+  assert.deepEqual(config.features, { alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false, modes: false, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: false, projector: false, events: false, morning: false, switches: false });
   assert.equal(config.ntfyTopic, "test-topic");
   assert.equal(config.healthcheckUrl, "https://hc-ping.com/test");
 });
 
 test("switchedOff lists nothing when everything is on", () => {
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true }), []);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true }), []);
 });
 
 test("switchedOff names each feature that's off, in plain words and a fixed order", () => {
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false, modes: false, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: false, projector: false, events: false, morning: false }), [
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: false, dailySummary: false, memoryInbox: false, memoryUpload: false, deals: false, findPhone: false, trains: false, trainAlerts: false, expiryAlerts: false, watchers: false, catchUp: false, modes: false, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: false, projector: false, events: false, morning: false, switches: false }), [
     "alerts",
     "heartbeat",
     "daily summary",
@@ -516,11 +517,12 @@ test("switchedOff names each feature that's off, in plain words and a fixed orde
     "the projector",
     "the events feed",
     "the morning",
+    "switch flipping",
   ]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true }), ["daily summary"]);
-  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true }), ["alerts"]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true }), ["brain inbox"]);
-  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true }), ["note uploads"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: false, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true }), ["daily summary"]);
+  assert.deepEqual(switchedOff({ alerts: false, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true }), ["alerts"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: false, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true }), ["brain inbox"]);
+  assert.deepEqual(switchedOff({ alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: false, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: true, chores: true, sessions: true, spotify: true, talk: true, wall: true, projector: true, events: true, morning: true, switches: true }), ["note uploads"]);
 });
 
 test("switchedOff agrees with what readConfig reads", () => {
@@ -922,7 +924,7 @@ test("EVENTS must be written out, as exactly on or off, and needs no other setti
 test("WALL_PRIVATE_PAGES is the wall's pages to hide in guest mode, none when left out, and only the wall's own page names", () => {
   assert.deepEqual(readConfig(complete).wall.privatePages, []);
   assert.deepEqual(readConfig({ ...complete, WALL_PRIVATE_PAGES: "deals, reminder" }).wall.privatePages, ["deals", "reminder"]);
-  assert.throws(() => readConfig({ ...complete, WALL_PRIVATE_PAGES: "deals,brain" }), /Settings in api\/\.env with a value that isn't allowed: WALL_PRIVATE_PAGES \(the wall's pages to hide in guest mode, by name, with commas between: server, train, backup, alerts, deals, reminder, music\)/);
+  assert.throws(() => readConfig({ ...complete, WALL_PRIVATE_PAGES: "deals,brain" }), /Settings in api\/\.env with a value that isn't allowed: WALL_PRIVATE_PAGES \(the wall's pages to hide in guest mode, by name, with commas between: server, train, backup, alerts, deals, reminder, music, switches\)/);
 });
 
 test("WALL_REMOTE is off unless set to on, and anything else is refused", () => {

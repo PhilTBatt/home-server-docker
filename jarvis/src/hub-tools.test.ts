@@ -403,6 +403,12 @@ test("run_chore for a session says which session it starts or stops", () => {
   for (const job of ["session-start-Docker", "session-start-", "session-start-a b"]) assert.equal(actionQuestion("run_chore", { job }), "Jarvis wants to run a chore the runner won't accept. Type yes to let him, or anything else to stop it", job);
 });
 
+test("run_chore for a switch says which of the hub's switches, which way, and that it restarts the API", () => {
+  assert.equal(actionQuestion("run_chore", { job: "switch-on-reminders" }), "Jarvis wants to switch the hub's REMINDERS on, editing api/.env and restarting the API. Type yes to let him, or anything else to stop it");
+  assert.equal(actionQuestion("run_chore", { job: "switch-off-find-phone" }), "Jarvis wants to switch the hub's FIND_PHONE off, editing api/.env and restarting the API. Type yes to let him, or anything else to stop it");
+  for (const job of ["switch-on-", "switch-on-Reminders", "switch-maybe-reminders", "switch-on-a"]) assert.equal(actionQuestion("run_chore", { job }), "Jarvis wants to run a chore the runner won't accept. Type yes to let him, or anything else to stop it", job);
+});
+
 test("with the wall's pages on, the hub's MCP server is told to give open_wall_page, which runs without a yes and is never an action", () => {
   const paged = { ...hubServerFor("t"), wallPages: true };
   assert.deepEqual(hubWallTools, ["open_wall_page"]);

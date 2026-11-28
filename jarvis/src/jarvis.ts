@@ -45,6 +45,7 @@ import { followOnCheck } from "./look-up-follow.js";
 import { voiceFor } from "./voice.js";
 import { createFollowAsk, eager, mutedFrom, spokenOf, startWakeHold, stopOnCutIn, watchWake } from "./wake.js";
 import { createWall, hubWall, lookingOnWall, playOnWall, type Wall } from "./wall.js";
+import { switchesOf, switchesToHub, tellSwitches, type SwitchesTeller } from "./switches.js";
 import { factsTold, featuresLine, hubFeaturesReader, watchHubFeatures } from "./hub-features.js";
 
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
@@ -56,6 +57,7 @@ const closing = new AbortController();
 const watching = new AbortController();
 let wakeHold: { close(): void } | undefined;
 let wall: Wall | undefined;
+let switchTeller: SwitchesTeller | undefined;
 lines.on("close", () => closing.abort());
 lines.on("SIGINT", () => {
   if (session === null) {
@@ -82,6 +84,7 @@ try {
     heard.prompt();
   };
   wall = config.wall && config.hubToken !== null ? createWall({ send: hubWall(config.hubToken), now, note: noteLine }) : undefined;
+  switchTeller = config.wall && config.hubToken !== null ? tellSwitches({ send: switchesToHub(config.hubToken), switches: switchesOf(config), note: noteLine }) : undefined;
   const shown = wall;
   const hints = lengthHintsFor(config.lengthHints, lengthLineFor(pricesPerMTok[chatModel], config.lengthWarn, config.lengthCap, newChatAdvice));
   if (config.hubToken !== null) checkHubServer(hubServerFile);
@@ -290,6 +293,7 @@ try {
   watching.abort();
   wakeHold?.close();
   wall?.close();
+  switchTeller?.close();
   lines.close();
   await hubTools?.close().catch(() => {});
 }

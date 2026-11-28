@@ -25,7 +25,7 @@ const config: Config = {
   login: { guard: false },
   projector: { host: "192.168.1.23", power: "wake-sleep" },
   morning: { at: 405, days: ["mon", "tue", "wed", "thu", "fri"] },
-  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: true, projector: false, events: true, morning: true },
+  features: { alerts: true, heartbeat: true, dailySummary: true, memoryInbox: true, memoryUpload: true, deals: true, findPhone: true, trains: true, trainAlerts: true, expiryAlerts: true, watchers: true, catchUp: true, modes: true, reminders: false, chores: false, sessions: false, spotify: false, talk: false, wall: true, projector: false, events: true, morning: true, switches: true },
 };
 
 const hub = { authorization: "Bearer test-token" };

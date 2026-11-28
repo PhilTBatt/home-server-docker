@@ -154,6 +154,8 @@ function chore(input: unknown): string {
   if (typeof job === "string" && Object.hasOwn(choreText, job)) return `${choreText[job]} (the ${job} chore)`;
   const session = typeof job === "string" ? /^session-(start|stop)-([a-z0-9-]{1,20})$/.exec(job) : null;
   if (session !== null) return `${session[1]} the Claude Code session ${session[2]}`;
+  const flip = typeof job === "string" ? /^switch-(on|off)-([a-z-]{2,30})$/.exec(job) : null;
+  if (flip !== null) return `switch the hub's ${flip[2].toUpperCase().replace(/-/g, "_")} ${flip[1]}, editing api/.env and restarting the API`;
   return "run a chore the runner won't accept";
 }
 

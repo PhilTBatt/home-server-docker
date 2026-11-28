@@ -31,6 +31,7 @@ export type Features = {
   projector: boolean;
   events: boolean;
   morning: boolean;
+  switches: boolean;
 };
 
 export type DealSettings = {
@@ -84,7 +85,33 @@ export type Config = {
   features: Features;
 };
 
-const featureLabels: Record<keyof Features, string> = {
+export const switchKeys: Record<keyof Features, string> = {
+  alerts: "ALERTS",
+  heartbeat: "HEARTBEAT",
+  dailySummary: "DAILY_SUMMARY",
+  memoryInbox: "MEMORY_INBOX",
+  memoryUpload: "MEMORY_UPLOAD",
+  deals: "DEALS",
+  findPhone: "FIND_PHONE",
+  trains: "TRAINS",
+  trainAlerts: "TRAIN_ALERTS",
+  expiryAlerts: "EXPIRY_ALERTS",
+  watchers: "WATCHERS",
+  catchUp: "CATCH_UP",
+  modes: "MODES",
+  reminders: "REMINDERS",
+  chores: "CHORES",
+  sessions: "SESSIONS",
+  spotify: "SPOTIFY",
+  talk: "TALK",
+  wall: "WALL",
+  projector: "PROJECTOR",
+  events: "EVENTS",
+  morning: "MORNING",
+  switches: "SWITCHES",
+};
+
+export const featureLabels: Record<keyof Features, string> = {
   alerts: "alerts",
   heartbeat: "heartbeat",
   dailySummary: "daily summary",
@@ -107,6 +134,7 @@ const featureLabels: Record<keyof Features, string> = {
   projector: "the projector",
   events: "the events feed",
   morning: "the morning",
+  switches: "switch flipping",
 };
 
 export function privateIPv4(text: string): boolean {
@@ -150,28 +178,29 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const qbitApiKey = read("QBIT_API_KEY");
   const jellyfinApiKey = read("JELLYFIN_API_KEY");
   const features = {
-    alerts: readSwitch("ALERTS"),
-    heartbeat: readSwitch("HEARTBEAT"),
-    dailySummary: readSwitch("DAILY_SUMMARY"),
-    memoryInbox: readSwitch("MEMORY_INBOX"),
-    memoryUpload: readSwitch("MEMORY_UPLOAD"),
-    deals: readSwitch("DEALS"),
-    findPhone: readSwitch("FIND_PHONE"),
-    trains: readSwitch("TRAINS"),
-    trainAlerts: readSwitch("TRAIN_ALERTS"),
-    expiryAlerts: readSwitch("EXPIRY_ALERTS"),
-    watchers: readSwitch("WATCHERS"),
-    catchUp: readSwitch("CATCH_UP"),
-    modes: readSwitch("MODES"),
-    reminders: readSwitch("REMINDERS"),
-    chores: readSwitch("CHORES"),
-    sessions: readSwitch("SESSIONS"),
-    spotify: readSwitch("SPOTIFY"),
-    talk: readSwitch("TALK"),
-    wall: readSwitch("WALL"),
-    projector: readSwitch("PROJECTOR"),
-    events: readSwitch("EVENTS"),
-    morning: readSwitch("MORNING"),
+    alerts: readSwitch(switchKeys.alerts),
+    heartbeat: readSwitch(switchKeys.heartbeat),
+    dailySummary: readSwitch(switchKeys.dailySummary),
+    memoryInbox: readSwitch(switchKeys.memoryInbox),
+    memoryUpload: readSwitch(switchKeys.memoryUpload),
+    deals: readSwitch(switchKeys.deals),
+    findPhone: readSwitch(switchKeys.findPhone),
+    trains: readSwitch(switchKeys.trains),
+    trainAlerts: readSwitch(switchKeys.trainAlerts),
+    expiryAlerts: readSwitch(switchKeys.expiryAlerts),
+    watchers: readSwitch(switchKeys.watchers),
+    catchUp: readSwitch(switchKeys.catchUp),
+    modes: readSwitch(switchKeys.modes),
+    reminders: readSwitch(switchKeys.reminders),
+    chores: readSwitch(switchKeys.chores),
+    sessions: readSwitch(switchKeys.sessions),
+    spotify: readSwitch(switchKeys.spotify),
+    talk: readSwitch(switchKeys.talk),
+    wall: readSwitch(switchKeys.wall),
+    projector: readSwitch(switchKeys.projector),
+    events: readSwitch(switchKeys.events),
+    morning: readSwitch(switchKeys.morning),
+    switches: readSwitch(switchKeys.switches),
   };
   const ntfyTopic = read("NTFY_TOPIC", features.alerts || features.dailySummary || features.deals || features.findPhone || features.trainAlerts || features.expiryAlerts || features.watchers || features.reminders);
   const healthcheckUrl = read("HEALTHCHECK_URL", features.heartbeat);

@@ -3,6 +3,7 @@ import { fitKey, letterbox, matrixFor, moveCorner, readFit, writeFit } from "./w
 import { bubbleAround, bubbleFor, byLine, cardFor, cornerStep, detailEveryMs, detailPages, detailsShown, fitChip, framesASecond, fromHub, isPageView, isTrainDetails, itemBox, movePointer, nextCorner, nextDetails, openHere, pageLeftMs, pageShownMs, pointerShown, privateOf, stillOpen, trailMs, trailOf, trainRowView, trainView } from "./wall-cards.js";
 import { morningTrainCard, morningView } from "./wall-morning.js";
 import { isServerMap, mapHalos, mapView, stateWord } from "./wall-map.js";
+import { isSwitchboard, switchboardView } from "./wall-switches.js";
 import { arrivalShownMs, arrivalsBetween, pairingLine, pairRefusedLine, pairRetryMs, spacedCode, bedtimeLine, captionFor, countdownOf, countdownText, itemColour, leavesText, londonClock, middleFor, middleKey, modeColour, orbitSlots, poseFor, poseLabels, trainState } from "./wall-logic.js";
 
 /**
@@ -504,7 +505,9 @@ function showArcs(picture) {
 function showCard(now) {
   const open = pages.opened;
   stage.classList.toggle("opened", open !== null);
-  if (showMap(open, now)) {
+  const mapShown = showMap(open, now);
+  const boardShown = showSwitches(open, now);
+  if (mapShown || boardShown) {
     card.hidden = true;
     card.classList.add("shut");
     return;
@@ -658,6 +661,72 @@ function showMap(open, now) {
   return true;
 }
 
+/** @type {import("./wall-switches.js").SeenSwitches} */
+let seenSwitches = {};
+
+/**
+ * @param {import("./wall-cards.js").Opened | null} open
+ * @param {number} now
+ * @returns {boolean}
+ */
+function showSwitches(open, now) {
+  const box = byId("switches");
+  const details = open?.page.id === "switches" ? detailsShown(detail, "switches", Date.now()) : null;
+  const shown = open !== null && isSwitchboard(details);
+  stage.classList.toggle("switched", shown);
+  box.hidden = !shown;
+  if (!shown || open === null || !isSwitchboard(details)) return false;
+  setText(byId("sw-by"), byLine(open.page.by) || "On the wall");
+  byId("sw-left").style.transform = `scaleX(${pageLeftMs(open, now) / pageShownMs})`;
+  const key = JSON.stringify(details);
+  if (box.dataset.shown === key) return true;
+  box.dataset.shown = key;
+  const built = switchboardView(details, seenSwitches, Date.now());
+  seenSwitches = built.seen;
+  setText(byId("sw-said"), built.view.said);
+  setText(byId("sw-how"), built.view.how);
+  byId("sw-panels").replaceChildren(
+    ...built.view.panels.map((panel) => {
+      const one = made("section", `sw-panel p-${panel.id}`);
+      one.setAttribute("aria-label", `${panel.title} switches`);
+      const head = made("div", "sw-head");
+      const name = made("h2", "sw-name");
+      name.textContent = panel.title;
+      const count = made("span", "sw-count");
+      count.textContent = panel.count;
+      head.append(name, count);
+      one.append(head);
+      if (panel.empty !== "") {
+        const empty = made("p", "sw-empty");
+        empty.textContent = panel.empty;
+        one.append(empty);
+        return one;
+      }
+      const grid = made("div", "sw-grid");
+      grid.append(
+        ...panel.rows.map((row) => {
+          const line = made("div", `sw-row${row.on ? " on" : ""}${row.hand ? " hand" : ""}${row.flipped ? " flipped" : ""}`);
+          const pill = made("span", "sw-pill");
+          pill.setAttribute("role", "img");
+          pill.setAttribute("aria-label", `${row.label}: ${row.on ? "on" : "off"}`);
+          pill.append(made("span", "sw-knob"));
+          const words = made("div", "sw-words");
+          const label = made("span", "sw-label");
+          label.textContent = row.label;
+          const sub = made("span", "sw-key");
+          sub.textContent = row.sub;
+          words.append(label, sub);
+          line.append(pill, words);
+          return line;
+        }),
+      );
+      one.append(grid);
+      return one;
+    }),
+  );
+  return true;
+}
+
 /**
  * @returns {Target[]}
  */
@@ -665,7 +734,7 @@ function targets() {
   /** @type {Target[]} */
   const list = [];
   if (pages.opened !== null && !card.hidden) list.push({ kind: "card", key: pages.opened.page.id, box: { left: card.offsetLeft, top: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight } });
-  else if (!stage.classList.contains("mapped")) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
+  else if (!stage.classList.contains("mapped") && !stage.classList.contains("switched")) list.push(...pages.boxes.map((one) => /** @type {Target} */ ({ kind: "item", key: one.key, box: one.box })));
   if (!fitChipBox.hidden) list.push({ kind: "fit", key: "fit", box: fitChip });
   return list;
 }
