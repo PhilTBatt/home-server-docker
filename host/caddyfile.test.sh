@@ -36,17 +36,16 @@ check "no other site names http://hub.home" "1" "$(sites_naming 'http://hub.home
 check "no other site names https://hub.home" "1" "$(sites_naming 'https://hub.home')"
 check "no site names hub.home without a scheme" "0" "$(sites_naming 'hub.home')"
 
-check "the plain http site serves the root certificate" "1" "$(grep -cx '	handle /caddy-root.crt {' <<< "$plain")"
-check "from the hub folder" "1" "$(grep -cx '		root \* /srv/hub' <<< "$plain")"
-check "with one file server" "1" "$(grep -c 'file_server' <<< "$plain")"
-check "and sends everything else to https, with the same path" "1" "$(grep -cx '		redir https://hub.home{uri}' <<< "$plain")"
+check "the plain http site sends everything to https, with the same path, and does nothing else" "	redir https://hub.home{uri}" "$(grep -E '^	[^}]' <<< "$plain")"
 check "with Caddy's temporary redirect, not a permanent one" "0" "$(grep -cE 'redir .* (permanent|301|308)' <<< "$plain")"
-check "the plain http site has two handles and nothing else at its top level" "	handle /caddy-root.crt {|	handle {" "$(grep -E '^	[^	}]' <<< "$plain" | paste -sd '|')"
+check "the plain http site serves no files, not even the root certificate" "0" "$(grep -cE 'file_server|caddy-root' <<< "$plain")"
 check "the plain http site never reaches the API" "0" "$(grep -c 'reverse_proxy' <<< "$plain")"
+check "the https site never serves a copy of the root certificate left in the hub folder" "1" "$(grep -A2 -x '	handle /caddy-root.crt {' <<< "$secure" | grep -cx '		respond 404')"
 
 check "the https site uses Caddy's own certificate authority" "1" "$(grep -cx '	tls internal' <<< "$secure")"
 check "and passes /api/ to the API" "1" "$(grep -cx '		reverse_proxy api:3000' <<< "$secure")"
 check "and serves the hub folder" "1" "$(grep -cx '		root \* /srv/hub' <<< "$secure")"
+check "with any file called caddy-root.crt hidden, whatever path asks for it" "1" "$(grep -A2 -x '		file_server {' <<< "$secure" | grep -cx '			hide caddy-root.crt')"
 
 policy="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; media-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 check "the https site sends the content security policy" "1" "$(grep -cxF "		Content-Security-Policy \"$policy\"" <<< "$secure")"

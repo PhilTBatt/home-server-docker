@@ -1,7 +1,7 @@
 # 0083. The hub page over https only, and a login guard
 
 - Date: 2026-11-27
-- Status: accepted
+- Status: accepted; serving `/caddy-root.crt` over plain http replaced by 0089
 
 ## Context
 A security review on 27 Nov found that `hub.home` still answered over plain http, and that the login cookie holds the hub's token itself for 60 days, marked https-only only when that login came over https. On plain http the token crosses the Wi-Fi in the clear, at login and in the cookie on every request, where anyone else on the network could catch it. Since record 0078 the token also lets whoever holds it talk to Jarvis as if from the phone, read his answers (which come from the brain) and answer his yes questions. There was also no limit on wrong tokens at login. The phone uses `https://hub.home` (record 0077), the laptops don't open the hub page, and the server's own scripts reach the API through `http://api.home` on the server itself. Since record 0081, the wall's page (`hub.home/wall.html`) is opened on the Xbox at `https://hub.home`, past a certificate warning, since an Xbox can't be told to trust Caddy's certificate; it logs in with its own token, `WALL_TOKEN`, which can only read what the wall shows.

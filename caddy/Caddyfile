@@ -44,14 +44,7 @@ http://api.home, https://api.home {
 }
 
 http://hub.home {
-	handle /caddy-root.crt {
-		root * /srv/hub
-		file_server
-	}
-
-	handle {
-		redir https://hub.home{uri}
-	}
+	redir https://hub.home{uri}
 }
 
 https://hub.home {
@@ -66,8 +59,14 @@ https://hub.home {
 		reverse_proxy api:3000
 	}
 
+	handle /caddy-root.crt {
+		respond 404
+	}
+
 	handle {
 		root * /srv/hub
-		file_server
+		file_server {
+			hide caddy-root.crt
+		}
 	}
 }

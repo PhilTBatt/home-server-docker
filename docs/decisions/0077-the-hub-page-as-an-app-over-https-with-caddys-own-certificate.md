@@ -1,7 +1,7 @@
 # 0077. The hub page as an app, over https with Caddy's own certificate
 
 - Date: 2026-11-27
-- Status: accepted
+- Status: accepted; how the certificate reaches the phone replaced by 0089
 
 ## Context
 The hub page is how I use the server from the phone, and I want it to feel like an app: its own icon, full screen, no browser bar. Talking to Jarvis from it (record 0078) also needs the microphone, which browsers only give a secure page. Caddy already serves `https://hub.home` with its own certificate authority, but the phone doesn't trust it.

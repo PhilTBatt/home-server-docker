@@ -47,3 +47,4 @@ spotify/*
 !spotify/README.md
 host/digest.env
 hub/caddy-root.crt
+caddy/root.crt
